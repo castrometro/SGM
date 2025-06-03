@@ -8,7 +8,7 @@ const estadoCierreColors = {
   en_revision:  { texto: "En Revisión", color: "bg-orange-400" },
   rechazado:    { texto: "Rechazado", color: "bg-red-600" },
   aprobado:     { texto: "Aprobado", color: "bg-green-500" },
-  completo:     { texto: "Compleado",color:"bg-green-700"},
+  completo:     { texto: "Completado",color:"bg-green-700"},
 };
 
 export default estadoCierreColors;

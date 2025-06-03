@@ -181,6 +181,24 @@ def obtener_hashtags_disponibles(request, cliente_id):
         hashtags.update(c.hashtags or [])
     return Response(sorted(list(hashtags)))
 
+
+@api_view(['DELETE'])
+def eliminar_concepto_remuneracion(request, cliente_id, nombre_concepto):
+    try:
+        concepto = ConceptoRemuneracion.objects.get(
+            cliente_id=cliente_id,
+            nombre_concepto=nombre_concepto
+        )
+    except ConceptoRemuneracion.DoesNotExist:
+        return Response(
+            {"error": "No encontrado"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    concepto.vigente = False
+    concepto.save()
+    return Response({"status": "ok"})
+
 class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
     queryset = MovimientosMesUpload.objects.all()
     serializer_class = MovimientosMesUploadSerializer

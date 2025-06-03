@@ -27,7 +27,7 @@ export const obtenerEstadoTipoDocumento = async (clienteId) => {
   return typeof res.data === "string" ? res.data : res.data.estado;
 };
 
-// Sube un archivo de tipo de documento para el cliente (routa nueva)
+// Sube un archivo de tipo de documento para el cliente (ruta nueva)
 export const subirTipoDocumento = async (formData) => {
   const res = await api.post("/contabilidad/tipo-documento/subir-archivo/", formData);
   return res.data;

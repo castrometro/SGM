@@ -44,7 +44,7 @@ class IndustriaSerializer(serializers.ModelSerializer):
 class ServicioSerializer(serializers.ModelSerializer):
     class Meta:
         model = Servicio
-        fields = ['id', 'nombre', 'area_servicio']
+        fields = ['id', 'nombre', 'area']
         read_only_fields = ['id']
 
 

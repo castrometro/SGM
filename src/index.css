@@ -1,0 +1,191 @@
+@import "tailwindcss";
+@plugin "daisyui";
+@keyframes pop {
+  0% { transform: scale(0.4); opacity: 0.2;}
+  80% { transform: scale(1.25);}
+  100% { transform: scale(1); opacity: 1;}
+}
+.animate-pop {
+  animation: pop 0.28s cubic-bezier(.8,2,.3,.7);
+}
+@keyframes fade-in {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+@keyframes fade-out {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes slide-in {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(0); }
+}
+@keyframes slide-out {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-100%); }
+}
+@keyframes slide-in-right {
+  0% { transform: translateX(100%); }
+  100% { transform: translateX(0); }
+}
+@keyframes slide-out-right {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(100%); }
+}
+@keyframes slide-in-left {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(0); }
+}
+@keyframes slide-out-left {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-100%); }
+}
+@keyframes slide-in-bottom {
+  0% { transform: translateY(100%); }
+  100% { transform: translateY(0); }
+}
+@keyframes slide-out-bottom {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(100%); }
+}
+@keyframes slide-in-top {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(0); }
+}
+@keyframes slide-out-top {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-100%); }
+}
+@keyframes slide-in-top-right {
+  0% { transform: translateY(-100%) translateX(100%); }
+  100% { transform: translateY(0) translateX(0); }
+}
+@keyframes slide-out-top-right {
+  0% { transform: translateY(0) translateX(0); }
+  100% { transform: translateY(-100%) translateX(100%); }
+}
+@keyframes slide-in-top-left {
+  0% { transform: translateY(-100%) translateX(-100%); }
+  100% { transform: translateY(0) translateX(0); }
+}
+@keyframes slide-out-top-left {
+  0% { transform: translateY(0) translateX(0); }
+  100% { transform: translateY(-100%) translateX(-100%); }
+}
+@keyframes slide-in-bottom-right {
+  0% { transform: translateY(100%) translateX(100%); }
+  100% { transform: translateY(0) translateX(0); }
+}
+@keyframes slide-out-bottom-right {
+  0% { transform: translateY(0) translateX(0); }
+  100% { transform: translateY(100%) translateX(100%); }
+}
+@keyframes slide-in-bottom-left {
+  0% { transform: translateY(100%) translateX(-100%); }
+  100% { transform: translateY(0) translateX(0); }
+}
+@keyframes slide-out-bottom-left {
+  0% { transform: translateY(0) translateX(0); }
+  100% { transform: translateY(100%) translateX(-100%); }
+}
+
+/* Definir los colores de BDO */
+:root {
+  --bdo-red: #e81a3b;
+  --bdo-blue: #22409a;
+  --bdo-burgundy: #98002e;
+  --bdo-charcoal: #333333;
+  --bdo-slate: #5b6e7f;
+  --bdo-gold: #d67900;
+  --bdo-jade: #009966;
+  --bdo-ocean: #008fd2;
+
+  --text-primary: var(--bdo-charcoal);
+  --background-primary: white;
+}
+
+/* General */
+body {
+  font-family: "Arial", sans-serif;
+  color: var(--text-primary);
+  background-color: var(--background-primary);
+}
+
+/* Estilos de enlaces */
+a {
+  font-weight: 500;
+  color: var(--bdo-blue);
+  text-decoration: inherit;
+}
+a:hover {
+  color: #1a3372;
+}
+
+/* Botones */
+.btn {
+  border-radius: 8px;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  transition: background-color 0.25s, transform 0.1s ease-in-out;
+}
+
+.btn-red {
+  background-color: var(--bdo-red);
+  color: white;
+}
+.btn-red:hover {
+  background-color: #c71734;
+  transform: scale(1.05);
+}
+
+.btn-blue {
+  background-color: var(--bdo-blue);
+  color: white;
+}
+.btn-blue:hover {
+  background-color: #1a3372;
+  transform: scale(1.05);
+}
+
+.btn-charcoal {
+  background-color: var(--bdo-charcoal);
+  color: white;
+}
+.btn-charcoal:hover {
+  background-color: #252525;
+  transform: scale(1.05);
+}
+
+/* Header */
+.header {
+  background-color: var(--bdo-red);
+  color: white;
+  padding: 1rem;
+  text-align: center;
+  font-size: 1.5rem;
+  font-weight: bold;
+}
+
+/* Tarjetas y elementos de contenido */
+.card {
+  background-color: var(--bdo-slate);
+  color: white;
+  padding: 1.5rem;
+  border-radius: 10px;
+  box-shadow: 2px 4px 6px rgba(0, 0, 0, 0.2);
+}
+
+/* Fondos */
+.bg-bdo-red {
+  background-color: var(--bdo-red);
+}
+.bg-bdo-blue {
+  background-color: var(--bdo-blue);
+}
+.bg-bdo-charcoal {
+  background-color: var(--bdo-charcoal);
+}
+.bg-bdo-slate {
+  background-color: var(--bdo-slate);
+}

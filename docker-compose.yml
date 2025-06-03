@@ -1,0 +1,70 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: sgm_db
+      POSTGRES_USER: sgm_user
+      POSTGRES_PASSWORD: sgm_pass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  django:
+    build:
+      context: ./backend  # Ajusta si tu manage.py está en otra carpeta
+    command: bash -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DJANGO_SETTINGS_MODULE=sgm_backend.settings
+      - POSTGRES_DB=sgm_db
+      - POSTGRES_USER=sgm_user
+      - POSTGRES_PASSWORD=sgm_pass
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+
+  celery_worker:
+    build:
+      context: ./backend
+    command: ./celery_worker.sh
+    volumes:
+      - ./backend:/app
+    environment:
+      - DJANGO_SETTINGS_MODULE=sgm_backend.settings
+      - POSTGRES_DB=sgm_db
+      - POSTGRES_USER=sgm_user
+      - POSTGRES_PASSWORD=sgm_pass
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+
+  flower:
+    image: mher/flower
+    command: python -m celery --broker=redis://redis:6379/0 flower
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+      - celery_worker
+
+
+
+volumes:
+  postgres_data:

@@ -1,6 +1,9 @@
 import { useState, useEffect } from "react";
 import CreatableSelect from "react-select/creatable";
-import { obtenerClasificacionesCliente } from "../api/nomina";
+import {
+  obtenerClasificacionesCliente,
+  eliminarConceptoRemuneracion,
+} from "../api/nomina";
 
 const categorias = ["haber", "descuento", "informacion"];
 
@@ -27,6 +30,15 @@ const ModalClasificacionHeaders = ({
   const [hashtags, setHashtags] = useState({});
   const [hashtagsDisponibles, setHashtagsDisponibles] = useState([]);
   const [seleccionado, setSeleccionado] = useState(null);
+
+  const categoriaDe = (header) => {
+    for (const c of categorias) {
+      if (headers[c].includes(header)) return c;
+    }
+    return null;
+  };
+
+  const clasificados = categorias.flatMap((c) => headers[c]);
 
   useEffect(() => {
     if (!isOpen || !clienteId) return;
@@ -93,6 +105,17 @@ const ModalClasificacionHeaders = ({
     if (seleccionado === header) setSeleccionado(null);
   };
 
+  const eliminarConcepto = async (header) => {
+    if (!clienteId) return;
+    if (!window.confirm(`¿Eliminar concepto "${header}"?`)) return;
+    try {
+      await eliminarConceptoRemuneracion(clienteId, header);
+      eliminarClasificacion(header);
+    } catch (e) {
+      console.error("Error eliminando concepto:", e);
+    }
+  };
+
   const handleGuardar = () => {
     const resultado = {};
 
@@ -126,7 +149,7 @@ const ModalClasificacionHeaders = ({
           Clasificación de Headers
         </h2>
 
-        <div className="grid grid-cols-4 gap-4 overflow-y-auto pr-2 flex-1">
+        <div className="grid grid-cols-5 gap-4 overflow-y-auto pr-2 flex-1">
           {Object.keys(headers).map((cat) => (
             <div key={cat} className="bg-gray-800 rounded p-3 flex flex-col">
               <h3 className="text-white text-sm font-semibold mb-2">
@@ -144,16 +167,28 @@ const ModalClasificacionHeaders = ({
                     <div className="flex justify-between items-center">
                       <span>{header}</span>
                       {cat !== "pendiente" && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            eliminarClasificacion(header);
-                          }}
-                          className="text-red-400 text-xs ml-2"
-                          title="Eliminar clasificación"
-                        >
-                          ✖
-                        </button>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              eliminarClasificacion(header);
+                            }}
+                            className="text-red-400 text-xs"
+                            title="Quitar clasificación"
+                          >
+                            ✖
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              eliminarConcepto(header);
+                            }}
+                            className="text-red-400 text-xs"
+                            title="Eliminar concepto"
+                          >
+                            🗑
+                          </button>
+                        </div>
                       )}
                     </div>
                     {cat !== "pendiente" && (
@@ -182,6 +217,25 @@ const ModalClasificacionHeaders = ({
               </div>
             </div>
           ))}
+
+          <div className="bg-gray-800 rounded p-3 flex flex-col">
+            <h3 className="text-white text-sm font-semibold mb-2">Hashtags</h3>
+            <div className="flex-1 space-y-2 overflow-y-auto">
+              {clasificados.map((h, idx) => (
+                <div key={idx} className="text-xs bg-gray-700 px-2 py-1 rounded">
+                  <div className="flex justify-between items-center">
+                    <span>{h}</span>
+                    <span className="text-[10px] text-gray-400">[
+                      {nombresCategorias[categoriaDe(h)]}
+                    ]</span>
+                  </div>
+                  <div className="text-[10px] text-blue-300 italic">
+                    #{(hashtags[h] || "").split(",").join(" #")}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Panel Fijo Inferior */}

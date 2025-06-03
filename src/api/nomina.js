@@ -119,3 +119,11 @@ export const guardarConceptosRemuneracion = async (clienteId, conceptos) => {
   });
   return response.data;
 };
+
+export const eliminarConceptoRemuneracion = async (clienteId, nombreConcepto) => {
+  const encoded = encodeURIComponent(nombreConcepto);
+  const res = await api.delete(
+    `/nomina/conceptos/${clienteId}/${encoded}/eliminar/`
+  );
+  return res.data;
+};

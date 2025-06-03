@@ -1,9 +1,15 @@
 from rest_framework import routers
 from .views import (
-    CierreNominaViewSet, LibroRemuneracionesUploadViewSet, MovimientosMesUploadViewSet,
-    ArchivoAnalistaUploadViewSet, ArchivoNovedadesUploadViewSet,
-    ChecklistItemViewSet, conceptos_remuneracion_por_cliente,
-    obtener_hashtags_disponibles, ConceptoRemuneracionBatchView
+    CierreNominaViewSet,
+    LibroRemuneracionesUploadViewSet,
+    MovimientosMesUploadViewSet,
+    ArchivoAnalistaUploadViewSet,
+    ArchivoNovedadesUploadViewSet,
+    ChecklistItemViewSet,
+    conceptos_remuneracion_por_cliente,
+    obtener_hashtags_disponibles,
+    ConceptoRemuneracionBatchView,
+    eliminar_concepto_remuneracion,
 )
 from django.urls import path
 from django.conf import settings
@@ -40,5 +46,10 @@ urlpatterns = router.urls + [
     path('conceptos-remuneracion/', conceptos_remuneracion_por_cliente, name='conceptos_remuneracion_por_cliente'),
     path('clientes/<int:cliente_id>/hashtags/', obtener_hashtags_disponibles),
     path("conceptos/", ConceptoRemuneracionBatchView.as_view(), name="guardar-conceptos"),
+    path(
+        "conceptos/<int:cliente_id>/<path:nombre_concepto>/eliminar/",
+        eliminar_concepto_remuneracion,
+        name="eliminar-concepto-remuneracion",
+    ),
 
 ]

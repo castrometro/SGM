@@ -16,9 +16,9 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
 
   const handleGuardarClasificaciones = async ({ guardar, eliminar }) => {
     try {
-      if (guardar && Object.keys(guardar).length > 0) {
-        await guardarConceptosRemuneracion(cliente.id, guardar);
-      }
+        if (guardar && Object.keys(guardar).length > 0) {
+          await guardarConceptosRemuneracion(cliente.id, guardar, cierre.id);
+        }
       if (Array.isArray(eliminar) && eliminar.length > 0) {
         await Promise.all(
           eliminar.map((h) => eliminarConceptoRemuneracion(cliente.id, h))

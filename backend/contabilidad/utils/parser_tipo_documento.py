@@ -9,7 +9,7 @@ def parsear_tipo_documento_excel(cliente_id, ruta_relativa):
     path = default_storage.path(ruta_relativa)
 
     try:
-        df = pd.read_excel(path)
+        df = pd.read_excel(path, engine="openpyxl")
         df.columns = df.columns.str.lower()
         df = df.dropna(subset=["codigo"])
     except Exception as e:

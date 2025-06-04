@@ -13,7 +13,7 @@ def obtener_headers_libro_remuneraciones(path_archivo):
     """
     logger.info(f"Abriendo archivo de libro de remuneraciones: {path_archivo}")
     try:
-        df = pd.read_excel(path_archivo)
+        df = pd.read_excel(path_archivo, engine="openpyxl")
         headers = list(df.columns)
 
         rut_col = next((c for c in headers if 'rut' in c.lower() and 'trab' in c.lower()), None)

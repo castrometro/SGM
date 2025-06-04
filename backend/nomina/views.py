@@ -1,4 +1,4 @@
-from rest_framework import viewsets, mixins, viewsets, status
+from rest_framework import viewsets, mixins, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from celery import chain
@@ -139,16 +139,13 @@ def conceptos_remuneracion_por_cliente(request):
         return Response({"error": "Se requiere cliente_id"}, status=400)
 
     conceptos = ConceptoRemuneracion.objects.filter(cliente_id=cliente_id, vigente=True)
-    Empleado,
     serializer = ConceptoRemuneracionSerializer(conceptos, many=True)
-    Empleado,
     return Response(serializer.data)
 
 
 
 
 class ConceptoRemuneracionBatchView(APIView):
-    Empleado,
     def post(self, request):
         data = request.data
         cliente_id = data.get("cliente_id")
@@ -172,7 +169,6 @@ class ConceptoRemuneracionBatchView(APIView):
                 continue  # Ignora si falta clasificación
 
             obj, _ = ConceptoRemuneracion.objects.update_or_create(
-    Empleado,
                 cliente=cliente,
                 nombre_concepto=nombre,
                 defaults={

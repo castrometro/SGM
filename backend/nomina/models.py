@@ -29,6 +29,18 @@ def analista_upload_to(instance, filename):
     return f"remuneraciones/{cliente_id}/{periodo}/{tipo_archivo}/{now}_{filename}"
 
 
+class Empleado(models.Model):
+    rut = models.CharField(max_length=12, unique=True)
+    nombres = models.CharField(max_length=120)
+    apellido_paterno = models.CharField(max_length=120)
+    apellido_materno = models.CharField(max_length=120, blank=True)
+    activo = models.BooleanField(default=True)
+    fecha_ingreso = models.DateField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.rut} - {self.nombres} {self.apellido_paterno}"
+
+
 
 
 class CierreNomina(models.Model):
@@ -132,6 +144,7 @@ class MovimientosMesUpload(models.Model):
 
 class MovimientoAltaBaja(models.Model):
     movimientos_mes = models.ForeignKey(MovimientosMesUpload, on_delete=models.CASCADE)
+    empleado = models.ForeignKey('Empleado', on_delete=models.CASCADE, null=True, blank=True)
     rut = models.CharField(max_length=12)
     nombre = models.CharField(max_length=120)
     tipo_movimiento = models.CharField(max_length=20, choices=[('alta', 'Alta'), ('baja', 'Baja')])
@@ -143,6 +156,7 @@ class MovimientoAltaBaja(models.Model):
 
 class MovimientoAusentismo(models.Model):
     movimientos_mes = models.ForeignKey(MovimientosMesUpload, on_delete=models.CASCADE)
+    empleado = models.ForeignKey('Empleado', on_delete=models.CASCADE, null=True, blank=True)
     rut = models.CharField(max_length=12)
     nombre = models.CharField(max_length=120)
     tipo_ausentismo = models.CharField(max_length=80)  # Licencia, Permiso, etc.
@@ -156,6 +170,7 @@ class MovimientoAusentismo(models.Model):
 
 class MovimientoVacaciones(models.Model):
     movimientos_mes = models.ForeignKey(MovimientosMesUpload, on_delete=models.CASCADE)
+    empleado = models.ForeignKey('Empleado', on_delete=models.CASCADE, null=True, blank=True)
     rut = models.CharField(max_length=12)
     nombre = models.CharField(max_length=120)
     fecha_inicio = models.DateField()
@@ -168,6 +183,7 @@ class MovimientoVacaciones(models.Model):
 
 class VariacionSueldoBase(models.Model):
     movimientos_mes = models.ForeignKey(MovimientosMesUpload, on_delete=models.CASCADE)
+    empleado = models.ForeignKey('Empleado', on_delete=models.CASCADE, null=True, blank=True)
     rut = models.CharField(max_length=12)
     nombre = models.CharField(max_length=120)
     sueldo_anterior = models.DecimalField(max_digits=12, decimal_places=2)
@@ -180,6 +196,7 @@ class VariacionSueldoBase(models.Model):
 
 class VariacionTipoContrato(models.Model):
     movimientos_mes = models.ForeignKey(MovimientosMesUpload, on_delete=models.CASCADE)
+    empleado = models.ForeignKey('Empleado', on_delete=models.CASCADE, null=True, blank=True)
     rut = models.CharField(max_length=12)
     nombre = models.CharField(max_length=120)
     tipo_anterior = models.CharField(max_length=80)
@@ -219,6 +236,7 @@ class ArchivoAnalistaUpload(models.Model):
 
 class RegistroIngresoAnalista(models.Model):
     archivo_upload = models.ForeignKey(ArchivoAnalistaUpload, on_delete=models.CASCADE)
+    empleado = models.ForeignKey('Empleado', on_delete=models.CASCADE, null=True, blank=True)
     rut = models.CharField(max_length=12)
     nombre = models.CharField(max_length=120)
     fecha_ingreso = models.DateField()
@@ -230,6 +248,7 @@ class RegistroIngresoAnalista(models.Model):
 
 class RegistroFiniquitoAnalista(models.Model):
     archivo_upload = models.ForeignKey(ArchivoAnalistaUpload, on_delete=models.CASCADE)
+    empleado = models.ForeignKey('Empleado', on_delete=models.CASCADE, null=True, blank=True)
     rut = models.CharField(max_length=12)
     nombre = models.CharField(max_length=120)
     fecha_finiquito = models.DateField()
@@ -241,6 +260,7 @@ class RegistroFiniquitoAnalista(models.Model):
 
 class RegistroAusentismoAnalista(models.Model):
     archivo_upload = models.ForeignKey(ArchivoAnalistaUpload, on_delete=models.CASCADE)
+    empleado = models.ForeignKey('Empleado', on_delete=models.CASCADE, null=True, blank=True)
     rut = models.CharField(max_length=12)
     nombre = models.CharField(max_length=120)
     tipo_ausentismo = models.CharField(max_length=80)
@@ -255,6 +275,7 @@ class RegistroAusentismoAnalista(models.Model):
 class IncidenciaComparacion(models.Model):
     cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE, related_name='incidencias_comparacion')
     tipo_incidencia = models.CharField(max_length=30)
+    empleado = models.ForeignKey('Empleado', on_delete=models.CASCADE, null=True, blank=True)
     rut = models.CharField(max_length=12)
     detalle = models.TextField()
     resuelto = models.BooleanField(default=False)
@@ -295,6 +316,7 @@ class ArchivoNovedadesUpload(models.Model):
 
 class Novedad(models.Model):
     archivo_upload = models.ForeignKey(ArchivoNovedadesUpload, on_delete=models.CASCADE, null=True, blank=True, related_name='novedades')
+    empleado = models.ForeignKey('Empleado', on_delete=models.CASCADE, null=True, blank=True)
     rut = models.CharField(max_length=12)
     nombre = models.CharField(max_length=120, blank=True, null=True)
     concepto = models.CharField(max_length=120)  # Header del archivo novedad
@@ -313,6 +335,7 @@ class Novedad(models.Model):
 
 class IncidenciaNovedad(models.Model):
     cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE, related_name='incidencias_novedad')
+    empleado = models.ForeignKey('Empleado', on_delete=models.CASCADE, null=True, blank=True)
     rut = models.CharField(max_length=12)
     nombre = models.CharField(max_length=120, blank=True, null=True)
     concepto = models.CharField(max_length=120)

@@ -3,8 +3,14 @@ from .models import (
     CierreNomina, LibroRemuneracionesUpload, MovimientosMesUpload,
     ArchivoAnalistaUpload, ArchivoNovedadesUpload,
     ConceptoRemuneracion, Novedad,
-    IncidenciaComparacion, IncidenciaNovedad, ChecklistItem
+    IncidenciaComparacion, IncidenciaNovedad, ChecklistItem, Empleado
 )
+
+
+class EmpleadoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Empleado
+        fields = ['id', 'rut', 'nombres', 'apellido_paterno', 'apellido_materno', 'activo', 'fecha_ingreso']
 
 class ChecklistItemSerializer(serializers.ModelSerializer):
     class Meta:

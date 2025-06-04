@@ -10,6 +10,7 @@ from .views import (
     obtener_hashtags_disponibles,
     ConceptoRemuneracionBatchView,
     eliminar_concepto_remuneracion,
+    progreso_clasificacion_libro_remuneraciones,
 )
 from django.urls import path
 from django.conf import settings
@@ -50,6 +51,11 @@ urlpatterns = router.urls + [
         "conceptos/<int:cliente_id>/<path:nombre_concepto>/eliminar/",
         eliminar_concepto_remuneracion,
         name="eliminar-concepto-remuneracion",
+    ),
+    path(
+        "libro_remuneraciones/progreso_clasificacion/<int:cierre_id>/",
+        progreso_clasificacion_libro_remuneraciones,
+        name="progreso-clasificacion-libro-remuneraciones",
     ),
 
 ]

@@ -199,6 +199,36 @@ def eliminar_concepto_remuneracion(request, cliente_id, nombre_concepto):
     concepto.save()
     return Response({"status": "ok"})
 
+
+@api_view(['GET'])
+def progreso_clasificacion_libro_remuneraciones(request, cierre_id):
+    """Calcula cuántos headers siguen sin clasificar para un cierre."""
+    libro = (
+        LibroRemuneracionesUpload.objects.filter(cierre_id=cierre_id)
+        .order_by('-fecha_subida')
+        .first()
+    )
+
+    if not libro:
+        return Response({"error": "Libro no encontrado"}, status=404)
+
+    cliente = libro.cierre.cliente
+    datos = libro.header_json or {}
+    if isinstance(datos, dict):
+        headers = (
+            datos.get('headers_clasificados', [])
+            + datos.get('headers_sin_clasificar', [])
+        )
+    else:
+        headers = datos
+
+    clasif, sin_clasif = clasificar_headers_libro_remuneraciones(headers, cliente)
+
+    return Response({
+        'headers_clasificados': clasif,
+        'headers_sin_clasificar': sin_clasif,
+    })
+
 class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
     queryset = MovimientosMesUpload.objects.all()
     serializer_class = MovimientosMesUploadSerializer

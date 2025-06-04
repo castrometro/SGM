@@ -83,7 +83,7 @@ def actualizar_empleados_desde_libro(result):
     libro_id = result.get('libro_id') if isinstance(result, dict) else result
     try:
         libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-        df = pd.read_excel(libro.archivo.path)
+        df = pd.read_excel(libro.archivo.path, engine="openpyxl")
 
         rut_col = next((c for c in df.columns if 'rut' in c.lower() and 'trab' in c.lower()), None)
         dv_col = next((c for c in df.columns if 'dv' in c.lower() and 'trab' in c.lower()), None)

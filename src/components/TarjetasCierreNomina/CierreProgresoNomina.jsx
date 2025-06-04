@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import LibroRemuneracionesCard from "./LibroRemuneracionesCard";
+import MovimientosMesCard from "./MovimientosMesCard";
 import ModalClasificacionHeaders from "../ModalClasificacionHeaders";
 import {
   obtenerEstadoLibroRemuneraciones,
   subirLibroRemuneraciones,
+  obtenerEstadoMovimientosMes,
+  subirMovimientosMes,
   guardarConceptosRemuneracion,
   eliminarConceptoRemuneracion,
 } from "../../api/nomina";
@@ -11,6 +14,8 @@ import {
 const CierreProgresoNomina = ({ cierre, cliente }) => {
   const [libro, setLibro] = useState(null);
   const [subiendo, setSubiendo] = useState(false);
+  const [movimientos, setMovimientos] = useState(null);
+  const [subiendoMov, setSubiendoMov] = useState(false);
   const [modalAbierto, setModalAbierto] = useState(false);
   const [libroListo, setLibroListo] = useState(false);
 
@@ -43,6 +48,7 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
   useEffect(() => {
     if (cierre?.id) {
       obtenerEstadoLibroRemuneraciones(cierre.id).then(setLibro);
+      obtenerEstadoMovimientosMes(cierre.id).then(setMovimientos);
     }
   }, [cierre]);
 
@@ -71,6 +77,20 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
     }
   };
 
+  const handleSubirMovimientos = async (archivo) => {
+    setSubiendoMov(true);
+    try {
+      const formData = new FormData();
+      formData.append("archivo", archivo);
+      await subirMovimientosMes(cierre.id, formData);
+      setTimeout(() => {
+        obtenerEstadoMovimientosMes(cierre.id).then(setMovimientos);
+      }, 1200);
+    } finally {
+      setSubiendoMov(false);
+    }
+  };
+
   const headersSinClasificar = Array.isArray(libro?.header_json?.headers_sin_clasificar)
     ? libro.header_json.headers_sin_clasificar
     : [];
@@ -86,6 +106,8 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
         }, {})
       : {};
 
+  const estadoMovimientos = movimientos?.estado || "pendiente";
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       <LibroRemuneracionesCard
@@ -98,6 +120,13 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
         onVerClasificacion={() => setModalAbierto(true)}
         headersSinClasificar={headersSinClasificar}
         headerClasificados={Object.keys(headersClasificados)}
+        disabled={false}
+      />
+      <MovimientosMesCard
+        estado={estadoMovimientos}
+        archivoNombre={movimientos?.archivo_nombre}
+        subiendo={subiendoMov}
+        onSubirArchivo={handleSubirMovimientos}
         disabled={false}
       />
       <ModalClasificacionHeaders

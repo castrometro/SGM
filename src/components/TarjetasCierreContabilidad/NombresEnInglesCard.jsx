@@ -19,7 +19,6 @@ const NombresEnInglesCard = ({
 
       const fetchEstado = async () => {
          
-        console.log("[NombresEnInglesCard] useEffect ejecutado", { cierreId, clienteId, clasificacionReady });
         if (!cierreId || !clienteId || !clasificacionReady) {
           setEstado("pendiente");
           setFaltantes(0);
@@ -34,9 +33,6 @@ const NombresEnInglesCard = ({
           const total = data.total || 0;
           const faltantes = data.faltantes ? data.faltantes.length : 0;
           const traducidas = total - faltantes;
-          console.log(
-            `[NombresEnInglesCard] Cuentas analizadas: ${total}, Sin traducción: ${faltantes}, Con traducción: ${traducidas}`
-          );
 
           // Si no hay cuentas (total === 0) o faltantes === 0, se considera completado.
           const esCompletado = (faltantes === 0 && total > 0) || data.estado === "subido";

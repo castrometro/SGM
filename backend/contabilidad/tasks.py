@@ -8,13 +8,16 @@ from django.utils import timezone
 from django.core.files.storage import default_storage
 import time
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @shared_task
 def tarea_de_prueba(nombre):
-    print(f"👋 ¡Hola {nombre} desde Celery!") #print1
+    logger.info("👋 ¡Hola %s desde Celery!", nombre)
     time.sleep(999)
-    print("✅ Tarea completada.") #print2
+    logger.info("✅ Tarea completada.")
     return f"Completado por {nombre}" #esto sale en succeeded
 
 
@@ -22,9 +25,9 @@ def tarea_de_prueba(nombre):
 def parsear_tipo_documento(cliente_id, ruta_relativa):
     ok, msg = parsear_tipo_documento_excel(cliente_id, ruta_relativa)
     if ok:
-        print("✅", msg)
+        logger.info("✅ %s", msg)
     else:
-        print("❌", msg)
+        logger.error("❌ %s", msg)
     return msg
 
 @shared_task

@@ -51,8 +51,6 @@ const ClienteDetalle = () => {
   if (!cliente || !resumen) {
     return <p className="text-white">Cargando cliente...</p>;
   }
-  console.log("Cliente:", cliente);
-  console.log("Resumen:", resumen);
 
   return (
     <div className="text-white space-y-6">

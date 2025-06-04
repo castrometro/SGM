@@ -5,6 +5,9 @@ from .models import (
     ConceptoRemuneracion, Novedad,
     IncidenciaComparacion, IncidenciaNovedad, ChecklistItem
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ChecklistItemSerializer(serializers.ModelSerializer):
     class Meta:
@@ -37,9 +40,12 @@ class CierreNominaCreateSerializer(serializers.ModelSerializer):
     def validate(self, data):
         cliente = data.get('cliente')
         periodo = data.get('periodo')
-        print("VALIDANDO: cliente:", cliente, "periodo:", periodo)
+        logger.debug("VALIDANDO cierre nomina", extra={
+            "cliente": cliente.id if hasattr(cliente, "id") else cliente,
+            "periodo": periodo,
+        })
         existe = CierreNomina.objects.filter(cliente=cliente, periodo=periodo).exists()
-        print("¿Existe cierre?", existe)
+        logger.debug("¿Existe cierre? %s", existe)
         if existe:
             raise serializers.ValidationError("Ya existe un cierre para este cliente en ese periodo.")
         return data

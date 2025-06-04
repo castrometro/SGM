@@ -71,7 +71,6 @@ const CrearCierreCard = ({ clienteId, areaActiva }) => {
         setLoading(false);
         return;
       }
-      console.log("Cierre existente:", cierreExistente);
       
 
 
@@ -89,7 +88,6 @@ const CrearCierreCard = ({ clienteId, areaActiva }) => {
         navigate(`/menu/nomina/cierres/${cierre.id}`);
       }
     } catch (err) {
-        console.log("Error detalle:", err.response?.data); // <- agrega esto
         setError("Error creando el cierre.");
       }
 

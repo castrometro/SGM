@@ -62,7 +62,6 @@ export const subirLibroRemuneraciones = async (cierreId, archivo) => {
 };
 export const obtenerEstadoLibroRemuneraciones = async (cierreId) => {
   const res = await api.get(`/nomina/libros-remuneraciones/estado/${cierreId}/`);
-  console.log("Estado Libro Remuneraciones:", res.data);
   return res.data;
 };
 export const obtenerConceptosLibroRemuneraciones = async (clienteId, periodo) => {

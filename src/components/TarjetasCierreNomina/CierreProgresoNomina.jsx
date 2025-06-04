@@ -68,7 +68,6 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
       : false;
     if (sinClasificar && !libroListo) {
       setLibroListo(true);
-      console.log("Libro de remuneraciones listo");
     } else if (!sinClasificar && libroListo) {
       setLibroListo(false);
     }

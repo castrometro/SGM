@@ -6,7 +6,6 @@ export const loginUsuario = async (correo, password) => {
     correo_bdo: correo,
     password,
   });
-  console.log("Login response:", response.data);
   return response.data;
 };
 

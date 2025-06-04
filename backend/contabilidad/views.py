@@ -1,6 +1,6 @@
 #backend/contabilidad/views.py
 from rest_framework import viewsets
-from rest_framework.decorators import api_view, permission_classes, parser_classes, action  
+from rest_framework.decorators import api_view, permission_classes, parser_classes, action
 from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -13,6 +13,9 @@ from datetime import date
 import os
 from django.db.models import Q
 from contabilidad.permissions import PuedeCrearCierreContabilidad, SoloContabilidadAsignadoOGerente
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 from .models import (
@@ -77,8 +80,7 @@ def verificar_y_marcar_completo(cuenta_id):
             cierre.estado = "completo"
             cierre.save(update_fields=["estado"])
     except Exception as e:
-        # Opcional: loggear el error
-        print(f"Error al verificar cierre completo: {e}")
+        logger.exception("Error al verificar cierre completo: %s", e)
 
 class ClasificacionViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]

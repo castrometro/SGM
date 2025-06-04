@@ -189,7 +189,6 @@ export const obtenerCierresCliente = async (clienteId) => {
     params: { cliente: clienteId }
     
   });
-  console.log("Cierres obtenidos:", res.data);
   return res.data; // [{ id, periodo, estado, ... }]
 };
 

@@ -112,11 +112,19 @@ export const obtenerClasificacionesCliente = async (clienteId) => {
 };
 //--------------------------
 
-export const guardarConceptosRemuneracion = async (clienteId, conceptos) => {
-  const response = await api.post(`/nomina/conceptos/`, {
+export const guardarConceptosRemuneracion = async (
+  clienteId,
+  conceptos,
+  cierreId = null
+) => {
+  const payload = {
     cliente_id: clienteId,
-    conceptos: conceptos,
-  });
+    conceptos,
+  };
+  if (cierreId) {
+    payload.cierre_id = cierreId;
+  }
+  const response = await api.post(`/nomina/conceptos/`, payload);
   return response.data;
 };
 

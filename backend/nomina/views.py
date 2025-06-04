@@ -6,6 +6,9 @@ from rest_framework.decorators import api_view
 from rest_framework.views import APIView
 from api.models import Cliente
 from django.contrib.auth import get_user_model
+import logging
+
+from .utils.LibroRemuneraciones import clasificar_headers_libro_remuneraciones
 
 User = get_user_model()
 
@@ -38,6 +41,8 @@ from .tasks import (
     analizar_headers_libro_remuneraciones,
     clasificar_headers_libro_remuneraciones_task
 )
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -141,6 +146,7 @@ class ConceptoRemuneracionBatchView(APIView):
     def post(self, request):
         data = request.data
         cliente_id = data.get("cliente_id")
+        cierre_id = data.get("cierre_id")
         conceptos = data.get("conceptos", {})
 
         if not cliente_id or not isinstance(conceptos, dict):
@@ -169,6 +175,33 @@ class ConceptoRemuneracionBatchView(APIView):
                     "vigente": True
                 }
             )
+
+        # Si se especificó un cierre, actualiza el JSON de headers
+        if cierre_id:
+            try:
+                libro = (
+                    LibroRemuneracionesUpload.objects
+                    .filter(cierre_id=cierre_id)
+                    .order_by('-fecha_subida')
+                    .first()
+                )
+                if libro:
+                    if isinstance(libro.header_json, dict):
+                        headers = (
+                            libro.header_json.get("headers_clasificados", [])
+                            + libro.header_json.get("headers_sin_clasificar", [])
+                        )
+                    else:
+                        headers = libro.header_json or []
+                    headers_c, headers_s = clasificar_headers_libro_remuneraciones(headers, cliente)
+                    libro.header_json = {
+                        "headers_clasificados": headers_c,
+                        "headers_sin_clasificar": headers_s,
+                    }
+                    libro.estado = 'clasif_pendiente' if headers_s else 'clasificado'
+                    libro.save()
+            except Exception as e:
+                logger.error(f"Error actualizando libro tras clasificacion: {e}")
 
         return Response({"status": "ok", "actualizados": len(conceptos)}, status=status.HTTP_200_OK)
 

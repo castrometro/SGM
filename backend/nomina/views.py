@@ -20,7 +20,7 @@ from .models import (
     ArchivoAnalistaUpload, 
     ArchivoNovedadesUpload, 
     ChecklistItem,
-    ConceptoRemuneracion
+    ConceptoRemuneracion,
     Empleado,
 
 )
@@ -228,12 +228,10 @@ def obtener_hashtags_disponibles(request, cliente_id):
 def eliminar_concepto_remuneracion(request, cliente_id, nombre_concepto):
     try:
         concepto = ConceptoRemuneracion.objects.get(
-    Empleado,
             cliente_id=cliente_id,
             nombre_concepto=nombre_concepto
         )
     except ConceptoRemuneracion.DoesNotExist:
-    Empleado,
         return Response(
             {"error": "No encontrado"},
             status=status.HTTP_404_NOT_FOUND

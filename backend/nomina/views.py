@@ -1,4 +1,4 @@
-from rest_framework import viewsets, mixins, viewsets, status
+from rest_framework import viewsets, mixins, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from celery import chain
@@ -14,15 +14,14 @@ User = get_user_model()
 
 
 from .models import (
-    CierreNomina, 
-    LibroRemuneracionesUpload, 
-    MovimientosMesUpload, 
-    ArchivoAnalistaUpload, 
-    ArchivoNovedadesUpload, 
+    CierreNomina,
+    LibroRemuneracionesUpload,
+    MovimientosMesUpload,
+    ArchivoAnalistaUpload,
+    ArchivoNovedadesUpload,
     ChecklistItem,
-    ConceptoRemuneracion
+    ConceptoRemuneracion,
     Empleado,
-
 )
 from .serializers import (
     CierreNominaSerializer, 
@@ -140,16 +139,13 @@ def conceptos_remuneracion_por_cliente(request):
         return Response({"error": "Se requiere cliente_id"}, status=400)
 
     conceptos = ConceptoRemuneracion.objects.filter(cliente_id=cliente_id, vigente=True)
-    Empleado,
     serializer = ConceptoRemuneracionSerializer(conceptos, many=True)
-    Empleado,
     return Response(serializer.data)
 
 
 
 
 class ConceptoRemuneracionBatchView(APIView):
-    Empleado,
     def post(self, request):
         data = request.data
         cliente_id = data.get("cliente_id")
@@ -173,7 +169,6 @@ class ConceptoRemuneracionBatchView(APIView):
                 continue  # Ignora si falta clasificación
 
             obj, _ = ConceptoRemuneracion.objects.update_or_create(
-    Empleado,
                 cliente=cliente,
                 nombre_concepto=nombre,
                 defaults={
@@ -217,7 +212,6 @@ class ConceptoRemuneracionBatchView(APIView):
 @api_view(['GET'])
 def obtener_hashtags_disponibles(request, cliente_id):
     conceptos = ConceptoRemuneracion.objects.filter(cliente_id=cliente_id)
-    Empleado,
     hashtags = set()
     for c in conceptos:
         hashtags.update(c.hashtags or [])
@@ -228,12 +222,10 @@ def obtener_hashtags_disponibles(request, cliente_id):
 def eliminar_concepto_remuneracion(request, cliente_id, nombre_concepto):
     try:
         concepto = ConceptoRemuneracion.objects.get(
-    Empleado,
             cliente_id=cliente_id,
             nombre_concepto=nombre_concepto
         )
     except ConceptoRemuneracion.DoesNotExist:
-    Empleado,
         return Response(
             {"error": "No encontrado"},
             status=status.HTTP_404_NOT_FOUND

@@ -12,6 +12,7 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
   const [libro, setLibro] = useState(null);
   const [subiendo, setSubiendo] = useState(false);
   const [modalAbierto, setModalAbierto] = useState(false);
+  const [libroListo, setLibroListo] = useState(false);
 
   const handleGuardarClasificaciones = async ({ guardar, eliminar }) => {
     try {
@@ -23,7 +24,9 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
           eliminar.map((h) => eliminarConceptoRemuneracion(cliente.id, h))
         );
       }
-      await obtenerEstadoLibroRemuneraciones(cierre.id).then(setLibro);
+      // Refrescamos los conteos consultando nuevamente el backend
+      const nuevoEstado = await obtenerEstadoLibroRemuneraciones(cierre.id);
+      setLibro(nuevoEstado);
     } catch (error) {
       console.error("Error al guardar clasificaciones:", error);
     }
@@ -42,6 +45,19 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
       obtenerEstadoLibroRemuneraciones(cierre.id).then(setLibro);
     }
   }, [cierre]);
+
+  // Detecta cuando no quedan headers por clasificar
+  useEffect(() => {
+    const sinClasificar = Array.isArray(libro?.header_json?.headers_sin_clasificar)
+      ? libro.header_json.headers_sin_clasificar.length === 0
+      : false;
+    if (sinClasificar && !libroListo) {
+      setLibroListo(true);
+      console.log("Libro de remuneraciones listo");
+    } else if (!sinClasificar && libroListo) {
+      setLibroListo(false);
+    }
+  }, [libro, libroListo]);
 
   const handleSubirArchivo = async (archivo) => {
     setSubiendo(true);
@@ -73,7 +89,9 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       <LibroRemuneracionesCard
-        estado={libro?.estado || "no_subido"}
+        estado={
+          libroListo ? "clasificado" : libro?.estado || "no_subido"
+        }
         archivoNombre={libro?.archivo_nombre}
         subiendo={subiendo}
         onSubirArchivo={handleSubirArchivo}

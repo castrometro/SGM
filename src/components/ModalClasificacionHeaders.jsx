@@ -244,6 +244,10 @@ const ModalClasificacionHeaders = ({
                     ...prev,
                     [seleccionado]: etiquetas.join(", ")
                   }));
+                  setHashtagsDisponibles((prev) => {
+                    const nuevos = etiquetas.filter((tag) => !prev.includes(tag));
+                    return [...prev, ...nuevos].sort();
+                  });
                 }}
                 options={hashtagsDisponibles.map(tag => ({ label: tag, value: tag }))}
                 placeholder="Ej: Bono, Legal, Fijo"

@@ -103,6 +103,12 @@ export const obtenerProgresoIncidencias = async (cierreId) => {
 export const descargarPlantillaLibroRemuneraciones = () => {
   return `${api.defaults.baseURL}/nomina/plantilla-libro-remuneraciones/`;
 };
+export const descargarPlantillaMovimientosMes = () => {
+  return `${api.defaults.baseURL}/nomina/plantilla-movimientos-mes/`;
+};
+
+
+
 
 
 //esto se cacheará en redis

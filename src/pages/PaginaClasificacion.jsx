@@ -61,9 +61,7 @@ const PaginaClasificacion = () => {
   async function fetchOptions(setId) {
     setLoading(true);
     try {
-      console.log("Buscando opciones para setId:", setId);
       const data = await obtenerOpcionesClasificacion(setId);
-      console.log("Opciones obtenidas:", data);
       setOptions(data);
     } catch {
       setMensaje("Error cargando opciones.");

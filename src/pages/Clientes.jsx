@@ -17,7 +17,6 @@ const Clientes = () => {
       setError("");
       try {
         const userData = await obtenerUsuario();
-        console.log("Usuario obtenido:", userData);
 
         setUsuario(userData);
         

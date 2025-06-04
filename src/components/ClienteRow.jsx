@@ -21,7 +21,6 @@ const ClienteRow = ({ cliente, areaActiva }) => {
     ultimo_cierre: null,
     estado_cierre_actual: null,
   });
-  console.log("ClienteRow renderizado para:", cliente.nombre, "Área activa:", areaActiva);
   useEffect(() => {
     const fetchResumen = async () => {
       try {

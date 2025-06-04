@@ -196,6 +196,11 @@ class ClasificacionSet(models.Model):
     cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
     nombre = models.CharField(max_length=100)
     descripcion = models.TextField(blank=True)
+    idioma = models.CharField(
+        max_length=2,
+        choices=[("es", "Español"), ("en", "English")],
+        default="es",
+    )
 
     class Meta:
         unique_together = ('cliente', 'nombre')
@@ -205,9 +210,29 @@ class ClasificacionSet(models.Model):
 
 class ClasificacionOption(models.Model):
     id = models.BigAutoField(primary_key=True)
-    set_clas = models.ForeignKey(ClasificacionSet, on_delete=models.CASCADE, related_name='opciones')
+    set_clas = models.ForeignKey(
+        ClasificacionSet,
+        on_delete=models.CASCADE,
+        related_name='opciones'
+    )
+    parent = models.ForeignKey(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='sub_opciones'
+    )
     valor = models.CharField(max_length=100)
     descripcion = models.TextField(blank=True)
+
+    @property
+    def nivel(self):
+        n = 1
+        p = self.parent
+        while p:
+            n += 1
+            p = p.parent
+        return n
 
    
     def __str__(self):

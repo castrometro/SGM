@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import CreatableSelect from "react-select/creatable";
 import {
   obtenerClasificacionesCliente,
-  eliminarConceptoRemuneracion,
 } from "../api/nomina";
 
 const categorias = ["haber", "descuento", "informacion"];
@@ -105,16 +104,6 @@ const ModalClasificacionHeaders = ({
     if (seleccionado === header) setSeleccionado(null);
   };
 
-  const eliminarConcepto = async (header) => {
-    if (!clienteId) return;
-    if (!window.confirm(`¿Eliminar concepto "${header}"?`)) return;
-    try {
-      await eliminarConceptoRemuneracion(clienteId, header);
-      eliminarClasificacion(header);
-    } catch (e) {
-      console.error("Error eliminando concepto:", e);
-    }
-  };
 
   const handleGuardar = () => {
     const resultado = {};
@@ -177,16 +166,6 @@ const ModalClasificacionHeaders = ({
                             title="Quitar clasificación"
                           >
                             ✖
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              eliminarConcepto(header);
-                            }}
-                            className="text-red-400 text-xs"
-                            title="Eliminar concepto"
-                          >
-                            🗑
                           </button>
                         </div>
                       )}

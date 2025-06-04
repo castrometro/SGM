@@ -2,7 +2,8 @@ from django.contrib import admin
 from .models import (
     CierreNomina, LibroRemuneracionesUpload, MovimientosMesUpload,
     ArchivoAnalistaUpload, ArchivoNovedadesUpload, ConceptoRemuneracion,
-    Novedad, IncidenciaComparacion, IncidenciaNovedad, ChecklistItem
+    Novedad, IncidenciaComparacion, IncidenciaNovedad, ChecklistItem,
+    Empleado
 )
 
 
@@ -114,4 +115,11 @@ class IncidenciaNovedadAdmin(admin.ModelAdmin):
     list_display = ('cierre', 'rut', 'concepto', 'monto_novedad', 'monto_libro', 'tipo_incidencia', 'resuelto', 'fecha_creacion', 'analista')
     list_filter = ('resuelto', 'tipo_incidencia')
     search_fields = ('cierre__cliente__nombre', 'rut', 'concepto')
+
+
+@admin.register(Empleado)
+class EmpleadoAdmin(admin.ModelAdmin):
+    list_display = ('rut', 'nombres', 'apellido_paterno', 'activo', 'fecha_ingreso')
+    search_fields = ('rut', 'nombres', 'apellido_paterno', 'apellido_materno')
+    list_filter = ('activo',)
 

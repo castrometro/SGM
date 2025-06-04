@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import CreatableSelect from "react-select/creatable";
 import {
   obtenerClasificacionesCliente,
-  eliminarConceptoRemuneracion,
 } from "../api/nomina";
 
 const categorias = ["haber", "descuento", "informacion"];
@@ -30,6 +29,7 @@ const ModalClasificacionHeaders = ({
   const [hashtags, setHashtags] = useState({});
   const [hashtagsDisponibles, setHashtagsDisponibles] = useState([]);
   const [seleccionado, setSeleccionado] = useState(null);
+  const [originalClasificados, setOriginalClasificados] = useState(new Set());
 
   const categoriaDe = (header) => {
     for (const c of categorias) {
@@ -51,10 +51,12 @@ const ModalClasificacionHeaders = ({
         const hashtagsIniciales = {};
         const setHashtagsUnicos = new Set();
 
+        const setOriginal = new Set();
         conceptos.forEach(({ nombre_concepto, clasificacion, hashtags }) => {
           clasificados[nombre_concepto] = { clasificacion, hashtags };
           hashtags?.forEach(tag => setHashtagsUnicos.add(tag));
           hashtagsIniciales[nombre_concepto] = hashtags?.join(", ") || "";
+          setOriginal.add(nombre_concepto);
         });
 
         const nuevoHeaders = {
@@ -76,6 +78,7 @@ const ModalClasificacionHeaders = ({
         setHeaders(nuevoHeaders);
         setHashtags(hashtagsIniciales);
         setHashtagsDisponibles([...setHashtagsUnicos].sort());
+        setOriginalClasificados(setOriginal);
       } catch (e) {
         console.error("Error al cargar datos de clasificación:", e);
       }
@@ -105,18 +108,8 @@ const ModalClasificacionHeaders = ({
     if (seleccionado === header) setSeleccionado(null);
   };
 
-  const eliminarConcepto = async (header) => {
-    if (!clienteId) return;
-    if (!window.confirm(`¿Eliminar concepto "${header}"?`)) return;
-    try {
-      await eliminarConceptoRemuneracion(clienteId, header);
-      eliminarClasificacion(header);
-    } catch (e) {
-      console.error("Error eliminando concepto:", e);
-    }
-  };
 
-  const handleGuardar = () => {
+  const handleGuardar = async () => {
     const resultado = {};
 
     for (const [categoria, headersEnCat] of Object.entries(headers)) {
@@ -129,7 +122,11 @@ const ModalClasificacionHeaders = ({
       });
     }
 
-    onGuardarClasificaciones(resultado);
+    const eliminar = Array.from(originalClasificados).filter(
+      (h) => !resultado[h]
+    );
+
+    await onGuardarClasificaciones({ guardar: resultado, eliminar });
     onClose();
   };
 
@@ -177,16 +174,6 @@ const ModalClasificacionHeaders = ({
                             title="Quitar clasificación"
                           >
                             ✖
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              eliminarConcepto(header);
-                            }}
-                            className="text-red-400 text-xs"
-                            title="Eliminar concepto"
-                          >
-                            🗑
                           </button>
                         </div>
                       )}

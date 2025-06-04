@@ -5,7 +5,7 @@ import {
   obtenerEstadoLibroRemuneraciones,
   subirLibroRemuneraciones,
   guardarConceptosRemuneracion,
-  obtenerClasificacionesCliente,
+  eliminarConceptoRemuneracion,
 } from "../../api/nomina";
 
 const CierreProgresoNomina = ({ cierre, cliente }) => {
@@ -13,9 +13,16 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
   const [subiendo, setSubiendo] = useState(false);
   const [modalAbierto, setModalAbierto] = useState(false);
 
-  const handleGuardarClasificaciones = async (clasificaciones) => {
+  const handleGuardarClasificaciones = async ({ guardar, eliminar }) => {
     try {
-      await guardarConceptosRemuneracion(cliente.id, clasificaciones);
+      if (guardar && Object.keys(guardar).length > 0) {
+        await guardarConceptosRemuneracion(cliente.id, guardar);
+      }
+      if (Array.isArray(eliminar) && eliminar.length > 0) {
+        await Promise.all(
+          eliminar.map((h) => eliminarConceptoRemuneracion(cliente.id, h))
+        );
+      }
       await obtenerEstadoLibroRemuneraciones(cierre.id).then(setLibro);
     } catch (error) {
       console.error("Error al guardar clasificaciones:", error);

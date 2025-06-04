@@ -14,15 +14,14 @@ User = get_user_model()
 
 
 from .models import (
-    CierreNomina, 
-    LibroRemuneracionesUpload, 
-    MovimientosMesUpload, 
-    ArchivoAnalistaUpload, 
-    ArchivoNovedadesUpload, 
+    CierreNomina,
+    LibroRemuneracionesUpload,
+    MovimientosMesUpload,
+    ArchivoAnalistaUpload,
+    ArchivoNovedadesUpload,
     ChecklistItem,
     ConceptoRemuneracion,
     Empleado,
-
 )
 from .serializers import (
     CierreNominaSerializer, 
@@ -217,7 +216,6 @@ class ConceptoRemuneracionBatchView(APIView):
 @api_view(['GET'])
 def obtener_hashtags_disponibles(request, cliente_id):
     conceptos = ConceptoRemuneracion.objects.filter(cliente_id=cliente_id)
-    Empleado,
     hashtags = set()
     for c in conceptos:
         hashtags.update(c.hashtags or [])

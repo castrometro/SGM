@@ -66,13 +66,18 @@ const ModalClasificacionHeaders = ({
           informacion: [],
         };
 
-        headersSinClasificar.forEach((h) => {
+        const todosHeaders = new Set([
+          ...headersSinClasificar,
+          ...Object.keys(clasificados),
+        ]);
+
+        todosHeaders.forEach((h) => {
           const info = clasificados[h];
-          if (info && nuevoHeaders[info.clasificacion]) {
-            nuevoHeaders[info.clasificacion].push(h);
-          } else {
-            nuevoHeaders.pendiente.push(h);
-          }
+          const destino =
+            info && nuevoHeaders[info.clasificacion]
+              ? info.clasificacion
+              : "pendiente";
+          nuevoHeaders[destino].push(h);
         });
 
         setHeaders(nuevoHeaders);

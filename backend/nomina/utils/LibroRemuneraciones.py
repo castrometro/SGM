@@ -6,12 +6,28 @@ from nomina.models import ConceptoRemuneracion, LibroRemuneracionesUpload
 logger = logging.getLogger(__name__)
 
 def obtener_headers_libro_remuneraciones(path_archivo):
+    """Obtiene los encabezados de un libro de remuneraciones.
+
+    Filtra las columnas que se utilizan para poblar el modelo ``Empleado``
+    antes de retornar el listado.
+    """
     logger.info(f"Abriendo archivo de libro de remuneraciones: {path_archivo}")
     try:
         df = pd.read_excel(path_archivo)
         headers = list(df.columns)
-        logger.info(f"Headers encontrados: {headers}")
-        return headers
+
+        rut_col = next((c for c in headers if 'rut' in c.lower() and 'trab' in c.lower()), None)
+        dv_col = next((c for c in headers if 'dv' in c.lower() and 'trab' in c.lower()), None)
+        ape_pat_col = next((c for c in headers if 'apellido' in c.lower() and 'pater' in c.lower()), None)
+        ape_mat_col = next((c for c in headers if 'apellido' in c.lower() and 'mater' in c.lower()), None)
+        nombres_col = next((c for c in headers if 'nombre' in c.lower()), None)
+        ingreso_col = next((c for c in headers if 'ingreso' in c.lower()), None)
+
+        empleado_cols = {c for c in [rut_col, dv_col, ape_pat_col, ape_mat_col, nombres_col, ingreso_col] if c}
+        filtered_headers = [h for h in headers if h not in empleado_cols]
+
+        logger.info(f"Headers encontrados: {filtered_headers}")
+        return filtered_headers
     except Exception as e:
         logger.error(f"Error al leer el archivo: {e}")
         raise

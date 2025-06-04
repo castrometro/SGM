@@ -21,6 +21,7 @@ from .models import (
     ArchivoNovedadesUpload, 
     ChecklistItem,
     ConceptoRemuneracion
+    Empleado,
 
 )
 from .serializers import (
@@ -32,14 +33,16 @@ from .serializers import (
     CierreNominaCreateSerializer, 
     ChecklistItemUpdateSerializer, 
     ChecklistItemCreateSerializer,
-    ConceptoRemuneracionSerializer
+    ConceptoRemuneracionSerializer,
+    EmpleadoSerializer,
 )
 
 
 
 from .tasks import (
     analizar_headers_libro_remuneraciones,
-    clasificar_headers_libro_remuneraciones_task
+    clasificar_headers_libro_remuneraciones_task,
+    actualizar_empleados_desde_libro
 )
 
 logger = logging.getLogger(__name__)
@@ -100,7 +103,8 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
         instance = serializer.save()
         chain(
             analizar_headers_libro_remuneraciones.s(instance.id),
-            clasificar_headers_libro_remuneraciones_task.s()
+            clasificar_headers_libro_remuneraciones_task.s(),
+            actualizar_empleados_desde_libro.s()
         )()
 
 
@@ -136,13 +140,16 @@ def conceptos_remuneracion_por_cliente(request):
         return Response({"error": "Se requiere cliente_id"}, status=400)
 
     conceptos = ConceptoRemuneracion.objects.filter(cliente_id=cliente_id, vigente=True)
+    Empleado,
     serializer = ConceptoRemuneracionSerializer(conceptos, many=True)
+    Empleado,
     return Response(serializer.data)
 
 
 
 
 class ConceptoRemuneracionBatchView(APIView):
+    Empleado,
     def post(self, request):
         data = request.data
         cliente_id = data.get("cliente_id")
@@ -166,6 +173,7 @@ class ConceptoRemuneracionBatchView(APIView):
                 continue  # Ignora si falta clasificación
 
             obj, _ = ConceptoRemuneracion.objects.update_or_create(
+    Empleado,
                 cliente=cliente,
                 nombre_concepto=nombre,
                 defaults={
@@ -209,6 +217,7 @@ class ConceptoRemuneracionBatchView(APIView):
 @api_view(['GET'])
 def obtener_hashtags_disponibles(request, cliente_id):
     conceptos = ConceptoRemuneracion.objects.filter(cliente_id=cliente_id)
+    Empleado,
     hashtags = set()
     for c in conceptos:
         hashtags.update(c.hashtags or [])
@@ -219,10 +228,12 @@ def obtener_hashtags_disponibles(request, cliente_id):
 def eliminar_concepto_remuneracion(request, cliente_id, nombre_concepto):
     try:
         concepto = ConceptoRemuneracion.objects.get(
+    Empleado,
             cliente_id=cliente_id,
             nombre_concepto=nombre_concepto
         )
     except ConceptoRemuneracion.DoesNotExist:
+    Empleado,
         return Response(
             {"error": "No encontrado"},
             status=status.HTTP_404_NOT_FOUND
@@ -249,3 +260,8 @@ class ChecklistItemViewSet(mixins.UpdateModelMixin,
                            viewsets.GenericViewSet):
     queryset = ChecklistItem.objects.all()
     serializer_class = ChecklistItemUpdateSerializer
+
+
+class EmpleadoViewSet(viewsets.ModelViewSet):
+    queryset = Empleado.objects.all()
+    serializer_class = EmpleadoSerializer

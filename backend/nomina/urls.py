@@ -6,6 +6,7 @@ from .views import (
     ArchivoAnalistaUploadViewSet,
     ArchivoNovedadesUploadViewSet,
     ChecklistItemViewSet,
+    EmpleadoViewSet,
     conceptos_remuneracion_por_cliente,
     obtener_hashtags_disponibles,
     ConceptoRemuneracionBatchView,
@@ -23,6 +24,7 @@ router.register(r'movimientos-mes', MovimientosMesUploadViewSet)
 router.register(r'archivos-analista', ArchivoAnalistaUploadViewSet)
 router.register(r'archivos-novedades', ArchivoNovedadesUploadViewSet)
 router.register(r'checklist-items', ChecklistItemViewSet)
+router.register(r'empleados', EmpleadoViewSet)
 
 urlpatterns = router.urls + [
     path(

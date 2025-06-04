@@ -21,14 +21,23 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
 
   const handleGuardarClasificaciones = async ({ guardar, eliminar }) => {
     try {
-        if (guardar && Object.keys(guardar).length > 0) {
-          await guardarConceptosRemuneracion(cliente.id, guardar, cierre.id);
-        }
+      // Primero eliminamos las clasificaciones que correspondan
       if (Array.isArray(eliminar) && eliminar.length > 0) {
         await Promise.all(
           eliminar.map((h) => eliminarConceptoRemuneracion(cliente.id, h))
         );
       }
+
+      const tieneGuardar = guardar && Object.keys(guardar).length > 0;
+
+      // Luego guardamos las nuevas clasificaciones
+      if (tieneGuardar) {
+        await guardarConceptosRemuneracion(cliente.id, guardar, cierre.id);
+      } else if (Array.isArray(eliminar) && eliminar.length > 0) {
+        // Si sólo se eliminaron conceptos, indicamos al backend que recalcule
+        await guardarConceptosRemuneracion(cliente.id, {}, cierre.id);
+      }
+
       // Refrescamos los conteos consultando nuevamente el backend
       const nuevoEstado = await obtenerEstadoLibroRemuneraciones(cierre.id);
       setLibro(nuevoEstado);

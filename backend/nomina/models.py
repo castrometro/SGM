@@ -367,3 +367,25 @@ class ChecklistItem(models.Model):
 
     def __str__(self):
         return f"{self.cierre} - {self.descripcion} - {self.estado}"
+
+
+class RegistroNomina(models.Model):
+    """Almacena los montos del libro de remuneraciones por empleado."""
+
+    cierre = models.ForeignKey(
+        CierreNomina,
+        on_delete=models.CASCADE,
+        related_name="registros_nomina",
+    )
+    empleado = models.ForeignKey(
+        Empleado,
+        on_delete=models.CASCADE,
+        related_name="registros_nomina",
+    )
+    data = models.JSONField()
+
+    class Meta:
+        unique_together = ("cierre", "empleado")
+
+    def __str__(self):
+        return f"{self.empleado.rut} - {self.cierre.periodo}"

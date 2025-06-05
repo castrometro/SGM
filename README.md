@@ -22,3 +22,9 @@ backend/venv/bin/python backend/manage.py test
 Luego de subir un Libro de Remuneraciones, verifica que las columnas usadas para
 crear `Empleado` (RUT, DV, nombres, apellidos y fecha de ingreso) no aparezcan en
 `header_json`.
+
+### Registro de nómina
+
+Cada fila del Libro de Remuneraciones se almacena en el modelo `RegistroNomina`.
+Los valores se guardan en el campo JSON `data` y pueden consultarse a través del
+endpoint `/registros-nomina/`.

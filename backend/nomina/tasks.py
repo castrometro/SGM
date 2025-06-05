@@ -2,6 +2,7 @@
 from .utils.LibroRemuneraciones import obtener_headers_libro_remuneraciones, clasificar_headers_libro_remuneraciones
 from celery import shared_task
 from .models import LibroRemuneracionesUpload, EmpleadosMes, RegistroNomina
+from celery import chain
 import logging
 import pandas as pd
 
@@ -180,3 +181,12 @@ def guardar_registros_nomina(result):
     except Exception as e:
         logger.error(f"Error guardando registros de nómina para libro id={libro_id}: {e}")
         raise
+
+
+@shared_task
+def procesar_libro_remuneraciones(libro_id):
+    """Ejecuta el flujo completo de procesamiento de un libro."""
+    return chain(
+        actualizar_empleados_desde_libro.s(libro_id),
+        guardar_registros_nomina.s(),
+    )()

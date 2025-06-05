@@ -96,8 +96,11 @@ def actualizar_empleados_desde_libro(result):
         periodo = cierre.periodo.split('-')
         ano = int(periodo[0])
         mes = int(periodo[1])
+        primera_col = df.columns[0]
         count = 0
         for _, row in df.iterrows():
+            if not str(row.get(primera_col, '')).strip():
+                continue
             rut_num = str(row.get(rut_col, '')).strip()
             dv = str(row.get(dv_col, '')).strip()
             rut = f"{rut_num}-{dv}" if dv else rut_num
@@ -145,8 +148,11 @@ def guardar_registros_nomina(result):
         if not headers:
             headers = [h for h in df.columns if h not in empleado_cols]
 
+        primera_col = df.columns[0]
         count = 0
         for _, row in df.iterrows():
+            if not str(row.get(primera_col, '')).strip():
+                continue
             rut_num = str(row.get(rut_col, "")).strip()
             dv = str(row.get(dv_col, "")).strip()
             rut = f"{rut_num}-{dv}" if dv else rut_num

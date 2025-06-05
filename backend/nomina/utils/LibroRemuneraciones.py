@@ -30,11 +30,11 @@ def obtener_headers_libro_remuneraciones(path_archivo):
         explicit_drop = {
             'año',
             'mes',
-            'rut_empresa',
-            'rut_trabajador',
-            'nombres',
-            'apellido_paterno',
-            'apellido_materno',
+            'rut de la empresa',
+            'rut del trabajador',
+            'nombre',
+            'apellido paterno',
+            'apellido materno',
         }
         explicit_cols = {h for h in headers if h.strip().lower() in explicit_drop}
 

@@ -4,17 +4,28 @@ from .models import (
     ArchivoAnalistaUpload, ArchivoNovedadesUpload,
     ConceptoRemuneracion, Novedad,
     IncidenciaComparacion, IncidenciaNovedad, ChecklistItem,
-    Empleado, RegistroNomina
+    EmpleadosMes, RegistroNomina
 )
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class EmpleadoSerializer(serializers.ModelSerializer):
+class EmpleadosMesSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Empleado
-        fields = ['id', 'rut', 'nombres', 'apellido_paterno', 'apellido_materno', 'activo', 'fecha_ingreso']
+        model = EmpleadosMes
+        fields = [
+            'id',
+            'cierre',
+            'cliente',
+            'ano',
+            'mes',
+            'rut_empresa',
+            'rut_trabajador',
+            'nombre',
+            'apellido_paterno',
+            'apellido_materno',
+        ]
 
 
 class RegistroNominaSerializer(serializers.ModelSerializer):

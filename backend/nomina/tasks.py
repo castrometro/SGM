@@ -1,7 +1,7 @@
 #nomina/tasks.py
 from .utils.LibroRemuneraciones import obtener_headers_libro_remuneraciones, clasificar_headers_libro_remuneraciones
 from celery import shared_task
-from .models import LibroRemuneracionesUpload, Empleado, RegistroNomina
+from .models import LibroRemuneracionesUpload, EmpleadosMes, RegistroNomina
 import logging
 import pandas as pd
 
@@ -92,22 +92,29 @@ def actualizar_empleados_desde_libro(result):
         nombres_col = next((c for c in df.columns if 'nombre' in c.lower()), None)
         ingreso_col = next((c for c in df.columns if 'ingreso' in c.lower()), None)
 
+        cierre = libro.cierre
+        periodo = cierre.periodo.split('-')
+        ano = int(periodo[0])
+        mes = int(periodo[1])
         count = 0
         for _, row in df.iterrows():
             rut_num = str(row.get(rut_col, '')).strip()
             dv = str(row.get(dv_col, '')).strip()
             rut = f"{rut_num}-{dv}" if dv else rut_num
             defaults = {
-                'nombres': str(row.get(nombres_col, '')).strip(),
+                'cliente': cierre.cliente,
+                'ano': ano,
+                'mes': mes,
+                'rut_empresa': str(cierre.cliente.rut),
+                'nombre': str(row.get(nombres_col, '')).strip(),
                 'apellido_paterno': str(row.get(ape_pat_col, '')).strip(),
                 'apellido_materno': str(row.get(ape_mat_col, '')).strip(),
             }
-            if ingreso_col:
-                try:
-                    defaults['fecha_ingreso'] = pd.to_datetime(row[ingreso_col]).date()
-                except Exception:
-                    pass
-            Empleado.objects.update_or_create(rut=rut, defaults=defaults)
+            EmpleadosMes.objects.update_or_create(
+                cierre=cierre,
+                rut_trabajador=rut,
+                defaults=defaults,
+            )
             count += 1
         logger.info(f"Actualizados {count} empleados desde libro {libro_id}")
         return {'libro_id': libro_id, 'empleados_actualizados': count}
@@ -143,7 +150,7 @@ def guardar_registros_nomina(result):
             rut_num = str(row.get(rut_col, "")).strip()
             dv = str(row.get(dv_col, "")).strip()
             rut = f"{rut_num}-{dv}" if dv else rut_num
-            empleado = Empleado.objects.filter(rut=rut).first()
+            empleado = EmpleadosMes.objects.filter(cierre=libro.cierre, rut_trabajador=rut).first()
             if not empleado:
                 continue
 

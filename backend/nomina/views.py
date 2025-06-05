@@ -21,7 +21,7 @@ from .models import (
     ArchivoNovedadesUpload,
     ChecklistItem,
     ConceptoRemuneracion,
-    Empleado,
+    EmpleadosMes,
     RegistroNomina,
 )
 from .serializers import (
@@ -34,7 +34,7 @@ from .serializers import (
     ChecklistItemUpdateSerializer, 
     ChecklistItemCreateSerializer,
     ConceptoRemuneracionSerializer,
-    EmpleadoSerializer,
+    EmpleadosMesSerializer,
     RegistroNominaSerializer,
 )
 
@@ -256,9 +256,9 @@ class ChecklistItemViewSet(mixins.UpdateModelMixin,
     serializer_class = ChecklistItemUpdateSerializer
 
 
-class EmpleadoViewSet(viewsets.ModelViewSet):
-    queryset = Empleado.objects.all()
-    serializer_class = EmpleadoSerializer
+class EmpleadosMesViewSet(viewsets.ModelViewSet):
+    queryset = EmpleadosMes.objects.all()
+    serializer_class = EmpleadosMesSerializer
 
 
 class RegistroNominaViewSet(viewsets.ReadOnlyModelViewSet):

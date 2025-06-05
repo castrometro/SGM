@@ -391,6 +391,7 @@ class RegistroNomina(models.Model):
         on_delete=models.CASCADE,
         related_name="registros_nomina",
     )
+    data = models.JSONField(default=dict)
 
     def __str__(self):
         return f"{self.empleado.rut_trabajador} - {self.cierre.periodo}"

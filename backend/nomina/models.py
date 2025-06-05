@@ -393,7 +393,7 @@ class RegistroNomina(models.Model):
     )
 
     def __str__(self):
-        return f"{self.empleado.rut} - {self.cierre.periodo}"
+        return f"{self.empleado.rut_trabajador} - {self.cierre.periodo}"
 
     class Meta:
         unique_together = ("cierre", "empleado")

@@ -7,6 +7,7 @@ const LibroRemuneracionesCard = ({
   archivoNombre,
   onSubirArchivo,
   onVerClasificacion,
+  onProcesar,
   headersSinClasificar = [],
   headerClasificados = [],
   subiendo = false,
@@ -134,17 +135,25 @@ const LibroRemuneracionesCard = ({
           Administrar Clasificaciones
         </button>
 
-        {true  && (
-          <div className="text-xs text-gray-300 mt-1 ml-1">
-            <span className="mr-4">
-              <strong>Clasificados:</strong> {headerClasificados?.length || 0}
-            </span>
-            <span>
-              <strong>Sin clasificar:</strong> {headersSinClasificar?.length || 0}
-            </span>
-          </div>
-        )}
+      {true  && (
+        <div className="text-xs text-gray-300 mt-1 ml-1">
+          <span className="mr-4">
+            <strong>Clasificados:</strong> {headerClasificados?.length || 0}
+          </span>
+          <span>
+            <strong>Sin clasificar:</strong> {headersSinClasificar?.length || 0}
+          </span>
+        </div>
+      )}
       </div>
+
+      <button
+        onClick={onProcesar}
+        disabled={headersSinClasificar?.length > 0 || disabled}
+        className="mt-2 bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded text-white text-sm font-medium transition shadow w-fit"
+      >
+        Procesar
+      </button>
 
 
 

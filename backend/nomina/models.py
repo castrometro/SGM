@@ -391,7 +391,10 @@ class RegistroNomina(models.Model):
         on_delete=models.CASCADE,
         related_name="registros_nomina",
     )
-        unique_together = ("cierre", "empleado")
 
     def __str__(self):
         return f"{self.empleado.rut} - {self.cierre.periodo}"
+
+    class Meta:
+        unique_together = ("cierre", "empleado")
+

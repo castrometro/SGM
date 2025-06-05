@@ -3,7 +3,8 @@ from .models import (
     CierreNomina, LibroRemuneracionesUpload, MovimientosMesUpload,
     ArchivoAnalistaUpload, ArchivoNovedadesUpload,
     ConceptoRemuneracion, Novedad,
-    IncidenciaComparacion, IncidenciaNovedad, ChecklistItem, Empleado
+    IncidenciaComparacion, IncidenciaNovedad, ChecklistItem,
+    Empleado, RegistroNomina
 )
 import logging
 
@@ -14,6 +15,12 @@ class EmpleadoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Empleado
         fields = ['id', 'rut', 'nombres', 'apellido_paterno', 'apellido_materno', 'activo', 'fecha_ingreso']
+
+
+class RegistroNominaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RegistroNomina
+        fields = '__all__'
 
 class ChecklistItemSerializer(serializers.ModelSerializer):
     class Meta:

@@ -120,14 +120,20 @@ DATABASES = {
     }
 }
 
-# Cache con Redis
+# Cache con Redis (usa memoria local si django_redis no está disponible)
+try:
+    import django_redis  # noqa: F401
+    _cache_backend = "django_redis.cache.RedisCache"
+    _cache_opts = {"CLIENT_CLASS": "django_redis.client.DefaultClient"}
+except ModuleNotFoundError:
+    _cache_backend = "django.core.cache.backends.locmem.LocMemCache"
+    _cache_opts = {}
+
 CACHES = {
     "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
+        "BACKEND": _cache_backend,
         "LOCATION": os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0"),
-        "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
-        }
+        "OPTIONS": _cache_opts,
     }
 }
 

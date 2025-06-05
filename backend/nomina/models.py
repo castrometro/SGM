@@ -46,6 +46,9 @@ class EmpleadosMes(models.Model):
     apellido_paterno = models.CharField(max_length=120)
     apellido_materno = models.CharField(max_length=120, blank=True)
 
+    class Meta:
+        unique_together = ("cierre", "rut_trabajador")
+
     def __str__(self):
         return f"{self.rut_trabajador} - {self.nombre} {self.apellido_paterno}"
 

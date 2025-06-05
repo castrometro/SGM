@@ -105,7 +105,6 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
         chain(
             analizar_headers_libro_remuneraciones.s(instance.id),
             clasificar_headers_libro_remuneraciones_task.s(),
-            actualizar_empleados_desde_libro.s()
         )()
 
 

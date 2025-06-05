@@ -19,6 +19,7 @@ const ModalClasificacionHeaders = ({
   clienteId,
   headersSinClasificar = [],
   onGuardarClasificaciones,
+  soloLectura = false,
 }) => {
   const [headers, setHeaders] = useState({
     pendiente: [],
@@ -93,6 +94,7 @@ const ModalClasificacionHeaders = ({
   }, [isOpen, clienteId, headersSinClasificar]);
 
   const mover = (header, destino) => {
+    if (soloLectura) return;
     setHeaders((prev) => {
       const nuevo = { ...prev };
       for (const key in nuevo) {
@@ -104,6 +106,7 @@ const ModalClasificacionHeaders = ({
   };
 
   const eliminarClasificacion = (header) => {
+    if (soloLectura) return;
     mover(header, "pendiente");
     setHashtags((prev) => {
       const nuevo = { ...prev };
@@ -115,6 +118,7 @@ const ModalClasificacionHeaders = ({
 
 
   const handleGuardar = async () => {
+    if (soloLectura) return;
     const resultado = {};
 
     for (const [categoria, headersEnCat] of Object.entries(headers)) {
@@ -164,11 +168,13 @@ const ModalClasificacionHeaders = ({
                     className={`text-xs bg-gray-700 px-2 py-1 rounded cursor-pointer relative ${
                       seleccionado === header ? "border border-blue-400" : ""
                     }`}
-                    onClick={() => setSeleccionado(header)}
+                    onClick={() => {
+                      if (!soloLectura) setSeleccionado(header);
+                    }}
                   >
                     <div className="flex justify-between items-center">
                       <span>{header}</span>
-                      {cat !== "pendiente" && (
+                      {cat !== "pendiente" && !soloLectura && (
                         <div className="flex gap-1">
                           <button
                             onClick={(e) => {
@@ -188,7 +194,7 @@ const ModalClasificacionHeaders = ({
                         #{(hashtags[header] || "").split(",").join(" #")}
                       </div>
                     )}
-                    {cat === "pendiente" && (
+                    {cat === "pendiente" && !soloLectura && (
                       <div className="mt-1 flex gap-1 flex-wrap">
                         {categorias.map((dest) => (
                           <button
@@ -232,7 +238,7 @@ const ModalClasificacionHeaders = ({
 
         {/* Panel Fijo Inferior */}
         <div className="sticky bottom-0 left-0 bg-gray-900 mt-3 pt-4 border-t border-gray-700">
-          {seleccionado && (
+          {seleccionado && !soloLectura && (
             <div className="mb-3">
               <label className="text-sm text-white block mb-1">
                 Hashtags para <strong>{seleccionado}</strong>:
@@ -266,14 +272,16 @@ const ModalClasificacionHeaders = ({
               onClick={onClose}
               className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm text-white"
             >
-              Cancelar
+              {soloLectura ? "Cerrar" : "Cancelar"}
             </button>
-            <button
-              onClick={handleGuardar}
-              className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm text-white"
-            >
-              Guardar Clasificaciones
-            </button>
+            {!soloLectura && (
+              <button
+                onClick={handleGuardar}
+                className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm text-white"
+              >
+                Guardar Clasificaciones
+              </button>
+            )}
           </div>
         </div>
       </div>

@@ -3,7 +3,7 @@ from .models import (
     CierreNomina, LibroRemuneracionesUpload, MovimientosMesUpload,
     ArchivoAnalistaUpload, ArchivoNovedadesUpload, ConceptoRemuneracion,
     Novedad, IncidenciaComparacion, IncidenciaNovedad, ChecklistItem,
-    Empleado, RegistroNomina
+    EmpleadosMes, RegistroNomina
 )
 
 
@@ -117,19 +117,25 @@ class IncidenciaNovedadAdmin(admin.ModelAdmin):
     search_fields = ('cierre__cliente__nombre', 'rut', 'concepto')
 
 
-@admin.register(Empleado)
-class EmpleadoAdmin(admin.ModelAdmin):
-    list_display = ('rut', 'nombres', 'apellido_paterno', 'activo', 'fecha_ingreso')
-    search_fields = ('rut', 'nombres', 'apellido_paterno', 'apellido_materno')
-    list_filter = ('activo',)
+@admin.register(EmpleadosMes)
+class EmpleadosMesAdmin(admin.ModelAdmin):
+    list_display = (
+        'rut_trabajador',
+        'nombre',
+        'apellido_paterno',
+        'ano',
+        'mes',
+        'cliente',
+    )
+    search_fields = ('rut_trabajador', 'nombre', 'apellido_paterno')
 
 
 @admin.register(RegistroNomina)
 class RegistroNominaAdmin(admin.ModelAdmin):
     list_display = ('cierre', 'empleado')
     search_fields = (
-        'empleado__rut',
-        'empleado__nombres',
+        'empleado__rut_trabajador',
+        'empleado__nombre',
         'cierre__cliente__nombre',
         'cierre__periodo',
     )

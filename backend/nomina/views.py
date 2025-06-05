@@ -43,7 +43,8 @@ from .serializers import (
 from .tasks import (
     analizar_headers_libro_remuneraciones,
     clasificar_headers_libro_remuneraciones_task,
-    actualizar_empleados_desde_libro
+    actualizar_empleados_desde_libro,
+    procesar_libro_remuneraciones,
 )
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,14 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
                 "cliente_id": None,
                 "cliente_nombre": "",
             })
+
+    @action(detail=True, methods=['post'])
+    def procesar(self, request, pk=None):
+        libro = self.get_object()
+        libro.estado = 'procesando'
+        libro.save(update_fields=['estado'])
+        result = procesar_libro_remuneraciones.delay(libro.id)
+        return Response({'task_id': result.id}, status=status.HTTP_202_ACCEPTED)
 
 @api_view(['GET'])
 def conceptos_remuneracion_por_cliente(request):

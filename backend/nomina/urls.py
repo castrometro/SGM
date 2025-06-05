@@ -30,6 +30,11 @@ router.register(r'registros-nomina', RegistroNominaViewSet, basename='registro-n
 
 urlpatterns = router.urls + [
     path(
+        'libros-remuneraciones/<int:pk>/procesar/',
+        LibroRemuneracionesUploadViewSet.as_view({'post': 'procesar'}),
+        name='procesar-libro-remuneraciones',
+    ),
+    path(
         'plantilla-libro-remuneraciones/',
         serve,
         {

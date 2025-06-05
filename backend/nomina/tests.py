@@ -6,8 +6,14 @@ from nomina.utils.LibroRemuneraciones import obtener_headers_libro_remuneracione
 
 
 class ObtenerHeadersLibroRemuneracionesTests(SimpleTestCase):
+    def _get_headers(self, data):
+        df = pd.DataFrame(data)
+        with NamedTemporaryFile(suffix='.xlsx') as tmp:
+            df.to_excel(tmp.name, index=False)
+            return obtener_headers_libro_remuneraciones(tmp.name)
+
     def test_employee_columns_removed(self):
-        df = pd.DataFrame({
+        headers = self._get_headers({
             'A\u00d1O': [2024],
             'MES': [5],
             'RUT_EMPRESA': ['12345678-9'],
@@ -19,9 +25,16 @@ class ObtenerHeadersLibroRemuneracionesTests(SimpleTestCase):
             'SUELDO BASE': [1000],
             'BONO': [100],
         })
-        with NamedTemporaryFile(suffix='.xlsx') as tmp:
-            df.to_excel(tmp.name, index=False)
-            headers = obtener_headers_libro_remuneraciones(tmp.name)
 
         self.assertEqual(headers, ['SUELDO BASE', 'BONO'])
+
+    def test_rut_empresa_with_spaces_removed(self):
+        headers = self._get_headers({
+            'Rut de la Empresa': ['12345678-9'],
+            'RUT_TRABAJADOR': ['11111111'],
+            'NOMBRES': ['Ana'],
+            'SUELDO BASE': [1000],
+        })
+
+        self.assertEqual(headers, ['SUELDO BASE'])
 

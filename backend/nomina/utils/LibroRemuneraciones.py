@@ -1,5 +1,6 @@
 import pandas as pd
 import logging
+import unicodedata
 
 from nomina.models import ConceptoRemuneracion, LibroRemuneracionesUpload
 
@@ -18,13 +19,14 @@ def obtener_headers_libro_remuneraciones(path_archivo):
 
         # --- Heuristics for common employee columns ---
         rut_col = next((c for c in headers if 'rut' in c.lower() and 'trab' in c.lower()), None)
+        rut_empresa_col = next((c for c in headers if 'rut' in c.lower() and 'empres' in c.lower()), None)
         dv_col = next((c for c in headers if 'dv' in c.lower() and 'trab' in c.lower()), None)
         ape_pat_col = next((c for c in headers if 'apellido' in c.lower() and 'pater' in c.lower()), None)
         ape_mat_col = next((c for c in headers if 'apellido' in c.lower() and 'mater' in c.lower()), None)
         nombres_col = next((c for c in headers if 'nombre' in c.lower()), None)
         ingreso_col = next((c for c in headers if 'ingreso' in c.lower()), None)
 
-        heuristic_cols = {c for c in [rut_col, dv_col, ape_pat_col, ape_mat_col, nombres_col, ingreso_col] if c}
+        heuristic_cols = {c for c in [rut_col, rut_empresa_col, dv_col, ape_pat_col, ape_mat_col, nombres_col, ingreso_col] if c}
 
         # --- Explicit columns to drop regardless of heuristics ---
         explicit_drop = {
@@ -35,8 +37,15 @@ def obtener_headers_libro_remuneraciones(path_archivo):
             'nombres',
             'apellido_paterno',
             'apellido_materno',
+            'rut de la empresa',
         }
-        explicit_cols = {h for h in headers if h.strip().lower() in explicit_drop}
+
+        def _normalize(txt):
+            norm = unicodedata.normalize('NFKD', txt).encode('ascii', 'ignore').decode('ascii')
+            return norm.lower().replace(' ', '').replace('_', '')
+
+        explicit_norm = {_normalize(c) for c in explicit_drop}
+        explicit_cols = {h for h in headers if _normalize(h) in explicit_norm}
 
         empleado_cols = heuristic_cols.union(explicit_cols)
         filtered_headers = [h for h in headers if h not in empleado_cols]

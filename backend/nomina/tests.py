@@ -8,14 +8,14 @@ from nomina.utils.LibroRemuneraciones import obtener_headers_libro_remuneracione
 class ObtenerHeadersLibroRemuneracionesTests(SimpleTestCase):
     def test_employee_columns_removed(self):
         df = pd.DataFrame({
-            'A\u00d1O': [2024],
-            'MES': [5],
-            'RUT_EMPRESA': ['12345678-9'],
-            'RUT_TRABAJADOR': ['11111111'],
-            'DV_TRABAJADOR': ['1'],
-            'NOMBRES': ['Ana'],
-            'APELLIDO_PATERNO': ['Gomez'],
-            'APELLIDO_MATERNO': ['Luna'],
+            'Año': [2024],
+            'Mes': [5],
+            'Rut de la Empresa': ['12345678-9'],
+            'Rut del Trabajador': ['11111111'],
+            'DV Trabajador': ['1'],
+            'Nombre': ['Ana'],
+            'Apellido Paterno': ['Gomez'],
+            'Apellido Materno': ['Luna'],
             'SUELDO BASE': [1000],
             'BONO': [100],
         })

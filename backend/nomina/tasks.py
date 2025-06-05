@@ -85,33 +85,35 @@ def actualizar_empleados_desde_libro(result):
         libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
         df = pd.read_excel(libro.archivo.path, engine="openpyxl")
 
-        rut_col = next((c for c in df.columns if 'rut' in c.lower() and 'trab' in c.lower()), None)
-        dv_col = next((c for c in df.columns if 'dv' in c.lower() and 'trab' in c.lower()), None)
-        ape_pat_col = next((c for c in df.columns if 'apellido' in c.lower() and 'pater' in c.lower()), None)
-        ape_mat_col = next((c for c in df.columns if 'apellido' in c.lower() and 'mater' in c.lower()), None)
-        nombres_col = next((c for c in df.columns if 'nombre' in c.lower()), None)
-        ingreso_col = next((c for c in df.columns if 'ingreso' in c.lower()), None)
+        expected = {
+            "ano": "Año",
+            "mes": "Mes",
+            "rut_empresa": "Rut de la Empresa",
+            "rut_trabajador": "Rut del Trabajador",
+            "nombre": "Nombre",
+            "ape_pat": "Apellido Paterno",
+            "ape_mat": "Apellido Materno",
+        }
+
+        missing = [v for v in expected.values() if v not in df.columns]
+        if missing:
+            raise ValueError(f"Faltan columnas en el Excel: {', '.join(missing)}")
 
         cierre = libro.cierre
-        periodo = cierre.periodo.split('-')
-        ano = int(periodo[0])
-        mes = int(periodo[1])
         primera_col = df.columns[0]
         count = 0
         for _, row in df.iterrows():
             if not str(row.get(primera_col, '')).strip():
                 continue
-            rut_num = str(row.get(rut_col, '')).strip()
-            dv = str(row.get(dv_col, '')).strip()
-            rut = f"{rut_num}-{dv}" if dv else rut_num
+            rut = str(row.get(expected["rut_trabajador"], "")).strip()
             defaults = {
                 'cliente': cierre.cliente,
-                'ano': ano,
-                'mes': mes,
-                'rut_empresa': str(cierre.cliente.rut),
-                'nombre': str(row.get(nombres_col, '')).strip(),
-                'apellido_paterno': str(row.get(ape_pat_col, '')).strip(),
-                'apellido_materno': str(row.get(ape_mat_col, '')).strip(),
+                'ano': int(row.get(expected["ano"], 0)),
+                'mes': int(row.get(expected["mes"], 0)),
+                'rut_empresa': str(row.get(expected["rut_empresa"], "")).strip(),
+                'nombre': str(row.get(expected["nombre"], '')).strip(),
+                'apellido_paterno': str(row.get(expected["ape_pat"], '')).strip(),
+                'apellido_materno': str(row.get(expected["ape_mat"], '')).strip(),
             }
             EmpleadosMes.objects.update_or_create(
                 cierre=cierre,
@@ -133,14 +135,21 @@ def guardar_registros_nomina(result):
         libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
         df = pd.read_excel(libro.archivo.path, engine="openpyxl")
 
-        rut_col = next((c for c in df.columns if 'rut' in c.lower() and 'trab' in c.lower()), None)
-        dv_col = next((c for c in df.columns if 'dv' in c.lower() and 'trab' in c.lower()), None)
-        ape_pat_col = next((c for c in df.columns if 'apellido' in c.lower() and 'pater' in c.lower()), None)
-        ape_mat_col = next((c for c in df.columns if 'apellido' in c.lower() and 'mater' in c.lower()), None)
-        nombres_col = next((c for c in df.columns if 'nombre' in c.lower()), None)
-        ingreso_col = next((c for c in df.columns if 'ingreso' in c.lower()), None)
+        expected = {
+            "ano": "Año",
+            "mes": "Mes",
+            "rut_empresa": "Rut de la Empresa",
+            "rut_trabajador": "Rut del Trabajador",
+            "nombre": "Nombre",
+            "ape_pat": "Apellido Paterno",
+            "ape_mat": "Apellido Materno",
+        }
 
-        empleado_cols = {c for c in [rut_col, dv_col, ape_pat_col, ape_mat_col, nombres_col, ingreso_col] if c}
+        missing = [v for v in expected.values() if v not in df.columns]
+        if missing:
+            raise ValueError(f"Faltan columnas en el Excel: {', '.join(missing)}")
+
+        empleado_cols = set(expected.values())
 
         headers = libro.header_json
         if isinstance(headers, dict):
@@ -153,9 +162,7 @@ def guardar_registros_nomina(result):
         for _, row in df.iterrows():
             if not str(row.get(primera_col, '')).strip():
                 continue
-            rut_num = str(row.get(rut_col, "")).strip()
-            dv = str(row.get(dv_col, "")).strip()
-            rut = f"{rut_num}-{dv}" if dv else rut_num
+            rut = str(row.get(expected["rut_trabajador"], "")).strip()
             empleado = EmpleadosMes.objects.filter(cierre=libro.cierre, rut_trabajador=rut).first()
             if not empleado:
                 continue

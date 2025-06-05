@@ -1,7 +1,20 @@
 #nomina/tasks.py
-from .utils.LibroRemuneraciones import obtener_headers_libro_remuneraciones, clasificar_headers_libro_remuneraciones
+from .utils.LibroRemuneraciones import (
+    obtener_headers_libro_remuneraciones,
+    clasificar_headers_libro_remuneraciones,
+)
 from celery import shared_task
-from .models import LibroRemuneracionesUpload, Empleado
+from .models import (
+    LibroRemuneracionesUpload,
+    MovimientosMesUpload,
+    MovimientoAltaBaja,
+    MovimientoAusentismo,
+    MovimientoVacaciones,
+    VariacionSueldoBase,
+    VariacionTipoContrato,
+    Empleado,
+    IncidenciaComparacion,
+)
 import logging
 import pandas as pd
 
@@ -113,4 +126,206 @@ def actualizar_empleados_desde_libro(result):
         return {'libro_id': libro_id, 'empleados_actualizados': count}
     except Exception as e:
         logger.error(f"Error actualizando empleados para libro id={libro_id}: {e}")
+        raise
+
+
+def _find_column(df, *keywords):
+    """Utility to find the first column containing all keywords."""
+    for col in df.columns:
+        col_l = str(col).lower()
+        if all(k.lower() in col_l for k in keywords):
+            return col
+    return None
+
+
+def _empleado_por_rut(rut):
+    return Empleado.objects.filter(rut=rut).first()
+
+
+def _parse_fecha(value):
+    try:
+        return pd.to_datetime(value).date()
+    except Exception:
+        return None
+
+
+def _procesar_alta_baja(df, upload):
+    rut_col = _find_column(df, "rut")
+    nombre_col = _find_column(df, "nombre")
+    tipo_col = _find_column(df, "tipo")
+    fecha_col = _find_column(df, "fecha")
+    motivo_col = _find_column(df, "motivo")
+
+    if not all([rut_col, nombre_col, tipo_col, fecha_col]):
+        raise ValueError("Formato inválido hoja Altas y Bajas")
+
+    count = 0
+    for _, row in df.iterrows():
+        rut = str(row.get(rut_col, "")).strip()
+        if not rut:
+            continue
+        MovimientoAltaBaja.objects.create(
+            movimientos_mes=upload,
+            empleado=_empleado_por_rut(rut),
+            rut=rut,
+            nombre=str(row.get(nombre_col, "")).strip(),
+            tipo_movimiento=str(row.get(tipo_col, "")).strip().lower(),
+            fecha=_parse_fecha(row.get(fecha_col)),
+            motivo=str(row.get(motivo_col, "")).strip() if motivo_col else None,
+        )
+        count += 1
+    return count
+
+
+def _procesar_ausentismo(df, upload):
+    rut_col = _find_column(df, "rut")
+    nombre_col = _find_column(df, "nombre")
+    tipo_col = _find_column(df, "tipo")
+    ini_col = _find_column(df, "inicio")
+    fin_col = _find_column(df, "fin")
+    dias_col = _find_column(df, "dias")
+
+    if not all([rut_col, nombre_col, tipo_col, ini_col, fin_col]):
+        raise ValueError("Formato inválido hoja Ausentismos")
+
+    count = 0
+    for _, row in df.iterrows():
+        rut = str(row.get(rut_col, "")).strip()
+        if not rut:
+            continue
+        MovimientoAusentismo.objects.create(
+            movimientos_mes=upload,
+            empleado=_empleado_por_rut(rut),
+            rut=rut,
+            nombre=str(row.get(nombre_col, "")).strip(),
+            tipo_ausentismo=str(row.get(tipo_col, "")).strip(),
+            fecha_inicio=_parse_fecha(row.get(ini_col)),
+            fecha_fin=_parse_fecha(row.get(fin_col)),
+            dias=int(row.get(dias_col)) if dias_col else 0,
+        )
+        count += 1
+    return count
+
+
+def _procesar_vacaciones(df, upload):
+    rut_col = _find_column(df, "rut")
+    nombre_col = _find_column(df, "nombre")
+    ini_col = _find_column(df, "inicio")
+    fin_col = _find_column(df, "fin")
+    dias_col = _find_column(df, "dias")
+
+    if not all([rut_col, nombre_col, ini_col, fin_col]):
+        raise ValueError("Formato inválido hoja Vacaciones")
+
+    count = 0
+    for _, row in df.iterrows():
+        rut = str(row.get(rut_col, "")).strip()
+        if not rut:
+            continue
+        MovimientoVacaciones.objects.create(
+            movimientos_mes=upload,
+            empleado=_empleado_por_rut(rut),
+            rut=rut,
+            nombre=str(row.get(nombre_col, "")).strip(),
+            fecha_inicio=_parse_fecha(row.get(ini_col)),
+            fecha_fin=_parse_fecha(row.get(fin_col)),
+            dias=int(row.get(dias_col)) if dias_col else 0,
+        )
+        count += 1
+    return count
+
+
+def _procesar_variacion_sueldo(df, upload):
+    rut_col = _find_column(df, "rut")
+    nombre_col = _find_column(df, "nombre")
+    ant_col = _find_column(df, "anterior")
+    nuevo_col = _find_column(df, "nuevo")
+    fecha_col = _find_column(df, "fecha")
+
+    if not all([rut_col, nombre_col, ant_col, nuevo_col, fecha_col]):
+        raise ValueError("Formato inválido hoja Sueldo Base")
+
+    count = 0
+    for _, row in df.iterrows():
+        rut = str(row.get(rut_col, "")).strip()
+        if not rut:
+            continue
+        VariacionSueldoBase.objects.create(
+            movimientos_mes=upload,
+            empleado=_empleado_por_rut(rut),
+            rut=rut,
+            nombre=str(row.get(nombre_col, "")).strip(),
+            sueldo_anterior=row.get(ant_col) or 0,
+            sueldo_nuevo=row.get(nuevo_col) or 0,
+            fecha=_parse_fecha(row.get(fecha_col)),
+        )
+        count += 1
+    return count
+
+
+def _procesar_variacion_contrato(df, upload):
+    rut_col = _find_column(df, "rut")
+    nombre_col = _find_column(df, "nombre")
+    ant_col = _find_column(df, "anterior")
+    nuevo_col = _find_column(df, "nuevo")
+    fecha_col = _find_column(df, "fecha")
+
+    if not all([rut_col, nombre_col, ant_col, nuevo_col, fecha_col]):
+        raise ValueError("Formato inválido hoja Tipo Contrato")
+
+    count = 0
+    for _, row in df.iterrows():
+        rut = str(row.get(rut_col, "")).strip()
+        if not rut:
+            continue
+        VariacionTipoContrato.objects.create(
+            movimientos_mes=upload,
+            empleado=_empleado_por_rut(rut),
+            rut=rut,
+            nombre=str(row.get(nombre_col, "")).strip(),
+            tipo_anterior=str(row.get(ant_col, "")).strip(),
+            tipo_nuevo=str(row.get(nuevo_col, "")).strip(),
+            fecha=_parse_fecha(row.get(fecha_col)),
+        )
+        count += 1
+    return count
+
+
+@shared_task
+def procesar_movimientos_mes(upload_id):
+    logger.info("Procesando movimientos mes id=%s", upload_id)
+    upload = MovimientosMesUpload.objects.get(id=upload_id)
+    upload.estado = "en_proceso"
+    upload.save()
+
+    try:
+        hojas = pd.read_excel(upload.archivo.path, sheet_name=None, engine="openpyxl")
+        total = 0
+        for nombre, df in hojas.items():
+            lname = nombre.lower()
+            if "alta" in lname or "baja" in lname:
+                total += _procesar_alta_baja(df, upload)
+            elif "ausent" in lname:
+                total += _procesar_ausentismo(df, upload)
+            elif "vacacion" in lname:
+                total += _procesar_vacaciones(df, upload)
+            elif "sueldo" in lname:
+                total += _procesar_variacion_sueldo(df, upload)
+            elif "contrato" in lname:
+                total += _procesar_variacion_contrato(df, upload)
+
+        upload.estado = "procesado"
+        upload.save()
+        logger.info("Movimientos procesados (%s registros) para upload %s", total, upload_id)
+        return {"upload_id": upload_id, "registros": total}
+    except Exception as e:
+        logger.error("Error procesando movimientos mes %s: %s", upload_id, e)
+        upload.estado = "con_error"
+        upload.save()
+        IncidenciaComparacion.objects.create(
+            cierre=upload.cierre,
+            tipo_incidencia="formato_movimientos",
+            rut="",
+            detalle=str(e),
+        )
         raise

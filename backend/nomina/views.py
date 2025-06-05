@@ -41,7 +41,8 @@ from .serializers import (
 from .tasks import (
     analizar_headers_libro_remuneraciones,
     clasificar_headers_libro_remuneraciones_task,
-    actualizar_empleados_desde_libro
+    actualizar_empleados_desde_libro,
+    procesar_movimientos_mes,
 )
 
 logger = logging.getLogger(__name__)
@@ -238,6 +239,38 @@ def eliminar_concepto_remuneracion(request, cliente_id, nombre_concepto):
 class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
     queryset = MovimientosMesUpload.objects.all()
     serializer_class = MovimientosMesUploadSerializer
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        procesar_movimientos_mes.delay(instance.id)
+        return instance
+
+    @action(detail=False, methods=['post'], url_path='subir/(?P<cierre_id>[^/.]+)')
+    def subir(self, request, cierre_id=None):
+        data = request.data.copy()
+        data['cierre'] = cierre_id
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        headers = serializer.data
+        return Response(headers, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'], url_path='estado/(?P<cierre_id>[^/.]+)')
+    def estado(self, request, cierre_id=None):
+        obj = self.get_queryset().filter(cierre_id=cierre_id).order_by('-fecha_subida').first()
+        if obj:
+            return Response({
+                'estado': obj.estado,
+                'archivo_nombre': obj.archivo.name.split('/')[-1],
+                'archivo_url': request.build_absolute_uri(obj.archivo.url),
+                'fecha_subida': obj.fecha_subida,
+            })
+        return Response({
+            'estado': 'no_subido',
+            'archivo_nombre': '',
+            'archivo_url': '',
+            'fecha_subida': None,
+        })
 
 class ArchivoAnalistaUploadViewSet(viewsets.ModelViewSet):
     queryset = ArchivoAnalistaUpload.objects.all()

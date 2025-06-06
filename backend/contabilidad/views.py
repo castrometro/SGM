@@ -11,7 +11,7 @@ import openpyxl
 from django.core.files.storage import default_storage
 from datetime import date
 import os
-from django.db.models import Q
+from django.db.models import Q, Sum
 from contabilidad.permissions import PuedeCrearCierreContabilidad, SoloContabilidadAsignadoOGerente
 import logging
 
@@ -468,6 +468,37 @@ class CierreContabilidadViewSet(viewsets.ModelViewSet):
         Asigna el usuario actual al crear el cierre.
         """
         serializer.save(usuario=self.request.user)
+
+    @action(detail=True, methods=['get'], url_path='movimientos-resumen')
+    def movimientos_resumen(self, request, pk=None):
+        """Retorna un resumen de movimientos agrupados por cuenta"""
+        movimientos = (
+            MovimientoContable.objects.filter(cierre_id=pk)
+            .values('cuenta_id', 'cuenta__codigo', 'cuenta__nombre')
+            .annotate(total_debe=Sum('debe'), total_haber=Sum('haber'))
+        )
+
+        saldos = {
+            a['cuenta_id']: a['saldo_anterior']
+            for a in AperturaCuenta.objects.filter(cierre_id=pk).values('cuenta_id', 'saldo_anterior')
+        }
+
+        data = []
+        for mov in movimientos:
+            cuenta_id = mov['cuenta_id']
+            saldo_anterior = saldos.get(cuenta_id, 0)
+            saldo_final = saldo_anterior + mov['total_debe'] - mov['total_haber']
+            data.append({
+                'cuenta_id': cuenta_id,
+                'codigo': mov['cuenta__codigo'],
+                'nombre': mov['cuenta__nombre'],
+                'saldo_anterior': saldo_anterior,
+                'total_debe': mov['total_debe'],
+                'total_haber': mov['total_haber'],
+                'saldo_final': saldo_final,
+            })
+
+        return Response(data)
 
 
 

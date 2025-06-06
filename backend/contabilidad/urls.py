@@ -21,6 +21,9 @@ router.register(r'analisis-cuentas', AnalisisCuentaCierreViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('cierres/<int:pk>/movimientos-resumen/',
+         CierreContabilidadViewSet.as_view({'get': 'movimientos_resumen'}),
+         name='cierre-movimientos-resumen'),
     path('clientes/<int:cliente_id>/resumen/', resumen_cliente),
     path('tipo-documento/subir-archivo/', cargar_tipo_documento),
     path('tipo-documento/<int:cliente_id>/estado/', estado_tipo_documento),

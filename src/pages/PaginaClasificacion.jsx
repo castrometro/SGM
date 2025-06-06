@@ -10,8 +10,9 @@ import {
   crearOpcionClasificacion,
 } from "../api/contabilidad";
 
-const PaginaClasificacion = () => {
-  const { clienteId } = useParams();
+const PaginaClasificacion = ({ clienteId: propClienteId }) => {
+  const { clienteId: paramClienteId } = useParams();
+  const clienteId = propClienteId || paramClienteId;
 
   const [sets, setSets] = useState([]);
   const [selectedSet, setSelectedSet] = useState(null);

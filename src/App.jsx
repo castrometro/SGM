@@ -6,6 +6,7 @@ import Layout from "./components/Layout";
 import Clientes from "./pages/Clientes";
 import ClienteDetalle from "./pages/ClienteDetalle";
 import PaginaClasificacion from "./pages/PaginaClasificacion";
+import ClasificacionCierre from "./pages/ClasificacionCierre";
 import HistorialCierresPage from "./pages/HistorialCierresPage";
 import CrearCierre from "./pages/CrearCierre";
 import CierreDetalle from "./pages/CierreDetalle"; // Asegúrate de importar la página de detalle del cierre
@@ -43,6 +44,7 @@ function App() {
           {/* ----------- ÁREA: CONTABILIDAD ------------- */}
           <Route path="cierres/:cierreId" element={<CierreDetalle />} />
           <Route path="cierres/:cierreId/analisis" element={<AnalisisCuentas />} />
+          <Route path="cierres/:cierreId/clasificacion" element={<ClasificacionCierre />} />
           <Route
             path="cierres/:cierreId/cuentas/:cuentaId"
             element={<MovimientosCuenta />}

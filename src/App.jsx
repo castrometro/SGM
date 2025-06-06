@@ -10,6 +10,7 @@ import HistorialCierresPage from "./pages/HistorialCierresPage";
 import CrearCierre from "./pages/CrearCierre";
 import CierreDetalle from "./pages/CierreDetalle"; // Asegúrate de importar la página de detalle del cierre
 import CierreDetalleNomina from "./pages/CierreDetalleNomina";
+import AnalisisCuentas from "./pages/AnalisisCuentas";
 
 function App() {
   return (
@@ -40,6 +41,7 @@ function App() {
 
           {/* ----------- ÁREA: CONTABILIDAD ------------- */}
           <Route path="cierres/:cierreId" element={<CierreDetalle />} />
+          <Route path="cierres/:cierreId/analisis" element={<AnalisisCuentas />} />
 
           {/* ----------- ÁREA: NÓMINA ------------- */}
           <Route path="nomina/cierres/:cierreId" element={<CierreDetalleNomina />} />

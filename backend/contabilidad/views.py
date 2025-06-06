@@ -552,6 +552,8 @@ class CierreContabilidadViewSet(viewsets.ModelViewSet):
                 'id': m.id,
                 'fecha': m.fecha,
                 'descripcion': m.descripcion,
+                'tipo_documento': m.tipo_documento.codigo if m.tipo_documento else None,
+                'numero_comprobante': m.numero_comprobante,
                 'debe': m.debe,
                 'haber': m.haber,
                 'saldo': saldo,

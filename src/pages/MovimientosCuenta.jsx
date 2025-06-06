@@ -14,6 +14,8 @@ const MovimientosCuenta = () => {
   const [cliente, setCliente] = useState(null);
   const [detalle, setDetalle] = useState(null);
   const [filtros, setFiltros] = useState({ desde: "", hasta: "", texto: "" });
+  const [sortField, setSortField] = useState("fecha");
+  const [sortOrder, setSortOrder] = useState("asc");
 
   useEffect(() => {
     const fetchData = async () => {
@@ -44,6 +46,27 @@ const MovimientosCuenta = () => {
     )
       return false;
     return true;
+  });
+
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortOrder((o) => (o === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortOrder("asc");
+    }
+  };
+
+  const movimientosOrdenados = [...movimientosFiltrados].sort((a, b) => {
+    let valA = a[sortField];
+    let valB = b[sortField];
+    if (sortField === "fecha") {
+      valA = new Date(valA);
+      valB = new Date(valB);
+    }
+    if (valA < valB) return sortOrder === "asc" ? -1 : 1;
+    if (valA > valB) return sortOrder === "asc" ? 1 : -1;
+    return 0;
   });
 
   return (
@@ -100,21 +123,62 @@ const MovimientosCuenta = () => {
         <table className="w-full text-sm border-separate border-spacing-y-1">
           <thead>
             <tr className="bg-gray-700">
-              <th className="px-4 py-2">Fecha</th>
-              <th className="px-4 py-2">Descripción</th>
-              <th className="px-4 py-2 text-right">Debe</th>
-              <th className="px-4 py-2 text-right">Haber</th>
-              <th className="px-4 py-2 text-right">Saldo</th>
+              <th
+                className="px-4 py-2 cursor-pointer"
+                onClick={() => handleSort("fecha")}
+              >
+                Fecha {sortField === "fecha" && (sortOrder === "asc" ? "▲" : "▼")}
+              </th>
+              <th
+                className="px-4 py-2 cursor-pointer"
+                onClick={() => handleSort("tipo_documento")}
+              >
+                Tipo doc.{" "}
+                {sortField === "tipo_documento" &&
+                  (sortOrder === "asc" ? "▲" : "▼")}
+              </th>
+              <th
+                className="px-4 py-2 cursor-pointer"
+                onClick={() => handleSort("numero_comprobante")}
+              >
+                N° comprobante {sortField === "numero_comprobante" && (sortOrder === "asc" ? "▲" : "▼")}
+              </th>
+              <th
+                className="px-4 py-2 cursor-pointer"
+                onClick={() => handleSort("descripcion")}
+              >
+                Descripción {sortField === "descripcion" && (sortOrder === "asc" ? "▲" : "▼")}
+              </th>
+              <th
+                className="px-4 py-2 text-right cursor-pointer"
+                onClick={() => handleSort("debe")}
+              >
+                Debe {sortField === "debe" && (sortOrder === "asc" ? "▲" : "▼")}
+              </th>
+              <th
+                className="px-4 py-2 text-right cursor-pointer"
+                onClick={() => handleSort("haber")}
+              >
+                Haber {sortField === "haber" && (sortOrder === "asc" ? "▲" : "▼")}
+              </th>
+              <th
+                className="px-4 py-2 text-right cursor-pointer"
+                onClick={() => handleSort("saldo")}
+              >
+                Saldo {sortField === "saldo" && (sortOrder === "asc" ? "▲" : "▼")}
+              </th>
             </tr>
           </thead>
           <tbody>
             <tr className="bg-gray-800 font-semibold">
-              <td colSpan={4} className="px-4 py-2 text-right">Saldo inicial</td>
+              <td colSpan={6} className="px-4 py-2 text-right">Saldo inicial</td>
               <td className="px-4 py-2 text-right">{formatMoney(detalle.saldo_inicial)}</td>
             </tr>
-            {movimientosFiltrados.map((m) => (
+            {movimientosOrdenados.map((m) => (
               <tr key={m.id} className="bg-gray-800">
                 <td className="px-4 py-2">{m.fecha}</td>
+                <td className="px-4 py-2">{m.tipo_documento || ""}</td>
+                <td className="px-4 py-2">{m.numero_comprobante}</td>
                 <td className="px-4 py-2">{m.descripcion}</td>
                 <td className="px-4 py-2 text-right">{formatMoney(m.debe)}</td>
                 <td className="px-4 py-2 text-right">{formatMoney(m.haber)}</td>

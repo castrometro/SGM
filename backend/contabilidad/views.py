@@ -472,8 +472,20 @@ class CierreContabilidadViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='movimientos-resumen')
     def movimientos_resumen(self, request, pk=None):
         """Retorna un resumen de movimientos agrupados por cuenta"""
+        set_id = request.query_params.get('set_id')
+        opcion_id = request.query_params.get('opcion_id')
+
+        filtro = Q()
+        if set_id:
+            filtro &= Q(clasificaciones__set_clas_id=set_id)
+        if opcion_id:
+            filtro &= Q(clasificaciones__opcion_id=opcion_id)
+
+        cuentas_qs = CuentaContable.objects.filter(filtro) if (set_id or opcion_id) else CuentaContable.objects.all()
+
         movimientos = (
-            MovimientoContable.objects.filter(cierre_id=pk)
+            MovimientoContable.objects
+            .filter(cierre_id=pk, cuenta__in=cuentas_qs)
             .values('cuenta_id', 'cuenta__codigo', 'cuenta__nombre')
             .annotate(total_debe=Sum('debe'), total_haber=Sum('haber'))
         )
@@ -482,6 +494,18 @@ class CierreContabilidadViewSet(viewsets.ModelViewSet):
             a['cuenta_id']: a['saldo_anterior']
             for a in AperturaCuenta.objects.filter(cierre_id=pk).values('cuenta_id', 'saldo_anterior')
         }
+
+        clasificaciones = {}
+        if set_id:
+            clasifs = AccountClassification.objects.filter(
+                cuenta_id__in=[m['cuenta_id'] for m in movimientos],
+                set_clas_id=set_id
+            ).select_related('opcion')
+            for c in clasifs:
+                clasificaciones[c.cuenta_id] = {
+                    'opcion_id': c.opcion_id,
+                    'opcion_valor': c.opcion.valor,
+                }
 
         data = []
         for mov in movimientos:
@@ -496,6 +520,7 @@ class CierreContabilidadViewSet(viewsets.ModelViewSet):
                 'total_debe': mov['total_debe'],
                 'total_haber': mov['total_haber'],
                 'saldo_final': saldo_final,
+                **({'clasificacion': clasificaciones.get(cuenta_id)} if set_id else {}),
             })
 
         return Response(data)

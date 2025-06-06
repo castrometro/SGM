@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import CierreInfoBar from "../components/InfoCards/CierreInfoBar";
-import { obtenerCierrePorId, obtenerMovimientosCuenta } from "../api/contabilidad";
+import {
+  obtenerCierrePorId,
+  obtenerMovimientosCuenta,
+} from "../api/contabilidad";
 import { obtenerCliente } from "../api/clientes";
+import { formatMoney } from "../utils/format";
 
 const MovimientosCuenta = () => {
   const { cierreId, cuentaId } = useParams();
@@ -106,15 +110,15 @@ const MovimientosCuenta = () => {
           <tbody>
             <tr className="bg-gray-800 font-semibold">
               <td colSpan={4} className="px-4 py-2 text-right">Saldo inicial</td>
-              <td className="px-4 py-2 text-right">{detalle.saldo_inicial}</td>
+              <td className="px-4 py-2 text-right">{formatMoney(detalle.saldo_inicial)}</td>
             </tr>
             {movimientosFiltrados.map((m) => (
               <tr key={m.id} className="bg-gray-800">
                 <td className="px-4 py-2">{m.fecha}</td>
                 <td className="px-4 py-2">{m.descripcion}</td>
-                <td className="px-4 py-2 text-right">{m.debe}</td>
-                <td className="px-4 py-2 text-right">{m.haber}</td>
-                <td className="px-4 py-2 text-right">{m.saldo}</td>
+                <td className="px-4 py-2 text-right">{formatMoney(m.debe)}</td>
+                <td className="px-4 py-2 text-right">{formatMoney(m.haber)}</td>
+                <td className="px-4 py-2 text-right">{formatMoney(m.saldo)}</td>
               </tr>
             ))}
           </tbody>

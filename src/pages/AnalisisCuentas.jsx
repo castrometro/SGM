@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import CierreInfoBar from "../components/InfoCards/CierreInfoBar";
-import { obtenerCierrePorId, obtenerMovimientosResumen } from "../api/contabilidad";
+import {
+  obtenerCierrePorId,
+  obtenerMovimientosResumen,
+} from "../api/contabilidad";
 import { obtenerCliente } from "../api/clientes";
+import { formatMoney } from "../utils/format";
 
 const AnalisisCuentas = () => {
   const { cierreId } = useParams();
@@ -10,6 +14,7 @@ const AnalisisCuentas = () => {
   const [cierre, setCierre] = useState(null);
   const [cliente, setCliente] = useState(null);
   const [resumen, setResumen] = useState(null);
+  const [filtros, setFiltros] = useState({ texto: "" });
 
   useEffect(() => {
     const fetchData = async () => {
@@ -30,9 +35,29 @@ const AnalisisCuentas = () => {
     );
   }
 
+  const { texto } = filtros;
+  const resumenFiltrado = resumen.filter((r) =>
+    `${r.codigo} ${r.nombre}`.toLowerCase().includes(texto.toLowerCase())
+  );
+
   return (
     <div className="space-y-6">
       <CierreInfoBar cierre={cierre} cliente={cliente} />
+      <div className="bg-gray-800 p-4 rounded-md flex flex-col gap-4 md:flex-row md:items-end">
+        <div className="flex flex-col flex-grow">
+          <label className="text-sm text-gray-300" htmlFor="texto">Buscar</label>
+          <input
+            id="texto"
+            type="text"
+            placeholder="Cuenta..."
+            className="bg-gray-700 text-white rounded px-2 py-1"
+            value={texto}
+            onChange={(e) =>
+              setFiltros((f) => ({ ...f, texto: e.target.value }))
+            }
+          />
+        </div>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm border-separate border-spacing-y-1">
           <thead>
@@ -45,7 +70,7 @@ const AnalisisCuentas = () => {
             </tr>
           </thead>
           <tbody>
-            {resumen.map((r) => (
+            {resumenFiltrado.map((r) => (
               <tr
                 key={r.cuenta_id}
                 className="bg-gray-800 hover:bg-gray-700 cursor-pointer"
@@ -56,10 +81,10 @@ const AnalisisCuentas = () => {
                 <td className="px-4 py-2">
                   {r.codigo} - {r.nombre}
                 </td>
-                <td className="px-4 py-2 text-right">{r.saldo_anterior}</td>
-                <td className="px-4 py-2 text-right">{r.total_debe}</td>
-                <td className="px-4 py-2 text-right">{r.total_haber}</td>
-                <td className="px-4 py-2 text-right">{r.saldo_final}</td>
+                <td className="px-4 py-2 text-right">{formatMoney(r.saldo_anterior)}</td>
+                <td className="px-4 py-2 text-right">{formatMoney(r.total_debe)}</td>
+                <td className="px-4 py-2 text-right">{formatMoney(r.total_haber)}</td>
+                <td className="px-4 py-2 text-right">{formatMoney(r.saldo_final)}</td>
               </tr>
             ))}
           </tbody>

@@ -500,6 +500,46 @@ class CierreContabilidadViewSet(viewsets.ModelViewSet):
 
         return Response(data)
 
+    @action(detail=True, methods=['get'],
+            url_path='cuentas/(?P<cuenta_id>[^/.]+)/movimientos')
+    def movimientos_cuenta(self, request, pk=None, cuenta_id=None):
+        """Devuelve todos los movimientos de una cuenta con saldo acumulado"""
+        try:
+            cuenta = CuentaContable.objects.get(id=cuenta_id)
+        except CuentaContable.DoesNotExist:
+            return Response({'error': 'Cuenta no encontrada'}, status=404)
+
+        apertura = AperturaCuenta.objects.filter(
+            cierre_id=pk, cuenta_id=cuenta_id
+        ).first()
+        saldo = apertura.saldo_anterior if apertura else 0
+
+        movimientos = (
+            MovimientoContable.objects
+            .filter(cierre_id=pk, cuenta_id=cuenta_id)
+            .order_by('fecha', 'id')
+        )
+
+        data = []
+        for m in movimientos:
+            saldo += m.debe - m.haber
+            data.append({
+                'id': m.id,
+                'fecha': m.fecha,
+                'descripcion': m.descripcion,
+                'debe': m.debe,
+                'haber': m.haber,
+                'saldo': saldo,
+            })
+
+        return Response({
+            'cuenta_id': cuenta.id,
+            'codigo': cuenta.codigo,
+            'nombre': cuenta.nombre,
+            'saldo_inicial': apertura.saldo_anterior if apertura else 0,
+            'movimientos': data,
+        })
+
 
 
 class LibroMayorUploadViewSet(viewsets.ModelViewSet):

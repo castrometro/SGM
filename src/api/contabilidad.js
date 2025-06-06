@@ -233,3 +233,11 @@ export const obtenerMovimientosResumen = async (cierreId) => {
   );
   return res.data;
 };
+
+// Detalle de movimientos para una cuenta específica
+export const obtenerMovimientosCuenta = async (cierreId, cuentaId) => {
+  const res = await api.get(
+    `/contabilidad/cierres/${cierreId}/cuentas/${cuentaId}/movimientos/`
+  );
+  return res.data;
+};

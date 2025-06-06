@@ -224,4 +224,12 @@ export const subirNombresIngles = async (formData) => {
     headers: { "Content-Type": "multipart/form-data" }
   });
   return res.data; // { ok: true }
-}
+};
+
+// Resumen de movimientos por cuenta para un cierre
+export const obtenerMovimientosResumen = async (cierreId) => {
+  const res = await api.get(
+    `/contabilidad/cierres/${cierreId}/movimientos-resumen/`
+  );
+  return res.data;
+};

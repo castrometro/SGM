@@ -4,6 +4,8 @@ import CierreInfoBar from "../components/InfoCards/CierreInfoBar";
 import {
   obtenerCierrePorId,
   obtenerMovimientosResumen,
+  obtenerSetsClasificacion,
+  obtenerOpcionesClasificacion,
 } from "../api/contabilidad";
 import { obtenerCliente } from "../api/clientes";
 import { formatMoney } from "../utils/format";
@@ -15,6 +17,10 @@ const AnalisisCuentas = () => {
   const [cliente, setCliente] = useState(null);
   const [resumen, setResumen] = useState(null);
   const [filtros, setFiltros] = useState({ texto: "" });
+  const [sets, setSets] = useState([]);
+  const [opciones, setOpciones] = useState([]);
+  const [selectedSet, setSelectedSet] = useState("");
+  const [selectedOpcion, setSelectedOpcion] = useState("");
 
   useEffect(() => {
     const fetchData = async () => {
@@ -23,11 +29,37 @@ const AnalisisCuentas = () => {
       setCierre(cierreObj);
       const clienteObj = await obtenerCliente(cierreObj.cliente);
       setCliente(clienteObj);
-      const movResumen = await obtenerMovimientosResumen(cierreId);
-      setResumen(movResumen);
+      const setsData = await obtenerSetsClasificacion(clienteObj.id);
+      setSets(setsData);
+      if (setsData.length > 0) setSelectedSet(setsData[0].id.toString());
     };
     fetchData();
   }, [cierreId]);
+
+  useEffect(() => {
+    if (!selectedSet) {
+      setOpciones([]);
+      return;
+    }
+    const loadOpts = async () => {
+      const opts = await obtenerOpcionesClasificacion(selectedSet);
+      setOpciones(opts);
+    };
+    loadOpts();
+  }, [selectedSet]);
+
+  useEffect(() => {
+    const fetchResumen = async () => {
+      if (!cierreId) return;
+      const params = {
+        setId: selectedSet || undefined,
+        opcionId: selectedOpcion || undefined,
+      };
+      const movResumen = await obtenerMovimientosResumen(cierreId, params);
+      setResumen(movResumen);
+    };
+    fetchResumen();
+  }, [cierreId, selectedSet, selectedOpcion]);
 
   if (!cierre || !cliente || !resumen) {
     return (
@@ -57,6 +89,42 @@ const AnalisisCuentas = () => {
             }
           />
         </div>
+        <div className="flex flex-col">
+          <label className="text-sm text-gray-300" htmlFor="set">Set</label>
+          <select
+            id="set"
+            className="bg-gray-700 text-white rounded px-2 py-1"
+            value={selectedSet}
+            onChange={(e) => {
+              setSelectedSet(e.target.value);
+              setSelectedOpcion("");
+            }}
+          >
+            <option value="">Todos</option>
+            {sets.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.nombre}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-col">
+          <label className="text-sm text-gray-300" htmlFor="opcion">Opción</label>
+          <select
+            id="opcion"
+            className="bg-gray-700 text-white rounded px-2 py-1"
+            value={selectedOpcion}
+            onChange={(e) => setSelectedOpcion(e.target.value)}
+            disabled={!selectedSet}
+          >
+            <option value="">Todas</option>
+            {opciones.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.valor}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm border-separate border-spacing-y-1">
@@ -67,6 +135,9 @@ const AnalisisCuentas = () => {
               <th className="px-4 py-2 text-right">Total debe</th>
               <th className="px-4 py-2 text-right">Total haber</th>
               <th className="px-4 py-2 text-right">Saldo final</th>
+              {selectedSet && (
+                <th className="px-4 py-2 text-left">Clasificación</th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -85,6 +156,9 @@ const AnalisisCuentas = () => {
                 <td className="px-4 py-2 text-right">{formatMoney(r.total_debe)}</td>
                 <td className="px-4 py-2 text-right">{formatMoney(r.total_haber)}</td>
                 <td className="px-4 py-2 text-right">{formatMoney(r.saldo_final)}</td>
+                {selectedSet && (
+                  <td className="px-4 py-2">{r.clasificacion?.opcion_valor || ""}</td>
+                )}
               </tr>
             ))}
           </tbody>

@@ -6,6 +6,9 @@ from contabilidad.models import (
     CuentaContable,
     AperturaCuenta,
     MovimientoContable,
+    ClasificacionSet,
+    ClasificacionOption,
+    AccountClassification,
 )
 
 
@@ -72,3 +75,18 @@ class MovimientosResumenTests(TestCase):
         self.assertEqual(float(c2["total_debe"]), 10)
         self.assertEqual(float(c2["total_haber"]), 5)
         self.assertEqual(float(c2["saldo_final"]), 205)
+
+    def test_filtrado_por_clasificacion(self):
+        set1 = ClasificacionSet.objects.create(cliente=self.cliente, nombre="Tipo")
+        opt1 = ClasificacionOption.objects.create(set_clas=set1, valor="A")
+        opt2 = ClasificacionOption.objects.create(set_clas=set1, valor="B")
+
+        AccountClassification.objects.create(cuenta=self.c1, set_clas=set1, opcion=opt1, asignado_por=self.user)
+        AccountClassification.objects.create(cuenta=self.c2, set_clas=set1, opcion=opt2, asignado_por=self.user)
+
+        url = f"/api/contabilidad/cierres/{self.cierre.id}/movimientos-resumen/?set_id={set1.id}&opcion_id={opt1.id}"
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["cuenta_id"], self.c1.id)

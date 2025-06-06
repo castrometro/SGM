@@ -28,3 +28,15 @@ crear `Empleado` (RUT, DV, nombres, apellidos y fecha de ingreso) no aparezcan e
 Cada fila del Libro de Remuneraciones se almacena en el modelo `RegistroNomina`.
 Los valores se guardan en el campo JSON `data` y pueden consultarse a través del
 endpoint `/registros-nomina/`.
+
+### Filtro de movimientos por clasificación
+
+El endpoint `/contabilidad/cierres/<id>/movimientos-resumen/` acepta los
+parámetros opcionales `set_id` y `opcion_id` para filtrar las cuentas según su
+clasificación. Ejemplo:
+
+```
+/api/contabilidad/cierres/1/movimientos-resumen/?set_id=2&opcion_id=5
+```
+
+Retorna únicamente las cuentas que estén clasificadas con la opción indicada.

@@ -231,9 +231,16 @@ export const subirNombresIngles = async (formData) => {
 };
 
 // Resumen de movimientos por cuenta para un cierre
-export const obtenerMovimientosResumen = async (cierreId) => {
+export const obtenerMovimientosResumen = async (
+  cierreId,
+  { setId, opcionId } = {}
+) => {
+  const params = {};
+  if (setId) params.set_id = setId;
+  if (opcionId) params.opcion_id = opcionId;
   const res = await api.get(
-    `/contabilidad/cierres/${cierreId}/movimientos-resumen/`
+    `/contabilidad/cierres/${cierreId}/movimientos-resumen/`,
+    { params }
   );
   return res.data;
 };

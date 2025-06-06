@@ -1,7 +1,7 @@
 #nomina/tasks.py
 from .utils.LibroRemuneraciones import obtener_headers_libro_remuneraciones, clasificar_headers_libro_remuneraciones
 from celery import shared_task
-from .models import LibroRemuneracionesUpload, EmpleadosMes, RegistroNomina
+from .models import LibroRemuneracionesUpload, EmpleadoCierre, RegistroConceptoEmpleado
 from celery import chain
 import logging
 import pandas as pd
@@ -116,7 +116,7 @@ def actualizar_empleados_desde_libro(result):
                 'apellido_paterno': str(row.get(expected["ape_pat"], '')).strip(),
                 'apellido_materno': str(row.get(expected["ape_mat"], '')).strip(),
             }
-            EmpleadosMes.objects.update_or_create(
+            EmpleadoCierre.objects.update_or_create(
                 cierre=cierre,
                 rut_trabajador=rut,
                 defaults=defaults,
@@ -164,12 +164,12 @@ def guardar_registros_nomina(result):
             if not str(row.get(primera_col, '')).strip():
                 continue
             rut = str(row.get(expected["rut_trabajador"], "")).strip()
-            empleado = EmpleadosMes.objects.filter(cierre=libro.cierre, rut_trabajador=rut).first()
+            empleado = EmpleadoCierre.objects.filter(cierre=libro.cierre, rut_trabajador=rut).first()
             if not empleado:
                 continue
 
             data = {h: row.get(h) for h in headers}
-            RegistroNomina.objects.update_or_create(
+            RegistroConceptoEmpleado.objects.update_or_create(
                 cierre=libro.cierre,
                 empleado=empleado,
                 defaults={"data": data},

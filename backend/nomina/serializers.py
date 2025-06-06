@@ -1,79 +1,50 @@
 from rest_framework import serializers
 from .models import (
-    CierreNomina, LibroRemuneracionesUpload, MovimientosMesUpload,
+    CierreNomina, EmpleadoCierre, ConceptoRemuneracion, RegistroConceptoEmpleado,
+    MovimientoIngreso, MovimientoFiniquito, MovimientoAusentismo,
+    LibroRemuneracionesUpload, MovimientosMesUpload,
     ArchivoAnalistaUpload, ArchivoNovedadesUpload,
-    ConceptoRemuneracion, Novedad,
-    IncidenciaComparacion, IncidenciaNovedad, ChecklistItem,
-    EmpleadosMes, RegistroNomina
+    ChecklistItem
 )
-import logging
-
-logger = logging.getLogger(__name__)
-
-
-class EmpleadosMesSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = EmpleadosMes
-        fields = [
-            'id',
-            'cierre',
-            'cliente',
-            'ano',
-            'mes',
-            'rut_empresa',
-            'rut_trabajador',
-            'nombre',
-            'apellido_paterno',
-            'apellido_materno',
-        ]
-
-
-class RegistroNominaSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = RegistroNomina
-        fields = '__all__'
 
 class ChecklistItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = ChecklistItem
         fields = ['id', 'descripcion', 'estado', 'comentario']
 
-class CierreNominaSerializer(serializers.ModelSerializer):
-    checklist = ChecklistItemSerializer(many=True, read_only=True)
-    class Meta:
-        model = CierreNomina
-        fields = ['id', 'cliente', 'periodo', 'usuario_analista', 'usuario_supervisor', 'estado','fecha_creacion', 'checklist']
-
 class ChecklistItemUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = ChecklistItem
         fields = ['estado', 'comentario']
-
 
 class ChecklistItemCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = ChecklistItem
         fields = ['descripcion']
 
+class CierreNominaSerializer(serializers.ModelSerializer):
+    checklist = ChecklistItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = CierreNomina
+        fields = [
+            'id', 'cliente', 'periodo', 'usuario_analista', 'usuario_supervisor',
+            'estado', 'fecha_creacion', 'checklist'
+        ]
+
 class CierreNominaCreateSerializer(serializers.ModelSerializer):
     checklist = ChecklistItemCreateSerializer(many=True, write_only=True)
+
     class Meta:
         model = CierreNomina
         fields = ['cliente', 'periodo', 'usuario_supervisor', 'checklist']
-        
+
     def validate(self, data):
         cliente = data.get('cliente')
         periodo = data.get('periodo')
-        logger.debug("VALIDANDO cierre nomina", extra={
-            "cliente": cliente.id if hasattr(cliente, "id") else cliente,
-            "periodo": periodo,
-        })
-        existe = CierreNomina.objects.filter(cliente=cliente, periodo=periodo).exists()
-        logger.debug("¿Existe cierre? %s", existe)
-        if existe:
+        if CierreNomina.objects.filter(cliente=cliente, periodo=periodo).exists():
             raise serializers.ValidationError("Ya existe un cierre para este cliente en ese periodo.")
         return data
-
 
     def create(self, validated_data):
         checklist_data = validated_data.pop('checklist', [])
@@ -86,6 +57,35 @@ class CierreNominaCreateSerializer(serializers.ModelSerializer):
             )
         return cierre
 
+class EmpleadoCierreSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmpleadoCierre
+        fields = '__all__'
+
+class ConceptoRemuneracionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ConceptoRemuneracion
+        fields = ['nombre_concepto', 'clasificacion', 'hashtags']
+
+class RegistroConceptoEmpleadoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RegistroConceptoEmpleado
+        fields = '__all__'
+
+class MovimientoIngresoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MovimientoIngreso
+        fields = '__all__'
+
+class MovimientoFiniquitoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MovimientoFiniquito
+        fields = '__all__'
+
+class MovimientoAusentismoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MovimientoAusentismo
+        fields = '__all__'
 
 class LibroRemuneracionesUploadSerializer(serializers.ModelSerializer):
     class Meta:
@@ -105,24 +105,4 @@ class ArchivoAnalistaUploadSerializer(serializers.ModelSerializer):
 class ArchivoNovedadesUploadSerializer(serializers.ModelSerializer):
     class Meta:
         model = ArchivoNovedadesUpload
-        fields = '__all__'
-
-class ConceptoRemuneracionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ConceptoRemuneracion
-        fields = ['nombre_concepto', 'clasificacion', 'hashtags']
-
-class NovedadSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Novedad
-        fields = '__all__'
-
-class IncidenciaComparacionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = IncidenciaComparacion
-        fields = '__all__'
-
-class IncidenciaNovedadSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = IncidenciaNovedad
         fields = '__all__'

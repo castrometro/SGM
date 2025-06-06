@@ -6,17 +6,18 @@ from .views import (
     ArchivoAnalistaUploadViewSet,
     ArchivoNovedadesUploadViewSet,
     ChecklistItemViewSet,
-    EmpleadosMesViewSet,
-    RegistroNominaViewSet,
     conceptos_remuneracion_por_cliente,
     obtener_hashtags_disponibles,
     ConceptoRemuneracionBatchView,
     eliminar_concepto_remuneracion,
+    # nuevos si ya los creaste
+    # EmpleadoCierreViewSet,
+    # RegistroConceptoEmpleadoViewSet,
 )
+
 from django.urls import path
 from django.conf import settings
 from django.views.static import serve
-# backend/nomina/urls.py
 
 router = routers.DefaultRouter()
 router.register(r'cierres', CierreNominaViewSet)
@@ -25,8 +26,10 @@ router.register(r'movimientos-mes', MovimientosMesUploadViewSet)
 router.register(r'archivos-analista', ArchivoAnalistaUploadViewSet)
 router.register(r'archivos-novedades', ArchivoNovedadesUploadViewSet)
 router.register(r'checklist-items', ChecklistItemViewSet)
-router.register(r'empleados', EmpleadosMesViewSet)
-router.register(r'registros-nomina', RegistroNominaViewSet, basename='registro-nomina')
+
+# si ya creaste los viewsets de estos modelos, puedes habilitar
+# router.register(r'empleados-cierre', EmpleadoCierreViewSet)
+# router.register(r'registros-concepto', RegistroConceptoEmpleadoViewSet)
 
 urlpatterns = router.urls + [
     path(
@@ -60,5 +63,4 @@ urlpatterns = router.urls + [
         eliminar_concepto_remuneracion,
         name="eliminar-concepto-remuneracion",
     ),
-
 ]

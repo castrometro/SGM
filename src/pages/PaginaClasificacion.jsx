@@ -17,6 +17,7 @@ const PaginaClasificacion = ({ clienteId: propClienteId }) => {
   const [sets, setSets] = useState([]);
   const [selectedSet, setSelectedSet] = useState(null);
   const [options, setOptions] = useState([]);
+  const [optionTree, setOptionTree] = useState([]);
   const [unclassified, setUnclassified] = useState([]);
   const [selectedAccts, setSelectedAccts] = useState([]);
   const [selectedOpt, setSelectedOpt] = useState(null);
@@ -26,6 +27,49 @@ const PaginaClasificacion = ({ clienteId: propClienteId }) => {
   const [mensaje, setMensaje] = useState("");
   const [loading, setLoading] = useState(true);
   const [alert, setAlert] = useState({ type: null, msg: "" });
+
+  function buildOptionTree(list) {
+    const map = {};
+    list.forEach(o => {
+      map[o.id] = { ...o, children: [] };
+    });
+    const roots = [];
+    list.forEach(o => {
+      if (o.parent) {
+        const parent = map[o.parent];
+        if (parent) parent.children.push(map[o.id]);
+        else roots.push(map[o.id]);
+      } else {
+        roots.push(map[o.id]);
+      }
+    });
+    return roots;
+  }
+
+  const OptionNode = ({ node, depth = 0 }) => (
+    <li>
+      <div
+        onClick={() => setSelectedOpt(node)}
+        className={`p-2 cursor-pointer rounded hover:bg-green-900 ${
+          selectedOpt?.id === node.id ? "bg-green-800" : ""
+        }`}
+        style={{ marginLeft: depth * 16 }}
+      >
+        {node.valor}
+      </div>
+      {node.children.length > 0 && (
+        <ul className="ml-4">
+          {node.children.map((child) => (
+            <OptionNode
+              key={child.id}
+              node={child}
+              depth={depth + 1}
+            />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
 
   // Fetch sets on mount
   useEffect(() => {
@@ -40,6 +84,7 @@ const PaginaClasificacion = ({ clienteId: propClienteId }) => {
       fetchUnclassified(selectedSet.id);
     } else {
       setOptions([]);
+      setOptionTree([]);
       setUnclassified([]);
       setSelectedAccts([]);
     }
@@ -64,6 +109,7 @@ const PaginaClasificacion = ({ clienteId: propClienteId }) => {
     try {
       const data = await obtenerOpcionesClasificacion(setId);
       setOptions(data);
+      setOptionTree(buildOptionTree(data));
     } catch {
       setMensaje("Error cargando opciones.");
     }
@@ -102,8 +148,12 @@ const PaginaClasificacion = ({ clienteId: propClienteId }) => {
     e.preventDefault();
     if (!selectedSet || !newOptValor) return;
     try {
-      const o = await crearOpcionClasificacion(selectedSet.id, { valor: newOptValor });
-      setOptions((prev) => [...prev, o]);
+      const payload = { valor: newOptValor };
+      if (selectedOpt) payload.parent = selectedOpt.id;
+      const o = await crearOpcionClasificacion(selectedSet.id, payload);
+      const updated = [...options, o];
+      setOptions(updated);
+      setOptionTree(buildOptionTree(updated));
       setNewOptValor("");
       setMensaje("Opción creada correctamente.");
     } catch {
@@ -210,16 +260,12 @@ const PaginaClasificacion = ({ clienteId: propClienteId }) => {
           {selectedSet ? (
             <>
               <ul className="border border-gray-700 rounded p-2 max-h-48 overflow-auto bg-gray-800">
-                {options.map((o) => (
-                  <li
-                    key={o.id}
-                    className={`p-2 cursor-pointer rounded hover:bg-green-900 ${selectedOpt?.id === o.id ? "bg-green-800" : ""}`}
-                    onClick={() => setSelectedOpt(o)}
-                  >
-                    {o.valor}
-                  </li>
+                {optionTree.map((node) => (
+                  <OptionNode key={node.id} node={node} />
                 ))}
-                {options.length === 0 && <p className="text-sm text-gray-400">Sin opciones</p>}
+                {optionTree.length === 0 && (
+                  <p className="text-sm text-gray-400">Sin opciones</p>
+                )}
               </ul>
               <form onSubmit={handleCreateOption} className="space-y-2">
                 <input
@@ -233,6 +279,9 @@ const PaginaClasificacion = ({ clienteId: propClienteId }) => {
                 <button type="submit" className="flex items-center bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded">
                   <PlusCircle size={16} className="mr-1" /> Crear Opción
                 </button>
+                {selectedOpt && (
+                  <p className="text-xs text-gray-400">Se añadirá dentro de &quot;{selectedOpt.valor}&quot;</p>
+                )}
               </form>
               <button
                 onClick={handleAssignBulk}

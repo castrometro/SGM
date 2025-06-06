@@ -128,7 +128,11 @@ export const obtenerOpcionesClasificacion = async (setClasId) => {
   const res = await api.get(`/contabilidad/clasificaciones-opcion/`, {
     params: { set_clas: setClasId }
   });
-  return res.data;
+  // Garantiza que el campo parent se incluya siempre
+  return res.data.map((o) => ({
+    ...o,
+    parent: o.parent,
+  }));
 };
 
 

@@ -1,3 +1,5 @@
+import { formatMoney } from "../utils/format";
+
 const ServiciosContratados = ({ servicios, areaActiva }) => {
   // Filtra los servicios que correspondan solo al área activa
   const serviciosFiltrados = areaActiva
@@ -16,7 +18,7 @@ const ServiciosContratados = ({ servicios, areaActiva }) => {
         <ul className="list-disc list-inside space-y-2">
           {serviciosFiltrados.map((s) => (
             <li key={s.id} className="text-white">
-              {s.servicio_nombre || "—"} — {s.valor} {s.moneda}
+              {s.servicio_nombre || "—"} — {formatMoney(s.valor)} {s.moneda}
             </li>
           ))}
         </ul>

@@ -28,7 +28,7 @@ class CierreNominaSerializer(serializers.ModelSerializer):
     class Meta:
         model = CierreNomina
         fields = [
-            'id', 'cliente', 'periodo', 'usuario_analista', 'usuario_supervisor',
+            'id', 'cliente', 'periodo', 'usuario_analista',
             'estado', 'fecha_creacion', 'checklist'
         ]
 
@@ -37,7 +37,7 @@ class CierreNominaCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CierreNomina
-        fields = ['cliente', 'periodo', 'usuario_supervisor', 'checklist']
+        fields = ['cliente', 'periodo', 'checklist']
 
     def validate(self, data):
         cliente = data.get('cliente')

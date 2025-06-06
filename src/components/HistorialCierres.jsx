@@ -65,9 +65,9 @@ const HistorialCierres = ({ clienteId, areaActiva }) => {
                   {cierre.estado === "completo" && areaActiva === "Contabilidad" && (
                     <button
                       className="text-green-500 underline font-medium"
-                      onClick={() => navigate(`/menu/cierres/${cierre.id}/analisis`)}
+                    onClick={() => navigate(`/menu/cierres/${cierre.id}/libro`)}
                     >
-                      Generar análisis de cuentas
+                      Visualizar libro
                     </button>
                   )}
                   {/* Aquí puedes poner otras acciones para Nómina */}

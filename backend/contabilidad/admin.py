@@ -38,8 +38,8 @@ class AperturaCuentaAdmin(admin.ModelAdmin):
 
 @admin.register(MovimientoContable)
 class MovimientoContableAdmin(admin.ModelAdmin):
-    list_display = ('cierre', 'cuenta', 'fecha', 'debe', 'haber')
-    list_filter = ('fecha', 'cuenta')
+    list_display = ('cierre', 'cuenta', 'debe', 'haber', 'tipo_documento', 'numero_documento', 'tipo', 'numero_comprobante','numero_interno')
+    list_filter = ('fecha', 'numero_interno','tipo_documento','cuenta')
     search_fields = ('descripcion',)
 
 @admin.register(ClasificacionSet)

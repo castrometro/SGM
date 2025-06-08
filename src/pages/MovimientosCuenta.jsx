@@ -72,7 +72,7 @@ const MovimientosCuenta = () => {
   return (
     <div className="space-y-6">
       <CierreInfoBar cierre={cierre} cliente={cliente} />
-      <Link to={`/menu/cierres/${cierreId}/analisis`} className="text-blue-400">
+      <Link to={`/menu/cierres/${cierreId}/libro`} className="text-blue-400">
         ← Volver
       </Link>
       <h2 className="text-xl font-semibold text-white">

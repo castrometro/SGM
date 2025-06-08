@@ -10,7 +10,7 @@ import {
 import { obtenerCliente } from "../api/clientes";
 import { formatMoney } from "../utils/format";
 
-const AnalisisCuentas = () => {
+const AnalisisLibro = () => {
   const { cierreId } = useParams();
   const navigate = useNavigate();
   const [cierre, setCierre] = useState(null);
@@ -63,7 +63,7 @@ const AnalisisCuentas = () => {
 
   if (!cierre || !cliente || !resumen) {
     return (
-      <div className="text-white text-center mt-8">Cargando análisis de cuentas...</div>
+      <div className="text-white text-center mt-8">Cargando análisis de libro...</div>
     );
   }
 
@@ -168,4 +168,4 @@ const AnalisisCuentas = () => {
   );
 };
 
-export default AnalisisCuentas;
+export default AnalisisLibro;

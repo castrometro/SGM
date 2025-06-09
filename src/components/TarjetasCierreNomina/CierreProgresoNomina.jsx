@@ -78,9 +78,11 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
     const sinClasificar = Array.isArray(libro?.header_json?.headers_sin_clasificar)
       ? libro.header_json.headers_sin_clasificar.length === 0
       : false;
-    if (sinClasificar && !libroListo) {
+    const enProceso = libro?.estado === "procesando" || libro?.estado === "procesado";
+
+    if (sinClasificar && !enProceso && !libroListo) {
       setLibroListo(true);
-    } else if (!sinClasificar && libroListo) {
+    } else if ((!sinClasificar || enProceso) && libroListo) {
       setLibroListo(false);
     }
   }, [libro, libroListo]);
@@ -134,10 +136,11 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
       console.log('🔄 Llamando a procesarLibroRemuneraciones...');
       
       // FORZAR el estado a "procesando" ANTES de la llamada
-      setLibro(prev => ({ 
-        ...prev, 
-        estado: "procesando" 
+      setLibro(prev => ({
+        ...prev,
+        estado: "procesando"
       }));
+      setLibroListo(false); // asegura que la tarjeta muestre el estado de procesamiento
       
       await procesarLibroRemuneraciones(id);
       console.log('✅ Procesamiento iniciado - el polling monitoreará el progreso');
@@ -213,7 +216,11 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       <LibroRemuneracionesCard
         estado={
-          libroListo ? "clasificado" : libro?.estado || "no_subido"
+          libro?.estado === "procesando" || libro?.estado === "procesado"
+            ? libro?.estado
+            : libroListo
+            ? "clasificado"
+            : libro?.estado || "no_subido"
         }
         archivoNombre={libro?.archivo_nombre}
         subiendo={subiendo}

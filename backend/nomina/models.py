@@ -74,6 +74,13 @@ class ConceptoRemuneracion(models.Model):
     nombre_concepto = models.CharField(max_length=120)
     clasificacion = models.CharField(max_length=20, choices=CLASIFICACION_CHOICES)
     hashtags = models.JSONField(default=list, blank=True)
+    usuario_clasifica = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="conceptos_clasificados",
+    )
     vigente = models.BooleanField(default=True)
 
     class Meta:

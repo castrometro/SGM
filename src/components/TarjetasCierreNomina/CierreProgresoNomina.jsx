@@ -249,10 +249,7 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
         onGuardarClasificaciones={handleGuardarClasificaciones}
         soloLectura={modoSoloLectura}
       />
-      {/* Botón temporal para debug */}
-      <button onClick={debugEstado} className="bg-red-500 p-2">
-        DEBUG Estado
-      </button>
+      
     </div>
   );
 };

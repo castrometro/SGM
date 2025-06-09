@@ -187,30 +187,79 @@ def guardar_registros_nomina(result):
                 continue
 
             for h in headers:
-                monto = row.get(h)
-                concepto = ConceptoRemuneracion.objects.filter(
-                    cliente=libro.cierre.cliente, nombre_concepto=h, vigente=True
-                ).first()
-                RegistroConceptoEmpleado.objects.update_or_create(
-                    empleado=empleado,
-                    nombre_concepto_original=h,
-                    defaults={"monto": monto, "concepto": concepto},
-                )
+                try:
+                    valor_raw = row.get(h)
+                    
+                    
+                    # Convertir todo a string y limpiar
+                    if pd.isna(valor_raw) or valor_raw == '':
+                        valor = ""  # Valor vacío
+                    else:
+                        valor = str(valor_raw).strip()
+                        # Si es "nan" como string, convertir a vacío
+                        if valor.lower() == 'nan':
+                            valor = ""
+        
+                    concepto = ConceptoRemuneracion.objects.filter(
+                        cliente=libro.cierre.cliente, nombre_concepto=h, vigente=True
+                    ).first()
+                    
+                    RegistroConceptoEmpleado.objects.update_or_create(
+                        empleado=empleado,
+                        nombre_concepto_original=h,
+                        defaults={"monto": valor, "concepto": concepto},
+                    )
+                    
+                except Exception as concepto_error:
+                    logger.error(f"❌ ERROR en concepto '{h}' para empleado RUT {rut}: {concepto_error}")
+                    logger.error(f"Valor problemático: {row.get(h)}")
+                    raise
             count += 1
 
         logger.info(f"Registros nómina guardados desde libro {libro_id}: {count}")
-        return {"libro_id": libro_id, "registros_actualizados": count}
+        
+        # ✅ ACTUALIZAR ESTADO AL FINAL
+        libro.estado = "procesado"
+        libro.save()
+        
+        return {
+            "libro_id": libro_id, 
+            "registros_actualizados": count,
+            "estado": "procesado"
+        }
     except Exception as e:
         logger.error(
             f"Error guardando registros de nómina para libro id={libro_id}: {e}"
         )
+        # Marcar como error
+        try:
+            libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
+            libro.estado = "con_error"
+            libro.save()
+        except:
+            pass
         raise
 
 
 @shared_task
 def procesar_libro_remuneraciones(libro_id):
     """Ejecuta el flujo completo de procesamiento de un libro."""
-    return chain(
-        actualizar_empleados_desde_libro.s(libro_id),
-        guardar_registros_nomina.s(),
-    )()
+    try:
+        # Marcar como procesando al inicio
+        libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
+        libro.estado = "procesando"
+        libro.save()
+        
+        return chain(
+            actualizar_empleados_desde_libro.s(libro_id),
+            guardar_registros_nomina.s(),
+        )()
+    except Exception as e:
+        logger.error(f"Error iniciando procesamiento libro id={libro_id}: {e}")
+        try:
+            libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
+            libro.estado = "con_error"
+            libro.save()
+        except:
+            pass
+        raise

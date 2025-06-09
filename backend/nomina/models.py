@@ -91,13 +91,35 @@ class ConceptoRemuneracion(models.Model):
 
 
 class RegistroConceptoEmpleado(models.Model):
-    empleado = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE, related_name="conceptos")
+    empleado = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE)
     concepto = models.ForeignKey(ConceptoRemuneracion, on_delete=models.SET_NULL, null=True, blank=True)
-    nombre_concepto_original = models.CharField(max_length=120)
-    monto = models.DecimalField(max_digits=12, decimal_places=2)
+    nombre_concepto_original = models.CharField(max_length=200)
+    monto = models.CharField(max_length=255, blank=True, null=True)  
+    fecha_registro = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('empleado', 'nombre_concepto_original')
 
     def __str__(self):
-        return f"{self.empleado.rut} - {self.nombre_concepto_original} - ${self.monto}"
+        return f"{self.empleado} - {self.nombre_concepto_original}: {self.monto}"
+    
+    @property
+    def monto_numerico(self):
+        """Convierte el monto a número para cálculos, retorna 0 si no es posible"""
+        try:
+            return float(self.monto) if self.monto else 0
+        except (ValueError, TypeError):
+            return 0
+    
+    @property
+    def es_numerico(self):
+        """Verifica si el monto puede convertirse a número"""
+        try:
+            float(self.monto) if self.monto else 0
+            return True
+        except (ValueError, TypeError):
+            return False
+
 
 
 class MovimientoIngreso(models.Model):

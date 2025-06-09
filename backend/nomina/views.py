@@ -111,16 +111,18 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
         libro = self.get_queryset().filter(cierre_id=cierre_id).order_by('-fecha_subida').first()
         if libro:
             return Response({
+                "id": libro.id,  # ← AGREGAR ESTA LÍNEA
                 "estado": libro.estado,
                 "archivo_nombre": libro.archivo.name.split("/")[-1],
                 "archivo_url": request.build_absolute_uri(libro.archivo.url),
-                "header_json": libro.header_json,  # o donde guardes los pendientes
+                "header_json": libro.header_json,
                 "fecha_subida": libro.fecha_subida,
                 "cliente_id": libro.cierre.cliente.id,
                 "cliente_nombre": libro.cierre.cliente.nombre,
             })
         else:
             return Response({
+                "id": None,  # ← AGREGAR ESTA LÍNEA TAMBIÉN
                 "estado": "no_subido",
                 "archivo_nombre": "",
                 "archivo_url": "",

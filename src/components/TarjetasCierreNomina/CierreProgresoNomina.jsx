@@ -21,6 +21,7 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
   const [modalAbierto, setModalAbierto] = useState(false);
   const [libroListo, setLibroListo] = useState(false);
   const [mensajeLibro, setMensajeLibro] = useState("");
+  const [modoSoloLectura, setModoSoloLectura] = useState(false);
 
   const handleGuardarClasificaciones = async ({ guardar, eliminar }) => {
     try {
@@ -119,15 +120,65 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
   };
 
   const handleProcesarLibro = async () => {
+    console.log('=== PROCESAR LIBRO ===');
+    
     const id = libro?.id || libroId;
-    if (!id) return;
-    try {
-      await procesarLibroRemuneraciones(id);
-      setLibro((prev) => ({ ...prev, estado: "procesando" }));
-    } catch (error) {
-      console.error("Error al procesar libro:", error);
-      setMensajeLibro("Error al procesar libro");
+    console.log('ID final para procesar:', id);
+    
+    if (!id) {
+      console.log('❌ No hay ID para procesar');  
+      return;
     }
+    
+    try {
+      console.log('🔄 Llamando a procesarLibroRemuneraciones...');
+      
+      // FORZAR el estado a "procesando" ANTES de la llamada
+      setLibro(prev => ({ 
+        ...prev, 
+        estado: "procesando" 
+      }));
+      
+      await procesarLibroRemuneraciones(id);
+      console.log('✅ Procesamiento iniciado - el polling monitoreará el progreso');
+      
+    } catch (error) {
+      console.error("❌ Error al procesar libro:", error);
+      setMensajeLibro("Error al procesar libro");
+      // Revertir el estado en caso de error
+      setLibro(prev => ({ 
+        ...prev, 
+        estado: "con_error" 
+      }));
+    }
+  };
+
+  const handleActualizarEstado = async () => {
+    try {
+      console.log('📡 Consultando estado actual del libro...');
+      const estadoActual = await obtenerEstadoLibroRemuneraciones(cierre.id);
+      console.log('📊 Estado recibido del servidor:', estadoActual);
+      console.log('📊 Estado anterior:', libro?.estado);
+      console.log('📊 Estado nuevo:', estadoActual?.estado);
+      
+      setLibro(estadoActual);
+      
+      // Log adicional para verificar el cambio
+      if (estadoActual?.estado !== libro?.estado) {
+        console.log(`🔄 Estado cambió de "${libro?.estado}" a "${estadoActual?.estado}"`);
+      }
+      
+    } catch (error) {
+      console.error('❌ Error actualizando estado:', error);
+    }
+  };
+
+  const handleVerClasificacion = (soloLectura = false) => {
+    // Si el libro ya está procesado, forzar modo solo lectura
+    const esSoloLectura = soloLectura || libro?.estado === "procesado";
+    
+    setModalAbierto(true);
+    setModoSoloLectura(esSoloLectura);
   };
 
   const headersSinClasificar = Array.isArray(libro?.header_json?.headers_sin_clasificar)
@@ -147,6 +198,17 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
 
   const estadoMovimientos = movimientos?.estado || "pendiente";
 
+  // Agregar esta función temporal para debug
+  const debugEstado = async () => {
+    try {
+      console.log('🔍 DEBUG: Consultando estado directamente...');
+      const estado = await obtenerEstadoLibroRemuneraciones(cierre.id);
+      console.log('🔍 DEBUG: Respuesta completa:', estado);
+    } catch (error) {
+      console.error('🔍 DEBUG: Error:', error);
+    }
+  };
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       <LibroRemuneracionesCard
@@ -156,8 +218,10 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
         archivoNombre={libro?.archivo_nombre}
         subiendo={subiendo}
         onSubirArchivo={handleSubirArchivo}
-        onVerClasificacion={() => setModalAbierto(true)}
+        onVerClasificacion={handleVerClasificacion}
         onProcesar={handleProcesarLibro}
+        onActualizarEstado={handleActualizarEstado}
+        libroId={libro?.id} // ← Agregar verificación de nulidad
         headersSinClasificar={headersSinClasificar}
         headerClasificados={Object.keys(headersClasificados)}
         mensaje={mensajeLibro}
@@ -176,7 +240,12 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
         clienteId={cliente.id}
         headersSinClasificar={headersSinClasificar}
         onGuardarClasificaciones={handleGuardarClasificaciones}
+        soloLectura={modoSoloLectura}
       />
+      {/* Botón temporal para debug */}
+      <button onClick={debugEstado} className="bg-red-500 p-2">
+        DEBUG Estado
+      </button>
     </div>
   );
 };

@@ -153,9 +153,10 @@ const ModalClasificacionHeaders = ({
 
         <h2 className="text-xl font-semibold text-white mb-4">
           Clasificación de Headers
+          {soloLectura && <span className="text-sm text-gray-400 ml-2">(Solo lectura)</span>}
         </h2>
 
-        <div className="grid grid-cols-5 gap-4 overflow-y-auto pr-2 flex-1">
+        <div className={`grid grid-cols-5 gap-4 overflow-y-auto pr-2 flex-1 ${soloLectura ? 'opacity-75' : ''}`}>
           {Object.keys(headers).map((cat) => (
             <div key={cat} className="bg-gray-800 rounded p-3 flex flex-col">
               <h3 className="text-white text-sm font-semibold mb-2">
@@ -165,7 +166,7 @@ const ModalClasificacionHeaders = ({
                 {headers[cat].map((header, idx) => (
                   <div
                     key={idx}
-                    className={`text-xs bg-gray-700 px-2 py-1 rounded cursor-pointer relative ${
+                    className={`text-xs bg-gray-700 px-2 py-1 rounded ${soloLectura ? 'cursor-default' : 'cursor-pointer'} relative ${
                       seleccionado === header ? "border border-blue-400" : ""
                     }`}
                     onClick={() => {

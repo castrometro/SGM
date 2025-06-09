@@ -5,6 +5,7 @@ import ModalClasificacionHeaders from "../ModalClasificacionHeaders";
 import {
   obtenerEstadoLibroRemuneraciones,
   subirLibroRemuneraciones,
+  procesarLibroRemuneraciones,
   obtenerEstadoMovimientosMes,
   subirMovimientosMes,
   guardarConceptosRemuneracion,
@@ -13,6 +14,7 @@ import {
 
 const CierreProgresoNomina = ({ cierre, cliente }) => {
   const [libro, setLibro] = useState(null);
+  const [libroId, setLibroId] = useState(null);
   const [subiendo, setSubiendo] = useState(false);
   const [movimientos, setMovimientos] = useState(null);
   const [subiendoMov, setSubiendoMov] = useState(false);
@@ -41,6 +43,9 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
       // Refrescamos los conteos consultando nuevamente el backend
       const nuevoEstado = await obtenerEstadoLibroRemuneraciones(cierre.id);
       setLibro(nuevoEstado);
+      if (nuevoEstado?.id) {
+        setLibroId(nuevoEstado.id);
+      }
     } catch (error) {
       console.error("Error al guardar clasificaciones:", error);
     }
@@ -56,7 +61,12 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
 
   useEffect(() => {
     if (cierre?.id) {
-      obtenerEstadoLibroRemuneraciones(cierre.id).then(setLibro);
+      obtenerEstadoLibroRemuneraciones(cierre.id).then((data) => {
+        setLibro(data);
+        if (data?.id) {
+          setLibroId(data.id);
+        }
+      });
       obtenerEstadoMovimientosMes(cierre.id).then(setMovimientos);
     }
   }, [cierre]);
@@ -76,9 +86,17 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
   const handleSubirArchivo = async (archivo) => {
     setSubiendo(true);
     try {
-      await subirLibroRemuneraciones(cierre.id, archivo);
+      const res = await subirLibroRemuneraciones(cierre.id, archivo);
+      if (res?.id) {
+        setLibroId(res.id);
+      }
       setTimeout(() => {
-        obtenerEstadoLibroRemuneraciones(cierre.id).then(setLibro);
+        obtenerEstadoLibroRemuneraciones(cierre.id).then((data) => {
+          setLibro(data);
+          if (data?.id) {
+            setLibroId(data.id);
+          }
+        });
       }, 1200);
     } finally {
       setSubiendo(false);
@@ -96,6 +114,17 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
       }, 1200);
     } finally {
       setSubiendoMov(false);
+    }
+  };
+
+  const handleProcesarLibro = async () => {
+    const id = libro?.id || libroId;
+    if (!id) return;
+    try {
+      await procesarLibroRemuneraciones(id);
+      setLibro((prev) => ({ ...prev, estado: "procesando" }));
+    } catch (error) {
+      console.error("Error al procesar libro:", error);
     }
   };
 
@@ -126,9 +155,10 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
         subiendo={subiendo}
         onSubirArchivo={handleSubirArchivo}
         onVerClasificacion={() => setModalAbierto(true)}
+        onProcesar={handleProcesarLibro}
         headersSinClasificar={headersSinClasificar}
         headerClasificados={Object.keys(headersClasificados)}
-        disabled={false}
+        disabled={libro?.estado === "procesando"}
       />
       <MovimientosMesCard
         estado={estadoMovimientos}

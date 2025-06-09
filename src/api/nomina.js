@@ -64,6 +64,13 @@ export const obtenerEstadoLibroRemuneraciones = async (cierreId) => {
   const res = await api.get(`/nomina/libros-remuneraciones/estado/${cierreId}/`);
   return res.data;
 };
+
+export const procesarLibroRemuneraciones = async (libroId) => {
+  const res = await api.post(
+    `/nomina/libros-remuneraciones/${libroId}/procesar/`
+  );
+  return res.data;
+};
 export const obtenerConceptosLibroRemuneraciones = async (clienteId, periodo) => {
   const response = await api.get(`/nomina/libro_remuneraciones/conceptos/${clienteId}/${periodo}/`);
   return response.data;

@@ -51,7 +51,7 @@ const LibroRemuneracionesCard = ({
         } catch (pollError) {
           console.error(`❌ Error en polling #${contadorPolling}:`, pollError);
         }
-      }, 5000);
+      }, 40000); // consultar cada 40 segundos
       
     } else if (estado !== "procesando" && pollingRef.current) {
       console.log(`✅ Estado cambió a "${estado}" - deteniendo polling`);

@@ -1,8 +1,7 @@
 #nomina/tasks.py
 from .utils.LibroRemuneraciones import obtener_headers_libro_remuneraciones, clasificar_headers_libro_remuneraciones
-from celery import shared_task
+from celery import shared_task, chain
 from .models import LibroRemuneracionesUpload, EmpleadoCierre, RegistroConceptoEmpleado
-from celery import chain
 import logging
 import pandas as pd
 

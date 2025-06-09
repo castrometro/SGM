@@ -40,3 +40,13 @@ clasificación. Ejemplo:
 ```
 
 Retorna únicamente las cuentas que estén clasificadas con la opción indicada.
+
+## Celery worker
+
+Algunas tareas se procesan de forma asíncrona con Celery. Para procesar el
+Libro de Remuneraciones es necesario que el worker esté en ejecución.
+
+```bash
+cd backend
+./celery_worker.sh
+```

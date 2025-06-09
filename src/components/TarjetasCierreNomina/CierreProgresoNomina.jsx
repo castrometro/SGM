@@ -20,6 +20,7 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
   const [subiendoMov, setSubiendoMov] = useState(false);
   const [modalAbierto, setModalAbierto] = useState(false);
   const [libroListo, setLibroListo] = useState(false);
+  const [mensajeLibro, setMensajeLibro] = useState("");
 
   const handleGuardarClasificaciones = async ({ guardar, eliminar }) => {
     try {
@@ -125,6 +126,7 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
       setLibro((prev) => ({ ...prev, estado: "procesando" }));
     } catch (error) {
       console.error("Error al procesar libro:", error);
+      setMensajeLibro("Error al procesar libro");
     }
   };
 
@@ -158,6 +160,7 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
         onProcesar={handleProcesarLibro}
         headersSinClasificar={headersSinClasificar}
         headerClasificados={Object.keys(headersClasificados)}
+        mensaje={mensajeLibro}
         disabled={libro?.estado === "procesando"}
       />
       <MovimientosMesCard

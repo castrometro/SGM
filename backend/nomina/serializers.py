@@ -65,7 +65,7 @@ class EmpleadoCierreSerializer(serializers.ModelSerializer):
 class ConceptoRemuneracionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ConceptoRemuneracion
-        fields = ['nombre_concepto', 'clasificacion', 'hashtags']
+        fields = ['nombre_concepto', 'clasificacion', 'hashtags', 'usuario_clasifica']
 
 class RegistroConceptoEmpleadoSerializer(serializers.ModelSerializer):
     class Meta:

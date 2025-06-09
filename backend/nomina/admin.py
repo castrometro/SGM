@@ -24,7 +24,13 @@ class EmpleadoCierreAdmin(admin.ModelAdmin):
 
 @admin.register(ConceptoRemuneracion)
 class ConceptoRemuneracionAdmin(admin.ModelAdmin):
-    list_display = ('cliente', 'nombre_concepto', 'clasificacion', 'vigente')
+    list_display = (
+        'cliente',
+        'nombre_concepto',
+        'clasificacion',
+        'usuario_clasifica',
+        'vigente',
+    )
     list_filter = ('cliente', 'clasificacion', 'vigente')
     search_fields = ('cliente__nombre', 'nombre_concepto')
 

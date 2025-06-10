@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import ModalTabla from "../ModalTabla"; // Asegúrate que esté en components/
 import { Download } from "lucide-react";
+import EstadoBadge from "../EstadoBadge";
 import { 
   descargarPlantillaTipoDocumento, 
   obtenerEstadoTipoDocumento, 
@@ -112,11 +113,7 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled }) => {
         <h3 className="text-lg font-semibold mb-3">1. Tipo de Documento</h3>
             <div className="flex items-center gap-2 mb-2">
                 <span className="font-semibold">Estado:</span>
-                {estado === "subido" ? (
-                    <span className="text-green-400 font-semibold">Subido</span>
-                    ) : (
-                    <span className="text-yellow-400 font-semibold">Pendiente</span>
-                )}
+                <EstadoBadge estado={estado === "subido" ? "subido" : "pendiente"} />
             </div>
             {/* Botón estilizado de descarga */}
             <a

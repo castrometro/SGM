@@ -2,13 +2,13 @@
 from .utils.LibroRemuneraciones import (
     obtener_headers_libro_remuneraciones,
     clasificar_headers_libro_remuneraciones,
+    actualizar_empleados_desde_libro_util,
+    guardar_registros_nomina_util,
 )
 from celery import shared_task, chain
 from .models import (
     LibroRemuneracionesUpload,
-    EmpleadoCierre,
-    RegistroConceptoEmpleado,
-    ConceptoRemuneracion,
+    MovimientosMesUpload,
 )
 import logging
 import pandas as pd
@@ -98,44 +98,11 @@ def clasificar_headers_libro_remuneraciones_task(result):
 
 @shared_task
 def actualizar_empleados_desde_libro(result):
+    """Task para actualizar empleados desde libro - solo maneja try/except"""
     libro_id = result.get("libro_id") if isinstance(result, dict) else result
     try:
         libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-        df = pd.read_excel(libro.archivo.path, engine="openpyxl")
-
-        expected = {
-            "ano": "Año",
-            "mes": "Mes",
-            "rut_empresa": "Rut de la Empresa",
-            "rut_trabajador": "Rut del Trabajador",
-            "nombre": "Nombre",
-            "ape_pat": "Apellido Paterno",
-            "ape_mat": "Apellido Materno",
-        }
-
-        missing = [v for v in expected.values() if v not in df.columns]
-        if missing:
-            raise ValueError(f"Faltan columnas en el Excel: {', '.join(missing)}")
-
-        cierre = libro.cierre
-        primera_col = df.columns[0]
-        count = 0
-        for _, row in df.iterrows():
-            if not str(row.get(primera_col, "")).strip():
-                continue
-            rut = str(row.get(expected["rut_trabajador"], "")).strip()
-            defaults = {
-                "rut_empresa": str(row.get(expected["rut_empresa"], "")).strip(),
-                "nombre": str(row.get(expected["nombre"], "")).strip(),
-                "apellido_paterno": str(row.get(expected["ape_pat"], "")).strip(),
-                "apellido_materno": str(row.get(expected["ape_mat"], "")).strip(),
-            }
-            EmpleadoCierre.objects.update_or_create(
-                cierre=cierre,
-                rut=rut,
-                defaults=defaults,
-            )
-            count += 1
+        count = actualizar_empleados_desde_libro_util(libro)
         logger.info(f"Actualizados {count} empleados desde libro {libro_id}")
         return {"libro_id": libro_id, "empleados_actualizados": count}
     except Exception as e:
@@ -145,78 +112,11 @@ def actualizar_empleados_desde_libro(result):
 
 @shared_task
 def guardar_registros_nomina(result):
+    """Task para guardar registros de nómina - solo maneja try/except"""
     libro_id = result.get("libro_id") if isinstance(result, dict) else result
     try:
         libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-        df = pd.read_excel(libro.archivo.path, engine="openpyxl")
-
-        expected = {
-            "ano": "Año",
-            "mes": "Mes",
-            "rut_empresa": "Rut de la Empresa",
-            "rut_trabajador": "Rut del Trabajador",
-            "nombre": "Nombre",
-            "ape_pat": "Apellido Paterno",
-            "ape_mat": "Apellido Materno",
-        }
-
-        missing = [v for v in expected.values() if v not in df.columns]
-        if missing:
-            raise ValueError(f"Faltan columnas en el Excel: {', '.join(missing)}")
-
-        empleado_cols = set(expected.values())
-
-        headers = libro.header_json
-        if isinstance(headers, dict):
-            headers = headers.get("headers_clasificados", []) + headers.get(
-                "headers_sin_clasificar", []
-            )
-        if not headers:
-            headers = [h for h in df.columns if h not in empleado_cols]
-
-        primera_col = df.columns[0]
-        count = 0
-        for _, row in df.iterrows():
-            if not str(row.get(primera_col, "")).strip():
-                continue
-            rut = str(row.get(expected["rut_trabajador"], "")).strip()
-            empleado = EmpleadoCierre.objects.filter(
-                cierre=libro.cierre, rut=rut
-            ).first()
-            if not empleado:
-                continue
-
-            for h in headers:
-                try:
-                    valor_raw = row.get(h)
-                    
-                    
-                    # Convertir todo a string y limpiar
-                    if pd.isna(valor_raw) or valor_raw == '':
-                        valor = ""  # Valor vacío
-                    else:
-                        valor = str(valor_raw).strip()
-                        # Si es "nan" como string, convertir a vacío
-                        if valor.lower() == 'nan':
-                            valor = ""
-        
-                    concepto = ConceptoRemuneracion.objects.filter(
-                        cliente=libro.cierre.cliente, nombre_concepto=h, vigente=True
-                    ).first()
-                    
-                    RegistroConceptoEmpleado.objects.update_or_create(
-                        empleado=empleado,
-                        nombre_concepto_original=h,
-                        defaults={"monto": valor, "concepto": concepto},
-                    )
-                    
-                except Exception as concepto_error:
-                    logger.error(f"❌ ERROR en concepto '{h}' para empleado RUT {rut}: {concepto_error}")
-                    logger.error(f"Valor problemático: {row.get(h)}")
-                    raise
-            count += 1
-
-        logger.info(f"Registros nómina guardados desde libro {libro_id}: {count}")
+        count = guardar_registros_nomina_util(libro)
         
         # ✅ ACTUALIZAR ESTADO AL FINAL
         libro.estado = "procesado"
@@ -228,9 +128,7 @@ def guardar_registros_nomina(result):
             "estado": "procesado"
         }
     except Exception as e:
-        logger.error(
-            f"Error guardando registros de nómina para libro id={libro_id}: {e}"
-        )
+        logger.error(f"Error guardando registros de nómina para libro id={libro_id}: {e}")
         # Marcar como error
         try:
             libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
@@ -242,24 +140,42 @@ def guardar_registros_nomina(result):
 
 
 @shared_task
-def procesar_libro_remuneraciones(libro_id):
-    """Ejecuta el flujo completo de procesamiento de un libro."""
+def procesar_movimientos_mes(movimiento_id):
+    """Task para procesar archivo de movimientos del mes - solo maneja try/except"""
+    logger.info(f"Procesando movimientos del mes id={movimiento_id}")
+    
     try:
-        # Marcar como procesando al inicio
-        libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-        libro.estado = "procesando"
-        libro.save()
+        movimiento = MovimientosMesUpload.objects.get(id=movimiento_id)
+        movimiento.estado = 'en_proceso'
+        movimiento.save()
         
-        return chain(
-            actualizar_empleados_desde_libro.s(libro_id),
-            guardar_registros_nomina.s(),
-        )()
+        # Aquí iría la lógica de procesamiento del archivo Excel
+        # Por ahora, simulamos un procesamiento exitoso
+        logger.info(f"Archivo de movimientos procesado: {movimiento.archivo.path}")
+        
+        # TODO: Implementar la lógica real de procesamiento:
+        # 1. Leer archivo Excel
+        # 2. Validar estructura
+        # 3. Extraer datos de movimientos (alta/baja, vacaciones, etc.)
+        # 4. Crear registros en los modelos correspondientes
+        # 5. Validar integridad de datos
+        
+        movimiento.estado = 'procesado'
+        movimiento.save()
+        
+        logger.info(f"Movimientos del mes procesados exitosamente id={movimiento_id}")
+        return {"movimiento_id": movimiento_id, "estado": "procesado"}
+        
+    except MovimientosMesUpload.DoesNotExist:
+        logger.error(f"MovimientosMesUpload con id={movimiento_id} no encontrado")
+        raise
     except Exception as e:
-        logger.error(f"Error iniciando procesamiento libro id={libro_id}: {e}")
+        # En caso de error, marcar como error
         try:
-            libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-            libro.estado = "con_error"
-            libro.save()
+            movimiento = MovimientosMesUpload.objects.get(id=movimiento_id)
+            movimiento.estado = 'con_error'
+            movimiento.save()
         except:
             pass
+        logger.error(f"Error procesando movimientos del mes id={movimiento_id}: {e}")
         raise

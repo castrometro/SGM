@@ -1,20 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { obtenerResumenContable } from "../api/contabilidad";
-import { obtenerResumenNomina } from "../api/nomina"; // Debes crearlo similar a contabilidad
-import estadoCierreColors from "../constants/estadoCierreColors";
-
-// Renderizador de estado (igual que antes)
-const renderEstadoCierre = (estado) => {
-  const color = estadoCierreColors[estado] || "bg-gray-600";
-  return (
-    <span
-      className={`inline-block px-3 py-1 text-sm rounded-full text-white ${color}`}
-    >
-      {estado}
-    </span>
-  );
-};
+import { obtenerResumenNomina } from "../api/nomina";
+import EstadoBadge from "./EstadoBadge";
 
 const ClienteRow = ({ cliente, areaActiva }) => {
   const [resumen, setResumen] = useState({
@@ -50,9 +38,7 @@ const ClienteRow = ({ cliente, areaActiva }) => {
         {resumen.ultimo_cierre || "—"}
       </td>
       <td className="p-2 text-center">
-        {resumen.estado_cierre_actual
-          ? renderEstadoCierre(resumen.estado_cierre_actual)
-          : <span className="text-gray-400 italic">No iniciado</span>}
+        <EstadoBadge estado={resumen.estado_cierre_actual} />
       </td>
       <td className="p-2 text-center">
         <Link

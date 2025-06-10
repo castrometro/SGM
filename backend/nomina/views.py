@@ -48,7 +48,8 @@ from .tasks import (
     analizar_headers_libro_remuneraciones,
     clasificar_headers_libro_remuneraciones_task,
     actualizar_empleados_desde_libro,
-    procesar_libro_remuneraciones,
+    guardar_registros_nomina,
+    procesar_movimientos_mes,
 )
 
 logger = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         if cierre:
             return Response({
                 "ultimo_cierre": cierre.periodo,
-                "estado_ultimo_cierre": cierre.estado,
+                "estado_cierre_actual": cierre.estado,
             })
         else:
             return Response({
@@ -138,11 +139,21 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def procesar(self, request, pk=None):
+        """Procesar libro completo: actualizar empleados y guardar registros"""
         libro = self.get_object()
         libro.estado = 'procesando'
         libro.save(update_fields=['estado'])
-        result = procesar_libro_remuneraciones.delay(libro.id)
-        return Response({'task_id': result.id}, status=status.HTTP_202_ACCEPTED)
+        
+        # Chain de procesamiento completo
+        result = chain(
+            actualizar_empleados_desde_libro.s(libro.id),
+            guardar_registros_nomina.s(),
+        )()
+        
+        return Response({
+            'task_id': result.id if hasattr(result, 'id') else str(result), 
+            'mensaje': 'Procesamiento iniciado'
+        }, status=status.HTTP_202_ACCEPTED)
 
 # Nuevos ViewSets para Movimientos_Mes
 
@@ -306,6 +317,75 @@ def eliminar_concepto_remuneracion(request, cliente_id, nombre_concepto):
 class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
     queryset = MovimientosMesUpload.objects.all()
     serializer_class = MovimientosMesUploadSerializer
+    
+    @action(detail=False, methods=['get'], url_path='estado/(?P<cierre_id>[^/.]+)')
+    def estado(self, request, cierre_id=None):
+        """Obtiene el estado del archivo de movimientos del mes para un cierre específico"""
+        movimiento = self.get_queryset().filter(cierre_id=cierre_id).order_by('-fecha_subida').first()
+        if movimiento:
+            return Response({
+                "id": movimiento.id,
+                "estado": movimiento.estado,
+                "archivo_nombre": movimiento.archivo.name.split("/")[-1] if movimiento.archivo else "",
+                "archivo_url": request.build_absolute_uri(movimiento.archivo.url) if movimiento.archivo else "",
+                "fecha_subida": movimiento.fecha_subida,
+                "cierre_id": movimiento.cierre.id,
+                "cliente_id": movimiento.cierre.cliente.id,
+                "cliente_nombre": movimiento.cierre.cliente.nombre,
+            })
+        else:
+            return Response({
+                "id": None,
+                "estado": "no_subido",
+                "archivo_nombre": "",
+                "archivo_url": "",
+                "fecha_subida": None,
+                "cierre_id": None,
+                "cliente_id": None,
+                "cliente_nombre": "",
+            })
+    
+    @action(detail=False, methods=['post'], url_path='subir/(?P<cierre_id>[^/.]+)')
+    def subir(self, request, cierre_id=None):
+        """Sube un archivo de movimientos del mes para un cierre específico"""
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        archivo = request.FILES.get('archivo')
+        if not archivo:
+            return Response({"error": "No se proporcionó archivo"}, status=400)
+        
+        # Validar que sea un archivo Excel
+        if not archivo.name.endswith(('.xlsx', '.xls')):
+            return Response({"error": "El archivo debe ser de tipo Excel (.xlsx o .xls)"}, status=400)
+        
+        # Crear o actualizar el registro de movimientos
+        movimiento, created = MovimientosMesUpload.objects.get_or_create(
+            cierre=cierre,
+            defaults={
+                'archivo': archivo,
+                'estado': 'pendiente'
+            }
+        )
+        
+        if not created:
+            # Si ya existe, actualizar el archivo
+            movimiento.archivo = archivo
+            movimiento.estado = 'pendiente'
+            movimiento.save()
+        
+        # Disparar tarea de procesamiento con Celery
+        procesar_movimientos_mes.delay(movimiento.id)
+        
+        return Response({
+            "id": movimiento.id,
+            "estado": movimiento.estado,
+            "archivo_nombre": archivo.name,
+            "fecha_subida": movimiento.fecha_subida,
+            "mensaje": "Archivo subido correctamente y enviado a procesamiento"
+        }, status=201)
 
 class ArchivoAnalistaUploadViewSet(viewsets.ModelViewSet):
     queryset = ArchivoAnalistaUpload.objects.all()

@@ -1,14 +1,6 @@
-import estadoCierreColors from "../../constants/estadoCierreColors";
+import EstadoBadge from "../EstadoBadge";
 
 const ClienteInfoCard = ({ cliente, resumen }) => {
-  const renderEstado = (estado) => {
-    const obj = estadoCierreColors[estado] || { texto: estado, color: "bg-gray-600" };
-    return (
-      <span className={`inline-block px-3 py-1 text-sm rounded-full text-white ${obj.color}`}>
-        {obj.texto}
-      </span>
-    );
-  };
 
 
   return (
@@ -36,11 +28,7 @@ const ClienteInfoCard = ({ cliente, resumen }) => {
         </div>
         <div className="bg-gray-700 p-4 rounded">
           <h3 className="text-sm text-gray-400">Estado</h3>
-            {resumen.estado_ultimo_cierre ? (
-              renderEstado(resumen.estado_ultimo_cierre)
-            ) : (
-              <span className="text-gray-400 italic">No iniciado</span>
-            )}
+          <EstadoBadge estado={resumen.estado_cierre_actual} />
         </div>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { obtenerEstadoNombresIngles, subirNombresIngles } from "../../api/contabilidad";
+import EstadoBadge from "../EstadoBadge";
 
 const NombresEnInglesCard = ({
   cierreId,
@@ -97,11 +98,7 @@ const NombresEnInglesCard = ({
               : `Faltan ${faltantes} de ${totalCuentas} cuentas por traducir`}
         </span>
         <span className="font-semibold">
-          Estado:{" "}
-          {estado === "subido"
-            ? <span className="text-green-400 font-semibold">Completado</span>
-            : <span className="text-yellow-400 font-semibold">Pendiente</span>
-          }
+          Estado: <EstadoBadge estado={estado === "subido" ? "completado" : "pendiente"} />
         </span>
       </div>
 

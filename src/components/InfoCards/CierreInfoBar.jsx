@@ -1,14 +1,6 @@
-import estadoCierreColors from "../../constants/estadoCierreColors";
+import EstadoBadge from "../EstadoBadge";
 
 const CierreInfoBar = ({ cierre, cliente }) => {
-  const renderEstado = (estado) => {
-    const obj = estadoCierreColors[estado] || { texto: estado, color: "bg-gray-600" };
-    return (
-      <span className={`inline-block px-4 py-1 text-base rounded-full text-white font-semibold ${obj.color}`}>
-        {obj.texto}
-      </span>
-    );
-  };
 
   return (
     <div className="bg-gray-800 px-8 py-6 rounded-xl shadow flex flex-wrap items-center gap-6 mb-10 w-full">
@@ -39,7 +31,7 @@ const CierreInfoBar = ({ cierre, cliente }) => {
       {/* Estado */}
       <div className="flex items-center gap-2">
         <span className="font-bold text-gray-300">Estado:</span>
-        {cierre?.estado ? renderEstado(cierre.estado) : <span className="italic text-gray-400">No iniciado</span>}
+        <EstadoBadge estado={cierre?.estado} size="md" />
       </div>
       {/* Link ficha cliente */}
       {cliente && (

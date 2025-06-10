@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Download, FileBarChart2, CheckCircle2, Loader2 } from "lucide-react";
 import { descargarPlantillaLibroRemuneraciones } from "../../api/nomina";
+import EstadoBadge from "../EstadoBadge";
 
 const LibroRemuneracionesCard = ({
   estado,
@@ -141,38 +142,12 @@ const LibroRemuneracionesCard = ({
 
       <div className="flex items-center gap-2 mb-2">
         <span className="font-semibold">Estado:</span>
-        {isProcesando && (
+        {isProcesando ? (
           <span className="text-blue-400 font-semibold flex items-center gap-1">
             <Loader2 size={16} className="animate-spin" /> Procesando...
           </span>
-        )}
-        {!isProcesando && estado === "clasificado" && (
-          <span className="text-green-400 font-semibold flex items-center gap-1">
-            <CheckCircle2 size={16} /> Clasificado
-          </span>
-        )}
-        {!isProcesando && estado === "clasif_pendiente" && (
-          <span className="text-red-400 font-semibold">Clasificación pendiente</span>
-        )}
-        {!isProcesando && estado === "no_subido" && (
-          <span className="text-red-400 font-semibold">Pendiente</span>
-        )}
-        {!isProcesando && estado === "analizando_hdrs" && (
-          <span className="text-yellow-400 font-semibold">Analizando Headers...</span>
-        )}
-        {!isProcesando && estado === "con_error" && (
-          <span className="text-red-400 font-semibold">Error en procesamiento</span>
-        )}
-        {!isProcesando && estado === "hdrs_analizados" && (
-          <span className="text-green-400 font-semibold">Headers Analizados</span>
-        )}
-        {!isProcesando && estado === "clasif_en_proceso" && (
-          <span className="text-yellow-400 font-semibold">Clasificando...</span>
-        )}
-        {!isProcesando && estado === "procesado" && (
-          <span className="text-green-400 font-semibold flex items-center gap-1">
-            <CheckCircle2 size={16} /> Procesado
-          </span>
+        ) : (
+          <EstadoBadge estado={estado} />
         )}
       </div>
 

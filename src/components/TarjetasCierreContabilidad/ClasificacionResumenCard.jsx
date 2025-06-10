@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { obtenerProgresoClasificacionTodosLosSets } from "../../api/contabilidad";
 import { useNavigate } from "react-router-dom";
+import EstadoBadge from "../EstadoBadge";
 
 const ClasificacionResumenCard = ({
   cierreId,
@@ -80,11 +81,9 @@ const ClasificacionResumenCard = ({
           {/* Estado global */}
           <div className="flex items-center gap-2 mb-2">
             <span className="font-semibold">Estado global:</span>
-            {progreso.sets_progreso.every((s) => s.estado === "Completo") ? (
-              <span className="text-green-400 font-semibold">Completo</span>
-            ) : (
-              <span className="text-yellow-400 font-semibold">Pendiente</span>
-            )}
+            <EstadoBadge 
+              estado={progreso.sets_progreso.every((s) => s.estado === "Completo") ? "completo" : "pendiente"} 
+            />
           </div>
 
           {/* Tabla de sets */}
@@ -109,15 +108,10 @@ const ClasificacionResumenCard = ({
                     </td>
                     <td className="px-2 py-1">{set.total_cuentas}</td>
                     <td className="px-2 py-1">
-                      {set.estado === "Completo" ? (
-                        <span className="text-green-400 font-semibold">
-                          Completo
-                        </span>
-                      ) : (
-                        <span className="text-yellow-400 font-semibold">
-                          Pendiente
-                        </span>
-                      )}
+                      <EstadoBadge 
+                        estado={set.estado === "Completo" ? "completo" : "pendiente"} 
+                        size="xs"
+                      />
                     </td>
                   </tr>
                 ))}

@@ -38,6 +38,16 @@ urlpatterns = router.urls + [
         name='procesar-libro-remuneraciones',
     ),
     path(
+        'movimientos/estado/<int:cierre_id>/',
+        MovimientosMesUploadViewSet.as_view({'get': 'estado'}),
+        name='estado-movimientos-mes',
+    ),
+    path(
+        'movimientos/subir/<int:cierre_id>/',
+        MovimientosMesUploadViewSet.as_view({'post': 'subir'}),
+        name='subir-movimientos-mes',
+    ),
+    path(
         'plantilla-libro-remuneraciones/',
         serve,
         {

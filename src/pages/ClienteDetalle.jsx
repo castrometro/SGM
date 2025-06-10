@@ -10,12 +10,7 @@ import ClienteInfoCard from "../components/InfoCards/ClienteInfoCard";
 import ServiciosContratados from "../components/ServiciosContratados";
 import KpiResumenCliente from "../components/KpiResumenCliente";
 import ClienteActionButtons from "../components/ClienteActionButtons";
-
-const areaColors = {
-  "Contabilidad": "bg-blue-600",
-  "Nomina": "bg-violet-600",
-  // agrega más si tienes más áreas
-};
+import { getAreaColor } from "../constants/areaColors";
 
 const ClienteDetalle = () => {
   const { id } = useParams();
@@ -56,7 +51,7 @@ const ClienteDetalle = () => {
     <div className="text-white space-y-6">
       <div className="flex items-center gap-4 mb-4">
         <h1 className="text-2xl font-bold">Detalle de Cliente</h1>
-        <span className={`px-3 py-1 rounded-full text-white text-sm font-semibold ${areaColors[areaActiva] || "bg-gray-600"}`}>
+        <span className={`px-3 py-1 rounded-full text-white text-sm font-semibold ${getAreaColor(areaActiva)}`}>
           {areaActiva}
         </span>
       </div>

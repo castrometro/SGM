@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { Download } from "lucide-react";
 import { descargarPlantillaMovimientosMes } from "../../api/nomina";
+import EstadoBadge from "../EstadoBadge";
 
 const MovimientosMesCard = ({
   estado,
@@ -29,15 +30,7 @@ const MovimientosMesCard = ({
 
       <div className="flex items-center gap-2 mb-2">
         <span className="font-semibold">Estado:</span>
-        {estado === "procesado" ? (
-          <span className="text-green-400 font-semibold">Procesado</span>
-        ) : estado === "en_proceso" ? (
-          <span className="text-blue-400 font-semibold">Procesando...</span>
-        ) : estado === "con_error" ? (
-          <span className="text-red-400 font-semibold">Error</span>
-        ) : (
-          <span className="text-yellow-400 font-semibold">Pendiente</span>
-        )}
+        <EstadoBadge estado={estado} />
       </div>
 
       <a

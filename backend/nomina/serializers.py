@@ -1,7 +1,8 @@
 from rest_framework import serializers
 from .models import (
     CierreNomina, EmpleadoCierre, ConceptoRemuneracion, RegistroConceptoEmpleado,
-    MovimientoIngreso, MovimientoFiniquito, MovimientoAusentismo,
+    MovimientoAltaBaja, MovimientoAusentismo, MovimientoVacaciones,
+    MovimientoVariacionSueldo, MovimientoVariacionContrato,
     LibroRemuneracionesUpload, MovimientosMesUpload,
     ArchivoAnalistaUpload, ArchivoNovedadesUpload,
     ChecklistItem
@@ -72,19 +73,31 @@ class RegistroConceptoEmpleadoSerializer(serializers.ModelSerializer):
         model = RegistroConceptoEmpleado
         fields = '__all__'
 
-class MovimientoIngresoSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = MovimientoIngreso
-        fields = '__all__'
+# Nuevos serializers para los modelos de Movimientos_Mes
 
-class MovimientoFiniquitoSerializer(serializers.ModelSerializer):
+class MovimientoAltaBajaSerializer(serializers.ModelSerializer):
     class Meta:
-        model = MovimientoFiniquito
+        model = MovimientoAltaBaja
         fields = '__all__'
 
 class MovimientoAusentismoSerializer(serializers.ModelSerializer):
     class Meta:
         model = MovimientoAusentismo
+        fields = '__all__'
+
+class MovimientoVacacionesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MovimientoVacaciones
+        fields = '__all__'
+
+class MovimientoVariacionSueldoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MovimientoVariacionSueldo
+        fields = '__all__'
+
+class MovimientoVariacionContratoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MovimientoVariacionContrato
         fields = '__all__'
 
 class LibroRemuneracionesUploadSerializer(serializers.ModelSerializer):

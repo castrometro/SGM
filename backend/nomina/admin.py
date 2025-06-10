@@ -1,9 +1,10 @@
 from django.contrib import admin
 from .models import (
     CierreNomina, EmpleadoCierre, ConceptoRemuneracion, RegistroConceptoEmpleado,
-    MovimientoIngreso, MovimientoFiniquito, MovimientoAusentismo,
-    LibroRemuneracionesUpload, MovimientosMesUpload, ArchivoAnalistaUpload, ArchivoNovedadesUpload,
-    ChecklistItem
+    MovimientoAltaBaja, MovimientoAusentismo, MovimientoVacaciones, 
+    MovimientoVariacionSueldo, MovimientoVariacionContrato,
+    LibroRemuneracionesUpload, MovimientosMesUpload, ArchivoAnalistaUpload, 
+    ArchivoNovedadesUpload, ChecklistItem
 )
 
 
@@ -41,25 +42,46 @@ class RegistroConceptoEmpleadoAdmin(admin.ModelAdmin):
     search_fields = ('empleado__rut', 'nombre_concepto_original')
 
 
-@admin.register(MovimientoIngreso)
-class MovimientoIngresoAdmin(admin.ModelAdmin):
-    list_display = ('rut', 'nombre', 'fecha_ingreso', 'cierre', 'empleado')
-    search_fields = ('rut', 'nombre')
-    list_filter = ('cierre__cliente', 'cierre__periodo')
+# Nuevos admins para los modelos de Movimientos_Mes
 
-
-@admin.register(MovimientoFiniquito)
-class MovimientoFiniquitoAdmin(admin.ModelAdmin):
-    list_display = ('rut', 'nombre', 'fecha_finiquito', 'motivo', 'cierre', 'empleado')
-    search_fields = ('rut', 'nombre', 'motivo')
-    list_filter = ('cierre__cliente', 'cierre__periodo')
+@admin.register(MovimientoAltaBaja)
+class MovimientoAltaBajaAdmin(admin.ModelAdmin):
+    list_display = ('rut', 'nombres_apellidos', 'empresa_nombre', 'alta_o_baja', 'fecha_ingreso', 'fecha_retiro', 'cierre')
+    search_fields = ('rut', 'nombres_apellidos', 'empresa_nombre')
+    list_filter = ('cierre__cliente', 'cierre__periodo', 'alta_o_baja', 'empresa_nombre')
+    readonly_fields = ('empleado',)
 
 
 @admin.register(MovimientoAusentismo)
 class MovimientoAusentismoAdmin(admin.ModelAdmin):
-    list_display = ('rut', 'nombre', 'tipo_ausentismo', 'fecha_inicio', 'fecha_fin', 'dias', 'cierre', 'empleado')
-    search_fields = ('rut', 'nombre', 'tipo_ausentismo')
-    list_filter = ('cierre__cliente', 'tipo_ausentismo')
+    list_display = ('rut', 'nombres_apellidos', 'tipo', 'fecha_inicio_ausencia', 'fecha_fin_ausencia', 'dias', 'cierre')
+    search_fields = ('rut', 'nombres_apellidos', 'tipo', 'motivo')
+    list_filter = ('cierre__cliente', 'cierre__periodo', 'tipo', 'empresa_nombre')
+    readonly_fields = ('empleado',)
+
+
+@admin.register(MovimientoVacaciones)
+class MovimientoVacacionesAdmin(admin.ModelAdmin):
+    list_display = ('rut', 'nombres_apellidos', 'fecha_inicio', 'fecha_fin_vacaciones', 'cantidad_dias', 'cierre')
+    search_fields = ('rut', 'nombres_apellidos', 'empresa_nombre')
+    list_filter = ('cierre__cliente', 'cierre__periodo', 'empresa_nombre')
+    readonly_fields = ('empleado',)
+
+
+@admin.register(MovimientoVariacionSueldo)
+class MovimientoVariacionSueldoAdmin(admin.ModelAdmin):
+    list_display = ('rut', 'nombres_apellidos', 'sueldo_base_anterior', 'sueldo_base_actual', 'porcentaje_reajuste', 'cierre')
+    search_fields = ('rut', 'nombres_apellidos', 'empresa_nombre')
+    list_filter = ('cierre__cliente', 'cierre__periodo', 'empresa_nombre')
+    readonly_fields = ('empleado', 'variacion_pesos')
+
+
+@admin.register(MovimientoVariacionContrato)
+class MovimientoVariacionContratoAdmin(admin.ModelAdmin):
+    list_display = ('rut', 'nombres_apellidos', 'tipo_contrato_anterior', 'tipo_contrato_actual', 'cierre')
+    search_fields = ('rut', 'nombres_apellidos', 'empresa_nombre')
+    list_filter = ('cierre__cliente', 'cierre__periodo', 'tipo_contrato_anterior', 'tipo_contrato_actual', 'empresa_nombre')
+    readonly_fields = ('empleado',)
 
 
 @admin.register(LibroRemuneracionesUpload)

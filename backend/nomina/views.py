@@ -12,7 +12,6 @@ from .utils.LibroRemuneraciones import clasificar_headers_libro_remuneraciones
 
 User = get_user_model()
 
-
 from .models import (
     CierreNomina,
     LibroRemuneracionesUpload,
@@ -21,7 +20,13 @@ from .models import (
     ArchivoNovedadesUpload,
     ChecklistItem,
     ConceptoRemuneracion,
+    MovimientoAltaBaja,
+    MovimientoAusentismo,
+    MovimientoVacaciones,
+    MovimientoVariacionSueldo,
+    MovimientoVariacionContrato,
 )
+
 from .serializers import (
     CierreNominaSerializer, 
     LibroRemuneracionesUploadSerializer, 
@@ -32,9 +37,12 @@ from .serializers import (
     ChecklistItemUpdateSerializer, 
     ChecklistItemCreateSerializer,
     ConceptoRemuneracionSerializer,
+    MovimientoAltaBajaSerializer,
+    MovimientoAusentismoSerializer,
+    MovimientoVacacionesSerializer,
+    MovimientoVariacionSueldoSerializer,
+    MovimientoVariacionContratoSerializer,
 )
-
-
 
 from .tasks import (
     analizar_headers_libro_remuneraciones,
@@ -44,8 +52,6 @@ from .tasks import (
 )
 
 logger = logging.getLogger(__name__)
-
-
 
 class CierreNominaViewSet(viewsets.ModelViewSet):
     queryset = CierreNomina.objects.all()
@@ -92,11 +98,11 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
                 "ultimo_cierre": None,
                 "estado_cierre_actual": None,
             })
-        
 
 class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
     queryset = LibroRemuneracionesUpload.objects.all()
     serializer_class = LibroRemuneracionesUploadSerializer
+    
     def perform_create(self, serializer):
         instance = serializer.save()
         chain(
@@ -104,14 +110,12 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
             clasificar_headers_libro_remuneraciones_task.s(),
         )()
 
-
-
     @action(detail=False, methods=['get'], url_path='estado/(?P<cierre_id>[^/.]+)')
     def estado(self, request, cierre_id=None):
         libro = self.get_queryset().filter(cierre_id=cierre_id).order_by('-fecha_subida').first()
         if libro:
             return Response({
-                "id": libro.id,  # ← AGREGAR ESTA LÍNEA
+                "id": libro.id,
                 "estado": libro.estado,
                 "archivo_nombre": libro.archivo.name.split("/")[-1],
                 "archivo_url": request.build_absolute_uri(libro.archivo.url),
@@ -122,7 +126,7 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
             })
         else:
             return Response({
-                "id": None,  # ← AGREGAR ESTA LÍNEA TAMBIÉN
+                "id": None,
                 "estado": "no_subido",
                 "archivo_nombre": "",
                 "archivo_url": "",
@@ -140,6 +144,65 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
         result = procesar_libro_remuneraciones.delay(libro.id)
         return Response({'task_id': result.id}, status=status.HTTP_202_ACCEPTED)
 
+# Nuevos ViewSets para Movimientos_Mes
+
+class MovimientoAltaBajaViewSet(viewsets.ModelViewSet):
+    queryset = MovimientoAltaBaja.objects.all()
+    serializer_class = MovimientoAltaBajaSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cierre_id = self.request.query_params.get('cierre')
+        if cierre_id:
+            queryset = queryset.filter(cierre_id=cierre_id)
+        return queryset
+
+class MovimientoAusentismoViewSet(viewsets.ModelViewSet):
+    queryset = MovimientoAusentismo.objects.all()
+    serializer_class = MovimientoAusentismoSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cierre_id = self.request.query_params.get('cierre')
+        if cierre_id:
+            queryset = queryset.filter(cierre_id=cierre_id)
+        return queryset
+
+class MovimientoVacacionesViewSet(viewsets.ModelViewSet):
+    queryset = MovimientoVacaciones.objects.all()
+    serializer_class = MovimientoVacacionesSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cierre_id = self.request.query_params.get('cierre')
+        if cierre_id:
+            queryset = queryset.filter(cierre_id=cierre_id)
+        return queryset
+
+class MovimientoVariacionSueldoViewSet(viewsets.ModelViewSet):
+    queryset = MovimientoVariacionSueldo.objects.all()
+    serializer_class = MovimientoVariacionSueldoSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cierre_id = self.request.query_params.get('cierre')
+        if cierre_id:
+            queryset = queryset.filter(cierre_id=cierre_id)
+        return queryset
+
+class MovimientoVariacionContratoViewSet(viewsets.ModelViewSet):
+    queryset = MovimientoVariacionContrato.objects.all()
+    serializer_class = MovimientoVariacionContratoSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cierre_id = self.request.query_params.get('cierre')
+        if cierre_id:
+            queryset = queryset.filter(cierre_id=cierre_id)
+        return queryset
+
+# APIs de funciones
+
 @api_view(['GET'])
 def conceptos_remuneracion_por_cliente(request):
     cliente_id = request.query_params.get('cliente_id')
@@ -149,9 +212,6 @@ def conceptos_remuneracion_por_cliente(request):
     conceptos = ConceptoRemuneracion.objects.filter(cliente_id=cliente_id, vigente=True)
     serializer = ConceptoRemuneracionSerializer(conceptos, many=True)
     return Response(serializer.data)
-
-
-
 
 class ConceptoRemuneracionBatchView(APIView):
     def post(self, request):
@@ -216,7 +276,6 @@ class ConceptoRemuneracionBatchView(APIView):
 
         return Response({"status": "ok", "actualizados": len(conceptos)}, status=status.HTTP_200_OK)
 
-
 @api_view(['GET'])
 def obtener_hashtags_disponibles(request, cliente_id):
     conceptos = ConceptoRemuneracion.objects.filter(cliente_id=cliente_id)
@@ -224,7 +283,6 @@ def obtener_hashtags_disponibles(request, cliente_id):
     for c in conceptos:
         hashtags.update(c.hashtags or [])
     return Response(sorted(list(hashtags)))
-
 
 @api_view(['DELETE'])
 def eliminar_concepto_remuneracion(request, cliente_id, nombre_concepto):
@@ -242,6 +300,8 @@ def eliminar_concepto_remuneracion(request, cliente_id, nombre_concepto):
     concepto.vigente = False
     concepto.save()
     return Response({"status": "ok"})
+
+# ViewSets existentes
 
 class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
     queryset = MovimientosMesUpload.objects.all()

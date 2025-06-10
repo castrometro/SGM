@@ -121,33 +121,134 @@ class RegistroConceptoEmpleado(models.Model):
             return False
 
 
+# Modelos para Movimientos_Mes completos
 
-class MovimientoIngreso(models.Model):
+class MovimientoAltaBaja(models.Model):
+    """Modelo para Altas y Bajas (b.1)"""
     cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE)
     empleado = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE, null=True, blank=True)
+    nombres_apellidos = models.CharField(max_length=200)
     rut = models.CharField(max_length=12)
-    nombre = models.CharField(max_length=120)
+    empresa_nombre = models.CharField(max_length=120)
+    cargo = models.CharField(max_length=120)
+    centro_de_costo = models.CharField(max_length=120)
+    sucursal = models.CharField(max_length=120)
     fecha_ingreso = models.DateField()
+    fecha_retiro = models.DateField(null=True, blank=True)
+    tipo_contrato = models.CharField(max_length=80)
+    dias_trabajados = models.IntegerField()
+    sueldo_base = models.DecimalField(max_digits=12, decimal_places=2)
+    alta_o_baja = models.CharField(max_length=20)  # "ALTA" o "BAJA"
+    motivo = models.CharField(max_length=200, blank=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['cierre', 'rut']),
+        ]
 
-class MovimientoFiniquito(models.Model):
-    cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE)
-    empleado = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE, null=True, blank=True)
-    rut = models.CharField(max_length=12)
-    nombre = models.CharField(max_length=120)
-    fecha_finiquito = models.DateField()
-    motivo = models.CharField(max_length=120, blank=True, null=True)
+    def __str__(self):
+        return f"{self.rut} - {self.nombres_apellidos} - {self.alta_o_baja}"
 
 
 class MovimientoAusentismo(models.Model):
+    """Modelo completo para Ausentismos (b.2)"""
     cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE)
     empleado = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE, null=True, blank=True)
+    nombres_apellidos = models.CharField(max_length=200)
     rut = models.CharField(max_length=12)
-    nombre = models.CharField(max_length=120)
-    tipo_ausentismo = models.CharField(max_length=80)
-    fecha_inicio = models.DateField()
-    fecha_fin = models.DateField()
+    empresa_nombre = models.CharField(max_length=120)
+    cargo = models.CharField(max_length=120)
+    centro_de_costo = models.CharField(max_length=120)
+    sucursal = models.CharField(max_length=120)
+    fecha_ingreso = models.DateField()
+    fecha_inicio_ausencia = models.DateField()
+    fecha_fin_ausencia = models.DateField()
     dias = models.IntegerField()
+    tipo = models.CharField(max_length=80)
+    motivo = models.CharField(max_length=200, blank=True)
+    observaciones = models.TextField(blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['cierre', 'rut']),
+        ]
+
+    def __str__(self):
+        return f"{self.rut} - {self.nombres_apellidos} - {self.tipo}"
+
+
+class MovimientoVacaciones(models.Model):
+    """Modelo para Vacaciones (b.3)"""
+    cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE)
+    empleado = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE, null=True, blank=True)
+    nombres_apellidos = models.CharField(max_length=200)
+    rut = models.CharField(max_length=12)
+    empresa_nombre = models.CharField(max_length=120)
+    cargo = models.CharField(max_length=120)
+    centro_de_costo = models.CharField(max_length=120)
+    sucursal = models.CharField(max_length=120)
+    fecha_ingreso = models.DateField()
+    fecha_inicio = models.DateField()
+    fecha_fin_vacaciones = models.DateField()
+    fecha_retorno = models.DateField()
+    cantidad_dias = models.IntegerField()
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['cierre', 'rut']),
+        ]
+
+    def __str__(self):
+        return f"{self.rut} - {self.nombres_apellidos} - Vacaciones"
+
+
+class MovimientoVariacionSueldo(models.Model):
+    """Modelo para Variaciones Sueldo Base (b.4)"""
+    cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE)
+    empleado = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE, null=True, blank=True)
+    nombres_apellidos = models.CharField(max_length=200)
+    rut = models.CharField(max_length=12)
+    empresa_nombre = models.CharField(max_length=120)
+    cargo = models.CharField(max_length=120)
+    centro_de_costo = models.CharField(max_length=120)
+    sucursal = models.CharField(max_length=120)
+    fecha_ingreso = models.DateField()
+    tipo_contrato = models.CharField(max_length=80)
+    sueldo_base_anterior = models.DecimalField(max_digits=12, decimal_places=2)
+    sueldo_base_actual = models.DecimalField(max_digits=12, decimal_places=2)
+    porcentaje_reajuste = models.DecimalField(max_digits=5, decimal_places=2)
+    variacion_pesos = models.DecimalField(max_digits=12, decimal_places=2)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['cierre', 'rut']),
+        ]
+
+    def __str__(self):
+        return f"{self.rut} - {self.nombres_apellidos} - Variación Sueldo"
+
+
+class MovimientoVariacionContrato(models.Model):
+    """Modelo para Variaciones Tipo Contrato (b.5)"""
+    cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE)
+    empleado = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE, null=True, blank=True)
+    nombres_apellidos = models.CharField(max_length=200)
+    rut = models.CharField(max_length=12)
+    empresa_nombre = models.CharField(max_length=120)
+    cargo = models.CharField(max_length=120)
+    centro_de_costo = models.CharField(max_length=120)
+    sucursal = models.CharField(max_length=120)
+    fecha_ingreso = models.DateField()
+    tipo_contrato_anterior = models.CharField(max_length=80)
+    tipo_contrato_actual = models.CharField(max_length=80)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['cierre', 'rut']),
+        ]
+
+    def __str__(self):
+        return f"{self.rut} - {self.nombres_apellidos} - Cambio Contrato"
 
 
 class LibroRemuneracionesUpload(models.Model):

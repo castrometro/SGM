@@ -156,6 +156,26 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
     }
   };
 
+  const handleActualizarEstadoMovimientos = async () => {
+    try {
+      console.log('📡 Consultando estado actual de movimientos...');
+      const estadoActual = await obtenerEstadoMovimientosMes(cierre.id);
+      console.log('📊 Estado movimientos recibido del servidor:', estadoActual);
+      console.log('📊 Estado movimientos anterior:', movimientos?.estado);
+      console.log('📊 Estado movimientos nuevo:', estadoActual?.estado);
+      
+      setMovimientos(estadoActual);
+      
+      // Log adicional para verificar el cambio
+      if (estadoActual?.estado !== movimientos?.estado) {
+        console.log(`🔄 Estado movimientos cambió de "${movimientos?.estado}" a "${estadoActual?.estado}"`);
+      }
+      
+    } catch (error) {
+      console.error('❌ Error actualizando estado movimientos:', error);
+    }
+  };
+
   const handleActualizarEstado = async () => {
     try {
       console.log('📡 Consultando estado actual del libro...');
@@ -239,6 +259,7 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
         archivoNombre={movimientos?.archivo_nombre}
         subiendo={subiendoMov}
         onSubirArchivo={handleSubirMovimientos}
+        onActualizarEstado={handleActualizarEstadoMovimientos}
         disabled={false}
       />
       <ModalClasificacionHeaders

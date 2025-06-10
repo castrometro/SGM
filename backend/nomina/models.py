@@ -271,12 +271,14 @@ class MovimientosMesUpload(models.Model):
     cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE, related_name='movimientos_mes')
     archivo = models.FileField(upload_to=movimientos_mes_upload_to)
     fecha_subida = models.DateTimeField(auto_now_add=True)
-    estado = models.CharField(max_length=20, choices=[
+    estado = models.CharField(max_length=30, choices=[
         ('pendiente', 'Pendiente'),
         ('en_proceso', 'En Proceso'),
         ('procesado', 'Procesado'),
-        ('con_error', 'Con Error')
+        ('con_error', 'Con Error'),
+        ('con_errores_parciales', 'Con Errores Parciales')
     ], default='pendiente')
+    resultados_procesamiento = models.JSONField(default=dict, blank=True)
 
 
 class ArchivoAnalistaUpload(models.Model):

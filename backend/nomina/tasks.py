@@ -5,6 +5,7 @@ from .utils.LibroRemuneraciones import (
     actualizar_empleados_desde_libro_util,
     guardar_registros_nomina_util,
 )
+from .utils.MovimientoMes import procesar_archivo_movimientos_mes_util
 from celery import shared_task, chain
 from .models import (
     LibroRemuneracionesUpload,
@@ -141,7 +142,7 @@ def guardar_registros_nomina(result):
 
 @shared_task
 def procesar_movimientos_mes(movimiento_id):
-    """Task para procesar archivo de movimientos del mes - solo maneja try/except"""
+    """Task para procesar archivo de movimientos del mes"""
     logger.info(f"Procesando movimientos del mes id={movimiento_id}")
     
     try:
@@ -149,22 +150,38 @@ def procesar_movimientos_mes(movimiento_id):
         movimiento.estado = 'en_proceso'
         movimiento.save()
         
-        # Aquí iría la lógica de procesamiento del archivo Excel
-        # Por ahora, simulamos un procesamiento exitoso
-        logger.info(f"Archivo de movimientos procesado: {movimiento.archivo.path}")
+        # Procesar el archivo usando la utilidad
+        resultados = procesar_archivo_movimientos_mes_util(movimiento)
         
-        # TODO: Implementar la lógica real de procesamiento:
-        # 1. Leer archivo Excel
-        # 2. Validar estructura
-        # 3. Extraer datos de movimientos (alta/baja, vacaciones, etc.)
-        # 4. Crear registros en los modelos correspondientes
-        # 5. Validar integridad de datos
+        # Verificar si hubo errores
+        if resultados.get('errores'):
+            # Si hay errores, marcar como error parcial pero guardar los resultados
+            movimiento.estado = 'con_errores_parciales'
+            logger.warning(f"Movimientos procesados con errores parciales id={movimiento_id}: {resultados['errores']}")
+        else:
+            movimiento.estado = 'procesado'
+            logger.info(f"Movimientos del mes procesados exitosamente id={movimiento_id}")
         
-        movimiento.estado = 'procesado'
+        # Guardar información del procesamiento
+        movimiento.resultados_procesamiento = resultados
         movimiento.save()
         
-        logger.info(f"Movimientos del mes procesados exitosamente id={movimiento_id}")
-        return {"movimiento_id": movimiento_id, "estado": "procesado"}
+        # Preparar respuesta con resumen
+        total_procesados = sum([v for k, v in resultados.items() if k != 'errores' and isinstance(v, int)])
+        
+        return {
+            "movimiento_id": movimiento_id, 
+            "estado": movimiento.estado,
+            "total_procesados": total_procesados,
+            "detalle": {
+                "altas_bajas": resultados.get('altas_bajas', 0),
+                "ausentismos": resultados.get('ausentismos', 0),
+                "vacaciones": resultados.get('vacaciones', 0),
+                "variaciones_sueldo": resultados.get('variaciones_sueldo', 0),
+                "variaciones_contrato": resultados.get('variaciones_contrato', 0),
+            },
+            "errores": resultados.get('errores', [])
+        }
         
     except MovimientosMesUpload.DoesNotExist:
         logger.error(f"MovimientosMesUpload con id={movimiento_id} no encontrado")

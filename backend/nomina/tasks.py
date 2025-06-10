@@ -6,10 +6,12 @@ from .utils.LibroRemuneraciones import (
     guardar_registros_nomina_util,
 )
 from .utils.MovimientoMes import procesar_archivo_movimientos_mes_util
+from .utils.ArchivosAnalista import procesar_archivo_analista_util
 from celery import shared_task, chain
 from .models import (
     LibroRemuneracionesUpload,
     MovimientosMesUpload,
+    ArchivoAnalistaUpload,
 )
 import logging
 import pandas as pd
@@ -142,57 +144,72 @@ def guardar_registros_nomina(result):
 
 @shared_task
 def procesar_movimientos_mes(movimiento_id):
-    """Task para procesar archivo de movimientos del mes"""
-    logger.info(f"Procesando movimientos del mes id={movimiento_id}")
+    """Procesa un archivo de movimientos del mes"""
+    logger.info(f"Procesando archivo movimientos mes id={movimiento_id}")
     
     try:
         movimiento = MovimientosMesUpload.objects.get(id=movimiento_id)
         movimiento.estado = 'en_proceso'
         movimiento.save()
         
-        # Procesar el archivo usando la utilidad
         resultados = procesar_archivo_movimientos_mes_util(movimiento)
         
-        # Verificar si hubo errores
+        # Guardar resultados
+        movimiento.resultados_procesamiento = resultados
+        
+        # Determinar estado final
         if resultados.get('errores'):
-            # Si hay errores, marcar como error parcial pero guardar los resultados
-            movimiento.estado = 'con_errores_parciales'
-            logger.warning(f"Movimientos procesados con errores parciales id={movimiento_id}: {resultados['errores']}")
+            if any(v > 0 for k, v in resultados.items() if k != 'errores' and isinstance(v, int)):
+                movimiento.estado = 'con_errores_parciales'
+            else:
+                movimiento.estado = 'con_error'
         else:
             movimiento.estado = 'procesado'
-            logger.info(f"Movimientos del mes procesados exitosamente id={movimiento_id}")
         
-        # Guardar información del procesamiento
-        movimiento.resultados_procesamiento = resultados
         movimiento.save()
+        logger.info(f"Procesamiento exitoso movimientos mes id={movimiento_id}")
+        return resultados
         
-        # Preparar respuesta con resumen
-        total_procesados = sum([v for k, v in resultados.items() if k != 'errores' and isinstance(v, int)])
-        
-        return {
-            "movimiento_id": movimiento_id, 
-            "estado": movimiento.estado,
-            "total_procesados": total_procesados,
-            "detalle": {
-                "altas_bajas": resultados.get('altas_bajas', 0),
-                "ausentismos": resultados.get('ausentismos', 0),
-                "vacaciones": resultados.get('vacaciones', 0),
-                "variaciones_sueldo": resultados.get('variaciones_sueldo', 0),
-                "variaciones_contrato": resultados.get('variaciones_contrato', 0),
-            },
-            "errores": resultados.get('errores', [])
-        }
-        
-    except MovimientosMesUpload.DoesNotExist:
-        logger.error(f"MovimientosMesUpload con id={movimiento_id} no encontrado")
-        raise
     except Exception as e:
-        # En caso de error, marcar como error
-        try:
-            movimiento = MovimientosMesUpload.objects.get(id=movimiento_id)
-            movimiento.estado = 'con_error'
-            movimiento.save()
-        except:
-            pass
-        logger.error(f"Error procesando movimientos del mes id={movimiento_id}: {e}")
+        movimiento = MovimientosMesUpload.objects.get(id=movimiento_id)
+        movimiento.estado = 'con_error'
+        movimiento.resultados_procesamiento = {'errores': [str(e)]}
+        movimiento.save()
+        logger.error(f"Error procesando movimientos mes id={movimiento_id}: {e}")
+        raise
+
+
+# Nuevas tasks para archivos del analista
+
+@shared_task
+def procesar_archivo_analista(archivo_id):
+    """Procesa un archivo subido por el analista (finiquitos, incidencias o ingresos)"""
+    logger.info(f"Procesando archivo analista id={archivo_id}")
+    
+    try:
+        archivo = ArchivoAnalistaUpload.objects.get(id=archivo_id)
+        archivo.estado = 'en_proceso'
+        archivo.save()
+        
+        resultados = procesar_archivo_analista_util(archivo)
+        
+        # Determinar estado final
+        if resultados.get('errores'):
+            if resultados.get('procesados', 0) > 0:
+                archivo.estado = 'procesado'  # Parcialmente exitoso
+            else:
+                archivo.estado = 'con_error'  # Totalmente fallido
+        else:
+            archivo.estado = 'procesado'
+        
+        archivo.save()
+        
+        logger.info(f"Procesamiento exitoso archivo analista id={archivo_id}: {resultados['procesados']} registros procesados")
+        return resultados
+        
+    except Exception as e:
+        archivo = ArchivoAnalistaUpload.objects.get(id=archivo_id)
+        archivo.estado = 'con_error'
+        archivo.save()
+        logger.error(f"Error procesando archivo analista id={archivo_id}: {e}")
         raise

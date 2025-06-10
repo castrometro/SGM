@@ -5,7 +5,7 @@ from .models import (
     MovimientoVariacionSueldo, MovimientoVariacionContrato,
     LibroRemuneracionesUpload, MovimientosMesUpload,
     ArchivoAnalistaUpload, ArchivoNovedadesUpload,
-    ChecklistItem
+    ChecklistItem, AnalistaFiniquito, AnalistaIncidencia, AnalistaIngreso
 )
 
 class ChecklistItemSerializer(serializers.ModelSerializer):
@@ -116,6 +116,51 @@ class ArchivoAnalistaUploadSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class ArchivoNovedadesUploadSerializer(serializers.ModelSerializer):
+    analista_nombre = serializers.CharField(source='analista.username', read_only=True)
+    
     class Meta:
         model = ArchivoNovedadesUpload
-        fields = '__all__'
+        fields = ['id', 'archivo', 'fecha_subida', 'estado', 'analista', 'analista_nombre']
+        read_only_fields = ['fecha_subida', 'estado', 'analista']
+
+
+# Nuevos serializers para los modelos del Analista
+
+class AnalistaFiniquitoSerializer(serializers.ModelSerializer):
+    empleado_nombre = serializers.CharField(source='empleado.nombre', read_only=True)
+    archivo_origen_id = serializers.IntegerField(source='archivo_origen.id', read_only=True)
+    
+    class Meta:
+        model = AnalistaFiniquito
+        fields = [
+            'id', 'rut', 'nombre', 'fecha_retiro', 'motivo',
+            'cierre', 'empleado', 'empleado_nombre', 'archivo_origen', 'archivo_origen_id'
+        ]
+        read_only_fields = ['cierre', 'empleado', 'archivo_origen']
+
+
+class AnalistaIncidenciaSerializer(serializers.ModelSerializer):
+    empleado_nombre = serializers.CharField(source='empleado.nombre', read_only=True)
+    archivo_origen_id = serializers.IntegerField(source='archivo_origen.id', read_only=True)
+    
+    class Meta:
+        model = AnalistaIncidencia
+        fields = [
+            'id', 'rut', 'nombre', 'fecha_inicio_ausencia', 'fecha_fin_ausencia', 
+            'dias', 'tipo_ausentismo', 'cierre', 'empleado', 'empleado_nombre', 
+            'archivo_origen', 'archivo_origen_id'
+        ]
+        read_only_fields = ['cierre', 'empleado', 'archivo_origen']
+
+
+class AnalistaIngresoSerializer(serializers.ModelSerializer):
+    empleado_nombre = serializers.CharField(source='empleado.nombre', read_only=True)
+    archivo_origen_id = serializers.IntegerField(source='archivo_origen.id', read_only=True)
+    
+    class Meta:
+        model = AnalistaIngreso
+        fields = [
+            'id', 'rut', 'nombre', 'fecha_ingreso', 'cierre', 
+            'empleado', 'empleado_nombre', 'archivo_origen', 'archivo_origen_id'
+        ]
+        read_only_fields = ['cierre', 'empleado', 'archivo_origen']

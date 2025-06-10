@@ -113,10 +113,38 @@ export const descargarPlantillaMovimientosMes = () => {
   return `${api.defaults.baseURL}/nomina/plantilla-movimientos-mes/`;
 };
 
+// Plantillas para archivos del analista
+export const descargarPlantillaFiniquitos = () => {
+  return `${api.defaults.baseURL}/nomina/plantilla-finiquitos/`;
+};
 
+export const descargarPlantillaIncidencias = () => {
+  return `${api.defaults.baseURL}/nomina/plantilla-incidencias/`;
+};
 
+export const descargarPlantillaIngresos = () => {
+  return `${api.defaults.baseURL}/nomina/plantilla-ingresos/`;
+};
 
+// Funciones para archivos del analista
+export const subirArchivoAnalista = async (cierreId, tipoArchivo, formData) => {
+  const response = await api.post(`/nomina/archivos-analista/subir/${cierreId}/${tipoArchivo}/`, formData, {
+    headers: {
+      "Content-Type": "multipart/form-data",
+    },
+  });
+  return response.data;
+};
 
+export const obtenerEstadoArchivoAnalista = async (cierreId, tipoArchivo) => {
+  const response = await api.get(`/nomina/archivos-analista/?cierre=${cierreId}&tipo_archivo=${tipoArchivo}`);
+  return response.data;
+};
+
+export const reprocesarArchivoAnalista = async (archivoId) => {
+  const response = await api.post(`/nomina/archivos-analista/${archivoId}/reprocesar/`);
+  return response.data;
+};
 //esto se cacheará en redis
 export const obtenerClasificacionesCliente = async (clienteId) => {
   const response = await api.get(`/nomina/conceptos-remuneracion/?cliente_id=${clienteId}`);

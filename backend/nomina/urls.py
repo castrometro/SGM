@@ -10,9 +10,16 @@ from .views import (
     obtener_hashtags_disponibles,
     ConceptoRemuneracionBatchView,
     eliminar_concepto_remuneracion,
-    # nuevos si ya los creaste
-    # EmpleadoCierreViewSet,
-    # RegistroConceptoEmpleadoViewSet,
+    # ViewSets para modelos del Analista
+    AnalistaFiniquitoViewSet,
+    AnalistaIncidenciaViewSet,
+    AnalistaIngresoViewSet,
+    # ViewSets para Movimientos del Mes
+    MovimientoAltaBajaViewSet,
+    MovimientoAusentismoViewSet,
+    MovimientoVacacionesViewSet,
+    MovimientoVariacionSueldoViewSet,
+    MovimientoVariacionContratoViewSet,
 )
 
 from django.urls import path
@@ -27,9 +34,17 @@ router.register(r'archivos-analista', ArchivoAnalistaUploadViewSet)
 router.register(r'archivos-novedades', ArchivoNovedadesUploadViewSet)
 router.register(r'checklist-items', ChecklistItemViewSet)
 
-# si ya creaste los viewsets de estos modelos, puedes habilitar
-# router.register(r'empleados-cierre', EmpleadoCierreViewSet)
-# router.register(r'registros-concepto', RegistroConceptoEmpleadoViewSet)
+# ViewSets para modelos del Analista
+router.register(r'analista-finiquitos', AnalistaFiniquitoViewSet)
+router.register(r'analista-incidencias', AnalistaIncidenciaViewSet)
+router.register(r'analista-ingresos', AnalistaIngresoViewSet)
+
+# ViewSets para Movimientos del Mes
+router.register(r'movimientos-altas-bajas', MovimientoAltaBajaViewSet)
+router.register(r'movimientos-ausentismos', MovimientoAusentismoViewSet)
+router.register(r'movimientos-vacaciones', MovimientoVacacionesViewSet)
+router.register(r'movimientos-variacion-sueldo', MovimientoVariacionSueldoViewSet)
+router.register(r'movimientos-variacion-contrato', MovimientoVariacionContratoViewSet)
 
 urlpatterns = router.urls + [
     path(
@@ -46,6 +61,17 @@ urlpatterns = router.urls + [
         'movimientos/subir/<int:cierre_id>/',
         MovimientosMesUploadViewSet.as_view({'post': 'subir'}),
         name='subir-movimientos-mes',
+    ),
+    # URLs para archivos del analista
+    path(
+        'archivos-analista/subir/<int:cierre_id>/<str:tipo_archivo>/',
+        ArchivoAnalistaUploadViewSet.as_view({'post': 'subir'}),
+        name='subir-archivo-analista',
+    ),
+    path(
+        'archivos-analista/<int:pk>/reprocesar/',
+        ArchivoAnalistaUploadViewSet.as_view({'post': 'reprocesar'}),
+        name='reprocesar-archivo-analista',
     ),
     path(
         'plantilla-libro-remuneraciones/',
@@ -64,6 +90,34 @@ urlpatterns = router.urls + [
             'path': 'plantilla_movimientos_mes.xlsx'
         },
         name='descargar_plantilla_movimientos_mes'
+    ),
+    # Plantillas para archivos del analista
+    path(
+        'plantilla-finiquitos/',
+        serve,
+        {
+            'document_root': settings.BASE_DIR / 'static/plantillas/nomina',
+            'path': 'plantilla_finiquitos.xlsx'
+        },
+        name='descargar_plantilla_finiquitos'
+    ),
+    path(
+        'plantilla-incidencias/',
+        serve,
+        {
+            'document_root': settings.BASE_DIR / 'static/plantillas/nomina',
+            'path': 'plantilla_incidencias.xlsx'
+        },
+        name='descargar_plantilla_incidencias'
+    ),
+    path(
+        'plantilla-ingresos/',
+        serve,
+        {
+            'document_root': settings.BASE_DIR / 'static/plantillas/nomina',
+            'path': 'plantilla_ingresos.xlsx'
+        },
+        name='descargar_plantilla_ingresos'
     ),
     path('conceptos-remuneracion/', conceptos_remuneracion_por_cliente, name='conceptos_remuneracion_por_cliente'),
     path('clientes/<int:cliente_id>/hashtags/', obtener_hashtags_disponibles),

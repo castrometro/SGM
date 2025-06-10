@@ -4,7 +4,8 @@ from .models import (
     MovimientoAltaBaja, MovimientoAusentismo, MovimientoVacaciones, 
     MovimientoVariacionSueldo, MovimientoVariacionContrato,
     LibroRemuneracionesUpload, MovimientosMesUpload, ArchivoAnalistaUpload, 
-    ArchivoNovedadesUpload, ChecklistItem
+    ArchivoNovedadesUpload, ChecklistItem,
+    AnalistaFiniquito, AnalistaIncidencia, AnalistaIngreso
 )
 
 
@@ -169,3 +170,32 @@ class ChecklistItemAdmin(admin.ModelAdmin):
     list_display = ('cierre', 'descripcion', 'estado', 'fecha_creacion', 'fecha_modificacion')
     list_filter = ('estado', 'fecha_creacion')
     search_fields = ('descripcion', 'comentario')
+
+
+# Nuevos admins para los modelos del Analista
+
+@admin.register(AnalistaFiniquito)
+class AnalistaFiniquitoAdmin(admin.ModelAdmin):
+    list_display = ('rut', 'nombre', 'fecha_retiro', 'motivo', 'cierre', 'archivo_origen')
+    search_fields = ('rut', 'nombre', 'motivo')
+    list_filter = ('cierre__cliente', 'cierre__periodo', 'fecha_retiro', 'archivo_origen')
+    readonly_fields = ('empleado', 'archivo_origen')
+    date_hierarchy = 'fecha_retiro'
+
+
+@admin.register(AnalistaIncidencia)
+class AnalistaIncidenciaAdmin(admin.ModelAdmin):
+    list_display = ('rut', 'nombre', 'tipo_ausentismo', 'fecha_inicio_ausencia', 'fecha_fin_ausencia', 'dias', 'cierre')
+    search_fields = ('rut', 'nombre', 'tipo_ausentismo')
+    list_filter = ('cierre__cliente', 'cierre__periodo', 'tipo_ausentismo', 'archivo_origen')
+    readonly_fields = ('empleado', 'archivo_origen')
+    date_hierarchy = 'fecha_inicio_ausencia'
+
+
+@admin.register(AnalistaIngreso)
+class AnalistaIngresoAdmin(admin.ModelAdmin):
+    list_display = ('rut', 'nombre', 'fecha_ingreso', 'cierre', 'archivo_origen')
+    search_fields = ('rut', 'nombre')
+    list_filter = ('cierre__cliente', 'cierre__periodo', 'fecha_ingreso', 'archivo_origen')
+    readonly_fields = ('empleado', 'archivo_origen')
+    date_hierarchy = 'fecha_ingreso'

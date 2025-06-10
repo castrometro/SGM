@@ -286,7 +286,7 @@ class ArchivoAnalistaUpload(models.Model):
     tipo_archivo = models.CharField(max_length=20, choices=[
         ('ingresos', 'Ingresos'),
         ('finiquitos', 'Finiquitos'),
-        ('ausentismos', 'Ausentismos')
+        ('incidencias', 'Incidencias')
     ])
     archivo = models.FileField(upload_to=analista_upload_to)
     fecha_subida = models.DateTimeField(auto_now_add=True)
@@ -328,3 +328,63 @@ class ChecklistItem(models.Model):
 
     def __str__(self):
         return f"{self.cierre} - {self.descripcion} - {self.estado}"
+
+
+# Modelos para datos del Analista
+
+class AnalistaFiniquito(models.Model):
+    """Datos de Finiquitos subidos por el analista"""
+    cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE)
+    empleado = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE, null=True, blank=True)
+    archivo_origen = models.ForeignKey(ArchivoAnalistaUpload, on_delete=models.CASCADE, null=True, blank=True)
+    rut = models.CharField(max_length=12)
+    nombre = models.CharField(max_length=200)
+    fecha_retiro = models.DateField()
+    motivo = models.CharField(max_length=200)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['cierre', 'rut']),
+        ]
+
+    def __str__(self):
+        return f"{self.rut} - {self.nombre} - Finiquito"
+
+
+class AnalistaIncidencia(models.Model):
+    """Datos de Incidencias subidos por el analista"""
+    cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE)
+    empleado = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE, null=True, blank=True)
+    archivo_origen = models.ForeignKey(ArchivoAnalistaUpload, on_delete=models.CASCADE, null=True, blank=True)
+    rut = models.CharField(max_length=12)
+    nombre = models.CharField(max_length=200)
+    fecha_inicio_ausencia = models.DateField()
+    fecha_fin_ausencia = models.DateField()
+    dias = models.IntegerField()
+    tipo_ausentismo = models.CharField(max_length=80)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['cierre', 'rut']),
+        ]
+
+    def __str__(self):
+        return f"{self.rut} - {self.nombre} - {self.tipo_ausentismo}"
+
+
+class AnalistaIngreso(models.Model):
+    """Datos de Ingresos subidos por el analista"""
+    cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE)
+    empleado = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE, null=True, blank=True)
+    archivo_origen = models.ForeignKey(ArchivoAnalistaUpload, on_delete=models.CASCADE, null=True, blank=True)
+    rut = models.CharField(max_length=12)
+    nombre = models.CharField(max_length=200)
+    fecha_ingreso = models.DateField()
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['cierre', 'rut']),
+        ]
+
+    def __str__(self):
+        return f"{self.rut} - {self.nombre} - Ingreso"

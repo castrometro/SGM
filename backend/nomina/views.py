@@ -25,6 +25,9 @@ from .models import (
     MovimientoVacaciones,
     MovimientoVariacionSueldo,
     MovimientoVariacionContrato,
+    AnalistaFiniquito,
+    AnalistaIncidencia,
+    AnalistaIngreso,
 )
 
 from .serializers import (
@@ -42,6 +45,9 @@ from .serializers import (
     MovimientoVacacionesSerializer,
     MovimientoVariacionSueldoSerializer,
     MovimientoVariacionContratoSerializer,
+    AnalistaFiniquitoSerializer,
+    AnalistaIncidenciaSerializer,
+    AnalistaIngresoSerializer,
 )
 
 from .tasks import (
@@ -50,6 +56,7 @@ from .tasks import (
     actualizar_empleados_desde_libro,
     guardar_registros_nomina,
     procesar_movimientos_mes,
+    procesar_archivo_analista,
 )
 
 logger = logging.getLogger(__name__)
@@ -390,6 +397,75 @@ class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
 class ArchivoAnalistaUploadViewSet(viewsets.ModelViewSet):
     queryset = ArchivoAnalistaUpload.objects.all()
     serializer_class = ArchivoAnalistaUploadSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cierre_id = self.request.query_params.get('cierre')
+        tipo_archivo = self.request.query_params.get('tipo_archivo')
+        if cierre_id:
+            queryset = queryset.filter(cierre_id=cierre_id)
+        if tipo_archivo:
+            queryset = queryset.filter(tipo_archivo=tipo_archivo)
+        return queryset
+    
+    @action(detail=False, methods=['post'], url_path='subir/(?P<cierre_id>[^/.]+)/(?P<tipo_archivo>[^/.]+)')
+    def subir(self, request, cierre_id=None, tipo_archivo=None):
+        """Sube un archivo del analista para un cierre específico"""
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        # Validar tipo de archivo
+        tipos_validos = ['finiquitos', 'incidencias', 'ingresos']
+        if tipo_archivo not in tipos_validos:
+            return Response({"error": f"Tipo de archivo inválido. Debe ser uno de: {', '.join(tipos_validos)}"}, status=400)
+        
+        archivo = request.FILES.get('archivo')
+        if not archivo:
+            return Response({"error": "No se proporcionó archivo"}, status=400)
+        
+        # Validar que sea un archivo Excel
+        if not archivo.name.endswith(('.xlsx', '.xls')):
+            return Response({"error": "El archivo debe ser de tipo Excel (.xlsx o .xls)"}, status=400)
+        
+        # Crear el registro del archivo
+        archivo_analista = ArchivoAnalistaUpload.objects.create(
+            cierre=cierre,
+            tipo_archivo=tipo_archivo,
+            archivo=archivo,
+            analista=request.user,
+            estado='pendiente'
+        )
+        
+        # Disparar tarea de procesamiento con Celery
+        procesar_archivo_analista.delay(archivo_analista.id)
+        
+        return Response({
+            "id": archivo_analista.id,
+            "tipo_archivo": archivo_analista.tipo_archivo,
+            "estado": archivo_analista.estado,
+            "archivo_nombre": archivo.name,
+            "fecha_subida": archivo_analista.fecha_subida,
+            "mensaje": "Archivo subido correctamente y enviado a procesamiento"
+        }, status=201)
+    
+    @action(detail=True, methods=['post'])
+    def reprocesar(self, request, pk=None):
+        """Reprocesa un archivo del analista"""
+        archivo = self.get_object()
+        
+        # Reiniciar estado
+        archivo.estado = 'pendiente'
+        archivo.save()
+        
+        # Disparar tarea de procesamiento
+        procesar_archivo_analista.delay(archivo.id)
+        
+        return Response({
+            "mensaje": "Archivo enviado a reprocesamiento",
+            "estado": archivo.estado
+        })
 
 class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
     queryset = ArchivoNovedadesUpload.objects.all()
@@ -400,5 +476,55 @@ class ChecklistItemViewSet(mixins.UpdateModelMixin,
                            viewsets.GenericViewSet):
     queryset = ChecklistItem.objects.all()
     serializer_class = ChecklistItemUpdateSerializer
+
+
+# Nuevos ViewSets para los modelos del Analista
+
+class AnalistaFiniquitoViewSet(viewsets.ModelViewSet):
+    queryset = AnalistaFiniquito.objects.all()
+    serializer_class = AnalistaFiniquitoSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cierre_id = self.request.query_params.get('cierre')
+        archivo_origen_id = self.request.query_params.get('archivo_origen')
+        if cierre_id:
+            queryset = queryset.filter(cierre_id=cierre_id)
+        if archivo_origen_id:
+            queryset = queryset.filter(archivo_origen_id=archivo_origen_id)
+        return queryset
+
+
+class AnalistaIncidenciaViewSet(viewsets.ModelViewSet):
+    queryset = AnalistaIncidencia.objects.all()
+    serializer_class = AnalistaIncidenciaSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cierre_id = self.request.query_params.get('cierre')
+        archivo_origen_id = self.request.query_params.get('archivo_origen')
+        tipo_ausentismo = self.request.query_params.get('tipo_ausentismo')
+        if cierre_id:
+            queryset = queryset.filter(cierre_id=cierre_id)
+        if archivo_origen_id:
+            queryset = queryset.filter(archivo_origen_id=archivo_origen_id)
+        if tipo_ausentismo:
+            queryset = queryset.filter(tipo_ausentismo__icontains=tipo_ausentismo)
+        return queryset
+
+
+class AnalistaIngresoViewSet(viewsets.ModelViewSet):
+    queryset = AnalistaIngreso.objects.all()
+    serializer_class = AnalistaIngresoSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cierre_id = self.request.query_params.get('cierre')
+        archivo_origen_id = self.request.query_params.get('archivo_origen')
+        if cierre_id:
+            queryset = queryset.filter(cierre_id=cierre_id)
+        if archivo_origen_id:
+            queryset = queryset.filter(archivo_origen_id=archivo_origen_id)
+        return queryset
 
 

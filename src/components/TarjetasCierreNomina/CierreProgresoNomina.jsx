@@ -271,6 +271,7 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
       <div className="w-full">
         <ArchivosAnalistaCard
           cierreId={cierre.id}
+          cliente={cliente}
           disabled={false}
         />
       </div>

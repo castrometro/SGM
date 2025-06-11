@@ -304,12 +304,17 @@ class ArchivoNovedadesUpload(models.Model):
     archivo = models.FileField(upload_to=novedades_upload_to)
     fecha_subida = models.DateTimeField(auto_now_add=True)
     analista = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
-    estado = models.CharField(max_length=20, choices=[
+    estado = models.CharField(max_length=60, choices=[
         ('pendiente', 'Pendiente'),
-        ('en_proceso', 'En Proceso'),
+        ('analizando_hdrs', 'Analizando Headers'),
+        ('hdrs_analizados', 'Headers Analizados'),
+        ('clasif_en_proceso', 'Clasificación en Proceso'),
+        ('clasif_pendiente', 'Clasificación Pendiente'),
+        ('clasificado', 'Clasificado'),
         ('procesado', 'Procesado'),
         ('con_error', 'Con Error')
     ], default='pendiente')
+    header_json = models.JSONField(default=list)
 
 
 class ChecklistItem(models.Model):
@@ -328,6 +333,77 @@ class ChecklistItem(models.Model):
 
     def __str__(self):
         return f"{self.cierre} - {self.descripcion} - {self.estado}"
+
+
+# Modelos específicos para Novedades
+
+class EmpleadoCierreNovedades(models.Model):
+    """Modelo específico para empleados en el procesamiento de novedades"""
+    cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE, related_name='empleados_novedades')
+    rut = models.CharField(max_length=12)
+    nombre = models.CharField(max_length=120)
+    apellido_paterno = models.CharField(max_length=120)
+    apellido_materno = models.CharField(max_length=120, blank=True)
+
+    class Meta:
+        unique_together = ("cierre", "rut")
+
+    def __str__(self):
+        return f"Novedades - {self.rut} - {self.nombre} {self.apellido_paterno}"
+
+
+class ConceptoRemuneracionNovedades(models.Model):
+    """Modelo específico para conceptos de remuneración en novedades"""
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
+    nombre_concepto = models.CharField(max_length=120)
+    clasificacion = models.CharField(max_length=20, choices=CLASIFICACION_CHOICES)
+    hashtags = models.JSONField(default=list, blank=True)
+    usuario_clasifica = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="conceptos_novedades_clasificados",
+    )
+    vigente = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = ('cliente', 'nombre_concepto')
+
+    def __str__(self):
+        return f"Novedades - {self.cliente.nombre} - {self.nombre_concepto}"
+
+
+class RegistroConceptoEmpleadoNovedades(models.Model):
+    """Modelo específico para registros de conceptos de empleados en novedades"""
+    empleado = models.ForeignKey(EmpleadoCierreNovedades, on_delete=models.CASCADE)
+    concepto = models.ForeignKey(ConceptoRemuneracionNovedades, on_delete=models.SET_NULL, null=True, blank=True)
+    nombre_concepto_original = models.CharField(max_length=200)
+    monto = models.CharField(max_length=255, blank=True, null=True)  
+    fecha_registro = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('empleado', 'nombre_concepto_original')
+
+    def __str__(self):
+        return f"Novedades - {self.empleado} - {self.nombre_concepto_original}: {self.monto}"
+    
+    @property
+    def monto_numerico(self):
+        """Convierte el monto a número para cálculos, retorna 0 si no es posible"""
+        try:
+            return float(self.monto) if self.monto else 0
+        except (ValueError, TypeError):
+            return 0
+    
+    @property
+    def es_numerico(self):
+        """Verifica si el monto puede convertirse a número"""
+        try:
+            float(self.monto) if self.monto else 0
+            return True
+        except (ValueError, TypeError):
+            return False
 
 
 # Modelos para datos del Analista

@@ -1,31 +1,49 @@
-import { useState, useRef, useEffect } from "react";
-import { Download, Loader2, Upload, FileText, UserCheck, LogOut } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Download, Loader2, Upload, FileText, UserCheck, LogOut, AlertCircle, Settings } from "lucide-react";
 import { 
   descargarPlantillaFiniquitos, 
   descargarPlantillaIncidencias, 
   descargarPlantillaIngresos,
+  descargarPlantillaNovedades,
   subirArchivoAnalista,
   obtenerEstadoArchivoAnalista,
-  reprocesarArchivoAnalista
+  reprocesarArchivoAnalista,
+  subirArchivoNovedades,
+  obtenerEstadoArchivoNovedades,
+  reprocesarArchivoNovedades,
+  obtenerHeadersNovedades,
+  clasificarHeadersNovedades,
+  procesarFinalNovedades
 } from "../../api/nomina";
 import EstadoBadge from "../EstadoBadge";
+import ModalClasificacionNovedades from "../ModalClasificacionNovedades";
 
 const ArchivosAnalistaCard = ({
   cierreId,
   disabled = false,
+  cliente = null, // Agregar cliente como prop
 }) => {
   const [archivos, setArchivos] = useState({
     finiquitos: { estado: "no_subido", archivo: null, error: "" },
     incidencias: { estado: "no_subido", archivo: null, error: "" },
-    ingresos: { estado: "no_subido", archivo: null, error: "" }
+    ingresos: { estado: "no_subido", archivo: null, error: "" },
+    novedades: { estado: "no_subido", archivo: null, error: "" }
   });
   const [subiendo, setSubiendo] = useState({});
+  
+  // Estados para el modal de clasificación de novedades
+  const [modalClasificacionAbierto, setModalClasificacionAbierto] = useState(false);
+  const [headersNovedades, setHeadersNovedades] = useState({ clasificados: [], sin_clasificar: [] });
+  const [archivoNovedadesId, setArchivoNovedadesId] = useState(null);
+  
   const fileInputRefs = {
     finiquitos: useRef(),
     incidencias: useRef(),
-    ingresos: useRef()
+    ingresos: useRef(),
+    novedades: useRef()
   };
-  const pollingRefs = useRef({});
+  // Cambiar a un solo polling ref ya que actualizaremos todos los archivos juntos
+  const pollingRef = useRef(null);
 
   // Configuración de tipos de archivo
   const tiposArchivo = {
@@ -46,64 +64,120 @@ const ArchivosAnalistaCard = ({
       icono: Upload,
       plantilla: descargarPlantillaIngresos,
       descripcion: "Nuevos empleados que ingresan"
+    },
+    novedades: {
+      titulo: "Novedades",
+      icono: AlertCircle,
+      plantilla: descargarPlantillaNovedades,
+      descripcion: "Cambios y actualizaciones de empleados"
     }
   };
 
   // Limpiar polling al desmontar
   useEffect(() => {
     return () => {
-      Object.values(pollingRefs.current).forEach(interval => {
-        if (interval) clearInterval(interval);
-      });
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
     };
   }, []);
 
-  // Cargar estado inicial de archivos
-  useEffect(() => {
-    const cargarEstados = async () => {
-      if (!cierreId) return;
-      
-      for (const tipo of Object.keys(tiposArchivo)) {
-        try {
-          const data = await obtenerEstadoArchivoAnalista(cierreId, tipo);
-          if (data && data.length > 0) {
-            const archivo = data[0]; // Obtener el último archivo subido
-            setArchivos(prev => ({
+  // Función para verificar si hay archivos en proceso
+  const verificarArchivoEnProceso = useCallback(() => {
+    return Object.values(archivos).some(archivo => archivo.estado === "en_proceso");
+  }, [archivos]);
+
+  // Función para manejar el polling
+  const manejarPolling = useCallback(async () => {
+    console.log('📡 Polling archivos analista...');
+    
+    for (const tipo of ['finiquitos', 'incidencias', 'ingresos', 'novedades']) {
+      try {
+        let data;
+        if (tipo === 'novedades') {
+          data = await obtenerEstadoArchivoNovedades(cierreId);
+          // La respuesta de novedades viene en formato diferente
+          if (data && data.id) {
+            data = [data]; // Convertir a array para mantener compatibilidad
+          } else {
+            data = [];
+          }
+        } else {
+          data = await obtenerEstadoArchivoAnalista(cierreId, tipo);
+        }
+        
+        if (data && data.length > 0) {
+          const archivo = data[0];
+          
+          setArchivos(prev => {
+            const estadoAnterior = prev[tipo]?.estado;
+            
+            if (estadoAnterior !== archivo.estado) {
+              console.log(`🔄 ${tipo}: ${estadoAnterior} → ${archivo.estado}`);
+            }
+            
+            return {
               ...prev,
               [tipo]: {
                 ...prev[tipo],
                 estado: archivo.estado,
                 archivo: {
                   id: archivo.id,
-                  nombre: archivo.archivo ? archivo.archivo.split('/').pop() : '',
+                  nombre: archivo.archivo ? archivo.archivo.split('/').pop() : (archivo.archivo_nombre || ''),
                   fecha_subida: archivo.fecha_subida
                 }
               }
-            }));
-            
-            // Iniciar polling si está en proceso
-            if (archivo.estado === "en_proceso") {
-              iniciarPolling(tipo);
-            }
-          }
-        } catch (error) {
-          console.error(`Error cargando estado de ${tipo}:`, error);
+            };
+          });
         }
+      } catch (error) {
+        console.error(`Error polling ${tipo}:`, error);
       }
-    };
-
-    cargarEstados();
+    }
   }, [cierreId]);
 
-  const iniciarPolling = (tipo) => {
-    if (pollingRefs.current[tipo]) return;
+  // Efecto para manejar el polling
+  useEffect(() => {
+    const tieneArchivosEnProceso = verificarArchivoEnProceso();
+    console.log('🎯 ArchivosAnalista - checking polling need:', tieneArchivosEnProceso);
+    console.log('🎯 Estados:', Object.fromEntries(Object.entries(archivos).map(([k,v]) => [k, v.estado])));
     
-    console.log(`🔄 Iniciando polling para ${tipo}...`);
-    pollingRefs.current[tipo] = setInterval(async () => {
+    if (tieneArchivosEnProceso && !pollingRef.current) {
+      console.log('🔄 Iniciando polling para archivos analista...');
+      
+      pollingRef.current = setInterval(manejarPolling, 2000);
+      
+    } else if (!tieneArchivosEnProceso && pollingRef.current) {
+      console.log('✅ Deteniendo polling - no hay archivos en proceso');
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+    
+    // Cleanup
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, [verificarArchivoEnProceso, manejarPolling]);
+
+  // Función para actualizar todos los estados
+  const actualizarTodosLosEstados = async () => {
+    if (!cierreId) return;
+    
+    console.log('🔍 Actualizando estados de archivos analista...');
+    
+    for (const tipo of Object.keys(tiposArchivo)) {
       try {
         const data = await obtenerEstadoArchivoAnalista(cierreId, tipo);
         if (data && data.length > 0) {
           const archivo = data[0];
+          const estadoAnterior = archivos[tipo]?.estado;
+          
+          console.log(`📊 ${tipo}: ${estadoAnterior} → ${archivo.estado}`);
+          
           setArchivos(prev => ({
             ...prev,
             [tipo]: {
@@ -117,18 +191,60 @@ const ArchivosAnalistaCard = ({
             }
           }));
           
-          // Detener polling si ya no está en proceso
-          if (archivo.estado !== "en_proceso") {
-            console.log(`✅ ${tipo} completado - deteniendo polling`);
-            clearInterval(pollingRefs.current[tipo]);
-            pollingRefs.current[tipo] = null;
+          // Log adicional para cambios de estado
+          if (estadoAnterior !== archivo.estado) {
+            console.log(`🔄 ${tipo} cambió de "${estadoAnterior}" a "${archivo.estado}"`);
           }
         }
       } catch (error) {
-        console.error(`Error en polling de ${tipo}:`, error);
+        console.error(`Error actualizando estado de ${tipo}:`, error);
       }
-    }, 5000);
+    }
   };
+
+  // Cargar estado inicial de archivos
+  useEffect(() => {
+    const cargarEstados = async () => {
+      if (!cierreId) return;
+      
+      for (const tipo of Object.keys(tiposArchivo)) {
+        try {
+          let data;
+          if (tipo === 'novedades') {
+            data = await obtenerEstadoArchivoNovedades(cierreId);
+            // Convertir a array para mantener compatibilidad
+            if (data && data.id) {
+              data = [data];
+            } else {
+              data = [];
+            }
+          } else {
+            data = await obtenerEstadoArchivoAnalista(cierreId, tipo);
+          }
+          
+          if (data && data.length > 0) {
+            const archivo = data[0]; // Obtener el último archivo subido
+            setArchivos(prev => ({
+              ...prev,
+              [tipo]: {
+                ...prev[tipo],
+                estado: archivo.estado,
+                archivo: {
+                  id: archivo.id,
+                  nombre: archivo.archivo ? archivo.archivo.split('/').pop() : (archivo.archivo_nombre || ''),
+                  fecha_subida: archivo.fecha_subida
+                }
+              }
+            }));
+          }
+        } catch (error) {
+          console.error(`Error cargando estado de ${tipo}:`, error);
+        }
+      }
+    };
+
+    cargarEstados();
+  }, [cierreId]);
 
   const handleSeleccionArchivo = async (tipo, archivo) => {
     if (!archivo) return;
@@ -144,7 +260,12 @@ const ArchivosAnalistaCard = ({
       const formData = new FormData();
       formData.append('archivo', archivo);
       
-      const response = await subirArchivoAnalista(cierreId, tipo, formData);
+      let response;
+      if (tipo === 'novedades') {
+        response = await subirArchivoNovedades(cierreId, formData);
+      } else {
+        response = await subirArchivoAnalista(cierreId, tipo, formData);
+      }
       
       setArchivos(prev => ({
         ...prev,
@@ -159,10 +280,8 @@ const ArchivosAnalistaCard = ({
         }
       }));
       
-      // Iniciar polling si está en proceso
-      if (response.estado === "en_proceso") {
-        iniciarPolling(tipo);
-      }
+      // El polling se iniciará automáticamente por el useEffect cuando detecte estado "en_proceso"
+      console.log(`✅ Archivo ${tipo} subido con estado: ${response.estado}`);
       
     } catch (error) {
       console.error(`Error subiendo ${tipo}:`, error);
@@ -178,17 +297,103 @@ const ArchivosAnalistaCard = ({
     }
   };
 
+  // Funciones para la clasificación de novedades
+  const handleClasificarNovedades = async () => {
+    const archivo = archivos.novedades.archivo;
+    if (!archivo?.id) return;
+    
+    try {
+      const headers = await obtenerHeadersNovedades(archivo.id);
+      setHeadersNovedades(headers);
+      setArchivoNovedadesId(archivo.id);
+      setModalClasificacionAbierto(true);
+    } catch (error) {
+      console.error("Error obteniendo headers de novedades:", error);
+      setArchivos(prev => ({
+        ...prev,
+        novedades: { 
+          ...prev.novedades, 
+          error: "Error al obtener headers para clasificación" 
+        }
+      }));
+    }
+  };
+
+  const handleGuardarClasificacionesNovedades = async (clasificaciones) => {
+    try {
+      await clasificarHeadersNovedades(archivoNovedadesId, clasificaciones);
+      
+      // Actualizar estado del archivo
+      setArchivos(prev => ({
+        ...prev,
+        novedades: { ...prev.novedades, error: "" }
+      }));
+      
+      // Recargar estado para verificar si está clasificado completamente
+      const data = await obtenerEstadoArchivoNovedades(cierreId);
+      if (data && data.id) {
+        setArchivos(prev => ({
+          ...prev,
+          novedades: {
+            ...prev.novedades,
+            estado: data.estado,
+          }
+        }));
+      }
+      
+    } catch (error) {
+      console.error("Error guardando clasificaciones:", error);
+      setArchivos(prev => ({
+        ...prev,
+        novedades: { 
+          ...prev.novedades, 
+          error: "Error al guardar clasificaciones" 
+        }
+      }));
+    }
+  };
+
+  const handleProcesarFinalNovedades = async () => {
+    const archivo = archivos.novedades.archivo;
+    if (!archivo?.id) return;
+    
+    try {
+      await procesarFinalNovedades(archivo.id);
+      setArchivos(prev => ({
+        ...prev,
+        novedades: { ...prev.novedades, estado: "en_proceso", error: "" }
+      }));
+    } catch (error) {
+      console.error("Error procesando novedades:", error);
+      setArchivos(prev => ({
+        ...prev,
+        novedades: { 
+          ...prev.novedades, 
+          error: "Error al procesar archivo final" 
+        }
+      }));
+    }
+  };
+
   const handleReprocesar = async (tipo) => {
     const archivo = archivos[tipo].archivo;
     if (!archivo?.id) return;
     
     try {
-      await reprocesarArchivoAnalista(archivo.id);
+      if (tipo === 'novedades') {
+        await reprocesarArchivoNovedades(archivo.id);
+      } else {
+        await reprocesarArchivoAnalista(archivo.id);
+      }
+      
       setArchivos(prev => ({
         ...prev,
-        [tipo]: { ...prev[tipo], estado: "en_proceso" }
+        [tipo]: { ...prev[tipo], estado: "en_proceso", error: "" }
       }));
-      iniciarPolling(tipo);
+      
+      // El polling se iniciará automáticamente por el useEffect cuando detecte estado "en_proceso"
+      console.log(`✅ Reprocesamiento de ${tipo} iniciado`);
+      
     } catch (error) {
       console.error(`Error reprocesando ${tipo}:`, error);
       setArchivos(prev => ({
@@ -280,6 +485,38 @@ const ArchivosAnalistaCard = ({
             </div>
           )}
           
+          {/* Botones especiales para novedades */}
+          {tipo === 'novedades' && estado.archivo?.id && (
+            <div className="flex flex-col gap-2 mt-2">
+              {estado.estado === 'clasif_pendiente' && (
+                <button
+                  type="button"
+                  onClick={handleClasificarNovedades}
+                  className="bg-orange-600 hover:bg-orange-500 px-3 py-1 rounded text-sm font-medium transition flex items-center gap-1"
+                >
+                  <Settings size={14} />
+                  Clasificar Headers
+                </button>
+              )}
+              
+              {estado.estado === 'clasificado' && (
+                <button
+                  type="button"
+                  onClick={handleProcesarFinalNovedades}
+                  className="bg-green-600 hover:bg-green-500 px-3 py-1 rounded text-sm font-medium transition"
+                >
+                  Procesar Final
+                </button>
+              )}
+              
+              {estado.estado === 'hdrs_analizados' && (
+                <div className="text-sm text-blue-400 bg-blue-900/20 p-2 rounded">
+                  ℹ️ Headers analizados, esperando clasificación...
+                </div>
+              )}
+            </div>
+          )}
+          
           {estado.archivo?.nombre && (
             <span className="text-gray-300 text-sm italic truncate">
               {estado.archivo.nombre}
@@ -302,7 +539,7 @@ const ArchivosAnalistaCard = ({
           </div>
         )}
 
-        {archivoEsBloqueado && (
+        {archivoEsBloqueado && estado.estado === "procesado" && (
           <div className="text-sm text-yellow-400 mt-2 bg-yellow-900/20 p-2 rounded">
             ℹ️ Archivo procesado correctamente
           </div>
@@ -318,13 +555,21 @@ const ArchivosAnalistaCard = ({
         3. Archivos del Analista
       </h3>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {Object.keys(tiposArchivo).map(renderArchivoCard)}
       </div>
 
       <p className="text-xs text-gray-400 italic mt-2">
         Sube los archivos específicos con datos adicionales del analista para complementar la nómina.
       </p>
+
+      <ModalClasificacionNovedades
+        isOpen={modalClasificacionAbierto}
+        onClose={() => setModalClasificacionAbierto(false)}
+        clienteId={cliente?.id}
+        headersSinClasificar={headersNovedades.headers_sin_clasificar || []}
+        onGuardarClasificaciones={handleGuardarClasificacionesNovedades}
+      />
     </div>
   );
 };

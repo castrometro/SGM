@@ -5,6 +5,12 @@ from .utils.LibroRemuneraciones import (
     actualizar_empleados_desde_libro_util,
     guardar_registros_nomina_util,
 )
+from .utils.NovedadesRemuneraciones import (
+    obtener_headers_archivo_novedades,
+    clasificar_headers_archivo_novedades,
+    actualizar_empleados_desde_novedades,
+    guardar_registros_novedades,
+)
 from .utils.MovimientoMes import procesar_archivo_movimientos_mes_util
 from .utils.ArchivosAnalista import procesar_archivo_analista_util
 from celery import shared_task, chain
@@ -12,6 +18,7 @@ from .models import (
     LibroRemuneracionesUpload,
     MovimientosMesUpload,
     ArchivoAnalistaUpload,
+    ArchivoNovedadesUpload,
 )
 import logging
 import pandas as pd
@@ -212,4 +219,162 @@ def procesar_archivo_analista(archivo_id):
         archivo.estado = 'con_error'
         archivo.save()
         logger.error(f"Error procesando archivo analista id={archivo_id}: {e}")
+        raise
+
+
+@shared_task
+def procesar_archivo_novedades(archivo_id):
+    """Procesa un archivo de novedades - implementación completa del flujo"""
+    logger.info(f"Iniciando procesamiento completo archivo de novedades id={archivo_id}")
+    
+    try:
+        archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
+        
+        # Crear cadena de tareas para novedades (similar al libro de remuneraciones)
+        workflow = chain(
+            analizar_headers_archivo_novedades.s(archivo_id),
+            clasificar_headers_archivo_novedades_task.s(),
+            actualizar_empleados_desde_novedades_task.s(),
+            guardar_registros_novedades_task.s()
+        )
+        
+        # Ejecutar la cadena
+        workflow.apply_async()
+        
+        logger.info(f"Cadena de procesamiento iniciada para archivo novedades id={archivo_id}")
+        return {"archivo_id": archivo_id, "estado": "cadena_iniciada"}
+        
+    except Exception as e:
+        try:
+            archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
+            archivo.estado = 'con_error'
+            archivo.save()
+        except Exception as ex:
+            logger.error(f"Error guardando estado 'con_error' para archivo novedades id={archivo_id}: {ex}")
+        
+        logger.error(f"Error iniciando procesamiento archivo de novedades id={archivo_id}: {e}")
+        raise
+
+
+@shared_task
+def analizar_headers_archivo_novedades(archivo_id):
+    """Analiza headers de un archivo de novedades"""
+    logger.info(f"Procesando archivo de novedades id={archivo_id}")
+    archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
+    archivo.estado = "analizando_hdrs"
+    archivo.save()
+
+    try:
+        headers = obtener_headers_archivo_novedades(archivo.archivo.path)
+        archivo.header_json = headers
+        archivo.estado = "hdrs_analizados"
+        archivo.save()
+        logger.info(f"Procesamiento exitoso archivo novedades id={archivo_id}")
+        # Retornamos archivo_id y headers
+        return {"archivo_id": archivo_id, "headers": headers}
+    except Exception as e:
+        archivo.estado = "con_error"
+        archivo.save()
+        logger.error(f"Error procesando archivo novedades id={archivo_id}: {e}")
+        raise
+
+
+@shared_task
+def clasificar_headers_archivo_novedades_task(result):
+    """Clasifica headers de un archivo de novedades"""
+    archivo_id = result["archivo_id"]
+    try:
+        archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
+        cierre = archivo.cierre
+        cliente = cierre.cliente
+
+        # Marcamos estado "en proceso de clasificación"
+        archivo.estado = "clasif_en_proceso"
+        archivo.save()
+
+        headers = (
+            archivo.header_json
+            if isinstance(archivo.header_json, list)
+            else result["headers"]
+        )
+
+        headers_clasificados, headers_sin_clasificar = (
+            clasificar_headers_archivo_novedades(headers, cliente)
+        )
+
+        # Escribe el resultado final en el campo JSON
+        archivo.header_json = {
+            "headers_clasificados": headers_clasificados,
+            "headers_sin_clasificar": headers_sin_clasificar,
+        }
+
+        # Cambia el estado según si quedan pendientes o no
+        if headers_sin_clasificar:
+            archivo.estado = "clasif_pendiente"
+        else:
+            archivo.estado = "clasificado"
+
+        archivo.save()
+        logger.info(
+            f"Archivo novedades {archivo_id}: {len(headers_clasificados)} headers clasificados, "
+            f"{len(headers_sin_clasificar)} sin clasificar"
+        )
+        return {
+            "archivo_id": archivo_id,
+            "headers_clasificados": len(headers_clasificados),
+            "headers_sin_clasificar": len(headers_sin_clasificar),
+        }
+    except Exception as e:
+        logger.error(f"Error clasificando headers para archivo novedades id={archivo_id}: {e}")
+        try:
+            archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
+            archivo.estado = "con_error"
+            archivo.save()
+        except Exception as ex:
+            logger.error(
+                f"Error guardando estado 'con_error' para archivo novedades id={archivo_id}: {ex}"
+            )
+        raise
+
+
+@shared_task
+def actualizar_empleados_desde_novedades_task(result):
+    """Task para actualizar empleados desde archivo de novedades"""
+    archivo_id = result.get("archivo_id") if isinstance(result, dict) else result
+    try:
+        archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
+        count = actualizar_empleados_desde_novedades(archivo)
+        logger.info(f"Actualizados {count} empleados desde archivo novedades {archivo_id}")
+        return {"archivo_id": archivo_id, "empleados_actualizados": count}
+    except Exception as e:
+        logger.error(f"Error actualizando empleados para archivo novedades id={archivo_id}: {e}")
+        raise
+
+
+@shared_task
+def guardar_registros_novedades_task(result):
+    """Task para guardar registros de novedades"""
+    archivo_id = result.get("archivo_id") if isinstance(result, dict) else result
+    try:
+        archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
+        count = guardar_registros_novedades(archivo)
+        
+        # ✅ ACTUALIZAR ESTADO AL FINAL
+        archivo.estado = "procesado"
+        archivo.save()
+        
+        return {
+            "archivo_id": archivo_id, 
+            "registros_actualizados": count,
+            "estado": "procesado"
+        }
+    except Exception as e:
+        logger.error(f"Error guardando registros de novedades para archivo id={archivo_id}: {e}")
+        # Marcar como error
+        try:
+            archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
+            archivo.estado = "con_error"
+            archivo.save()
+        except:
+            pass
         raise

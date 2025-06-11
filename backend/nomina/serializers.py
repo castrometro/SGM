@@ -5,7 +5,9 @@ from .models import (
     MovimientoVariacionSueldo, MovimientoVariacionContrato,
     LibroRemuneracionesUpload, MovimientosMesUpload,
     ArchivoAnalistaUpload, ArchivoNovedadesUpload,
-    ChecklistItem, AnalistaFiniquito, AnalistaIncidencia, AnalistaIngreso
+    ChecklistItem, AnalistaFiniquito, AnalistaIncidencia, AnalistaIngreso,
+    # Nuevos modelos para novedades
+    EmpleadoCierreNovedades, ConceptoRemuneracionNovedades, RegistroConceptoEmpleadoNovedades
 )
 
 class ChecklistItemSerializer(serializers.ModelSerializer):
@@ -164,3 +166,40 @@ class AnalistaIngresoSerializer(serializers.ModelSerializer):
             'empleado', 'empleado_nombre', 'archivo_origen', 'archivo_origen_id'
         ]
         read_only_fields = ['cierre', 'empleado', 'archivo_origen']
+
+
+# Serializers para modelos de Novedades
+
+class EmpleadoCierreNovedadesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmpleadoCierreNovedades
+        fields = ['id', 'rut', 'nombre', 'apellido_paterno', 'apellido_materno', 'cierre']
+        read_only_fields = ['cierre']
+
+
+class ConceptoRemuneracionNovedadesSerializer(serializers.ModelSerializer):
+    usuario_clasifica_nombre = serializers.CharField(source='usuario_clasifica.username', read_only=True)
+    
+    class Meta:
+        model = ConceptoRemuneracionNovedades
+        fields = [
+            'id', 'nombre_concepto', 'clasificacion', 'hashtags', 
+            'vigente', 'cliente', 'usuario_clasifica', 'usuario_clasifica_nombre'
+        ]
+        read_only_fields = ['cliente', 'usuario_clasifica']
+
+
+class RegistroConceptoEmpleadoNovedadesSerializer(serializers.ModelSerializer):
+    empleado_rut = serializers.CharField(source='empleado.rut', read_only=True)
+    empleado_nombre = serializers.CharField(source='empleado.nombre', read_only=True)
+    concepto_nombre = serializers.CharField(source='concepto.nombre_concepto', read_only=True)
+    concepto_clasificacion = serializers.CharField(source='concepto.clasificacion', read_only=True)
+    
+    class Meta:
+        model = RegistroConceptoEmpleadoNovedades
+        fields = [
+            'id', 'nombre_concepto_original', 'monto', 'fecha_registro',
+            'empleado', 'empleado_rut', 'empleado_nombre',
+            'concepto', 'concepto_nombre', 'concepto_clasificacion'
+        ]
+        read_only_fields = ['empleado', 'concepto', 'fecha_registro']

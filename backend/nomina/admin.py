@@ -5,7 +5,9 @@ from .models import (
     MovimientoVariacionSueldo, MovimientoVariacionContrato,
     LibroRemuneracionesUpload, MovimientosMesUpload, ArchivoAnalistaUpload, 
     ArchivoNovedadesUpload, ChecklistItem,
-    AnalistaFiniquito, AnalistaIncidencia, AnalistaIngreso
+    AnalistaFiniquito, AnalistaIncidencia, AnalistaIngreso,
+    # Modelos de novedades
+    EmpleadoCierreNovedades, ConceptoRemuneracionNovedades, RegistroConceptoEmpleadoNovedades
 )
 
 
@@ -199,3 +201,36 @@ class AnalistaIngresoAdmin(admin.ModelAdmin):
     list_filter = ('cierre__cliente', 'cierre__periodo', 'fecha_ingreso', 'archivo_origen')
     readonly_fields = ('empleado', 'archivo_origen')
     date_hierarchy = 'fecha_ingreso'
+
+
+# Nuevos admins para los modelos de Novedades
+
+@admin.register(EmpleadoCierreNovedades)
+class EmpleadoCierreNovedadesAdmin(admin.ModelAdmin):
+    list_display = ('rut', 'nombre', 'apellido_paterno', 'apellido_materno', 'cierre')
+    search_fields = ('rut', 'nombre', 'apellido_paterno', 'apellido_materno')
+    list_filter = ('cierre__cliente', 'cierre__periodo')
+    readonly_fields = ('cierre',)
+
+
+@admin.register(ConceptoRemuneracionNovedades)
+class ConceptoRemuneracionNovedadesAdmin(admin.ModelAdmin):
+    list_display = (
+        'cliente',
+        'nombre_concepto',
+        'clasificacion',
+        'usuario_clasifica',
+        'vigente',
+    )
+    list_filter = ('cliente', 'clasificacion', 'vigente')
+    search_fields = ('cliente__nombre', 'nombre_concepto')
+    readonly_fields = ('usuario_clasifica',)
+
+
+@admin.register(RegistroConceptoEmpleadoNovedades)
+class RegistroConceptoEmpleadoNovedadesAdmin(admin.ModelAdmin):
+    list_display = ('empleado', 'concepto', 'nombre_concepto_original', 'monto', 'fecha_registro')
+    search_fields = ('empleado__rut', 'nombre_concepto_original')
+    list_filter = ('concepto__clasificacion', 'fecha_registro')
+    readonly_fields = ('fecha_registro',)
+    date_hierarchy = 'fecha_registro'

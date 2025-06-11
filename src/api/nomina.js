@@ -175,3 +175,55 @@ export const eliminarConceptoRemuneracion = async (clienteId, nombreConcepto) =>
   );
   return res.data;
 };
+
+export const obtenerConceptosRemuneracionPorCierre = async (cierreId) => {
+  const response = await api.get(`/nomina/conceptos/cierre/${cierreId}/`);
+  return response.data;
+};
+
+export const descargarPlantillaNovedades = () => {
+  return `${api.defaults.baseURL}/nomina/plantilla-novedades/`;
+};
+
+// Funciones específicas para archivos de novedades
+export const subirArchivoNovedades = async (cierreId, formData) => {
+  const response = await api.post(`/nomina/archivos-novedades/subir/${cierreId}/`, formData, {
+    headers: {
+      "Content-Type": "multipart/form-data",
+    },
+  });
+  return response.data;
+};
+
+export const obtenerEstadoArchivoNovedades = async (cierreId) => {
+  const response = await api.get(`/nomina/archivos-novedades/estado/${cierreId}/`);
+  return response.data;
+};
+
+export const reprocesarArchivoNovedades = async (archivoId) => {
+  const response = await api.post(`/nomina/archivos-novedades/${archivoId}/reprocesar/`);
+  return response.data;
+};
+
+// Funciones para clasificación de headers en novedades
+export const obtenerHeadersNovedades = async (archivoId) => {
+  const response = await api.get(`/nomina/archivos-novedades/${archivoId}/headers/`);
+  return response.data;
+};
+
+export const clasificarHeadersNovedades = async (archivoId, clasificaciones) => {
+  const response = await api.post(`/nomina/archivos-novedades/${archivoId}/clasificar_headers/`, {
+    clasificaciones
+  });
+  return response.data;
+};
+
+export const procesarFinalNovedades = async (archivoId) => {
+  const response = await api.post(`/nomina/archivos-novedades/${archivoId}/procesar_final/`);
+  return response.data;
+};
+
+export const obtenerConceptosRemuneracionNovedades = async (clienteId) => {
+  const response = await api.get(`/nomina/conceptos-remuneracion-novedades/?cliente=${clienteId}`);
+  return response.data;
+};

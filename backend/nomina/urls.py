@@ -20,6 +20,10 @@ from .views import (
     MovimientoVacacionesViewSet,
     MovimientoVariacionSueldoViewSet,
     MovimientoVariacionContratoViewSet,
+    # ViewSets para modelos de Novedades
+    EmpleadoCierreNovedadesViewSet,
+    ConceptoRemuneracionNovedadesViewSet,
+    RegistroConceptoEmpleadoNovedadesViewSet,
 )
 
 from django.urls import path
@@ -45,6 +49,11 @@ router.register(r'movimientos-ausentismos', MovimientoAusentismoViewSet)
 router.register(r'movimientos-vacaciones', MovimientoVacacionesViewSet)
 router.register(r'movimientos-variacion-sueldo', MovimientoVariacionSueldoViewSet)
 router.register(r'movimientos-variacion-contrato', MovimientoVariacionContratoViewSet)
+
+# ViewSets para modelos de Novedades
+router.register(r'empleados-cierre-novedades', EmpleadoCierreNovedadesViewSet)
+router.register(r'conceptos-remuneracion-novedades', ConceptoRemuneracionNovedadesViewSet)
+router.register(r'registros-concepto-empleado-novedades', RegistroConceptoEmpleadoNovedadesViewSet)
 
 urlpatterns = router.urls + [
     path(
@@ -118,6 +127,15 @@ urlpatterns = router.urls + [
             'path': 'plantilla_ingresos.xlsx'
         },
         name='descargar_plantilla_ingresos'
+    ),
+    path(
+        'plantilla-novedades/',
+        serve,
+        {
+            'document_root': settings.BASE_DIR / 'static/plantillas/nomina',
+            'path': 'plantilla_novedades.xlsx'
+        },
+        name='descargar_plantilla_novedades'
     ),
     path('conceptos-remuneracion/', conceptos_remuneracion_por_cliente, name='conceptos_remuneracion_por_cliente'),
     path('clientes/<int:cliente_id>/hashtags/', obtener_hashtags_disponibles),

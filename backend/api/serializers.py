@@ -98,3 +98,17 @@ class AsignacionClienteUsuarioSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'fecha_asignacion']
 
 
+class AnalistaPerformanceSerializer(serializers.ModelSerializer):
+    clientes_asignados = serializers.IntegerField(read_only=True)
+    cierres_contabilidad = serializers.IntegerField(read_only=True)
+    cierres_nomina = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Usuario
+        fields = [
+            'id', 'nombre', 'apellido', 'correo_bdo', 'cargo_bdo',
+            'clientes_asignados', 'cierres_contabilidad', 'cierres_nomina'
+        ]
+        read_only_fields = fields
+
+

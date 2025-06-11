@@ -13,6 +13,7 @@ import CierreDetalle from "./pages/CierreDetalle"; // Asegúrate de importar la 
 import CierreDetalleNomina from "./pages/CierreDetalleNomina";
 import AnalisisLibro from "./pages/AnalisisLibro";
 import MovimientosCuenta from "./pages/MovimientosCuenta";
+import InformesAnalistas from "./pages/InformesAnalistas";
 
 function App() {
   return (
@@ -52,6 +53,9 @@ function App() {
 
           {/* ----------- ÁREA: NÓMINA ------------- */}
           <Route path="nomina/cierres/:cierreId" element={<CierreDetalleNomina />} />
+
+          {/* ----------- ÁREA: INFORMES ------------- */}
+          <Route path="informes" element={<InformesAnalistas />} />
 
           {/* ----------- 404 / OTRAS ------------- */}
           <Route path="*" element={<h1 className="text-white">404 - Página no encontrada</h1>} />

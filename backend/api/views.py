@@ -160,8 +160,8 @@ class AnalistaPerformanceViewSet(viewsets.ReadOnlyModelViewSet):
             .annotate(
                 clientes_asignados=Count('asignaciones', distinct=True),
                 cierres_contabilidad=Count(
-                    'cierrecontabilidad',
-                    filter=Q(cierrecontabilidad__area__in=areas),
+                    'cierrecontabilidad_set',
+                    filter=Q(cierrecontabilidad_set__area__in=areas),
                     distinct=True,
                 ),
                 cierres_nomina=Count('cierres_analista', distinct=True),

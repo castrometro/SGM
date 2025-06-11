@@ -7,6 +7,7 @@ from .views import (
     ArchivoNovedadesUploadViewSet,
     ChecklistItemViewSet,
     conceptos_remuneracion_por_cliente,
+    conceptos_remuneracion_por_cierre,
     obtener_hashtags_disponibles,
     ConceptoRemuneracionBatchView,
     eliminar_concepto_remuneracion,
@@ -138,6 +139,7 @@ urlpatterns = router.urls + [
         name='descargar_plantilla_novedades'
     ),
     path('conceptos-remuneracion/', conceptos_remuneracion_por_cliente, name='conceptos_remuneracion_por_cliente'),
+    path('conceptos/cierre/<int:cierre_id>/', conceptos_remuneracion_por_cierre, name='conceptos_remuneracion_por_cierre'),
     path('clientes/<int:cliente_id>/hashtags/', obtener_hashtags_disponibles),
     path("conceptos/", ConceptoRemuneracionBatchView.as_view(), name="guardar-conceptos"),
     path(

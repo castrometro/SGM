@@ -211,9 +211,9 @@ export const obtenerHeadersNovedades = async (archivoId) => {
   return response.data;
 };
 
-export const clasificarHeadersNovedades = async (archivoId, clasificaciones) => {
+export const mapearHeadersNovedades = async (archivoId, mapeos) => {
   const response = await api.post(`/nomina/archivos-novedades/${archivoId}/clasificar_headers/`, {
-    clasificaciones
+    mapeos
   });
   return response.data;
 };

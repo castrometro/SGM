@@ -353,25 +353,56 @@ class EmpleadoCierreNovedades(models.Model):
 
 
 class ConceptoRemuneracionNovedades(models.Model):
-    """Modelo específico para conceptos de remuneración en novedades"""
+    """Mapeo entre headers de novedades y conceptos del libro de remuneraciones"""
     cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
-    nombre_concepto = models.CharField(max_length=120)
-    clasificacion = models.CharField(max_length=20, choices=CLASIFICACION_CHOICES)
-    hashtags = models.JSONField(default=list, blank=True)
-    usuario_clasifica = models.ForeignKey(
+    
+    # Header tal como aparece en el archivo de novedades
+    nombre_concepto_novedades = models.CharField(max_length=120)
+    
+    # Mapeo directo al concepto del libro de remuneraciones
+    concepto_libro = models.ForeignKey(
+        ConceptoRemuneracion, 
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="Concepto del libro de remuneraciones al que mapea este header de novedades"
+    )
+    
+    # Metadatos del mapeo
+    usuario_mapea = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="conceptos_novedades_clasificados",
+        related_name="mapeos_novedades_creados",
     )
-    vigente = models.BooleanField(default=True)
+    activo = models.BooleanField(default=True)
+    fecha_mapeo = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('cliente', 'nombre_concepto')
+        unique_together = ('cliente', 'nombre_concepto_novedades')
 
     def __str__(self):
-        return f"Novedades - {self.cliente.nombre} - {self.nombre_concepto}"
+        return f"{self.cliente.nombre}: {self.nombre_concepto_novedades} → {self.concepto_libro.nombre_concepto}"
+    
+    # Propiedades que delegan al concepto del libro
+    @property
+    def clasificacion(self):
+        return self.concepto_libro.clasificacion if self.concepto_libro else None
+    
+    @property
+    def hashtags(self):
+        return self.concepto_libro.hashtags if self.concepto_libro else []
+    
+    @property
+    def nombre_concepto(self):
+        """Compatibilidad con código existente"""
+        return self.nombre_concepto_novedades
+    
+    @property
+    def vigente(self):
+        """Compatibilidad con código existente"""
+        return self.activo and (self.concepto_libro.vigente if self.concepto_libro else False)
 
 
 class RegistroConceptoEmpleadoNovedades(models.Model):
@@ -404,6 +435,11 @@ class RegistroConceptoEmpleadoNovedades(models.Model):
             return True
         except (ValueError, TypeError):
             return False
+    
+    @property
+    def concepto_libro_equivalente(self):
+        """Retorna el concepto del libro de remuneraciones equivalente"""
+        return self.concepto.concepto_libro if self.concepto else None
 
 
 # Modelos para datos del Analista

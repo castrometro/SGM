@@ -217,20 +217,22 @@ class EmpleadoCierreNovedadesAdmin(admin.ModelAdmin):
 class ConceptoRemuneracionNovedadesAdmin(admin.ModelAdmin):
     list_display = (
         'cliente',
-        'nombre_concepto',
-        'clasificacion',
-        'usuario_clasifica',
-        'vigente',
+        'nombre_concepto_novedades',
+        'concepto_libro',
+        'usuario_mapea',
+        'activo',
+        'fecha_mapeo',
     )
-    list_filter = ('cliente', 'clasificacion', 'vigente')
-    search_fields = ('cliente__nombre', 'nombre_concepto')
-    readonly_fields = ('usuario_clasifica',)
+    list_filter = ('cliente', 'activo', 'concepto_libro__clasificacion', 'fecha_mapeo')
+    search_fields = ('cliente__nombre', 'nombre_concepto_novedades', 'concepto_libro__nombre_concepto')
+    readonly_fields = ('fecha_mapeo',)
+    raw_id_fields = ('concepto_libro',)
 
 
 @admin.register(RegistroConceptoEmpleadoNovedades)
 class RegistroConceptoEmpleadoNovedadesAdmin(admin.ModelAdmin):
     list_display = ('empleado', 'concepto', 'nombre_concepto_original', 'monto', 'fecha_registro')
     search_fields = ('empleado__rut', 'nombre_concepto_original')
-    list_filter = ('concepto__clasificacion', 'fecha_registro')
+    list_filter = ('concepto__concepto_libro__clasificacion', 'concepto__activo', 'fecha_registro')
     readonly_fields = ('fecha_registro',)
     date_hierarchy = 'fecha_registro'

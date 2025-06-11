@@ -38,25 +38,29 @@ def obtener_headers_archivo_novedades(path_archivo):
 
 def clasificar_headers_archivo_novedades(headers, cliente):
     """
-    Clasifica los headers usando los ConceptoRemuneracionNovedades vigentes del cliente.
+    Clasifica los headers usando los mapeos ConceptoRemuneracionNovedades vigentes del cliente.
     Retorna dos listas: clasificados y sin clasificar.
     """
-    # Obtén los conceptos vigentes del cliente, normalizados a lower y sin espacios
-    conceptos_vigentes = set(
-        c.nombre_concepto.strip().lower()
-        for c in ConceptoRemuneracionNovedades.objects.filter(cliente=cliente, vigente=True)
+    # Obtén los headers ya mapeados del cliente, normalizados a lower y sin espacios
+    headers_mapeados = set(
+        c.nombre_concepto_novedades.strip().lower()
+        for c in ConceptoRemuneracionNovedades.objects.filter(
+            cliente=cliente, 
+            activo=True,
+            concepto_libro__vigente=True
+        )
     )
     headers_clasificados = []
     headers_sin_clasificar = []
 
     for h in headers:
-        if h.strip().lower() in conceptos_vigentes:
+        if h.strip().lower() in headers_mapeados:
             headers_clasificados.append(h)
         else:
             headers_sin_clasificar.append(h)
 
     logger.info(
-        f"Clasificación automática novedades: {len(headers_clasificados)} clasificados, {len(headers_sin_clasificar)} sin clasificar"
+        f"Clasificación automática novedades: {len(headers_clasificados)} mapeados, {len(headers_sin_clasificar)} sin mapear"
     )
     return headers_clasificados, headers_sin_clasificar
 
@@ -157,8 +161,12 @@ def guardar_registros_novedades(archivo_novedades):
                     if valor.lower() == 'nan':
                         valor = ""
 
+                # Buscar el mapeo del header de novedades
                 concepto = ConceptoRemuneracionNovedades.objects.filter(
-                    cliente=archivo_novedades.cierre.cliente, nombre_concepto=h, vigente=True
+                    cliente=archivo_novedades.cierre.cliente, 
+                    nombre_concepto_novedades=h, 
+                    activo=True,
+                    concepto_libro__vigente=True
                 ).first()
                 
                 RegistroConceptoEmpleadoNovedades.objects.update_or_create(

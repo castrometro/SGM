@@ -224,24 +224,22 @@ def procesar_archivo_analista(archivo_id):
 
 @shared_task
 def procesar_archivo_novedades(archivo_id):
-    """Procesa un archivo de novedades - implementación completa del flujo"""
-    logger.info(f"Iniciando procesamiento completo archivo de novedades id={archivo_id}")
+    """Procesa un archivo de novedades - solo hasta clasificación inicial"""
+    logger.info(f"Iniciando procesamiento inicial archivo de novedades id={archivo_id}")
     
     try:
         archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
         
-        # Crear cadena de tareas para novedades (similar al libro de remuneraciones)
+        # ✅ SOLO ejecutar análisis y clasificación inicial - NO las tareas finales
         workflow = chain(
             analizar_headers_archivo_novedades.s(archivo_id),
-            clasificar_headers_archivo_novedades_task.s(),
-            actualizar_empleados_desde_novedades_task.s(),
-            guardar_registros_novedades_task.s()
+            clasificar_headers_archivo_novedades_task.s()
         )
         
-        # Ejecutar la cadena
+        # Ejecutar la cadena parcial
         workflow.apply_async()
         
-        logger.info(f"Cadena de procesamiento iniciada para archivo novedades id={archivo_id}")
+        logger.info(f"Cadena de análisis y clasificación iniciada para archivo novedades id={archivo_id}")
         return {"archivo_id": archivo_id, "estado": "cadena_iniciada"}
         
     except Exception as e:
@@ -313,6 +311,15 @@ def clasificar_headers_archivo_novedades_task(result):
             archivo.estado = "clasif_pendiente"
         else:
             archivo.estado = "clasificado"
+            
+            # ✅ Si todos los headers se clasificaron automáticamente, continuar con las tareas finales
+            from celery import chain
+            workflow_final = chain(
+                actualizar_empleados_desde_novedades_task.s({"archivo_id": archivo_id}),
+                guardar_registros_novedades_task.s()
+            )
+            workflow_final.apply_async()
+            logger.info(f"Todos los headers se clasificaron automáticamente. Iniciando procesamiento final para archivo {archivo_id}")
 
         archivo.save()
         logger.info(

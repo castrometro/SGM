@@ -240,6 +240,23 @@ def conceptos_remuneracion_por_cliente(request):
     serializer = ConceptoRemuneracionSerializer(conceptos, many=True)
     return Response(serializer.data)
 
+@api_view(['GET'])
+def conceptos_remuneracion_por_cierre(request, cierre_id):
+    """Obtiene los conceptos de remuneración del libro del cierre especificado"""
+    try:
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        conceptos = ConceptoRemuneracion.objects.filter(
+            cliente=cierre.cliente, 
+            vigente=True
+        ).order_by('nombre_concepto')
+        
+        serializer = ConceptoRemuneracionSerializer(conceptos, many=True)
+        return Response(serializer.data)
+    except CierreNomina.DoesNotExist:
+        return Response({"error": "Cierre no encontrado"}, status=404)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
 class ConceptoRemuneracionBatchView(APIView):
     def post(self, request):
         data = request.data
@@ -560,58 +577,91 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def reprocesar(self, request, pk=None):
-        """Reprocesa un archivo de novedades"""
+        """Reprocesa un archivo de novedades desde el inicio"""
+        from nomina.tasks import procesar_archivo_novedades
+        
         archivo = self.get_object()
         
-        # Reiniciar estado
-        archivo.estado = 'pendiente'
-        archivo.save()
+        if archivo.estado == 'en_proceso':
+            return Response({
+                "error": "El archivo ya está siendo procesado"
+            }, status=400)
         
-        # Disparar tarea de procesamiento
-        procesar_archivo_novedades.delay(archivo.id)
-        
-        return Response({
-            "mensaje": "Archivo enviado a reprocesamiento",
-            "estado": archivo.estado
-        })
+        try:
+            # Resetear estado y limpiar datos previos
+            archivo.estado = 'en_proceso'
+            archivo.header_json = None
+            archivo.save()
+            
+            # Iniciar procesamiento asíncrono
+            procesar_archivo_novedades.delay(archivo.id)
+            
+            return Response({
+                "mensaje": "Reprocesamiento iniciado",
+                "estado": archivo.estado
+            })
+            
+        except Exception as e:
+            archivo.estado = 'con_error'
+            archivo.save()
+            return Response({"error": str(e)}, status=500)
 
     @action(detail=True, methods=['get'])
     def headers(self, request, pk=None):
         """Obtiene los headers de un archivo de novedades para clasificación"""
         archivo = self.get_object()
         
-        if archivo.estado not in ['clasif_pendiente', 'clasificado']:
+        if archivo.estado not in ['clasif_pendiente', 'clasificado', 'procesado']:
             return Response({
-                "error": "El archivo debe estar en estado 'clasif_pendiente' o 'clasificado' para obtener headers"
+                "error": "El archivo debe estar en estado 'clasif_pendiente', 'clasificado' o 'procesado' para obtener headers"
             }, status=400)
         
         headers_data = archivo.header_json
         if isinstance(headers_data, dict):
-            return Response({
-                "headers_clasificados": headers_data.get("headers_clasificados", []),
-                "headers_sin_clasificar": headers_data.get("headers_sin_clasificar", [])
-            })
+            headers_clasificados = headers_data.get("headers_clasificados", [])
+            headers_sin_clasificar = headers_data.get("headers_sin_clasificar", [])
         else:
-            return Response({
-                "headers_clasificados": [],
-                "headers_sin_clasificar": headers_data if isinstance(headers_data, list) else []
-            })
+            headers_clasificados = []
+            headers_sin_clasificar = headers_data if isinstance(headers_data, list) else []
+        
+        # Si el archivo está procesado, incluir los mapeos existentes
+        mapeos_existentes = {}
+        if archivo.estado == 'procesado':
+            from nomina.models import ConceptoRemuneracionNovedades
+            mapeos = ConceptoRemuneracionNovedades.objects.filter(
+                cliente=archivo.cierre.cliente,
+                activo=True,
+                nombre_concepto_novedades__in=headers_clasificados
+            ).select_related('concepto_libro')
+            
+            for mapeo in mapeos:
+                mapeos_existentes[mapeo.nombre_concepto_novedades] = {
+                    'concepto_libro_id': mapeo.concepto_libro.id,
+                    'concepto_libro_nombre': mapeo.concepto_libro.nombre,
+                    'concepto_libro_clasificacion': mapeo.concepto_libro.clasificacion
+                }
+        
+        return Response({
+            "headers_clasificados": headers_clasificados,
+            "headers_sin_clasificar": headers_sin_clasificar,
+            "mapeos_existentes": mapeos_existentes
+        })
 
     @action(detail=True, methods=['post'])
     def clasificar_headers(self, request, pk=None):
-        """Clasifica headers pendientes de un archivo de novedades"""
-        from nomina.models import ConceptoRemuneracionNovedades
+        """Mapea headers pendientes de un archivo de novedades con conceptos del libro de remuneraciones"""
+        from nomina.models import ConceptoRemuneracionNovedades, ConceptoRemuneracion
         
         archivo = self.get_object()
         
         if archivo.estado != 'clasif_pendiente':
             return Response({
-                "error": "El archivo debe estar en estado 'clasif_pendiente' para clasificar headers"
+                "error": "El archivo debe estar en estado 'clasif_pendiente' para mapear headers"
             }, status=400)
         
-        clasificaciones = request.data.get('clasificaciones', [])
-        if not clasificaciones:
-            return Response({"error": "No se proporcionaron clasificaciones"}, status=400)
+        mapeos = request.data.get('mapeos', [])
+        if not mapeos:
+            return Response({"error": "No se proporcionaron mapeos"}, status=400)
         
         try:
             # Obtener headers actuales
@@ -619,32 +669,42 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
             headers_clasificados = headers_data.get("headers_clasificados", [])
             headers_sin_clasificar = headers_data.get("headers_sin_clasificar", [])
             
-            # Procesar clasificaciones
-            for clasificacion in clasificaciones:
-                header = clasificacion.get('header')
-                concepto_clasificacion = clasificacion.get('clasificacion')
+            # Procesar mapeos
+            for mapeo in mapeos:
+                header_novedades = mapeo.get('header_novedades')
+                concepto_libro_id = mapeo.get('concepto_libro_id')
                 
-                if header in headers_sin_clasificar:
-                    # Crear o actualizar concepto
-                    concepto, created = ConceptoRemuneracionNovedades.objects.get_or_create(
-                        cliente=archivo.cierre.cliente,
-                        nombre_concepto=header,
-                        defaults={
-                            'clasificacion': concepto_clasificacion,
-                            'usuario_clasifica': request.user,
-                            'vigente': True
-                        }
-                    )
-                    
-                    if not created:
-                        concepto.clasificacion = concepto_clasificacion
-                        concepto.usuario_clasifica = request.user
-                        concepto.vigente = True
-                        concepto.save()
-                    
-                    # Mover de sin clasificar a clasificados
-                    headers_sin_clasificar.remove(header)
-                    headers_clasificados.append(header)
+                if header_novedades in headers_sin_clasificar and concepto_libro_id:
+                    try:
+                        concepto_libro = ConceptoRemuneracion.objects.get(
+                            id=concepto_libro_id,
+                            cliente=archivo.cierre.cliente,
+                            vigente=True
+                        )
+                        
+                        # Crear o actualizar mapeo
+                        mapeo_concepto, created = ConceptoRemuneracionNovedades.objects.get_or_create(
+                            cliente=archivo.cierre.cliente,
+                            nombre_concepto_novedades=header_novedades,
+                            defaults={
+                                'concepto_libro': concepto_libro,
+                                'usuario_mapea': request.user,
+                                'activo': True
+                            }
+                        )
+                        
+                        if not created:
+                            mapeo_concepto.concepto_libro = concepto_libro
+                            mapeo_concepto.usuario_mapea = request.user
+                            mapeo_concepto.activo = True
+                            mapeo_concepto.save()
+                        
+                        # Mover de sin clasificar a clasificados
+                        headers_sin_clasificar.remove(header_novedades)
+                        headers_clasificados.append(header_novedades)
+                        
+                    except ConceptoRemuneracion.DoesNotExist:
+                        continue  # Saltar este mapeo si el concepto no existe
             
             # Actualizar archivo
             archivo.header_json = {
@@ -659,7 +719,7 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
             archivo.save()
             
             return Response({
-                "mensaje": "Headers clasificados correctamente",
+                "mensaje": "Headers mapeados correctamente",
                 "headers_clasificados": len(headers_clasificados),
                 "headers_sin_clasificar": len(headers_sin_clasificar),
                 "estado": archivo.estado

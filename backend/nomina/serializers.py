@@ -178,15 +178,19 @@ class EmpleadoCierreNovedadesSerializer(serializers.ModelSerializer):
 
 
 class ConceptoRemuneracionNovedadesSerializer(serializers.ModelSerializer):
-    usuario_clasifica_nombre = serializers.CharField(source='usuario_clasifica.username', read_only=True)
+    usuario_mapea_nombre = serializers.CharField(source='usuario_mapea.username', read_only=True)
+    concepto_libro_nombre = serializers.CharField(source='concepto_libro.nombre_concepto', read_only=True)
+    clasificacion = serializers.CharField(read_only=True)  # Viene del concepto del libro
+    hashtags = serializers.JSONField(read_only=True)  # Viene del concepto del libro
     
     class Meta:
         model = ConceptoRemuneracionNovedades
         fields = [
-            'id', 'nombre_concepto', 'clasificacion', 'hashtags', 
-            'vigente', 'cliente', 'usuario_clasifica', 'usuario_clasifica_nombre'
+            'id', 'nombre_concepto_novedades', 'concepto_libro', 'concepto_libro_nombre',
+            'clasificacion', 'hashtags', 'activo', 'cliente', 'usuario_mapea', 
+            'usuario_mapea_nombre', 'fecha_mapeo'
         ]
-        read_only_fields = ['cliente', 'usuario_clasifica']
+        read_only_fields = ['cliente', 'usuario_mapea', 'fecha_mapeo', 'clasificacion', 'hashtags']
 
 
 class RegistroConceptoEmpleadoNovedadesSerializer(serializers.ModelSerializer):

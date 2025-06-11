@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import LibroRemuneracionesCard from "./LibroRemuneracionesCard";
-import MovimientosMesCard from "./MovimientosMesCard";
-import ArchivosAnalistaCard from "./ArchivosAnalistaCard";
+import ArchivosTalanaSection from "./ArchivosTalanaSection";
+import ArchivosAnalistaSection from "./ArchivosAnalistaSection";
 import ModalClasificacionHeaders from "../ModalClasificacionHeaders";
 import {
   obtenerEstadoLibroRemuneraciones,
@@ -234,47 +233,31 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Primera fila: Libro de Remuneraciones y Movimientos del Mes */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <LibroRemuneracionesCard
-          estado={
-            libro?.estado === "procesando" || libro?.estado === "procesado"
-              ? libro?.estado
-              : libroListo
-              ? "clasificado"
-              : libro?.estado || "no_subido"
-          }
-          archivoNombre={libro?.archivo_nombre}
-          subiendo={subiendo}
-          onSubirArchivo={handleSubirArchivo}
-          onVerClasificacion={handleVerClasificacion}
-          onProcesar={handleProcesarLibro}
-          onActualizarEstado={handleActualizarEstado}
-          libroId={libro?.id} // ← Agregar verificación de nulidad
-          headersSinClasificar={headersSinClasificar}
-          headerClasificados={Object.keys(headersClasificados)}
-          mensaje={mensajeLibro}
-          disabled={libro?.estado === "procesando"}
-        />
-        <MovimientosMesCard
-          estado={estadoMovimientos}
-          archivoNombre={movimientos?.archivo_nombre}
-          subiendo={subiendoMov}
-          onSubirArchivo={handleSubirMovimientos}
-          onActualizarEstado={handleActualizarEstadoMovimientos}
-          disabled={false}
-        />
-      </div>
+    <div className="space-y-10">
+      {/* Sección 1: Archivos Talana */}
+      <ArchivosTalanaSection
+        libro={libro}
+        subiendo={subiendo}
+        onSubirArchivo={handleSubirArchivo}
+        onVerClasificacion={handleVerClasificacion}
+        onProcesarLibro={handleProcesarLibro}
+        onActualizarEstado={handleActualizarEstado}
+        headersSinClasificar={headersSinClasificar}
+        headersClasificados={headersClasificados}
+        mensajeLibro={mensajeLibro}
+        libroListo={libroListo}
+        movimientos={movimientos}
+        subiendoMov={subiendoMov}
+        onSubirMovimientos={handleSubirMovimientos}
+        onActualizarEstadoMovimientos={handleActualizarEstadoMovimientos}
+      />
       
-      {/* Segunda fila: Archivos del Analista */}
-      <div className="w-full">
-        <ArchivosAnalistaCard
-          cierreId={cierre.id}
-          cliente={cliente}
-          disabled={false}
-        />
-      </div>
+      {/* Sección 2: Archivos del Analista */}
+      <ArchivosAnalistaSection
+        cierreId={cierre.id}
+        cliente={cliente}
+        disabled={false}
+      />
       
       <ModalClasificacionHeaders
         isOpen={modalAbierto}
@@ -284,7 +267,6 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
         onGuardarClasificaciones={handleGuardarClasificaciones}
         soloLectura={modoSoloLectura}
       />
-      
     </div>
   );
 };

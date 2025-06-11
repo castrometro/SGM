@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import ArchivosTalanaSection from "./ArchivosTalanaSection";
 import ArchivosAnalistaSection from "./ArchivosAnalistaSection";
+import IncidenciasEncontradasSection from "./IncidenciasEncontradasSection";
 import ModalClasificacionHeaders from "../ModalClasificacionHeaders";
 import {
   obtenerEstadoLibroRemuneraciones,
@@ -258,7 +259,10 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
         cliente={cliente}
         disabled={false}
       />
-      
+
+      {/* Sección 3: Incidencias Encontradas */}
+      <IncidenciasEncontradasSection />
+
       <ModalClasificacionHeaders
         isOpen={modalAbierto}
         onClose={() => setModalAbierto(false)}

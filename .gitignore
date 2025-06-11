@@ -26,3 +26,4 @@ backend/venv/
 *.njsproj
 *.sln
 *.sw?
+backend/nomina/__pycache__/serializers.cpython-312.pyc

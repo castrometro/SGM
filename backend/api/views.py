@@ -13,12 +13,15 @@ from .models import Cliente, Contrato, Usuario, Industria, Area, Servicio, Servi
 from .serializers import (
     ClienteSerializer, ContratoSerializer,
     UsuarioSerializer, IndustriaSerializer,
-    AreaSerializer, ServicioSerializer, ServicioClienteSerializer, AsignacionClienteUsuarioSerializer, CustomTokenObtainPairSerializer, ServicioClienteMiniSerializer
+    AreaSerializer, ServicioSerializer, ServicioClienteSerializer,
+    AsignacionClienteUsuarioSerializer, CustomTokenObtainPairSerializer,
+    ServicioClienteMiniSerializer, AnalistaPerformanceSerializer,
 )
 from .permissions import (
     IsAuthenticatedAndActive, IsGerente, IsSupervisor, IsAnalista,
     ClienteAccess, ContratoAccess
 )
+from django.db.models import Count, Q
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
@@ -142,3 +145,25 @@ class AsignacionClienteUsuarioViewSet(viewsets.ModelViewSet):
             return qs.filter(usuario=user)
         # analista ve sólo sus propias asignaciones, read-only
         return qs.filter(usuario=user)
+
+
+class AnalistaPerformanceViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = AnalistaPerformanceSerializer
+    permission_classes = [IsAuthenticatedAndActive & IsGerente]
+
+    def get_queryset(self):
+        gerente = self.request.user
+        areas = gerente.areas.all()
+        return (
+            Usuario.objects.filter(tipo_usuario='analista', areas__in=areas)
+            .distinct()
+            .annotate(
+                clientes_asignados=Count('asignaciones', distinct=True),
+                cierres_contabilidad=Count(
+                    'cierrecontabilidad',
+                    filter=Q(cierrecontabilidad__area__in=areas),
+                    distinct=True,
+                ),
+                cierres_nomina=Count('cierres_analista', distinct=True),
+            )
+        )

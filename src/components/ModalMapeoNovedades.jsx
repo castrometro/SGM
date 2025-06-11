@@ -27,9 +27,9 @@ const ModalMapeoNovedades = ({
   const [filtroConceptos, setFiltroConceptos] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // IDs already used
+  // IDs already used (excludes null so multiple "sin asignación" allowed)
   const usedConceptIds = useMemo(
-    () => new Set(Object.values(mapeos).map(c => c.id)),
+    () => new Set(Object.values(mapeos).map(c => c.id).filter(id => id !== null)),
     [mapeos]
   );
 
@@ -61,8 +61,16 @@ const ModalMapeoNovedades = ({
         const conceptos = await obtenerConceptosRemuneracionPorCierre(cierreId);
         setConceptosLibro(conceptos);
 
-        // initialize map
-        setMapeos({ ...mapeosExistentes });
+        // initialize map transformando mapeosExistentes
+        const convertidos = {};
+        Object.entries(mapeosExistentes).forEach(([header, data]) => {
+          if (data.concepto_libro_id === null || data.concepto_libro_id === undefined) {
+            convertidos[header] = { id: null, nombre_concepto: "Sin asignación" };
+          } else {
+            convertidos[header] = { id: data.concepto_libro_id, nombre_concepto: data.concepto_libro_nombre };
+          }
+        });
+        setMapeos(convertidos);
       } catch (error) {
         console.error("Error al cargar datos para mapeo:", error);
       } finally {
@@ -94,6 +102,14 @@ const ModalMapeoNovedades = ({
     setMapeos(prev => ({
       ...prev,
       [headerSeleccionado]: concepto,
+    }));
+  };
+
+  const mapearSinAsignacion = () => {
+    if (!headerSeleccionado || soloLectura) return;
+    setMapeos(prev => ({
+      ...prev,
+      [headerSeleccionado]: { id: null, nombre_concepto: "Sin asignación" },
     }));
   };
 
@@ -211,6 +227,18 @@ const ModalMapeoNovedades = ({
                 onChange={e => setFiltroConceptos(e.target.value)}
                 className="mb-3 px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-blue-500 focus:outline-none"
               />
+              {!soloLectura && (
+                <button
+                  type="button"
+                  onClick={mapearSinAsignacion}
+                  disabled={!headerSeleccionado}
+                  className={`mb-3 px-3 py-2 rounded text-sm border-2 transition-colors ${
+                    headerSeleccionado ? 'bg-red-600 hover:bg-red-500 border-red-500 text-white' : 'bg-gray-700 text-gray-400 border-gray-600 cursor-not-allowed'
+                  }`}
+                >
+                  Sin asignación
+                </button>
+              )}
               <div className="flex-1 border-2 border-dashed border-green-400 bg-opacity-10 rounded-lg p-3 overflow-y-auto bg-green-50">
                 {conceptosFiltrados.map(concepto => {
                   const used = usedConceptIds.has(concepto.id);

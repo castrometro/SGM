@@ -212,9 +212,14 @@ export const obtenerHeadersNovedades = async (archivoId) => {
 };
 
 export const mapearHeadersNovedades = async (archivoId, mapeos) => {
-  const response = await api.post(`/nomina/archivos-novedades/${archivoId}/clasificar_headers/`, {
-    mapeos
-  });
+  const payload = mapeos.map(m => ({
+    ...m,
+    concepto_libro_id: m.concepto_libro_id ?? null,
+  }));
+  const response = await api.post(
+    `/nomina/archivos-novedades/${archivoId}/clasificar_headers/`,
+    { mapeos: payload }
+  );
   return response.data;
 };
 

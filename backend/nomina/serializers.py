@@ -183,11 +183,15 @@ class ConceptoRemuneracionNovedadesSerializer(serializers.ModelSerializer):
     clasificacion = serializers.CharField(read_only=True)  # Viene del concepto del libro
     hashtags = serializers.JSONField(read_only=True)  # Viene del concepto del libro
     
+    concepto_libro = serializers.PrimaryKeyRelatedField(
+        queryset=ConceptoRemuneracion.objects.all(), allow_null=True, required=False
+    )
+
     class Meta:
         model = ConceptoRemuneracionNovedades
         fields = [
             'id', 'nombre_concepto_novedades', 'concepto_libro', 'concepto_libro_nombre',
-            'clasificacion', 'hashtags', 'activo', 'cliente', 'usuario_mapea', 
+            'clasificacion', 'hashtags', 'activo', 'cliente', 'usuario_mapea',
             'usuario_mapea_nombre', 'fecha_mapeo'
         ]
         read_only_fields = ['cliente', 'usuario_mapea', 'fecha_mapeo', 'clasificacion', 'hashtags']

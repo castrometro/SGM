@@ -633,13 +633,18 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
                 activo=True,
                 nombre_concepto_novedades__in=headers_clasificados
             ).select_related('concepto_libro')
-            
+
             for mapeo in mapeos:
-                mapeos_existentes[mapeo.nombre_concepto_novedades] = {
-                    'concepto_libro_id': mapeo.concepto_libro.id,
-                    'concepto_libro_nombre': mapeo.concepto_libro.nombre,
-                    'concepto_libro_clasificacion': mapeo.concepto_libro.clasificacion
-                }
+                if mapeo.concepto_libro:
+                    mapeos_existentes[mapeo.nombre_concepto_novedades] = {
+                        'concepto_libro_id': mapeo.concepto_libro.id,
+                        'concepto_libro_nombre': mapeo.concepto_libro.nombre,
+                        'concepto_libro_clasificacion': mapeo.concepto_libro.clasificacion,
+                    }
+                else:
+                    mapeos_existentes[mapeo.nombre_concepto_novedades] = {
+                        'concepto_libro_id': None,
+                    }
         
         return Response({
             "headers_clasificados": headers_clasificados,
@@ -673,38 +678,40 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
             for mapeo in mapeos:
                 header_novedades = mapeo.get('header_novedades')
                 concepto_libro_id = mapeo.get('concepto_libro_id')
-                
-                if header_novedades in headers_sin_clasificar and concepto_libro_id:
-                    try:
-                        concepto_libro = ConceptoRemuneracion.objects.get(
-                            id=concepto_libro_id,
-                            cliente=archivo.cierre.cliente,
-                            vigente=True
-                        )
-                        
-                        # Crear o actualizar mapeo
-                        mapeo_concepto, created = ConceptoRemuneracionNovedades.objects.get_or_create(
-                            cliente=archivo.cierre.cliente,
-                            nombre_concepto_novedades=header_novedades,
-                            defaults={
-                                'concepto_libro': concepto_libro,
-                                'usuario_mapea': request.user,
-                                'activo': True
-                            }
-                        )
-                        
-                        if not created:
-                            mapeo_concepto.concepto_libro = concepto_libro
-                            mapeo_concepto.usuario_mapea = request.user
-                            mapeo_concepto.activo = True
-                            mapeo_concepto.save()
-                        
-                        # Mover de sin clasificar a clasificados
-                        headers_sin_clasificar.remove(header_novedades)
-                        headers_clasificados.append(header_novedades)
-                        
-                    except ConceptoRemuneracion.DoesNotExist:
-                        continue  # Saltar este mapeo si el concepto no existe
+
+                if header_novedades in headers_sin_clasificar:
+                    if concepto_libro_id:
+                        try:
+                            concepto_libro = ConceptoRemuneracion.objects.get(
+                                id=concepto_libro_id,
+                                cliente=archivo.cierre.cliente,
+                                vigente=True
+                            )
+                        except ConceptoRemuneracion.DoesNotExist:
+                            continue
+                    else:
+                        concepto_libro = None
+
+                    # Crear o actualizar mapeo
+                    mapeo_concepto, created = ConceptoRemuneracionNovedades.objects.get_or_create(
+                        cliente=archivo.cierre.cliente,
+                        nombre_concepto_novedades=header_novedades,
+                        defaults={
+                            'concepto_libro': concepto_libro,
+                            'usuario_mapea': request.user,
+                            'activo': True,
+                        }
+                    )
+
+                    if not created:
+                        mapeo_concepto.concepto_libro = concepto_libro
+                        mapeo_concepto.usuario_mapea = request.user
+                        mapeo_concepto.activo = True
+                        mapeo_concepto.save()
+
+                    # Mover de sin clasificar a clasificados
+                    headers_sin_clasificar.remove(header_novedades)
+                    headers_clasificados.append(header_novedades)
             
             # Actualizar archivo
             archivo.header_json = {

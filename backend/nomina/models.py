@@ -383,7 +383,8 @@ class ConceptoRemuneracionNovedades(models.Model):
         unique_together = ('cliente', 'nombre_concepto_novedades')
 
     def __str__(self):
-        return f"{self.cliente.nombre}: {self.nombre_concepto_novedades} → {self.concepto_libro.nombre_concepto}"
+        nombre = self.concepto_libro.nombre_concepto if self.concepto_libro else "Sin asignación"
+        return f"{self.cliente.nombre}: {self.nombre_concepto_novedades} → {nombre}"
     
     # Propiedades que delegan al concepto del libro
     @property

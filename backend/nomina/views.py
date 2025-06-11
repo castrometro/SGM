@@ -638,7 +638,7 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
                 if mapeo.concepto_libro:
                     mapeos_existentes[mapeo.nombre_concepto_novedades] = {
                         'concepto_libro_id': mapeo.concepto_libro.id,
-                        'concepto_libro_nombre': mapeo.concepto_libro.nombre,
+                        'concepto_libro_nombre': mapeo.concepto_libro.nombre_concepto,
                         'concepto_libro_clasificacion': mapeo.concepto_libro.clasificacion,
                     }
                 else:

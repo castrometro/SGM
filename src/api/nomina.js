@@ -232,3 +232,8 @@ export const obtenerConceptosRemuneracionNovedades = async (clienteId) => {
   const response = await api.get(`/nomina/conceptos-remuneracion-novedades/?cliente=${clienteId}`);
   return response.data;
 };
+
+export const obtenerCategoriasIncidencias = async () => {
+  const response = await api.get('/nomina/incidencias/categorias/');
+  return response.data;
+};

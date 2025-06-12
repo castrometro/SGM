@@ -45,6 +45,24 @@ class CierreNomina(models.Model):
         default='pendiente'
     )
     usuario_analista = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='cierres_analista')
+    
+    # NUEVOS CAMPOS PARA INCIDENCIAS
+    estado_incidencias = models.CharField(
+        max_length=50,
+        choices=[
+            ('analisis_pendiente', 'Análisis de Incidencias Pendiente'),
+            ('incidencias_generadas', 'Incidencias Detectadas'),
+            ('resolucion_analista', 'En Resolución por Analista'),
+            ('revision_supervisor', 'En Revisión por Supervisor'),
+            ('devuelto_analista', 'Devuelto al Analista'),
+            ('aprobado', 'Incidencias Aprobadas'),
+            ('cierre_completado', 'Cierre Completado'),
+        ],
+        default='analisis_pendiente'
+    )
+    fecha_ultima_revision = models.DateTimeField(null=True, blank=True)
+    revisiones_realizadas = models.PositiveIntegerField(default=0)
+    supervisor_asignado = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='cierres_supervisor')
 
     class Meta:
         unique_together = ('cliente', 'periodo')
@@ -501,3 +519,158 @@ class AnalistaIngreso(models.Model):
 
     def __str__(self):
         return f"{self.rut} - {self.nombre} - Ingreso"
+
+
+# ===== SISTEMA DE INCIDENCIAS COLABORATIVO =====
+
+class EstadoCierreIncidencias(models.TextChoices):
+    ANALISIS_PENDIENTE = 'analisis_pendiente', 'Análisis de Incidencias Pendiente'
+    INCIDENCIAS_GENERADAS = 'incidencias_generadas', 'Incidencias Detectadas'
+    RESOLUCION_ANALISTA = 'resolucion_analista', 'En Resolución por Analista'
+    REVISION_SUPERVISOR = 'revision_supervisor', 'En Revisión por Supervisor'
+    DEVUELTO_ANALISTA = 'devuelto_analista', 'Devuelto al Analista'
+    APROBADO = 'aprobado', 'Incidencias Aprobadas'
+    CIERRE_COMPLETADO = 'cierre_completado', 'Cierre Completado'
+
+class TipoIncidencia(models.TextChoices):
+    # Grupo 1: Libro vs Novedades
+    EMPLEADO_SOLO_LIBRO = 'empleado_solo_libro', 'Empleado solo en Libro'
+    EMPLEADO_SOLO_NOVEDADES = 'empleado_solo_novedades', 'Empleado solo en Novedades'
+    DIFERENCIA_DATOS_PERSONALES = 'diff_datos_personales', 'Diferencia en Datos Personales'
+    DIFERENCIA_SUELDO_BASE = 'diff_sueldo_base', 'Diferencia en Sueldo Base'
+    DIFERENCIA_CONCEPTO_MONTO = 'diff_concepto_monto', 'Diferencia en Monto por Concepto'
+    CONCEPTO_SOLO_LIBRO = 'concepto_solo_libro', 'Concepto solo en Libro'
+    CONCEPTO_SOLO_NOVEDADES = 'concepto_solo_novedades', 'Concepto solo en Novedades'
+    
+    # Grupo 2: MovimientosMes vs Analista
+    INGRESO_NO_REPORTADO = 'ingreso_no_reportado', 'Ingreso no reportado por Analista'
+    FINIQUITO_NO_REPORTADO = 'finiquito_no_reportado', 'Finiquito no reportado por Analista'
+    AUSENCIA_NO_REPORTADA = 'ausencia_no_reportada', 'Ausencia no reportada por Analista'
+    DIFERENCIA_FECHAS_AUSENCIA = 'diff_fechas_ausencia', 'Diferencia en Fechas de Ausencia'
+    DIFERENCIA_DIAS_AUSENCIA = 'diff_dias_ausencia', 'Diferencia en Días de Ausencia'
+    DIFERENCIA_TIPO_AUSENCIA = 'diff_tipo_ausencia', 'Diferencia en Tipo de Ausencia'
+
+class EstadoIncidencia(models.TextChoices):
+    PENDIENTE = 'pendiente', 'Pendiente de Resolución'
+    RESUELTA_ANALISTA = 'resuelta_analista', 'Resuelta por Analista'
+    APROBADA_SUPERVISOR = 'aprobada_supervisor', 'Aprobada por Supervisor'
+    RECHAZADA_SUPERVISOR = 'rechazada_supervisor', 'Rechazada por Supervisor'
+    RE_RESUELTA = 're_resuelta', 'Re-resuelta por Analista'
+
+def resolucion_upload_to(instance, filename):
+    now = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"resoluciones/{instance.incidencia.cierre.cliente.id}/{instance.incidencia.cierre.periodo}/{now}_{filename}"
+
+class IncidenciaCierre(models.Model):
+    """Incidencias detectadas en la comparación de archivos de un cierre"""
+    cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE, related_name='incidencias')
+    tipo_incidencia = models.CharField(max_length=50, choices=TipoIncidencia.choices)
+    
+    # Empleado afectado
+    empleado_libro = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE, null=True, blank=True)
+    empleado_novedades = models.ForeignKey('EmpleadoCierreNovedades', on_delete=models.CASCADE, null=True, blank=True)
+    rut_empleado = models.CharField(max_length=20)
+    
+    # Detalles de la incidencia
+    descripcion = models.TextField()
+    valor_libro = models.CharField(max_length=500, null=True, blank=True)
+    valor_novedades = models.CharField(max_length=500, null=True, blank=True)
+    valor_movimientos = models.CharField(max_length=500, null=True, blank=True)
+    valor_analista = models.CharField(max_length=500, null=True, blank=True)
+    
+    # Contexto adicional
+    concepto_afectado = models.CharField(max_length=200, null=True, blank=True)
+    fecha_detectada = models.DateTimeField(auto_now_add=True)
+    
+    # NUEVOS CAMPOS PARA RESOLUCIÓN COLABORATIVA
+    estado = models.CharField(max_length=20, choices=EstadoIncidencia.choices, default='pendiente')
+    prioridad = models.CharField(max_length=10, choices=[
+        ('baja', 'Baja'),
+        ('media', 'Media'),
+        ('alta', 'Alta'),
+        ('critica', 'Crítica')
+    ], default='media')
+    
+    # Impacto monetario calculado
+    impacto_monetario = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    
+    # Usuario asignado para resolución
+    asignado_a = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='incidencias_asignadas')
+    
+    # Fechas de seguimiento
+    fecha_primera_resolucion = models.DateTimeField(null=True, blank=True)
+    fecha_ultima_accion = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['cierre', 'tipo_incidencia']),
+            models.Index(fields=['cierre', 'estado']),
+            models.Index(fields=['rut_empleado', 'cierre']),
+            models.Index(fields=['estado', 'prioridad']),
+            models.Index(fields=['asignado_a', 'estado']),
+        ]
+    
+    def __str__(self):
+        return f"{self.get_tipo_incidencia_display()} - {self.rut_empleado} - {self.cierre}"
+
+    def calcular_impacto_monetario(self):
+        """Calcula el impacto monetario de la incidencia"""
+        try:
+            if self.tipo_incidencia == TipoIncidencia.DIFERENCIA_CONCEPTO_MONTO:
+                if self.valor_libro and self.valor_novedades:
+                    # Limpiar y convertir valores
+                    monto_libro = float(str(self.valor_libro).replace(',', '').replace('$', '').strip())
+                    monto_novedades = float(str(self.valor_novedades).replace(',', '').replace('$', '').strip())
+                    return abs(monto_libro - monto_novedades)
+            elif self.tipo_incidencia == TipoIncidencia.DIFERENCIA_SUELDO_BASE:
+                if self.valor_libro and self.valor_novedades:
+                    sueldo_libro = float(str(self.valor_libro).replace(',', '').replace('$', '').strip())
+                    sueldo_novedades = float(str(self.valor_novedades).replace(',', '').replace('$', '').strip())
+                    return abs(sueldo_libro - sueldo_novedades)
+        except (ValueError, TypeError):
+            pass
+        return 0
+
+    def save(self, *args, **kwargs):
+        # Calcular impacto monetario automáticamente
+        if not self.impacto_monetario:
+            self.impacto_monetario = self.calcular_impacto_monetario()
+        super().save(*args, **kwargs)
+
+class ResolucionIncidencia(models.Model):
+    """Historial de resoluciones de una incidencia (conversación)"""
+    incidencia = models.ForeignKey(IncidenciaCierre, on_delete=models.CASCADE, related_name='resoluciones')
+    usuario = models.ForeignKey(User, on_delete=models.CASCADE)
+    tipo_resolucion = models.CharField(max_length=20, choices=[
+        ('justificacion', 'Justificación'),
+        ('correccion', 'Corrección'),
+        ('aprobacion', 'Aprobación'),
+        ('rechazo', 'Rechazo'),
+        ('consulta', 'Consulta'),
+        ('solicitud_cambio', 'Solicitud de Cambio'),
+    ])
+    
+    # Contenido de la resolución
+    comentario = models.TextField()
+    adjunto = models.FileField(upload_to=resolucion_upload_to, null=True, blank=True)
+    
+    # Metadatos
+    fecha_resolucion = models.DateTimeField(auto_now_add=True)
+    estado_anterior = models.CharField(max_length=20)
+    estado_nuevo = models.CharField(max_length=20)
+    
+    # Para correcciones de datos
+    valor_corregido = models.CharField(max_length=500, null=True, blank=True)
+    campo_corregido = models.CharField(max_length=100, null=True, blank=True)
+    
+    # Referencias a usuarios mencionados
+    usuarios_mencionados = models.ManyToManyField(User, related_name='resoluciones_mencionado', blank=True)
+    
+    class Meta:
+        ordering = ['-fecha_resolucion']
+    
+    def __str__(self):
+        return f"{self.get_tipo_resolucion_display()} por {self.usuario.username} - {self.incidencia}"
+
+# Agregar campos al modelo CierreNomina existente
+# Nota: Esto requiere una migración

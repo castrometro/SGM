@@ -16,6 +16,7 @@ import MovimientosCuenta from "./pages/MovimientosCuenta";
 import InformesAnalistas from "./pages/InformesAnalistas";
 import Dashboard from "./pages/Dashboard";
 import GestionAnalistas from "./pages/GestionAnalistas";
+import DashboardGerente from "./pages/DashboardGerente";
 import Tools from "./pages/Tools";
 
 function App() {
@@ -56,7 +57,12 @@ function App() {
 
           {/* ----------- ÁREA: NÓMINA ------------- */}
           <Route path="nomina/cierres/:cierreId" element={<CierreDetalleNomina />} />          {/* ----------- ÁREA: GESTIÓN DE ANALISTAS ------------- */}
-          <Route path="analistas" element={<GestionAnalistas />} />          {/* ----------- ÁREA: ANALYTICS DE PERFORMANCE ------------- */}
+          <Route path="analistas" element={<GestionAnalistas />} />
+
+          {/* ----------- ÁREA: DASHBOARD GERENTE ------------- */}
+          <Route path="dashboard-gerente" element={<DashboardGerente />} />
+
+          {/* ----------- ÁREA: ANALYTICS DE PERFORMANCE ------------- */}
           <Route path="analytics" element={<Dashboard />} />
           
           {/* ----------- ÁREA: HERRAMIENTAS ------------- */}

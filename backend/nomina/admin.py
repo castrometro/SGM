@@ -7,16 +7,90 @@ from .models import (
     ArchivoNovedadesUpload, ChecklistItem,
     AnalistaFiniquito, AnalistaIncidencia, AnalistaIngreso,
     # Modelos de novedades
-    EmpleadoCierreNovedades, ConceptoRemuneracionNovedades, RegistroConceptoEmpleadoNovedades
+    EmpleadoCierreNovedades, ConceptoRemuneracionNovedades, RegistroConceptoEmpleadoNovedades,
+    # Modelos de incidencias
+    IncidenciaCierre, ResolucionIncidencia
 )
 
 
 @admin.register(CierreNomina)
 class CierreNominaAdmin(admin.ModelAdmin):
-    list_display = ('cliente', 'periodo', 'estado', 'fecha_creacion', 'usuario_analista')
-    list_filter = ('cliente', 'estado', 'periodo')
+    list_display = (
+        'cliente', 
+        'periodo', 
+        'estado', 
+        'estado_incidencias', 
+        'total_incidencias',
+        'incidencias_pendientes',
+        'fecha_creacion', 
+        'usuario_analista'
+    )
+    list_filter = ('cliente', 'estado', 'estado_incidencias', 'periodo')
     search_fields = ('cliente__nombre', 'periodo')
-    readonly_fields = ('fecha_creacion',)
+    readonly_fields = ('fecha_creacion', 'resumen_incidencias')
+    fieldsets = (
+        ('Información General', {
+            'fields': ('cliente', 'periodo', 'usuario_analista', 'fecha_creacion')
+        }),
+        ('Estados', {
+            'fields': ('estado', 'estado_incidencias')
+        }),
+        ('Resumen de Incidencias', {
+            'fields': ('resumen_incidencias',),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def total_incidencias(self, obj):
+        """Total de incidencias del cierre"""
+        return obj.incidencias.count()
+    total_incidencias.short_description = 'Total Incidencias'
+    
+    def incidencias_pendientes(self, obj):
+        """Incidencias pendientes"""
+        pendientes = obj.incidencias.filter(estado='pendiente').count()
+        if pendientes > 0:
+            return f'<span style="color: #f59e0b; font-weight: bold;">{pendientes}</span>'
+        return pendientes
+    incidencias_pendientes.allow_tags = True
+    incidencias_pendientes.short_description = 'Pendientes'
+    
+    def resumen_incidencias(self, obj):
+        """Resumen detallado de incidencias para readonly"""
+        incidencias = obj.incidencias.all()
+        if not incidencias.exists():
+            return "No hay incidencias generadas"
+        
+        total = incidencias.count()
+        por_estado = {
+            'pendiente': incidencias.filter(estado='pendiente').count(),
+            'resuelta_analista': incidencias.filter(estado='resuelta_analista').count(),
+            'aprobada_supervisor': incidencias.filter(estado='aprobada_supervisor').count(),
+            'rechazada_supervisor': incidencias.filter(estado='rechazada_supervisor').count(),
+        }
+        por_prioridad = {
+            'critica': incidencias.filter(prioridad='critica').count(),
+            'alta': incidencias.filter(prioridad='alta').count(),
+            'media': incidencias.filter(prioridad='media').count(),
+            'baja': incidencias.filter(prioridad='baja').count(),
+        }
+        
+        return f"""
+        TOTAL: {total} incidencias
+        
+        Por Estado:
+        - Pendientes: {por_estado['pendiente']}
+        - Resueltas por Analista: {por_estado['resuelta_analista']}
+        - Aprobadas por Supervisor: {por_estado['aprobada_supervisor']}
+        - Rechazadas por Supervisor: {por_estado['rechazada_supervisor']}
+        
+        Por Prioridad:
+        - Críticas: {por_prioridad['critica']}
+        - Altas: {por_prioridad['alta']}
+        - Medias: {por_prioridad['media']}
+        - Bajas: {por_prioridad['baja']}
+        """
+    resumen_incidencias.short_description = 'Resumen de Incidencias'
 
 
 @admin.register(EmpleadoCierre)
@@ -236,3 +310,275 @@ class RegistroConceptoEmpleadoNovedadesAdmin(admin.ModelAdmin):
     list_filter = ('concepto__concepto_libro__clasificacion', 'concepto__activo', 'fecha_registro')
     readonly_fields = ('fecha_registro',)
     date_hierarchy = 'fecha_registro'
+
+
+# ========== ADMINISTRACIÓN DE INCIDENCIAS ==========
+
+class ResolucionIncidenciaInline(admin.TabularInline):
+    """Inline para mostrar resoluciones dentro de una incidencia"""
+    model = ResolucionIncidencia
+    extra = 0
+    readonly_fields = ('fecha_resolucion',)
+    fields = ('tipo_resolucion', 'usuario', 'comentario', 'valor_corregido', 'fecha_resolucion')
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('usuario')
+
+
+@admin.register(IncidenciaCierre)
+class IncidenciaCierreAdmin(admin.ModelAdmin):
+    """Administración de incidencias de cierre"""
+    list_display = (
+        'id',
+        'cierre_info',
+        'rut_empleado',
+        'tipo_incidencia_display',
+        'prioridad_display', 
+        'estado_display',
+        'asignado_a',
+        'impacto_monetario',
+        'fecha_detectada'
+    )
+    list_filter = (
+        'prioridad',
+        'estado', 
+        'tipo_incidencia',
+        'cierre__cliente',
+        'cierre__periodo',
+        'fecha_detectada',
+        'asignado_a'
+    )
+    search_fields = (
+        'rut_empleado',
+        'descripcion',
+        'concepto_afectado',
+        'empleado_libro__nombre',
+        'empleado_libro__apellido_paterno',
+        'empleado_novedades__nombre',
+        'empleado_novedades__apellido_paterno'
+    )
+    readonly_fields = (
+        'fecha_detectada',
+        'fecha_primera_resolucion',
+        'cierre_info_detailed'
+    )
+    fieldsets = (
+        ('Información General', {
+            'fields': (
+                'cierre',
+                'cierre_info_detailed',
+                'tipo_incidencia',
+                'rut_empleado',
+                'descripcion'
+            )
+        }),
+        ('Clasificación', {
+            'fields': (
+                'prioridad',
+                'estado', 
+                'asignado_a',
+                'concepto_afectado'
+            )
+        }),
+        ('Valores Comparados', {
+            'fields': (
+                'valor_libro',
+                'valor_novedades',
+                'valor_movimientos',
+                'valor_analista',
+                'impacto_monetario'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Referencias', {
+            'fields': (
+                'empleado_libro',
+                'empleado_novedades'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Fechas', {
+            'fields': (
+                'fecha_detectada',
+                'fecha_primera_resolucion'
+            )
+        })
+    )
+    inlines = [ResolucionIncidenciaInline]
+    date_hierarchy = 'fecha_detectada'
+    list_per_page = 50
+    
+    def cierre_info(self, obj):
+        """Info básica del cierre"""
+        return f"{obj.cierre.cliente.nombre} - {obj.cierre.periodo}"
+    cierre_info.short_description = 'Cierre'
+    
+    def cierre_info_detailed(self, obj):
+        """Info detallada del cierre para readonly"""
+        return f"""
+        Cliente: {obj.cierre.cliente.nombre}
+        Período: {obj.cierre.periodo}
+        Estado Cierre: {obj.cierre.get_estado_display()}
+        Analista: {obj.cierre.usuario_analista or 'No asignado'}
+        """
+    cierre_info_detailed.short_description = 'Información del Cierre'
+    
+    def tipo_incidencia_display(self, obj):
+        """Display mejorado del tipo de incidencia"""
+        return obj.get_tipo_incidencia_display()
+    tipo_incidencia_display.short_description = 'Tipo'
+    
+    def prioridad_display(self, obj):
+        """Display con colores para prioridad"""
+        colors = {
+            'critica': '#dc2626',    # rojo
+            'alta': '#ea580c',       # naranja
+            'media': '#d97706',      # amarillo
+            'baja': '#16a34a'        # verde
+        }
+        color = colors.get(obj.prioridad, '#6b7280')
+        return f'<span style="color: {color}; font-weight: bold;">●</span> {obj.prioridad.title()}'
+    prioridad_display.allow_tags = True
+    prioridad_display.short_description = 'Prioridad'
+    
+    def estado_display(self, obj):
+        """Display con colores para estado"""
+        colors = {
+            'pendiente': '#f59e0b',           # amarillo
+            'resuelta_analista': '#3b82f6',   # azul
+            'aprobada_supervisor': '#10b981', # verde
+            'rechazada_supervisor': '#ef4444' # rojo
+        }
+        color = colors.get(obj.estado, '#6b7280')
+        return f'<span style="color: {color};">●</span> {obj.get_estado_display()}'
+    estado_display.allow_tags = True
+    estado_display.short_description = 'Estado'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'cierre',
+            'cierre__cliente',
+            'cierre__usuario_analista',
+            'empleado_libro',
+            'empleado_novedades',
+            'asignado_a'
+        )
+
+
+@admin.register(ResolucionIncidencia)
+class ResolucionIncidenciaAdmin(admin.ModelAdmin):
+    """Administración de resoluciones de incidencias"""
+    list_display = (
+        'incidencia_info',
+        'tipo_resolucion_display',
+        'usuario',
+        'comentario_resumido',
+        'valor_corregido',
+        'fecha_resolucion'
+    )
+    list_filter = (
+        'tipo_resolucion',
+        'incidencia__prioridad',
+        'incidencia__estado',
+        'incidencia__cierre__cliente',
+        'fecha_resolucion',
+        'usuario'
+    )
+    search_fields = (
+        'comentario',
+        'valor_corregido',
+        'campo_corregido',
+        'incidencia__rut_empleado',
+        'incidencia__descripcion',
+        'usuario__username',
+        'usuario__first_name',
+        'usuario__last_name'
+    )
+    readonly_fields = ('fecha_resolucion',)
+    fieldsets = (
+        ('Información General', {
+            'fields': (
+                'incidencia',
+                'usuario',
+                'tipo_resolucion',
+                'fecha_resolucion'
+            )
+        }),
+        ('Resolución', {
+            'fields': (
+                'comentario',
+                'valor_corregido',
+                'campo_corregido',
+                'adjunto'
+            )
+        }),
+        ('Colaboración', {
+            'fields': ('usuarios_mencionados',),
+            'classes': ('collapse',)
+        })
+    )
+    date_hierarchy = 'fecha_resolucion'
+    list_per_page = 100
+    
+    def incidencia_info(self, obj):
+        """Info de la incidencia relacionada"""
+        return f"#{obj.incidencia.id} - {obj.incidencia.rut_empleado} ({obj.incidencia.get_prioridad_display()})"
+    incidencia_info.short_description = 'Incidencia'
+    
+    def tipo_resolucion_display(self, obj):
+        """Display mejorado del tipo de resolución"""
+        icons = {
+            'comentario': '💬',
+            'solucion': '✅',
+            'correccion': '🔧',
+            'rechazo': '❌'
+        }
+        icon = icons.get(obj.tipo_resolucion, '📝')
+        return f"{icon} {obj.get_tipo_resolucion_display()}"
+    tipo_resolucion_display.short_description = 'Tipo'
+    
+    def comentario_resumido(self, obj):
+        """Comentario truncado para la lista"""
+        if obj.comentario:
+            return (obj.comentario[:100] + '...') if len(obj.comentario) > 100 else obj.comentario
+        return '-'
+    comentario_resumido.short_description = 'Comentario'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'incidencia',
+            'incidencia__cierre',
+            'incidencia__cierre__cliente',
+            'usuario'
+        ).prefetch_related('usuarios_mencionados')
+
+
+# ========== ACCIONES PERSONALIZADAS ==========
+
+@admin.action(description='Asignar incidencias seleccionadas a mí')
+def asignar_incidencias_a_mi(modeladmin, request, queryset):
+    """Acción para asignarse incidencias"""
+    count = queryset.update(asignado_a=request.user)
+    modeladmin.message_user(
+        request,
+        f'{count} incidencia(s) asignada(s) a {request.user.get_full_name() or request.user.username}'
+    )
+
+@admin.action(description='Marcar como pendientes')
+def marcar_como_pendientes(modeladmin, request, queryset):
+    """Acción para marcar incidencias como pendientes"""
+    count = queryset.update(estado='pendiente')
+    modeladmin.message_user(request, f'{count} incidencia(s) marcada(s) como pendiente(s)')
+
+@admin.action(description='Marcar como resueltas por analista')
+def marcar_como_resueltas(modeladmin, request, queryset):
+    """Acción para marcar incidencias como resueltas"""
+    count = queryset.update(estado='resuelta_analista')
+    modeladmin.message_user(request, f'{count} incidencia(s) marcada(s) como resuelta(s)')
+
+# Agregar acciones al admin de incidencias
+IncidenciaCierreAdmin.actions = [
+    asignar_incidencias_a_mi,
+    marcar_como_pendientes,
+    marcar_como_resueltas
+]

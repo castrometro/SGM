@@ -385,3 +385,54 @@ def guardar_registros_novedades_task(result):
         except:
             pass
         raise
+
+
+# ===== TAREAS PARA SISTEMA DE INCIDENCIAS =====
+
+@shared_task
+def generar_incidencias_cierre_task(cierre_id):
+    """Task para generar incidencias de un cierre"""
+    from .utils.GenerarIncidencias import generar_todas_incidencias
+    from .models import CierreNomina
+    
+    logger.info(f"Iniciando generación de incidencias para cierre {cierre_id}")
+    
+    try:
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        # Verificar que el cierre tenga los archivos necesarios procesados
+        if not _verificar_archivos_listos_para_incidencias(cierre):
+            raise ValueError("No todos los archivos están procesados para generar incidencias")
+        
+        resultado = generar_todas_incidencias(cierre)
+        
+        logger.info(f"Incidencias generadas exitosamente para cierre {cierre_id}: {resultado['total_incidencias']} incidencias")
+        return resultado
+        
+    except Exception as e:
+        logger.error(f"Error generando incidencias para cierre {cierre_id}: {e}")
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            cierre.estado_incidencias = 'analisis_pendiente'
+            cierre.save(update_fields=['estado_incidencias'])
+        except:
+            pass
+        raise
+
+def _verificar_archivos_listos_para_incidencias(cierre):
+    """Verifica que los archivos necesarios estén procesados"""
+    from .models import LibroRemuneracionesUpload, MovimientosMesUpload
+    
+    # Verificar libro de remuneraciones procesado
+    libro = LibroRemuneracionesUpload.objects.filter(cierre=cierre).first()
+    if not libro or libro.estado != 'procesado':
+        logger.warning(f"Libro de remuneraciones no procesado para cierre {cierre.id}")
+        return False
+    
+    # Verificar movimientos del mes procesados
+    movimientos = MovimientosMesUpload.objects.filter(cierre=cierre).first()
+    if not movimientos or movimientos.estado != 'procesado':
+        logger.warning(f"Movimientos del mes no procesados para cierre {cierre.id}")
+        return False
+    
+    return True

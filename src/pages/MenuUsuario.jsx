@@ -5,7 +5,8 @@ import {
   ShieldCheck,
   UserCog,
   FileText,
-  BarChart3
+  BarChart3,
+  Activity
 } from "lucide-react";
 
 const MenuUsuario = () => {
@@ -36,6 +37,15 @@ const MenuUsuario = () => {
     opciones.push(
       { label: "Clientes", descripcion: "Visión general de todos los clientes", icon: FolderKanban, color: "#4F46E5", path: "/menu/clientes" }
     );
+    
+    // Dashboard del Gerente - Nuevo
+    opciones.push({
+      label: "Dashboard Gerencial", 
+      descripcion: "Dashboard avanzado con métricas, alertas y reportes", 
+      icon: Activity, 
+      color: "#EF4444", 
+      path: "/menu/dashboard-gerente"
+    });
     
     // Analytics específicos por área
     if (tieneContabilidad || tieneNomina) {

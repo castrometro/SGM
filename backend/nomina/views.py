@@ -32,6 +32,9 @@ from .models import (
     EmpleadoCierreNovedades,
     ConceptoRemuneracionNovedades,
     RegistroConceptoEmpleadoNovedades,
+    # Modelos para incidencias
+    IncidenciaCierre,
+    ResolucionIncidencia,
 )
 
 from .serializers import (
@@ -56,6 +59,11 @@ from .serializers import (
     EmpleadoCierreNovedadesSerializer,
     ConceptoRemuneracionNovedadesSerializer,
     RegistroConceptoEmpleadoNovedadesSerializer,
+    # Serializers de incidencias
+    IncidenciaCierreSerializer,
+    ResolucionIncidenciaSerializer,
+    CrearResolucionSerializer,
+    ResumenIncidenciasSerializer,
 )
 
 from .tasks import (
@@ -66,6 +74,7 @@ from .tasks import (
     procesar_movimientos_mes,
     procesar_archivo_analista,
     procesar_archivo_novedades,
+    generar_incidencias_cierre_task,
 )
 
 logger = logging.getLogger(__name__)
@@ -642,7 +651,7 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
                         'concepto_libro_clasificacion': mapeo.concepto_libro.clasificacion,
                     }
                 else:
-                    mapeos_existentes[mapeo.nombre_concepto_novedades] = {
+                    mapeos_existentes[mapeo.nombre_concepto_novedas] = {
                         'concepto_libro_id': None,
                     }
         
@@ -856,5 +865,276 @@ class RegistroConceptoEmpleadoNovedadesViewSet(viewsets.ModelViewSet):
         if cierre_id:
             queryset = queryset.filter(empleado__cierre_id=cierre_id)
         return queryset
+
+# ======== VIEWSETS PARA SISTEMA DE INCIDENCIAS ========
+
+class IncidenciaCierreViewSet(viewsets.ModelViewSet):
+    """ViewSet para gestionar incidencias de cierre de nómina"""
+    queryset = IncidenciaCierre.objects.all()
+    serializer_class = IncidenciaCierreSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cierre_id = self.request.query_params.get('cierre')
+        estado = self.request.query_params.get('estado')
+        prioridad = self.request.query_params.get('prioridad')
+        asignado_a = self.request.query_params.get('asignado_a')
+        
+        if cierre_id:
+            queryset = queryset.filter(cierre_id=cierre_id)
+        if estado:
+            queryset = queryset.filter(estado=estado)
+        if prioridad:
+            queryset = queryset.filter(prioridad=prioridad)
+        if asignado_a:
+            queryset = queryset.filter(asignado_a_id=asignado_a)
+            
+        return queryset.select_related('cierre', 'empleado_libro', 'empleado_novedades', 'asignado_a')
+    
+    @action(detail=False, methods=['post'], url_path='generar/(?P<cierre_id>[^/.]+)')
+    def generar_incidencias(self, request, cierre_id=None):
+        """Endpoint para generar incidencias de un cierre específico"""
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        # Verificar permisos básicos
+        if not request.user.is_authenticated:
+            return Response({"error": "Usuario no autenticado"}, status=401)
+        
+        # Verificar si el usuario tiene acceso al cierre (mismo cliente)
+        # Esto se puede extender con lógica más específica según los requerimientos
+        
+        # Lanzar tarea de generación de incidencias
+        task = generar_incidencias_cierre_task.delay(cierre_id)
+        
+        return Response({
+            "message": "Generación de incidencias iniciada",
+            "task_id": task.id,
+            "cierre_id": cierre_id
+        }, status=202)
+    
+    @action(detail=False, methods=['get'], url_path='resumen/(?P<cierre_id>[^/.]+)')
+    def resumen_incidencias(self, request, cierre_id=None):
+        """Obtiene un resumen estadístico de incidencias de un cierre"""
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        from .utils.GenerarIncidencias import obtener_resumen_incidencias
+        resumen = obtener_resumen_incidencias(cierre)
+        
+        serializer = ResumenIncidenciasSerializer(resumen)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['patch'])
+    def cambiar_estado(self, request, pk=None):
+        """Cambiar el estado de una incidencia específica"""
+        incidencia = self.get_object()
+        nuevo_estado = request.data.get('estado')
+        
+        if nuevo_estado not in ['pendiente', 'resuelta_analista', 'aprobada_supervisor', 'rechazada_supervisor']:
+            return Response({"error": "Estado inválido"}, status=400)
+        
+        incidencia.estado = nuevo_estado
+        incidencia.save(update_fields=['estado'])
+        
+        return Response({"message": "Estado actualizado", "estado": nuevo_estado})
+    
+    @action(detail=True, methods=['patch'])
+    def asignar_usuario(self, request, pk=None):
+        """Asignar una incidencia a un usuario específico"""
+        incidencia = self.get_object()
+        usuario_id = request.data.get('usuario_id')
+        
+        if usuario_id:
+            try:
+                from django.contrib.auth import get_user_model
+                User = get_user_model()
+                usuario = User.objects.get(id=usuario_id)
+                incidencia.asignado_a = usuario
+                incidencia.save(update_fields=['asignado_a'])
+                return Response({"message": "Incidencia asignada correctamente"})
+            except User.DoesNotExist:
+                return Response({"error": "Usuario no encontrado"}, status=404)
+        else:
+            incidencia.asignado_a = None
+            incidencia.save(update_fields=['asignado_a'])
+            return Response({"message": "Asignación removida"})
+    
+    @action(detail=False, methods=['get'], url_path='preview/(?P<cierre_id>[^/.]+)')
+    def preview_incidencias(self, request, cierre_id=None):
+        """Endpoint para previsualizar qué incidencias se generarían sin crearlas"""
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        from .utils.GenerarIncidencias import (
+            generar_incidencias_libro_vs_novedades,
+            generar_incidencias_movimientos_vs_analista
+        )
+        
+        try:
+            # Generar incidencias preview sin guardarlas
+            incidencias_libro_novedades = generar_incidencias_libro_vs_novedades(cierre)
+            incidencias_movimientos_analista = generar_incidencias_movimientos_vs_analista(cierre)
+            
+            todas_incidencias = incidencias_libro_novedades + incidencias_movimientos_analista
+            
+            # Convertir incidencias a formato serializable
+            incidencias_preview = []
+            for incidencia in todas_incidencias:
+                incidencias_preview.append({
+                    'tipo_incidencia': incidencia.tipo_incidencia,
+                    'rut_empleado': incidencia.rut_empleado,
+                    'descripcion': incidencia.descripcion,
+                    'prioridad': incidencia.prioridad,
+                    'concepto_afectado': incidencia.concepto_afectado,
+                    'valor_libro': incidencia.valor_libro,
+                    'valor_novedades': incidencia.valor_novedades,
+                    'impacto_monetario': float(incidencia.impacto_monetario or 0),
+                })
+            
+            return Response({
+                'total_incidencias': len(todas_incidencias),
+                'libro_vs_novedades': len(incidencias_libro_novedades),
+                'movimientos_vs_analista': len(incidencias_movimientos_analista),
+                'incidencias': incidencias_preview,
+                'mensaje': 'Vista previa generada - no se guardaron incidencias'
+            })
+            
+        except Exception as e:
+            logger.error(f"Error generando preview de incidencias: {e}")
+            return Response({
+                "error": f"Error generando preview: {str(e)}"
+            }, status=500)
+
+class ResolucionIncidenciaViewSet(viewsets.ModelViewSet):
+    """ViewSet para gestionar resoluciones de incidencias"""
+    queryset = ResolucionIncidencia.objects.all()
+    serializer_class = ResolucionIncidenciaSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        incidencia_id = self.request.query_params.get('incidencia')
+        usuario_id = self.request.query_params.get('usuario')
+        
+        if incidencia_id:
+            queryset = queryset.filter(incidencia_id=incidencia_id)
+        if usuario_id:
+            queryset = queryset.filter(usuario_id=usuario_id)
+            
+        return queryset.select_related('incidencia', 'usuario').order_by('-fecha_resolucion')
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return CrearResolucionSerializer
+        return ResolucionIncidenciaSerializer
+    
+    def perform_create(self, serializer):
+        """Crear una nueva resolución para una incidencia"""
+        incidencia_id = self.request.data.get('incidencia_id')
+        
+        if not incidencia_id:
+            raise serializers.ValidationError("incidencia_id es requerido")
+        
+        try:
+            incidencia = IncidenciaCierre.objects.get(id=incidencia_id)
+        except IncidenciaCierre.DoesNotExist:
+            raise serializers.ValidationError("Incidencia no encontrada")
+        
+        # Crear la resolución
+        resolucion = serializer.save(
+            incidencia=incidencia,
+            usuario=self.request.user
+        )
+        
+        # Actualizar estado de la incidencia según el tipo de resolución y rol del usuario
+        tipo_resolucion = resolucion.tipo_resolucion
+        if tipo_resolucion == 'solucion':
+            # Si el usuario es staff o superuser, puede aprobar directamente
+            if self.request.user.is_staff or self.request.user.is_superuser:
+                incidencia.estado = 'aprobada_supervisor'
+            else:
+                incidencia.estado = 'resuelta_analista'
+        elif tipo_resolucion == 'rechazo':
+            incidencia.estado = 'rechazada_supervisor'
+        
+        incidencia.save(update_fields=['estado'])
+        
+        return resolucion
+    
+    @action(detail=False, methods=['get'], url_path='historial/(?P<incidencia_id>[^/.]+)')
+    def historial_incidencia(self, request, incidencia_id=None):
+        """Obtiene el historial completo de resoluciones de una incidencia"""
+        try:
+            incidencia = IncidenciaCierre.objects.get(id=incidencia_id)
+        except IncidenciaCierre.DoesNotExist:
+            return Response({"error": "Incidencia no encontrada"}, status=404)
+        
+        resoluciones = ResolucionIncidencia.objects.filter(
+            incidencia=incidencia
+        ).select_related('usuario').order_by('fecha_resolucion')
+        
+        serializer = ResolucionIncidenciaSerializer(resoluciones, many=True)
+        return Response({
+            "incidencia_id": incidencia_id,
+            "resoluciones": serializer.data,
+            "total_resoluciones": resoluciones.count()
+        })
+
+
+# ======== ENDPOINTS ADICIONALES PARA CIERRE NOMINA ========
+
+# Agregar action al CierreNominaViewSet existente para manejo de incidencias
+# (Se puede agregar como mixin o extender el ViewSet existente)
+
+class CierreNominaIncidenciasViewSet(viewsets.ViewSet):
+    """ViewSet adicional para operaciones de incidencias en cierres"""
+    
+    @action(detail=True, methods=['get'])
+    def estado_incidencias(self, request, pk=None):
+        """Obtiene el estado de incidencias de un cierre"""
+        try:
+            cierre = CierreNomina.objects.get(id=pk)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        return Response({
+            "cierre_id": cierre.id,
+            "estado_incidencias": cierre.estado_incidencias,
+            "tiene_incidencias": cierre.incidencias.exists(),
+            "total_incidencias": cierre.incidencias.count(),
+            "incidencias_pendientes": cierre.incidencias.filter(estado='pendiente').count(),
+            "incidencias_resueltas": cierre.incidencias.filter(
+                estado__in=['aprobada_supervisor', 'resuelta_analista']
+            ).count()
+        })
+    
+    @action(detail=True, methods=['post'])
+    def lanzar_generacion_incidencias(self, request, pk=None):
+        """Lanza la tarea de generación de incidencias para un cierre"""
+        try:
+            cierre = CierreNomina.objects.get(id=pk)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        # Verificar que el cierre esté en estado adecuado
+        if cierre.estado not in ['datos_consolidados', 'completado']:
+            return Response({
+                "error": "El cierre debe estar en estado 'datos_consolidados' o 'completado' para generar incidencias"
+            }, status=400)
+        
+        # Lanzar tarea
+        task = generar_incidencias_cierre_task.delay(pk)
+        
+        return Response({
+            "message": "Generación de incidencias iniciada",
+            "task_id": task.id,
+            "cierre_id": pk
+        }, status=202)
 
 

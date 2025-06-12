@@ -42,3 +42,23 @@ export const obtenerEstadisticasAnalista = async (analistaId) => {
   const res = await api.get(`/analistas-detallado/${analistaId}/estadisticas/`);
   return res.data;
 };
+
+export const actualizarAnalista = async (analistaId, datosAnalista) => {
+  const res = await api.put(`/usuarios/${analistaId}/`, datosAnalista);
+  return res.data;
+};
+
+export const crearAnalista = async (datosAnalista) => {
+  const res = await api.post("/usuarios/", datosAnalista);
+  return res.data;
+};
+
+export const cambiarEstadoAnalista = async (analistaId, activo) => {
+  const res = await api.patch(`/usuarios/${analistaId}/`, { is_active: activo });
+  return res.data;
+};
+
+export const obtenerRendimientoAnalista = async (analistaId, periodo = 'month') => {
+  const res = await api.get(`/analistas-detallado/${analistaId}/rendimiento/?periodo=${periodo}`);
+  return res.data;
+};

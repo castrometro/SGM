@@ -7,7 +7,9 @@ from .models import (
     ArchivoAnalistaUpload, ArchivoNovedadesUpload,
     ChecklistItem, AnalistaFiniquito, AnalistaIncidencia, AnalistaIngreso,
     # Nuevos modelos para novedades
-    EmpleadoCierreNovedades, ConceptoRemuneracionNovedades, RegistroConceptoEmpleadoNovedades
+    EmpleadoCierreNovedades, ConceptoRemuneracionNovedades, RegistroConceptoEmpleadoNovedades,
+    # Modelos para el sistema de incidencias
+    IncidenciaCierre, ResolucionIncidencia
 )
 
 class ChecklistItemSerializer(serializers.ModelSerializer):
@@ -211,3 +213,104 @@ class RegistroConceptoEmpleadoNovedadesSerializer(serializers.ModelSerializer):
             'concepto', 'concepto_nombre', 'concepto_clasificacion'
         ]
         read_only_fields = ['empleado', 'concepto', 'fecha_registro']
+
+
+# ===== SERIALIZERS PARA SISTEMA DE INCIDENCIAS =====
+
+class ResolucionIncidenciaSerializer(serializers.ModelSerializer):
+    usuario_nombre = serializers.CharField(source='usuario.get_full_name', read_only=True)
+    usuario_username = serializers.CharField(source='usuario.username', read_only=True)
+    usuarios_mencionados_nombres = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ResolucionIncidencia
+        fields = [
+            'id', 'tipo_resolucion', 'comentario', 'adjunto',
+            'fecha_resolucion', 'estado_anterior', 'estado_nuevo',
+            'valor_corregido', 'campo_corregido', 'usuario',
+            'usuario_nombre', 'usuario_username', 'usuarios_mencionados',
+            'usuarios_mencionados_nombres'
+        ]
+        read_only_fields = ['usuario', 'fecha_resolucion', 'estado_anterior', 'estado_nuevo']
+    
+    def get_usuarios_mencionados_nombres(self, obj):
+        return [user.get_full_name() or user.username for user in obj.usuarios_mencionados.all()]
+
+class IncidenciaCierreSerializer(serializers.ModelSerializer):
+    empleado_libro_nombre = serializers.SerializerMethodField()
+    empleado_novedades_nombre = serializers.SerializerMethodField()
+    tipo_incidencia_display = serializers.CharField(source='get_tipo_incidencia_display', read_only=True)
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    prioridad_display = serializers.CharField(source='get_prioridad_display', read_only=True)
+    resoluciones = ResolucionIncidenciaSerializer(many=True, read_only=True)
+    asignado_a_nombre = serializers.CharField(source='asignado_a.get_full_name', read_only=True)
+    tiempo_sin_resolver = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = IncidenciaCierre
+        fields = [
+            'id', 'tipo_incidencia', 'tipo_incidencia_display', 'rut_empleado',
+            'descripcion', 'valor_libro', 'valor_novedades', 'valor_movimientos',
+            'valor_analista', 'concepto_afectado', 'fecha_detectada',
+            'estado', 'estado_display', 'prioridad', 'prioridad_display',
+            'impacto_monetario', 'asignado_a', 'asignado_a_nombre',
+            'fecha_primera_resolucion', 'fecha_ultima_accion',
+            'empleado_libro', 'empleado_novedades', 'empleado_libro_nombre',
+            'empleado_novedades_nombre', 'resoluciones', 'tiempo_sin_resolver'
+        ]
+        read_only_fields = [
+            'fecha_detectada', 'fecha_primera_resolucion', 'fecha_ultima_accion',
+            'tiempo_sin_resolver'
+        ]
+    
+    def get_empleado_libro_nombre(self, obj):
+        if obj.empleado_libro:
+            return f"{obj.empleado_libro.nombre} {obj.empleado_libro.apellido_paterno}"
+        return None
+    
+    def get_empleado_novedades_nombre(self, obj):
+        if obj.empleado_novedades:
+            return f"{obj.empleado_novedades.nombre} {obj.empleado_novedades.apellido_paterno}"
+        return None
+    
+    def get_tiempo_sin_resolver(self, obj):
+        if obj.estado == 'pendiente':
+            from django.utils import timezone
+            diff = timezone.now() - obj.fecha_detectada
+            return diff.days
+        return None
+
+class CrearResolucionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ResolucionIncidencia
+        fields = [
+            'tipo_resolucion', 'comentario', 'adjunto',
+            'valor_corregido', 'campo_corregido', 'usuarios_mencionados'
+        ]
+    
+    def validate(self, data):
+        # Validaciones específicas según tipo de resolución
+        tipo = data.get('tipo_resolucion')
+        
+        if tipo == 'correccion' and not data.get('valor_corregido'):
+            raise serializers.ValidationError({
+                'valor_corregido': 'El valor corregido es requerido para correcciones.'
+            })
+        
+        if not data.get('comentario', '').strip():
+            raise serializers.ValidationError({
+                'comentario': 'El comentario es requerido.'
+            })
+        
+        return data
+
+class ResumenIncidenciasSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    por_prioridad = serializers.DictField()
+    por_estado = serializers.DictField()
+    impacto_monetario_total = serializers.DecimalField(max_digits=15, decimal_places=2)
+    
+    # Estadísticas adicionales
+    pendientes_criticas = serializers.IntegerField(required=False)
+    tiempo_promedio_resolucion = serializers.FloatField(required=False)
+    porcentaje_resueltas = serializers.FloatField(required=False)

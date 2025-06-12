@@ -25,4 +25,6 @@ urlpatterns = [
     path('clientes-disponibles/<int:analista_id>/', clientes_disponibles, name='clientes-disponibles'),
     path('clientes-asignados/<int:analista_id>/', clientes_asignados, name='clientes-asignados'),
     path('asignaciones/<int:analista_id>/<int:cliente_id>/', remover_asignacion, name='remover-asignacion'),
+    # URLs específicas del gerente
+    path('gerente/', include('api.urls_gerente')),
 ]

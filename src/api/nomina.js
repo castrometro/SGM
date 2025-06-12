@@ -38,10 +38,113 @@ export const eliminarCierreNomina = async (cierreId) => {
   const res = await api.delete(`/nomina/cierres/${cierreId}/`);
   return res.data;
 };
-export const obtenerIncidenciasCierre = async (cierreId) => {
-  const res = await api.get(`/nomina/cierres/${cierreId}/incidencias/`);
-  return res.data;
+
+// ========== SISTEMA DE INCIDENCIAS ==========
+
+// Obtener incidencias de un cierre
+export const obtenerIncidenciasCierre = async (cierreId, filtros = {}) => {
+  const params = { cierre: cierreId, ...filtros };
+  const response = await api.get('/nomina/incidencias/', { params });
+  return response.data;
 };
+
+// Generar incidencias para un cierre
+export const generarIncidenciasCierre = async (cierreId) => {
+  const response = await api.post(`/nomina/incidencias/generar/${cierreId}/`);
+  return response.data;
+};
+
+// Obtener resumen de incidencias de un cierre
+export const obtenerResumenIncidencias = async (cierreId) => {
+  const response = await api.get(`/nomina/incidencias/resumen/${cierreId}/`);
+  return response.data;
+};
+
+// Cambiar estado de una incidencia
+export const cambiarEstadoIncidencia = async (incidenciaId, estado) => {
+  const response = await api.patch(`/nomina/incidencias/${incidenciaId}/cambiar_estado/`, {
+    estado
+  });
+  return response.data;
+};
+
+// Asignar usuario a una incidencia
+export const asignarUsuarioIncidencia = async (incidenciaId, usuarioId) => {
+  const response = await api.patch(`/nomina/incidencias/${incidenciaId}/asignar_usuario/`, {
+    usuario_id: usuarioId
+  });
+  return response.data;
+};
+
+// Obtener una incidencia específica
+export const obtenerIncidencia = async (incidenciaId) => {
+  const response = await api.get(`/nomina/incidencias/${incidenciaId}/`);
+  return response.data;
+};
+
+// Vista previa de incidencias (sin guardar)
+export const previewIncidenciasCierre = async (cierreId) => {
+  const response = await api.get(`/nomina/incidencias/preview/${cierreId}/`);
+  return response.data;
+};
+
+// ========== RESOLUCIONES DE INCIDENCIAS ==========
+
+// Crear una nueva resolución para una incidencia
+export const crearResolucionIncidencia = async (incidenciaId, resolucionData) => {
+  const response = await api.post('/nomina/resoluciones-incidencias/', {
+    incidencia_id: incidenciaId,
+    ...resolucionData
+  });
+  return response.data;
+};
+
+// Obtener historial de resoluciones de una incidencia
+export const obtenerHistorialIncidencia = async (incidenciaId) => {
+  const response = await api.get(`/nomina/resoluciones-incidencias/historial/${incidenciaId}/`);
+  return response.data;
+};
+
+// Obtener resoluciones de un usuario
+export const obtenerResolucionesUsuario = async (usuarioId) => {
+  const response = await api.get('/nomina/resoluciones-incidencias/', {
+    params: { usuario: usuarioId }
+  });
+  return response.data;
+};
+
+// ========== ESTADO DE INCIDENCIAS EN CIERRES ==========
+
+// Obtener estado de incidencias de un cierre
+export const obtenerEstadoIncidenciasCierre = async (cierreId) => {
+  const response = await api.get(`/nomina/cierres-incidencias/${cierreId}/estado_incidencias/`);
+  return response.data;
+};
+
+// Lanzar generación de incidencias desde el cierre
+export const lanzarGeneracionIncidencias = async (cierreId) => {
+  const response = await api.post(`/nomina/cierres-incidencias/${cierreId}/lanzar_generacion_incidencias/`);
+  return response.data;
+};
+
+// ========== FUNCIONES DE UTILIDAD ==========
+
+// Obtener estadísticas generales de incidencias
+export const obtenerEstadisticasIncidencias = async (filtros = {}) => {
+  const response = await api.get('/nomina/incidencias/', { 
+    params: { ...filtros, stats: true } 
+  });
+  return response.data;
+};
+
+// Exportar incidencias a Excel
+export const exportarIncidenciasExcel = async (cierreId) => {
+  const response = await api.get(`/nomina/incidencias/exportar/${cierreId}/`, {
+    responseType: 'blob'
+  });
+  return response.data;
+};
+
 export const obtenerCierresCliente = async (clienteId) => {
   const res = await api.get(`/nomina/cierres/`, { params: { cliente: clienteId } });
   return res.data;

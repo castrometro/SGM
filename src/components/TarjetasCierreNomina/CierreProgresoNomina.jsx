@@ -261,7 +261,7 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
       />
 
       {/* Sección 3: Incidencias Encontradas */}
-      <IncidenciasEncontradasSection />
+      <IncidenciasEncontradasSection cierre={cierre} />
 
       <ModalClasificacionHeaders
         isOpen={modalAbierto}

@@ -1,11 +1,37 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AlertOctagon, ChevronDown, ChevronRight } from "lucide-react";
-import IncidenciaCard from "./IncidenciasEncontradas/IncidenciaCard";
+import IncidenciaCard from "./IncidenciaCard";
+import { obtenerIncidenciasCierre } from "../../api/nomina";
 
-const IncidenciasEncontradasSection = () => {
+/**
+ * Muestra las incidencias detectadas para un cierre específico.
+ *
+ * Usage:
+ * ```jsx
+ * <IncidenciasEncontradasSection cierreId={cierre.id} clienteId={cliente.id} />
+ * ```
+ */
+const IncidenciasEncontradasSection = ({ cierreId, clienteId }) => {
   const [expandido, setExpandido] = useState(true);
+  const [categorias, setCategorias] = useState([]);
 
-  const categorias = [
+  useEffect(() => {
+    if (!cierreId) return;
+    obtenerIncidenciasCierre(cierreId)
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setCategorias(data);
+        } else {
+          setCategorias([]);
+        }
+      })
+      .catch((err) => {
+        console.error("Error obteniendo incidencias", err);
+        setCategorias([]);
+      });
+  }, [cierreId, clienteId]);
+
+  const categoriasFallback = [
     {
       id: "info-faltante",
       titulo: "Información Faltante",
@@ -39,7 +65,7 @@ const IncidenciasEncontradasSection = () => {
 
       {expandido && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {categorias.map((cat) => (
+          {(categorias.length > 0 ? categorias : categoriasFallback).map((cat) => (
             <IncidenciaCard
               key={cat.id}
               titulo={cat.titulo}

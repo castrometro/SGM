@@ -106,6 +106,12 @@ export const obtenerProgresoIncidencias = async (cierreId) => {
   return response.data;
 };
 
+// Categorías de incidencias generadas por el sistema
+export const obtenerCategoriasIncidencias = async () => {
+  const response = await api.get('/nomina/incidencias/');
+  return response.data;
+};
+
 export const descargarPlantillaLibroRemuneraciones = () => {
   return `${api.defaults.baseURL}/nomina/plantilla-libro-remuneraciones/`;
 };

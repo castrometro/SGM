@@ -1,19 +1,24 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AlertOctagon, ChevronDown, ChevronRight } from "lucide-react";
 import IncidenciaCard from "./IncidenciasEncontradas/IncidenciaCard";
+import { obtenerCategoriasIncidencias } from "../../api/nomina";
 
 const IncidenciasEncontradasSection = () => {
   const [expandido, setExpandido] = useState(true);
+  const [categorias, setCategorias] = useState([]);
 
-  const categorias = [
-    {
-      id: "info-faltante",
-      titulo: "Información Faltante",
-      descripcion:
-        "Comparar la información del archivo Movimientos con los datos de Finiquitos, Incidencias/Ausentismos e Ingresos.",
-      items: [],
-    },
-  ];
+  useEffect(() => {
+    const cargarDatos = async () => {
+      try {
+        const data = await obtenerCategoriasIncidencias();
+        setCategorias(Array.isArray(data) ? data : []);
+      } catch (error) {
+        console.error("Error al obtener incidencias:", error);
+      }
+    };
+
+    cargarDatos();
+  }, []);
 
   return (
     <section className="space-y-6">

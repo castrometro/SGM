@@ -50,3 +50,13 @@ Libro de Remuneraciones es necesario que el worker esté en ejecución.
 cd backend
 ./celery_worker.sh
 ```
+
+### IncidenciasEncontradasSection
+
+Use this component to display the incidences for a specific payroll closure:
+
+```jsx
+import IncidenciasEncontradasSection from "./components/Incidencias/IncidenciasEncontradasSection";
+
+<IncidenciasEncontradasSection cierreId={cierre.id} clienteId={cliente.id} />
+```

@@ -1,4 +1,3 @@
-
 #backend/api/serializers.py
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -110,5 +109,56 @@ class AnalistaPerformanceSerializer(serializers.ModelSerializer):
             'clientes_asignados', 'cierres_contabilidad', 'cierres_nomina'
         ]
         read_only_fields = fields
+
+
+class AnalistaDetalladoSerializer(serializers.ModelSerializer):
+    clientes_asignados = serializers.IntegerField(read_only=True)
+    cierres_completados = serializers.IntegerField(read_only=True)
+    cierres_contabilidad = serializers.IntegerField(read_only=True)
+    cierres_nomina = serializers.IntegerField(read_only=True)
+    eficiencia = serializers.FloatField(read_only=True)
+    carga_trabajo = serializers.FloatField(read_only=True)
+    areas = AreaSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Usuario
+        fields = [
+            'id', 'nombre', 'apellido', 'correo_bdo', 'cargo_bdo', 'fecha_registro',
+            'clientes_asignados', 'cierres_completados', 'cierres_contabilidad', 
+            'cierres_nomina', 'eficiencia', 'carga_trabajo', 'areas'
+        ]
+        read_only_fields = fields
+
+
+class DashboardKpisSerializer(serializers.Serializer):
+    total_analistas = serializers.IntegerField()
+    clientes_activos = serializers.IntegerField()
+    cierres_completados = serializers.IntegerField()
+    eficiencia_promedio = serializers.FloatField()
+
+
+class DashboardDataSerializer(serializers.Serializer):
+    kpis = DashboardKpisSerializer()
+    analistas_performance = AnalistaDetalladoSerializer(many=True)
+    cierres_por_estado = serializers.DictField()
+    clientes_por_industria = serializers.ListField()
+    ingresos_por_servicio = serializers.ListField()
+    tendencia_cierres = serializers.ListField()
+    alerta_cierres_retrasados = serializers.DictField()
+
+
+class ClienteSimpleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Cliente
+        fields = ['id', 'nombre', 'rut', 'industria']
+        read_only_fields = fields
+
+
+class EstadisticasAnalistaSerializer(serializers.Serializer):
+    cierres_completados = serializers.IntegerField()
+    eficiencia = serializers.FloatField()
+    tiempo_promedio_dias = serializers.FloatField()
+    cierres_por_estado = serializers.DictField()
+    clientes = ClienteSimpleSerializer(many=True)
 
 

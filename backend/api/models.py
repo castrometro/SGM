@@ -102,7 +102,10 @@ class AsignacionClienteUsuario(models.Model):
     fecha_asignacion = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        # Un cliente solo puede estar asignado a un analista
         unique_together = ('cliente', 'usuario')
+        # TODO: Para enforcement estricto de 1 cliente = 1 analista únicamente,
+        # cambiar a: constraints = [models.UniqueConstraint(fields=['cliente'], name='unique_cliente_assignment')]
 
     def __str__(self):
         return f"{self.usuario.correo_bdo} ↔ {self.cliente.nombre}"

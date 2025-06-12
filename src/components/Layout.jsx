@@ -19,9 +19,7 @@ const Layout = () => {
                 {/* Asegura que el contenido crezca para empujar el footer */}
                 <main className="flex-grow container mx-auto p-6">
                     <Outlet />
-                </main>
-
-                <Footer />
+                </main>                <Footer />
             </div>
         </div>
     );

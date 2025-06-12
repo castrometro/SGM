@@ -14,6 +14,9 @@ import CierreDetalleNomina from "./pages/CierreDetalleNomina";
 import AnalisisLibro from "./pages/AnalisisLibro";
 import MovimientosCuenta from "./pages/MovimientosCuenta";
 import InformesAnalistas from "./pages/InformesAnalistas";
+import Dashboard from "./pages/Dashboard";
+import GestionAnalistas from "./pages/GestionAnalistas";
+import Tools from "./pages/Tools";
 
 function App() {
   return (
@@ -52,10 +55,12 @@ function App() {
           />
 
           {/* ----------- ÁREA: NÓMINA ------------- */}
-          <Route path="nomina/cierres/:cierreId" element={<CierreDetalleNomina />} />
-
-          {/* ----------- ÁREA: INFORMES ------------- */}
-          <Route path="informes" element={<InformesAnalistas />} />
+          <Route path="nomina/cierres/:cierreId" element={<CierreDetalleNomina />} />          {/* ----------- ÁREA: GESTIÓN DE ANALISTAS ------------- */}
+          <Route path="analistas" element={<GestionAnalistas />} />          {/* ----------- ÁREA: ANALYTICS DE PERFORMANCE ------------- */}
+          <Route path="analytics" element={<Dashboard />} />
+          
+          {/* ----------- ÁREA: HERRAMIENTAS ------------- */}
+          <Route path="tools" element={<Tools />} />
 
           {/* ----------- 404 / OTRAS ------------- */}
           <Route path="*" element={<h1 className="text-white">404 - Página no encontrada</h1>} />

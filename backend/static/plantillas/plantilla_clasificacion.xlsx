@@ -1,0 +1,7 @@
+Numero de Cuenta,Set Activo/Pasivo,Set Por Naturaleza,Set IFRS,Set Tributario
+1101,Activo,Circulante,IAS 1,Exento
+1102,Activo,No Circulante,IAS 16,Afecto
+2101,Pasivo,Circulante,IAS 19,Diferido
+3101,Patrimonio,Capital,IAS 1,Exento
+4101,Ingresos,Operacionales,IAS 18,Afecto
+5101,Gastos,Administrativos,IAS 1,Deducible

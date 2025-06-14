@@ -2,7 +2,14 @@ import { useEffect, useState, useRef } from "react";
 import { obtenerLibrosMayor, subirLibroMayor } from "../../api/contabilidad";
 import EstadoBadge from "../EstadoBadge";
 
-const LibroMayorCard = ({ cierreId, disabled, onCompletado }) => {
+const LibroMayorCard = ({ 
+  cierreId, 
+  disabled, 
+  onCompletado, 
+  tipoDocumentoReady, 
+  clasificacionReady, 
+  nombresInglesReady 
+}) => {
   const [libroActual, setLibroActual] = useState(null);
   const [archivoNombre, setArchivoNombre] = useState("");
   const [subiendo, setSubiendo] = useState(false);
@@ -90,7 +97,25 @@ const LibroMayorCard = ({ cierreId, disabled, onCompletado }) => {
 
   return (
     <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${disabled ? "opacity-60 pointer-events-none" : ""}`}>
-      <h3 className="text-lg font-semibold mb-3">2. Libro Mayor</h3>
+      <h3 className="text-lg font-semibold mb-3">4. Libro Mayor y Procesamiento</h3>
+
+      {/* Información de prerequisitos */}
+      <div className="text-xs text-gray-400 mb-2">
+        <div className="flex items-center gap-2">
+          <span>Prerequisitos:</span>
+          <span className={tipoDocumentoReady ? "text-green-400" : "text-red-400"}>
+            {tipoDocumentoReady ? "✓" : "✗"} Tipos de Documento
+          </span>
+          <span className={clasificacionReady ? "text-green-400" : "text-red-400"}>
+            {clasificacionReady ? "✓" : "✗"} Clasificación
+          </span>
+          {nombresInglesReady !== undefined && (
+            <span className={nombresInglesReady ? "text-green-400" : "text-red-400"}>
+              {nombresInglesReady ? "✓" : "✗"} Nombres en Inglés
+            </span>
+          )}
+        </div>
+      </div>
 
       <div className="flex items-center gap-2 mb-2">
         <span className="font-semibold">Estado:</span>
@@ -149,8 +174,12 @@ const LibroMayorCard = ({ cierreId, disabled, onCompletado }) => {
       {error && <div className="text-xs text-red-400 mt-1">{error}</div>}
       <span className="text-xs text-gray-400 italic mt-2">
         {estado === "subido"
-          ? "✔ Libro mayor cargado correctamente"
-          : "Aún no se ha subido el libro mayor."}
+          ? "✔ Libro mayor procesado correctamente con toda la información previa"
+          : estado === "procesando"
+          ? "🔄 Procesando libro mayor con clasificaciones y configuraciones..."
+          : disabled
+          ? "Complete los pasos anteriores para procesar el libro mayor"
+          : "Suba el libro mayor para completar el procesamiento del cierre"}
       </span>
     </div>
   );

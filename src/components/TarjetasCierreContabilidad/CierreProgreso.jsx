@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import TipoDocumentoCard from "./TipoDocumentoCard";
 import LibroMayorCard from "./LibroMayorCard";
-import ClasificacionResumenCard from "./ClasificacionResumenCard";
+import ClasificacionBulkCard from "./ClasificacionBulkCard";
 import NombresEnInglesCard from "./NombresEnInglesCard";
 import {
   obtenerEstadoTipoDocumento,
@@ -11,11 +11,11 @@ import {
 } from "../../api/contabilidad";
 
 const CierreProgreso = ({ cierre, cliente }) => {
-  // Estados internos
+  // Estados internos - nuevo orden
   const [tipoDocumentoReady, setTipoDocumentoReady] = useState(false);
-  const [libroMayorReady, setLibroMayorReady] = useState(false);
   const [clasificacionReady, setClasificacionReady] = useState(false);
   const [nombresInglesReady, setNombresInglesReady] = useState(false);
+  const [libroMayorReady, setLibroMayorReady] = useState(false);
 
   // Fetch por etapas, solo cuando corresponde
   useEffect(() => {
@@ -25,74 +25,86 @@ const CierreProgreso = ({ cierre, cliente }) => {
       const tipoDocOk = estadoTipoDoc === "subido";
       setTipoDocumentoReady(tipoDocOk);
 
-      // 2. Libro Mayor (solo si paso anterior está ok)
-      let libroOk = false;
-      let libroActual = null;
-      if (tipoDocOk) {
-        const libros = await obtenerLibrosMayor(cierre.id);
-        libroActual = libros && libros.length > 0 ? libros[libros.length - 1] : null;
-        libroOk = libroActual && libroActual.estado === "completado";
-        setLibroMayorReady(libroOk);
-      } else {
-        setLibroMayorReady(false);
-      }
-
-      // 3. Clasificación (solo si paso anterior está ok)
+      // 2. Clasificación de Cuentas (solo si paso anterior está ok)
       let clasificacionOk = false;
-      if (libroOk) {
-        const clasificacion = await obtenerProgresoClasificacionTodosLosSets(cierre.id);
-        clasificacionOk =
-          clasificacion &&
-          clasificacion.sets_progreso.length > 0 &&
-          clasificacion.sets_progreso.every((s) => s.estado === "Completo");
-        setClasificacionReady(clasificacionOk);
+      if (tipoDocOk) {
+        // Aquí verificaremos el estado de la clasificación bulk
+        // Por ahora dejamos que se verifique en el componente
+        setClasificacionReady(false); // Se actualizará desde el componente
       } else {
         setClasificacionReady(false);
       }
 
-      // 4. Nombres en inglés (solo si paso anterior está ok)
-      if (clasificacionOk) {
+      // 3. Nombres en inglés (solo si clasificación está ok y cliente es bilingüe)
+      let nombresOk = false;
+      if (clasificacionOk && cliente.bilingue) {
         const nombresIngles = await obtenerEstadoNombresIngles(cliente.id, cierre.id);
-        setNombresInglesReady(nombresIngles && nombresIngles.estado === "subido");
+        // Verificar que tenga cuentas y que todas tengan nombres en inglés
+        nombresOk = nombresIngles && 
+                   nombresIngles.estado === "subido" && 
+                   nombresIngles.total > 0; // Asegurar que hay cuentas para traducir
+        setNombresInglesReady(nombresOk);
       } else {
-        setNombresInglesReady(false);
+        setNombresInglesReady(!cliente.bilingue ? true : false); // Si no es bilingüe, este paso se "salta"
+      }
+
+      // 4. Libro Mayor (solo si pasos anteriores están ok)
+      const prerequisitosLibro = clasificacionOk && (cliente.bilingue ? nombresOk : true);
+      if (prerequisitosLibro) {
+        const libros = await obtenerLibrosMayor(cierre.id);
+        const libroActual = libros && libros.length > 0 ? libros[libros.length - 1] : null;
+        const libroOk = libroActual && libroActual.estado === "completado";
+        setLibroMayorReady(libroOk);
+      } else {
+        setLibroMayorReady(false);
       }
     };
 
     if (cierre && cliente) fetchEstados();
-  }, [cierre, cliente]);
+  }, [cierre, cliente, clasificacionReady]); // Agregamos clasificacionReady como dependencia
 
   // Callbacks para actualizar pasos tras acción de usuario
   const handleTipoDocumentoCompletado = (ready) => setTipoDocumentoReady(ready);
-  const handleLibroMayorCompletado = () => setLibroMayorReady(true);
   const handleClasificacionCompletado = (ready) => setClasificacionReady(ready);
   const handleTraduccionCompletada = () => setNombresInglesReady(true);
+  const handleLibroMayorCompletado = () => setLibroMayorReady(true);
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Paso 1: Tipos de Documento */}
       <TipoDocumentoCard
         clienteId={cliente.id}
         onCompletado={handleTipoDocumentoCompletado}
         disabled={false}
       />
-      <LibroMayorCard
-        cierreId={cierre.id}
-        disabled={!tipoDocumentoReady}
-        onCompletado={handleLibroMayorCompletado}
-      />
-      <ClasificacionResumenCard
-        cierreId={cierre.id}
-        libroMayorReady={libroMayorReady}
+      
+      {/* Paso 2: Clasificación de Cuentas */}
+      <ClasificacionBulkCard
+        clienteId={cliente.id}
         onCompletado={handleClasificacionCompletado}
+        disabled={!tipoDocumentoReady}
       />
+      
+      {/* Paso 3: Nombres en Inglés (solo si cliente es bilingüe) */}
       {cliente.bilingue && (
         <NombresEnInglesCard
           cierreId={cierre.id}
           clienteId={cliente.id}
           clasificacionReady={clasificacionReady}
           onCompletado={handleTraduccionCompletada}
+          disabled={!clasificacionReady}
         />
       )}
+      
+      {/* Paso 4: Libro Mayor (procesamiento final) */}
+      <LibroMayorCard
+        cierreId={cierre.id}
+        disabled={!clasificacionReady || (cliente.bilingue && !nombresInglesReady)}
+        onCompletado={handleLibroMayorCompletado}
+        tipoDocumentoReady={tipoDocumentoReady}
+        clasificacionReady={clasificacionReady}
+        nombresInglesReady={nombresInglesReady}
+      />
     </div>
   );
 };

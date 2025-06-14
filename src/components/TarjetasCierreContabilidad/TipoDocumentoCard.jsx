@@ -1,16 +1,17 @@
-//src/components/TarjetasCierre/TipoDocumentoCard.jsx
-
 import { useEffect, useState, useRef } from "react";
-import ModalTabla from "../ModalTabla"; // Asegúrate que esté en components/
-import { Download } from "lucide-react";
+import ModalTipoDocumentoCRUD from "./ModalTipoDocumentoCRUD";
+import HistorialCambios from "../HistorialCambios";
+import Notificacion from "../Notificacion";
+import { Download, History } from "lucide-react";
 import EstadoBadge from "../EstadoBadge";
 import { 
   descargarPlantillaTipoDocumento, 
   obtenerEstadoTipoDocumento, 
   obtenerTiposDocumentoCliente, 
+  registrarVistaTiposDocumento,
   subirTipoDocumento, 
   eliminarTodosTiposDocumento 
-} from "../../api/contabilidad"; // Ajusta path según tu estructura
+} from "../../api/contabilidad";
 
 const TipoDocumentoCard = ({ clienteId, onCompletado, disabled }) => {
   const [estado, setEstado] = useState("pendiente");
@@ -18,10 +19,21 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled }) => {
   const [subiendo, setSubiendo] = useState(false);
   const [error, setError] = useState("");
   const [modalAbierto, setModalAbierto] = useState(false);
+  const [historialAbierto, setHistorialAbierto] = useState(false);
   const [tiposDocumento, setTiposDocumento] = useState([]);
   const [eliminando, setEliminando] = useState(false);
   const [errorEliminando, setErrorEliminando] = useState("");
+  const [notificacion, setNotificacion] = useState({ visible: false, tipo: "", mensaje: "" });
   const fileInputRef = useRef();
+
+  // Función para mostrar notificaciones
+  const mostrarNotificacion = (tipo, mensaje) => {
+    setNotificacion({ visible: true, tipo, mensaje });
+  };
+
+  const cerrarNotificacion = () => {
+    setNotificacion({ visible: false, tipo: "", mensaje: "" });
+  };
 
   // Cargar estado del tipo de documento al montar
   useEffect(() => {
@@ -30,6 +42,17 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled }) => {
         const data = await obtenerEstadoTipoDocumento(clienteId);
         const estadoActual = typeof data === "string" ? data : data.estado;
         setEstado(estadoActual);
+        
+        // Si hay datos, cargar también los tipos de documento para el conteo
+        if (estadoActual === "subido") {
+          try {
+            const tipos = await obtenerTiposDocumentoCliente(clienteId);
+            setTiposDocumento(tipos);
+          } catch (err) {
+            console.error("Error cargando tipos de documento:", err);
+          }
+        }
+        
         if (onCompletado) onCompletado(estadoActual === "subido");
       } catch (err) {
         setEstado("pendiente");
@@ -69,8 +92,26 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled }) => {
           onCompletado && onCompletado(false);
         }
       } catch (err) {
-        setError("Error al subir el archivo.");
-        onCompletado && onCompletado(false); // <- IMPORTANTE: lo agregas aquí
+        console.error("Error al subir archivo:", err);
+        
+        // Manejo específico para error 409 - Datos existentes
+        if (err.response?.status === 409) {
+          const errorData = err.response.data;
+          setError(`Ya existen ${errorData.tipos_existentes || 'algunos'} tipos de documento. Debe eliminar todos los registros antes de subir un nuevo archivo.`);
+          mostrarNotificacion("warning", 
+            `Archivo rechazado: Ya existen ${errorData.tipos_existentes || 'algunos'} tipos de documento. Use "Eliminar todos" primero.`
+          );
+        } else if (err.response?.data?.error) {
+          // Otros errores del backend
+          setError(err.response.data.error);
+          mostrarNotificacion("error", err.response.data.error);
+        } else {
+          // Error genérico
+          setError("Error al subir el archivo.");
+          mostrarNotificacion("error", "Error al subir el archivo.");
+        }
+        
+        onCompletado && onCompletado(false);
       } finally {
         setSubiendo(false);
       }
@@ -80,12 +121,27 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled }) => {
   // Handler para abrir modal y cargar lista
   const handleVerTiposDocumento = async () => {
     try {
+      // Registrar que se abrió el modal manualmente
+      await registrarVistaTiposDocumento(clienteId);
+      
+      // Cargar los datos
       const datos = await obtenerTiposDocumentoCliente(clienteId);
       setTiposDocumento(datos);
       setModalAbierto(true);
     } catch (err) {
+      console.error("Error al abrir modal o registrar vista:", err);
       setTiposDocumento([]);
       setModalAbierto(true);
+    }
+  };
+
+  // Handler para actualizar la lista de tipos de documento
+  const handleActualizarTiposDocumento = async () => {
+    try {
+      const datos = await obtenerTiposDocumentoCliente(clienteId);
+      setTiposDocumento(datos);
+    } catch (err) {
+      console.error("Error al actualizar tipos de documento:", err);
     }
   };
 
@@ -97,9 +153,8 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled }) => {
       await eliminarTodosTiposDocumento(clienteId);
       setEstado("pendiente");
       setTiposDocumento([]);
-      setModalAbierto(false);
       setArchivoNombre("");
-      if (onCompletado) onCompletado(false); // <- Solo una vez aquí
+      if (onCompletado) onCompletado(false);
     } catch (err) {
       setErrorEliminando("Error eliminando los tipos de documento");
     } finally {
@@ -124,7 +179,7 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled }) => {
                 style={{ pointerEvents: disabled ? "none" : "auto" }}
                 >
                 <Download size={16} />
-                Descargar Plantilla
+                Descargar Estructura
                 </a>
             <div className="flex gap-3 items-center">
                 <button
@@ -148,7 +203,16 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled }) => {
             style={{ display: "none" }}
             onChange={handleSeleccionArchivo}
             />
-            {error && <div className="text-xs text-red-400 mt-1">{error}</div>}
+            {error && (
+              <div className="text-xs text-red-400 mt-1 p-2 bg-red-900/20 rounded border border-red-500/30">
+                <p className="font-medium">⚠️ {error}</p>
+                {error.includes("Ya existen") && (
+                  <p className="mt-1 text-gray-300">
+                    💡 Tip: Use el botón "Eliminar todos" para limpiar los datos existentes y luego suba el nuevo archivo.
+                  </p>
+                )}
+              </div>
+            )}
                 <div className="flex gap-2 mt-2">
                     <button
                         onClick={handleVerTiposDocumento}
@@ -161,27 +225,48 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled }) => {
                     >
                         Ver tipos de documento
                     </button>
+                    <button
+                        onClick={() => setHistorialAbierto(true)}
+                        className="px-3 py-1 rounded text-sm font-medium transition bg-gray-700 hover:bg-gray-600 text-white flex items-center gap-2"
+                    >
+                        <History size={16} />
+                        Historial
+                    </button>
                 </div>
-                <ModalTabla
-                abierto={modalAbierto}
-                onClose={() => setModalAbierto(false)}
-                titulo="Tipos de Documento cargados"
-                columnas={[
-                    { key: "codigo", label: "Código" },
-                    { key: "descripcion", label: "Descripción" }
-                ]}
-                datos={tiposDocumento}
-                editable={true}
-                onEliminarTodos={handleEliminarTodos}
-                eliminando={eliminando}
-                errorEliminando={errorEliminando}
+                <ModalTipoDocumentoCRUD
+                    abierto={modalAbierto}
+                    onClose={() => setModalAbierto(false)}
+                    clienteId={clienteId}
+                    tiposDocumento={tiposDocumento}
+                    onActualizar={handleActualizarTiposDocumento}
+                    onEliminarTodos={handleEliminarTodos}
+                    eliminando={eliminando}
+                    errorEliminando={errorEliminando}
+                    onNotificacion={mostrarNotificacion}
                 />
+
+                {/* Historial de cambios */}
+                <HistorialCambios
+                    tipoUpload="tipo_documento"
+                    clienteId={clienteId}
+                    abierto={historialAbierto}
+                    onClose={() => setHistorialAbierto(false)}
+                />
+
                 <span className="text-xs text-gray-400 italic mt-2">
                 {estado === "subido"
-                    ? "✔ Archivo cargado correctamente"
+                    ? `✔ Archivo cargado correctamente${tiposDocumento.length > 0 ? ` (${tiposDocumento.length} tipos de documento)` : ""}`
                     : "Aún no se ha subido el archivo."}
                 </span>
-    </div>
-);
+                
+                {/* Componente de notificación */}
+                <Notificacion
+                    tipo={notificacion.tipo}
+                    mensaje={notificacion.mensaje}
+                    visible={notificacion.visible}
+                    onClose={cerrarNotificacion}
+                />
+            </div>
+    );
 }
 export default TipoDocumentoCard;

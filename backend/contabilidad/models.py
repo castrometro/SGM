@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.conf import settings
 from api.models import Cliente, Usuario, Area
 from django.utils.translation import gettext_lazy as _
 
@@ -277,3 +278,151 @@ class AnalisisCuentaCierre(models.Model):
 
     class Meta:
         unique_together = ('cierre', 'cuenta')
+
+class BulkClasificacionUpload(models.Model):
+    ESTADO_CHOICES = [
+        ("subido", "Archivo subido"),
+        ("procesando", "Procesando"),
+        ("completado", "Procesado correctamente"),
+        ("error", "Con errores"),
+    ]
+    id = models.BigAutoField(primary_key=True)
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
+    archivo = models.FileField(upload_to='clasificaciones/%Y/%m/%d/')
+    fecha_subida = models.DateTimeField(auto_now_add=True)
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="subido")
+    errores = models.TextField(blank=True)
+    resumen = models.JSONField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Bulk Clasificación {self.cliente.nombre} - {self.id}"
+
+class NombresEnInglesUpload(models.Model):
+    ESTADO_CHOICES = [
+        ("subido", "Archivo subido"),
+        ("procesando", "Procesando"),
+        ("completado", "Procesado correctamente"),
+        ("error", "Con errores"),
+    ]
+    id = models.BigAutoField(primary_key=True)
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
+    cierre = models.ForeignKey(CierreContabilidad, on_delete=models.CASCADE, null=True, blank=True)
+    archivo = models.FileField(upload_to='nombres_ingles/%Y/%m/%d/')
+    fecha_subida = models.DateTimeField(auto_now_add=True)
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="subido")
+    errores = models.TextField(blank=True)
+    resumen = models.JSONField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Nombres en Inglés {self.cliente.nombre} - {self.id}"
+
+    class Meta:
+        verbose_name = "Upload de Nombres en Inglés"
+        verbose_name_plural = "Uploads de Nombres en Inglés"
+        ordering = ['-fecha_subida']
+
+# ======================================
+#           TRAZABILIDAD POR TARJETA
+# ======================================
+
+class TarjetaActivityLog(models.Model):
+    # Asociación al cierre
+    cierre = models.ForeignKey(CierreContabilidad, on_delete=models.CASCADE, related_name='activity_logs')
+    
+    # Identificación de la tarjeta
+    TARJETA_CHOICES = [
+        ('tipo_documento', 'Tarjeta 1: Tipo de Documento'),
+        ('libro_mayor', 'Tarjeta 2: Libro Mayor'),
+        ('clasificacion', 'Tarjeta 3: Clasificaciones'),
+        ('incidencias', 'Tarjeta 4: Incidencias'),
+        ('revision', 'Tarjeta 5: Revisión'),
+    ]
+    tarjeta = models.CharField(max_length=20, choices=TARJETA_CHOICES)
+    
+    # Acción realizada
+    ACCION_CHOICES = [
+        ('upload_excel', 'Subida de Excel'),
+        ('manual_create', 'Creación Manual'),
+        ('manual_edit', 'Edición Manual'), 
+        ('manual_delete', 'Eliminación Manual'),
+        ('bulk_delete', 'Eliminación Masiva'),
+        ('view_data', 'Visualización de Datos'),
+        ('validation_error', 'Error de Validación'),
+        ('process_start', 'Inicio de Procesamiento'),
+        ('process_complete', 'Procesamiento Completado'),
+    ]
+    accion = models.CharField(max_length=20, choices=ACCION_CHOICES)
+    
+    # Metadatos
+    usuario = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True)
+    descripcion = models.TextField()  # Descripción legible 
+    detalles = models.JSONField(null=True, blank=True)  # Datos específicos
+    resultado = models.CharField(max_length=10, choices=[
+        ('exito', 'Exitoso'),
+        ('error', 'Error'),
+        ('warning', 'Advertencia')
+    ], default='exito')
+    
+    # Timestamps
+    timestamp = models.DateTimeField(auto_now_add=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    
+    class Meta:
+        verbose_name = "Log de Actividad de Tarjeta"
+        verbose_name_plural = "Logs de Actividad de Tarjetas"
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['cierre', 'tarjeta']),
+            models.Index(fields=['usuario', 'timestamp']),
+        ]
+    
+    def __str__(self):
+        return f"{self.get_tarjeta_display()} - {self.get_accion_display()} - {self.usuario}"
+
+# ======================================
+#           LOGGING
+# ======================================
+
+class ClasificacionCuentaArchivo(models.Model):
+    """
+    Modelo para guardar las clasificaciones tal como vienen del archivo Excel,
+    sin hacer mapeo inmediato a cuentas existentes (similar a TipoDocumento)
+    """
+    id = models.BigAutoField(primary_key=True)
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
+    upload = models.ForeignKey(BulkClasificacionUpload, on_delete=models.CASCADE, related_name='clasificaciones_archivo')
+    
+    # Datos tal como vienen del archivo
+    numero_cuenta = models.CharField(max_length=50)  # Código de cuenta tal como está en el archivo
+    
+    # Clasificaciones por sets (dinámico según los sets del cliente)
+    clasificaciones = models.JSONField()  # {"set_nombre_1": "opcion_valor_1", "set_nombre_2": "opcion_valor_2"}
+    
+    # Metadatos
+    fila_excel = models.IntegerField(null=True, blank=True)  # Para tracking de errores
+    procesado = models.BooleanField(default=False)  # Si ya se mapeó a cuentas reales
+    errores_mapeo = models.TextField(blank=True)  # Errores al hacer el mapeo real
+    
+    # Referencia a la cuenta real (cuando se procese)
+    cuenta_mapeada = models.ForeignKey(
+        'CuentaContable', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='clasificaciones_archivo'
+    )
+    
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_procesado = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        unique_together = ('upload', 'numero_cuenta')
+        indexes = [
+            models.Index(fields=['cliente', 'procesado']),
+            models.Index(fields=['upload', 'procesado']),
+        ]
+    
+    def __str__(self):
+        return f"{self.numero_cuenta} - {self.cliente.nombre}"
+
+

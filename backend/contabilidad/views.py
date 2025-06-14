@@ -830,11 +830,205 @@ class ClasificacionSetViewSet(viewsets.ModelViewSet):
     queryset = ClasificacionSet.objects.all()
     serializer_class = ClasificacionSetSerializer
     permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cliente_id = self.request.query_params.get("cliente")
+        if cliente_id:
+            queryset = queryset.filter(cliente_id=cliente_id)
+        return queryset.order_by('nombre')
+    
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        
+        # Registrar creación de set
+        registrar_actividad_tarjeta(
+            cliente_id=instance.cliente.id,
+            periodo=date.today().strftime('%Y-%m'),
+            tarjeta='clasificacion',
+            accion='set_create',
+            descripcion=f'Creado set de clasificación: {instance.nombre}',
+            usuario=self.request.user,
+            detalles={
+                'set_id': instance.id,
+                'set_nombre': instance.nombre,
+                'accion_origen': 'manual_sets_tab'
+            },
+            resultado='exito',
+            ip_address=self.request.META.get('REMOTE_ADDR')
+        )
+    
+    def perform_update(self, serializer):
+        old_instance = self.get_object()
+        instance = serializer.save()
+        
+        # Registrar edición de set
+        registrar_actividad_tarjeta(
+            cliente_id=instance.cliente.id,
+            periodo=date.today().strftime('%Y-%m'),
+            tarjeta='clasificacion',
+            accion='set_edit',
+            descripcion=f'Editado set de clasificación: {old_instance.nombre} → {instance.nombre}',
+            usuario=self.request.user,
+            detalles={
+                'set_id': instance.id,
+                'nombre_anterior': old_instance.nombre,
+                'nombre_nuevo': instance.nombre,
+                'accion_origen': 'manual_sets_tab'
+            },
+            resultado='exito',
+            ip_address=self.request.META.get('REMOTE_ADDR')
+        )
+    
+    def perform_destroy(self, instance):
+        set_info = {'id': instance.id, 'nombre': instance.nombre, 'cliente_id': instance.cliente.id}
+        
+        try:
+            # Contar opciones que se eliminarán
+            opciones_count = ClasificacionOption.objects.filter(set_clas=instance).count()
+            
+            super().perform_destroy(instance)
+            
+            # Registrar eliminación de set
+            registrar_actividad_tarjeta(
+                cliente_id=set_info['cliente_id'],
+                periodo=date.today().strftime('%Y-%m'),
+                tarjeta='clasificacion',
+                accion='set_delete',
+                descripcion=f'Eliminado set de clasificación: {set_info["nombre"]} (incluía {opciones_count} opciones)',
+                usuario=self.request.user,
+                detalles={
+                    **set_info,
+                    'opciones_eliminadas': opciones_count,
+                    'accion_origen': 'manual_sets_tab'
+                },
+                resultado='exito',
+                ip_address=self.request.META.get('REMOTE_ADDR')
+            )
+            
+        except Exception as e:
+            # Registrar error
+            registrar_actividad_tarjeta(
+                cliente_id=set_info['cliente_id'],
+                periodo=date.today().strftime('%Y-%m'),
+                tarjeta='clasificacion',
+                accion='set_delete',
+                descripcion=f'Error al eliminar set de clasificación: {set_info["nombre"]} - {str(e)}',
+                usuario=self.request.user,
+                detalles={
+                    **set_info,
+                    'error': str(e),
+                    'accion_origen': 'manual_sets_tab'
+                },
+                resultado='error',
+                ip_address=self.request.META.get('REMOTE_ADDR')
+            )
+            raise
 
 class ClasificacionOptionViewSet(viewsets.ModelViewSet):
     queryset = ClasificacionOption.objects.all()
     serializer_class = ClasificacionOptionSerializer
     permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        set_id = self.request.query_params.get("set_clas")
+        if set_id:
+            queryset = queryset.filter(set_clas_id=set_id)
+        return queryset.order_by('valor')
+    
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        
+        # Registrar creación de opción
+        registrar_actividad_tarjeta(
+            cliente_id=instance.set_clas.cliente.id,
+            periodo=date.today().strftime('%Y-%m'),
+            tarjeta='clasificacion',
+            accion='option_create',
+            descripcion=f'Creada opción de clasificación: {instance.valor} en set {instance.set_clas.nombre}',
+            usuario=self.request.user,
+            detalles={
+                'opcion_id': instance.id,
+                'opcion_valor': instance.valor,
+                'set_id': instance.set_clas.id,
+                'set_nombre': instance.set_clas.nombre,
+                'accion_origen': 'manual_sets_tab'
+            },
+            resultado='exito',
+            ip_address=self.request.META.get('REMOTE_ADDR')
+        )
+    
+    def perform_update(self, serializer):
+        old_instance = self.get_object()
+        instance = serializer.save()
+        
+        # Registrar edición de opción
+        registrar_actividad_tarjeta(
+            cliente_id=instance.set_clas.cliente.id,
+            periodo=date.today().strftime('%Y-%m'),
+            tarjeta='clasificacion',
+            accion='option_edit',
+            descripcion=f'Editada opción de clasificación: {old_instance.valor} → {instance.valor} en set {instance.set_clas.nombre}',
+            usuario=self.request.user,
+            detalles={
+                'opcion_id': instance.id,
+                'valor_anterior': old_instance.valor,
+                'valor_nuevo': instance.valor,
+                'set_id': instance.set_clas.id,
+                'set_nombre': instance.set_clas.nombre,
+                'accion_origen': 'manual_sets_tab'
+            },
+            resultado='exito',
+            ip_address=self.request.META.get('REMOTE_ADDR')
+        )
+    
+    def perform_destroy(self, instance):
+        opcion_info = {
+            'id': instance.id, 
+            'valor': instance.valor,
+            'set_id': instance.set_clas.id,
+            'set_nombre': instance.set_clas.nombre,
+            'cliente_id': instance.set_clas.cliente.id
+        }
+        
+        try:
+            super().perform_destroy(instance)
+            
+            # Registrar eliminación de opción
+            registrar_actividad_tarjeta(
+                cliente_id=opcion_info['cliente_id'],
+                periodo=date.today().strftime('%Y-%m'),
+                tarjeta='clasificacion',
+                accion='option_delete',
+                descripcion=f'Eliminada opción de clasificación: {opcion_info["valor"]} del set {opcion_info["set_nombre"]}',
+                usuario=self.request.user,
+                detalles={
+                    **opcion_info,
+                    'accion_origen': 'manual_sets_tab'
+                },
+                resultado='exito',
+                ip_address=self.request.META.get('REMOTE_ADDR')
+            )
+            
+        except Exception as e:
+            # Registrar error
+            registrar_actividad_tarjeta(
+                cliente_id=opcion_info['cliente_id'],
+                periodo=date.today().strftime('%Y-%m'),
+                tarjeta='clasificacion',
+                accion='option_delete',
+                descripcion=f'Error al eliminar opción de clasificación: {opcion_info["valor"]} - {str(e)}',
+                usuario=self.request.user,
+                detalles={
+                    **opcion_info,
+                    'error': str(e),
+                    'accion_origen': 'manual_sets_tab'
+                },
+                resultado='error',
+                ip_address=self.request.META.get('REMOTE_ADDR')
+            )
+            raise
 
 class AccountClassificationViewSet(viewsets.ModelViewSet):
     queryset = AccountClassification.objects.select_related(

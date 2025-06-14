@@ -48,6 +48,11 @@ export const registrarVistaClasificaciones = async (clienteId, uploadId = null) 
   return res.data;
 };
 
+export const registrarVistaSetsClasificacion = async (clienteId) => {
+  const res = await api.post(`/contabilidad/clasificacion/${clienteId}/registrar-vista-sets/`);
+  return res.data;
+};
+
 export const eliminarTodosTiposDocumento = async (clienteId) => {
   const res = await api.post(`/contabilidad/tipo-documento/${clienteId}/eliminar-todos/`);
   return res.data;
@@ -438,5 +443,61 @@ export const obtenerLogsUpload = async (tipoUpload, uploadId = null, clienteId =
   if (clienteId) params.cliente_id = clienteId;
   
   const res = await api.get('/contabilidad/activity-logs/', { params });
+  return res.data;
+};
+
+// ==================== FUNCIONES PARA SETS DE CLASIFICACIÓN ====================
+export const obtenerSetsCliente = async (clienteId) => {
+  const res = await api.get('/contabilidad/clasificaciones-set/', {
+    params: { cliente: clienteId }
+  });
+  return res.data;
+};
+
+export const crearSet = async (clienteId, nombre) => {
+  const res = await api.post('/contabilidad/clasificaciones-set/', {
+    cliente: clienteId,
+    nombre: nombre
+  });
+  return res.data;
+};
+
+export const actualizarSet = async (setId, nombre) => {
+  const res = await api.put(`/contabilidad/clasificaciones-set/${setId}/`, {
+    nombre: nombre
+  });
+  return res.data;
+};
+
+export const eliminarSet = async (setId) => {
+  const res = await api.delete(`/contabilidad/clasificaciones-set/${setId}/`);
+  return res.data;
+};
+
+// ==================== FUNCIONES PARA OPCIONES DE CLASIFICACIÓN ====================
+export const obtenerOpcionesSet = async (setId) => {
+  const res = await api.get('/contabilidad/clasificaciones-opcion/', {
+    params: { set_clas: setId }
+  });
+  return res.data;
+};
+
+export const crearOpcion = async (setId, valor) => {
+  const res = await api.post('/contabilidad/clasificaciones-opcion/', {
+    set_clas: setId,
+    valor: valor
+  });
+  return res.data;
+};
+
+export const actualizarOpcion = async (opcionId, valor) => {
+  const res = await api.put(`/contabilidad/clasificaciones-opcion/${opcionId}/`, {
+    valor: valor
+  });
+  return res.data;
+};
+
+export const eliminarOpcion = async (opcionId) => {
+  const res = await api.delete(`/contabilidad/clasificaciones-opcion/${opcionId}/`);
   return res.data;
 };

@@ -177,7 +177,7 @@ const ClasificacionBulkCard = ({ clienteId, onCompletado, disabled }) => {
       <div className="flex gap-2 mt-2">
         <button
           onClick={() => setModalRegistrosRaw(true)}
-          className="px-3 py-1 rounded text-sm font-medium transition bg-green-700 hover:bg-green-600 text-white flex items-center gap-2"
+          className="px-3 py-1 rounded text-sm font-medium transition bg-blue-700 hover:bg-blue-600 text-white flex items-center gap-2"
           disabled={!ultimoUpload?.id}
         >
           <Settings size={16} />

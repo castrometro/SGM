@@ -3,6 +3,7 @@ import { X, Check, AlertTriangle, Clock, FileText, Plus, Edit2, Trash2, Save, XC
 import { 
   obtenerClasificacionesArchivo,
   registrarVistaClasificaciones,
+  registrarVistaSetsClasificacion,
   crearClasificacionArchivo,
   actualizarClasificacionArchivo,
   eliminarClasificacionArchivo,
@@ -36,14 +37,6 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
   // Estados para selección de sets y opciones en creación/edición
   const [setSeleccionado, setSetSeleccionado] = useState('');
   const [opcionSeleccionada, setOpcionSeleccionada] = useState('');
-
-  // Estados para filtros de búsqueda
-  const [filtros, setFiltros] = useState({
-    busquedaCuenta: '',
-    setsSeleccionados: [],
-    soloSinClasificar: false,
-    soloClasificados: false
-  });
 
   // Estados para gestión de sets y opciones
   const [sets, setSets] = useState([]);
@@ -129,64 +122,6 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
     setEstadisticas({ total });
   };
 
-  // ==================== FUNCIONES DE FILTRADO ====================
-  const obtenerSetsUnicos = () => {
-    const setsEncontrados = new Set();
-    registros.forEach(registro => {
-      if (registro.clasificaciones) {
-        Object.keys(registro.clasificaciones).forEach(setNombre => {
-          setsEncontrados.add(setNombre);
-        });
-      }
-    });
-    return Array.from(setsEncontrados).sort();
-  };
-
-  const aplicarFiltros = (registros) => {
-    let registrosFiltrados = [...registros];
-
-    // Filtro por búsqueda de cuenta
-    if (filtros.busquedaCuenta.trim()) {
-      const busqueda = filtros.busquedaCuenta.toLowerCase();
-      registrosFiltrados = registrosFiltrados.filter(registro =>
-        registro.numero_cuenta.toLowerCase().includes(busqueda)
-      );
-    }
-
-    // Filtro por sets seleccionados
-    if (filtros.setsSeleccionados.length > 0) {
-      registrosFiltrados = registrosFiltrados.filter(registro => {
-        if (!registro.clasificaciones) return false;
-        const setsDelRegistro = Object.keys(registro.clasificaciones);
-        return filtros.setsSeleccionados.some(setFiltro => 
-          setsDelRegistro.includes(setFiltro)
-        );
-      });
-    }
-
-    // Filtro por estado de clasificación
-    if (filtros.soloSinClasificar) {
-      registrosFiltrados = registrosFiltrados.filter(registro =>
-        !registro.clasificaciones || Object.keys(registro.clasificaciones).length === 0
-      );
-    } else if (filtros.soloClasificados) {
-      registrosFiltrados = registrosFiltrados.filter(registro =>
-        registro.clasificaciones && Object.keys(registro.clasificaciones).length > 0
-      );
-    }
-
-    return registrosFiltrados;
-  };
-
-  const limpiarFiltros = () => {
-    setFiltros({
-      busquedaCuenta: '',
-      setsSeleccionados: [],
-      soloSinClasificar: false,
-      soloClasificados: false
-    });
-  };
-
   // ==================== FUNCIONES AUXILIARES PARA SETS/OPCIONES ====================
   const obtenerSetsDisponibles = () => {
     return sets || [];
@@ -204,10 +139,7 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
     }
 
     const setEncontrado = sets.find(s => s.id === parseInt(setSeleccionado));
-    if (!setEncontrado) {
-      console.error('Set no encontrado:', setSeleccionado);
-      return;
-    }
+    if (!setEncontrado) return;
 
     if (creandoNuevo) {
       setNuevoRegistro(prev => ({
@@ -252,15 +184,15 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
     // Si ya está en esa pestaña, no hacer nada
     if (pestanaActiva === nuevaPestana) return;
     
-    // TODO: Implementar registro de vista de sets si es necesario
-    // Comentado temporalmente porque el endpoint no existe en el backend
-    // if (nuevaPestana === 'sets') {
-    //   try {
-    //     await registrarVistaSetsClasificacion(clienteId);
-    //   } catch (error) {
-    //     console.error("Error al registrar vista de sets:", error);
-    //   }
-    // }
+    // Si va a la pestaña de sets, registrar el acceso
+    if (nuevaPestana === 'sets') {
+      try {
+        await registrarVistaSetsClasificacion(clienteId);
+      } catch (error) {
+        console.error("Error al registrar vista de sets:", error);
+        // Continuar aunque falle el registro
+      }
+    }
     
     setPestanaActiva(nuevaPestana);
   };
@@ -381,70 +313,19 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
       return;
     }
 
-    // Validar que el número de cuenta no exista ya en este upload
-    const numeroCuentaExiste = registros.some(r => r.numero_cuenta === nuevoRegistro.numero_cuenta.trim());
-    if (numeroCuentaExiste) {
-      alert(`El número de cuenta "${nuevoRegistro.numero_cuenta}" ya existe en este archivo. Por favor usa un número diferente o edita el registro existente.`);
-      return;
-    }
-
     try {
-      // Calcular la siguiente fila disponible basándose en las filas existentes
-      const filasExistentes = registros.map(r => r.fila_excel || 0);
-      const maxFila = filasExistentes.length > 0 ? Math.max(...filasExistentes) : 1;
-      const siguienteFila = maxFila + 1;
-      
-      const datosAEnviar = {
+      await crearClasificacionArchivo({
         upload: uploadId,
-        cliente: clienteId,
-        numero_cuenta: nuevoRegistro.numero_cuenta.trim(),
+        numero_cuenta: nuevoRegistro.numero_cuenta,
         clasificaciones: nuevoRegistro.clasificaciones,
-        fila_excel: siguienteFila
-      };
-      
-      console.log('=== CREANDO NUEVO REGISTRO ===');
-      console.log('Upload ID:', uploadId);
-      console.log('Cliente ID:', clienteId);
-      console.log('Datos completos a enviar:', JSON.stringify(datosAEnviar, null, 2));
-      console.log('Tipo de clasificaciones:', typeof nuevoRegistro.clasificaciones);
-      console.log('¿Clasificaciones es object?:', nuevoRegistro.clasificaciones && typeof nuevoRegistro.clasificaciones === 'object');
-
-      await crearClasificacionArchivo(datosAEnviar);
-      
-      console.log('✅ Registro creado exitosamente');
+        fila_excel: registros.length + 2 // Siguiente fila disponible
+      });
       await cargarRegistros();
       handleCancelarCreacion();
       if (onDataChanged) onDataChanged();
     } catch (error) {
-      console.error('❌ ERROR COMPLETO:', error);
-      console.error('Error response:', error.response);
-      console.error('Error response data:', error.response?.data);
-      console.error('Error response status:', error.response?.status);
-      console.error('Error response headers:', error.response?.headers);
-      
-      // Mostrar error más específico
-      let errorMessage = "Error al crear el registro";
-      if (error.response?.data) {
-        console.log('Procesando error response data:', error.response.data);
-        
-        if (error.response.data.detail) {
-          errorMessage = error.response.data.detail;
-        } else if (error.response.data.numero_cuenta) {
-          errorMessage = `Error en número de cuenta: ${error.response.data.numero_cuenta.join(', ')}`;
-        } else if (error.response.data.upload) {
-          errorMessage = `Error en upload: ${error.response.data.upload.join(', ')}`;
-        } else if (error.response.data.fila_excel) {
-          errorMessage = `Error en fila excel: ${error.response.data.fila_excel.join(', ')}`;
-        } else if (error.response.data.clasificaciones) {
-          errorMessage = `Error en clasificaciones: ${error.response.data.clasificaciones.join(', ')}`;
-        } else if (typeof error.response.data === 'string') {
-          errorMessage = error.response.data;
-        } else {
-          errorMessage = `Error del servidor: ${JSON.stringify(error.response.data)}`;
-        }
-      }
-      
-      alert(errorMessage);
+      console.error("Error al crear registro:", error);
+      alert("Error al crear el registro");
     }
   };
 
@@ -493,8 +374,7 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
     }
   };
 
-  const registrosFiltrados = aplicarFiltros(registros || []);
-  const setsUnicos = obtenerSetsUnicos();
+  const registrosFiltrados = registros || [];
 
   if (!isOpen) return null;
 
@@ -504,12 +384,12 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
         className="bg-gray-900 rounded-lg shadow-xl w-full overflow-hidden flex flex-col"
         style={{ 
           maxWidth: '95vw',
-          height: '90vh',
+          maxHeight: '90vh',
           width: '1200px'
         }}
       >
-        {/* Header del modal */}
-        <div className="flex justify-between items-center p-6 border-b border-gray-700 bg-gray-900">
+        {/* Header del modal - sticky */}
+        <div className="flex justify-between items-center p-6 border-b border-gray-700 bg-gray-900 sticky top-0 z-20">
           <h2 className="text-xl font-semibold text-white flex items-center gap-2">
             <Database size={20} />
             Gestión de Clasificaciones
@@ -522,8 +402,8 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
           </button>
         </div>
 
-        {/* Pestañas de navegación */}
-        <div className="bg-gray-800 border-b border-gray-700">
+        {/* Pestañas de navegación - sticky */}
+        <div className="bg-gray-800 border-b border-gray-700 sticky top-[88px] z-10">
           <div className="flex space-x-4 p-4">
             <button
               onClick={() => manejarCambioPestana('registros')}
@@ -551,17 +431,15 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
         </div>
 
         {/* Contenido principal con scroll */}
-        <div className="flex-1 overflow-auto bg-gray-900" style={{ minHeight: 0 }}>
+        <div className="flex-1 overflow-hidden bg-gray-900">
           {/* Contenido de la pestaña Registros */}
           {pestanaActiva === 'registros' && (
-            <div className="p-4">
-              {/* Filtros y estadísticas */}
-              <div className="bg-gray-800 p-4 rounded-lg mb-4 border border-gray-700">
-                {/* Header con estadísticas y botón crear */}
-                <div className="flex justify-between items-center mb-4">
+            <div className="h-full flex flex-col">
+              {/* Estadísticas y botón crear */}
+              <div className="bg-gray-800 p-4 border-b border-gray-700">
+                <div className="flex justify-between items-center">
                   <div className="flex items-center gap-4 text-sm text-gray-300">
-                    <span>Total: <strong className="text-white">{registros.length}</strong></span>
-                    <span>Filtrados: <strong className="text-blue-400">{registrosFiltrados.length}</strong></span>
+                    <span>Total de Registros: <strong className="text-white">{estadisticas.total || 0}</strong></span>
                   </div>
                   <button
                     onClick={handleIniciarCreacion}
@@ -571,147 +449,10 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                     Nuevo Registro
                   </button>
                 </div>
-
-                {/* Filtros */}
-                <div className="border-t border-gray-700 pt-4">
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                    {/* Búsqueda por número de cuenta */}
-                    <div>
-                      <label className="block text-xs text-gray-400 mb-1">Buscar por cuenta:</label>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          value={filtros.busquedaCuenta}
-                          onChange={(e) => setFiltros(prev => ({ ...prev, busquedaCuenta: e.target.value }))}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Escape') {
-                              setFiltros(prev => ({ ...prev, busquedaCuenta: '' }));
-                            }
-                          }}
-                          placeholder="Ej: 1-01-001... (Esc para limpiar)"
-                          className="w-full bg-gray-700 text-white px-3 py-1 rounded border border-gray-600 text-sm focus:border-blue-500 focus:outline-none"
-                        />
-                        {filtros.busquedaCuenta && (
-                          <button
-                            onClick={() => setFiltros(prev => ({ ...prev, busquedaCuenta: '' }))}
-                            className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white"
-                          >
-                            <XCircle size={14} />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Filtros por estado */}
-                    <div>
-                      <label className="block text-xs text-gray-400 mb-1">Estado:</label>
-                      <div className="flex gap-2">
-                        <label className="flex items-center text-sm text-gray-300 hover:bg-gray-700 px-2 py-1 rounded cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={filtros.soloClasificados}
-                            onChange={(e) => setFiltros(prev => ({ 
-                              ...prev, 
-                              soloClasificados: e.target.checked,
-                              soloSinClasificar: e.target.checked ? false : prev.soloSinClasificar
-                            }))}
-                            className="mr-1 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
-                          />
-                          Con clasificaciones
-                        </label>
-                        <label className="flex items-center text-sm text-gray-300 hover:bg-gray-700 px-2 py-1 rounded cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={filtros.soloSinClasificar}
-                            onChange={(e) => setFiltros(prev => ({ 
-                              ...prev, 
-                              soloSinClasificar: e.target.checked,
-                              soloClasificados: e.target.checked ? false : prev.soloClasificados
-                            }))}
-                            className="mr-1 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
-                          />
-                          Sin clasificar
-                        </label>
-                      </div>
-                    </div>
-
-                    {/* Botón limpiar filtros y contador activos */}
-                    <div className="flex items-end gap-2">
-                      {(filtros.busquedaCuenta || filtros.setsSeleccionados.length > 0 || filtros.soloClasificados || filtros.soloSinClasificar) && (
-                        <div className="text-xs text-blue-400 bg-blue-900/30 px-2 py-1 rounded">
-                          {[
-                            filtros.busquedaCuenta ? 'cuenta' : null,
-                            filtros.setsSeleccionados.length > 0 ? `${filtros.setsSeleccionados.length} sets` : null,
-                            filtros.soloClasificados ? 'clasificados' : null,
-                            filtros.soloSinClasificar ? 'sin clasificar' : null
-                          ].filter(Boolean).length} filtros activos
-                        </div>
-                      )}
-                      <button
-                        onClick={limpiarFiltros}
-                        disabled={!filtros.busquedaCuenta && filtros.setsSeleccionados.length === 0 && !filtros.soloClasificados && !filtros.soloSinClasificar}
-                        className="bg-gray-600 hover:bg-gray-500 disabled:bg-gray-700 disabled:text-gray-500 text-white px-3 py-1 rounded text-sm transition flex items-center gap-1"
-                      >
-                        <XCircle size={14} />
-                        Limpiar filtros
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Filtros por sets */}
-                  {setsUnicos.length > 0 && (
-                    <div className="mt-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <label className="text-xs text-gray-400">Filtrar por sets:</label>
-                        {filtros.setsSeleccionados.length > 0 && (
-                          <button
-                            onClick={() => setFiltros(prev => ({ ...prev, setsSeleccionados: [] }))}
-                            className="text-xs text-blue-400 hover:text-blue-300 underline"
-                          >
-                            Deseleccionar todos
-                          </button>
-                        )}
-                        {filtros.setsSeleccionados.length !== setsUnicos.length && (
-                          <button
-                            onClick={() => setFiltros(prev => ({ ...prev, setsSeleccionados: [...setsUnicos] }))}
-                            className="text-xs text-blue-400 hover:text-blue-300 underline"
-                          >
-                            Seleccionar todos
-                          </button>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {setsUnicos.map(setNombre => (
-                          <label key={setNombre} className="flex items-center text-sm text-gray-300 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded cursor-pointer transition">
-                            <input
-                              type="checkbox"
-                              checked={filtros.setsSeleccionados.includes(setNombre)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setFiltros(prev => ({
-                                    ...prev,
-                                    setsSeleccionados: [...prev.setsSeleccionados, setNombre]
-                                  }));
-                                } else {
-                                  setFiltros(prev => ({
-                                    ...prev,
-                                    setsSeleccionados: prev.setsSeleccionados.filter(s => s !== setNombre)
-                                  }));
-                                }
-                              }}
-                              className="mr-2 text-blue-600 bg-gray-600 border-gray-500 rounded focus:ring-blue-500"
-                            />
-                            {setNombre}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
               </div>
 
-              {/* Tabla */}
-              <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+              {/* Tabla con scroll */}
+              <div className="flex-1 overflow-auto">
                 {loading ? (
                   <div className="flex justify-center items-center h-32">
                     <div className="animate-spin w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full"></div>
@@ -719,29 +460,7 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                 ) : registrosFiltrados.length === 0 ? (
                   <div className="text-center py-8 text-gray-400">
                     <FileText size={48} className="mx-auto mb-2 opacity-50" />
-                    {registros.length === 0 ? (
-                      <p>No hay registros de clasificación disponibles</p>
-                    ) : (
-                      <div>
-                        <p className="mb-2">No hay registros que coincidan con los filtros aplicados</p>
-                        {(filtros.busquedaCuenta || filtros.setsSeleccionados.length > 0 || filtros.soloClasificados || filtros.soloSinClasificar) && (
-                          <div className="text-sm text-gray-500 mb-3">
-                            Filtros activos: {[
-                              filtros.busquedaCuenta ? `cuenta "${filtros.busquedaCuenta}"` : null,
-                              filtros.setsSeleccionados.length > 0 ? `sets: ${filtros.setsSeleccionados.join(', ')}` : null,
-                              filtros.soloClasificados ? 'solo clasificados' : null,
-                              filtros.soloSinClasificar ? 'solo sin clasificar' : null
-                            ].filter(Boolean).join(' • ')}
-                          </div>
-                        )}
-                        <button
-                          onClick={limpiarFiltros}
-                          className="mt-2 text-blue-400 hover:text-blue-300 underline text-sm"
-                        >
-                          Limpiar filtros para ver todos los registros
-                        </button>
-                      </div>
-                    )}
+                    <p>No hay registros de clasificación disponibles</p>
                   </div>
                 ) : (
                   <table className="w-full">
@@ -767,30 +486,13 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                         <tr className="bg-gray-800 border-l-4 border-l-blue-500">
                           <td className="px-3 py-2 text-gray-400 text-sm">Nuevo</td>
                           <td className="px-3 py-2">
-                            {(() => {
-                              const cuentaExiste = nuevoRegistro.numero_cuenta.trim() && 
-                                                 registros.some(r => r.numero_cuenta === nuevoRegistro.numero_cuenta.trim());
-                              return (
-                                <div>
-                                  <input
-                                    type="text"
-                                    value={nuevoRegistro.numero_cuenta}
-                                    onChange={(e) => setNuevoRegistro(prev => ({ ...prev, numero_cuenta: e.target.value }))}
-                                    placeholder="Número de cuenta"
-                                    className={`w-full bg-gray-700 text-white px-2 py-1 rounded border focus:outline-none ${
-                                      cuentaExiste 
-                                        ? 'border-red-500 focus:border-red-400' 
-                                        : 'border-gray-600 focus:border-blue-500'
-                                    }`}
-                                  />
-                                  {cuentaExiste && (
-                                    <div className="text-red-400 text-xs mt-1">
-                                      ⚠️ Esta cuenta ya existe en el archivo
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })()}
+                            <input
+                              type="text"
+                              value={nuevoRegistro.numero_cuenta}
+                              onChange={(e) => setNuevoRegistro(prev => ({ ...prev, numero_cuenta: e.target.value }))}
+                              placeholder="Número de cuenta"
+                              className="w-full bg-gray-700 text-white px-2 py-1 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+                            />
                           </td>
                           <td className="px-3 py-2">
                             {/* Clasificaciones agregadas */}
@@ -1031,9 +733,9 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
 
           {/* Contenido de la pestaña Sets y Opciones */}
           {pestanaActiva === 'sets' && (
-            <div className="p-4">
+            <div className="h-full flex flex-col">
               {/* Header para crear nuevo set */}
-              <div className="bg-gray-800 p-4 rounded-lg mb-4 border border-gray-700">
+              <div className="bg-gray-800 p-4 border-b border-gray-700">
                 <h3 className="text-lg font-medium text-white mb-3 flex items-center gap-2">
                   <FolderPlus size={18} />
                   Gestión de Sets de Clasificación
@@ -1078,8 +780,8 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                 </div>
               </div>
 
-              {/* Lista de sets */}
-              <div className="space-y-4">
+              {/* Contenedor de sets con scroll */}
+              <div className="flex-1 overflow-auto p-4">
                 {loadingSets ? (
                   <div className="flex justify-center items-center h-32">
                     <div className="animate-spin w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full"></div>
@@ -1273,8 +975,8 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
           )}
         </div>
 
-        {/* Footer */}
-        <div className="bg-gray-800 px-6 py-4 border-t border-gray-700">
+        {/* Footer - sticky */}
+        <div className="bg-gray-800 px-6 py-4 border-t border-gray-700 sticky bottom-0 z-10">
           <div className="flex justify-between items-center">
             <div className="text-sm text-gray-400">
               {pestanaActiva === 'registros' ? (

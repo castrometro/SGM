@@ -56,6 +56,7 @@ class CierreContabilidadSerializer(serializers.ModelSerializer):
             'id',
             'cliente',
             'usuario',
+            'area',
             'periodo',
             'fecha_inicio_libro',
             'fecha_fin_libro',
@@ -67,6 +68,24 @@ class CierreContabilidadSerializer(serializers.ModelSerializer):
             'parsing_completado',
         ]
         read_only_fields = ['fecha_creacion', 'fecha_cierre', 'usuario']
+    
+    def validate(self, data):
+        cliente = data.get('cliente')
+        periodo = data.get('periodo')
+        
+        if cliente and periodo:
+            # En caso de actualización, excluir el registro actual
+            queryset = CierreContabilidad.objects.filter(cliente=cliente, periodo=periodo)
+            if self.instance:
+                queryset = queryset.exclude(pk=self.instance.pk)
+            
+            if queryset.exists():
+                cierre_existente = queryset.first()
+                raise serializers.ValidationError({
+                    'periodo': f'Ya existe un cierre contable para el cliente "{cliente.nombre}" en el periodo "{periodo}". Estado actual: {cierre_existente.get_estado_display()}.'
+                })
+        
+        return data
         
 class ProgresoClasificacionSerializer(serializers.Serializer):
     existen_sets = serializers.BooleanField()

@@ -1958,10 +1958,21 @@ class CierreContabilidadViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        cliente_id = self.request.query_params.get('cliente_id')
+        cliente_id = self.request.query_params.get('cliente')
+        periodo = self.request.query_params.get('periodo')
+        
         if cliente_id:
             queryset = queryset.filter(cliente_id=cliente_id)
+        if periodo:
+            queryset = queryset.filter(periodo=periodo)
+            
         return queryset.select_related('cliente', 'usuario', 'area').order_by('-fecha_creacion')
+
+    def perform_create(self, serializer):
+        """
+        Establece el usuario actual al crear un nuevo cierre contable.
+        """
+        serializer.save(usuario=self.request.user)
 
     @action(detail=True, methods=['get'])
     def movimientos_resumen(self, request, pk=None):

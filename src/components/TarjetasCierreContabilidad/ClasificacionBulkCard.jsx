@@ -12,7 +12,7 @@ import {
   obtenerClasificacionesArchivo
 } from '../../api/contabilidad';
 
-const ClasificacionBulkCard = ({ clienteId, onCompletado, disabled }) => {
+const ClasificacionBulkCard = ({ clienteId, onCompletado, disabled, numeroPaso }) => {
   const [archivo, setArchivo] = useState(null);
   const [estado, setEstado] = useState('pendiente');
   const [subiendo, setSubiendo] = useState(false);
@@ -125,8 +125,8 @@ const ClasificacionBulkCard = ({ clienteId, onCompletado, disabled }) => {
   };
 
   return (
-    <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${disabled ? 'opacity-60 pointer-events-none' : ''}`}>        
-      <h3 className="text-lg font-semibold mb-3">2. Subir Clasificaciones de Cuentas</h3>
+    <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${disabled ? 'opacity-60 pointer-events-none' : ''}`}>
+      <h3 className="text-lg font-semibold mb-3">{numeroPaso}. Subir Clasificaciones de Cuentas</h3>
       <div className="flex items-center gap-2 mb-2">
         <span className="font-semibold">Estado:</span>
         <EstadoBadge estado={estado === 'completado' ? 'subido' : estado} />

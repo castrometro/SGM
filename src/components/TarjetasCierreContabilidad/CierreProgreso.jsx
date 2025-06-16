@@ -69,6 +69,8 @@ const CierreProgreso = ({ cierre, cliente }) => {
   const handleTraduccionCompletada = () => setNombresInglesReady(true);
   const handleLibroMayorCompletado = () => setLibroMayorReady(true);
 
+  let paso = 1;
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
       {/* Paso 1: Tipos de Documento */}
@@ -76,6 +78,7 @@ const CierreProgreso = ({ cierre, cliente }) => {
         clienteId={cliente.id}
         onCompletado={handleTipoDocumentoCompletado}
         disabled={false}
+        numeroPaso={paso++}
       />
       
       {/* Paso 2: Clasificación de Cuentas */}
@@ -83,6 +86,7 @@ const CierreProgreso = ({ cierre, cliente }) => {
         clienteId={cliente.id}
         onCompletado={handleClasificacionCompletado}
         disabled={!tipoDocumentoReady}
+        numeroPaso={paso++}
       />
       
       {/* Paso 3: Nombres en Inglés (solo si cliente es bilingüe) */}
@@ -93,6 +97,7 @@ const CierreProgreso = ({ cierre, cliente }) => {
           clasificacionReady={clasificacionReady}
           onCompletado={handleTraduccionCompletada}
           disabled={!clasificacionReady}
+          numeroPaso={paso++}
         />
       )}
       
@@ -104,6 +109,7 @@ const CierreProgreso = ({ cierre, cliente }) => {
         tipoDocumentoReady={tipoDocumentoReady}
         clasificacionReady={clasificacionReady}
         nombresInglesReady={nombresInglesReady}
+        numeroPaso={paso++}
       />
     </div>
   );

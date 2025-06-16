@@ -100,6 +100,41 @@ class TipoDocumentoArchivo(models.Model):
         return f"Archivo Tipo Documento - {self.cliente.nombre}"
 
 
+# ======================================
+#           NOMBRES EN INGLÉS
+# ======================================
+
+class NombreIngles(models.Model):
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
+    cierre = models.ForeignKey('CierreContabilidad', on_delete=models.CASCADE, null=True, blank=True)
+    cuenta_codigo = models.CharField(max_length=20)
+    nombre_ingles = models.CharField(max_length=255)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = [('cliente', 'cuenta_codigo')]
+        db_table = 'contabilidad_nombreingles'
+        ordering = ['cuenta_codigo']
+    
+    def __str__(self):
+        return f"{self.cuenta_codigo} - {self.nombre_ingles}"
+
+
+class NombreInglesArchivo(models.Model):
+    cliente = models.OneToOneField(Cliente, on_delete=models.CASCADE)
+    archivo = models.FileField(upload_to='nombres_ingles/')
+    fecha_subida = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Archivo Nombres en Inglés - {self.cliente.nombre}"
+
+
+# ======================================
+#           CIERRES CONTABILIDAD
+# ======================================
+
+
 
 class CierreContabilidad(models.Model):
     id = models.BigAutoField(primary_key=True)

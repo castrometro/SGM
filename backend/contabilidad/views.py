@@ -40,6 +40,8 @@ from .models import (
     NombresEnInglesUpload,
     TarjetaActivityLog,
     TipoDocumentoArchivo,
+    NombreIngles,
+    NombreInglesArchivo,
 )
 from .serializers import (
     TipoDocumentoSerializer,
@@ -60,6 +62,7 @@ from .serializers import (
     AnalisisCuentaCierreSerializer,
     NombresEnInglesUploadSerializer,
     TarjetaActivityLogSerializer,
+    NombreInglesSerializer,
 )
 
 from api.models import (
@@ -73,6 +76,7 @@ from contabilidad.tasks import (
     procesar_nombres_ingles,
     procesar_bulk_clasificacion,
     procesar_nombres_ingles_upload,
+    parsear_nombres_ingles,
     )
 
 
@@ -651,6 +655,220 @@ def registrar_vista_clasificaciones(request, cliente_id):
     return Response({"mensaje": "Visualización registrada"})
 
 
+# ===== FUNCIONES API PARA NOMBRES EN INGLÉS =====
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def estado_nombres_ingles(request, cliente_id):
+    # Busca si ya existen nombres en inglés asociados al cliente
+    existe = NombreIngles.objects.filter(cliente_id=cliente_id).exists()
+    return Response({"estado": "subido" if existe else "pendiente"})
+
+
+@api_view(['POST'])
+@parser_classes([MultiPartParser])
+@permission_classes([IsAuthenticated])
+def cargar_nombres_ingles(request):
+    cliente_id = request.data.get("cliente_id")
+    archivo = request.FILES.get("archivo")
+
+    if not cliente_id or not archivo:
+        return Response({"error": "cliente_id y archivo son requeridos"}, status=400)
+
+    try:
+        cliente = Cliente.objects.get(id=cliente_id)
+    except Cliente.DoesNotExist:
+        return Response({"error": "Cliente no encontrado"}, status=404)
+
+    # Verificar si ya existen datos para este cliente
+    nombres_existentes = NombreIngles.objects.filter(cliente=cliente).count()
+    if nombres_existentes > 0:
+        # Registrar intento de upload con datos existentes
+        registrar_actividad_tarjeta(
+            cliente_id=cliente_id,
+            periodo=date.today().strftime('%Y-%m'),
+            tarjeta='nombres_ingles',
+            accion='upload_excel',
+            descripcion=f'Upload rechazado: ya existen {nombres_existentes} nombres en inglés',
+            usuario=request.user,
+            detalles={
+                'nombre_archivo': archivo.name,
+                'nombres_existentes': nombres_existentes,
+                'razon_rechazo': 'datos_existentes'
+            },
+            resultado='error',
+            ip_address=request.META.get('REMOTE_ADDR')
+        )
+        
+        return Response({
+            "error": "Ya existen nombres en inglés para este cliente",
+            "mensaje": "Debe eliminar todos los registros existentes antes de subir un nuevo archivo",
+            "nombres_existentes": nombres_existentes,
+            "accion_requerida": "Usar 'Eliminar todos' primero"
+        }, status=409)  # 409 Conflict
+
+    # Limpiar archivos temporales anteriores del mismo cliente
+    patron_temp = f"temp/nombres_ingles_cliente_{cliente_id}*"
+    import glob
+    archivos_temp_anteriores = glob.glob(os.path.join(default_storage.location, "temp", f"nombres_ingles_cliente_{cliente_id}*"))
+    for archivo_anterior in archivos_temp_anteriores:
+        try:
+            os.remove(archivo_anterior)
+        except OSError:
+            pass  # Ignorar si no se puede eliminar
+
+    # Guardar archivo temporalmente (media/temp/)
+    nombre_archivo = f"temp/nombres_ingles_cliente_{cliente_id}.xlsx"
+    ruta_guardada = default_storage.save(nombre_archivo, archivo)
+
+    # Registrar actividad de subida
+    registrar_actividad_tarjeta(
+        cliente_id=cliente_id,
+        periodo=date.today().strftime('%Y-%m'),  # Periodo actual por defecto
+        tarjeta='nombres_ingles',
+        accion='upload_excel',
+        descripcion=f'Subido archivo: {archivo.name}',
+        usuario=request.user,
+        detalles={
+            'nombre_archivo': archivo.name,
+            'tamaño_bytes': archivo.size,
+            'tipo_contenido': archivo.content_type
+        },
+        resultado='exito',
+        ip_address=request.META.get('REMOTE_ADDR')
+    )
+
+    # Enviar tarea a Celery (con ruta relativa)
+    parsear_nombres_ingles.delay(cliente_id, ruta_guardada)
+
+    return Response({"mensaje": "Archivo recibido y tarea enviada"})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def nombres_ingles_cliente(request, cliente_id):
+    nombres = NombreIngles.objects.filter(cliente_id=cliente_id)
+    
+    # Log eliminado - se registrará solo desde el frontend cuando se abra el modal manualmente
+    
+    # O usa un serializer si tienes uno
+    data = [
+        {
+            "id": nombre.id,
+            "cuenta_codigo": nombre.cuenta_codigo,
+            "nombre_ingles": nombre.nombre_ingles,
+        }
+        for nombre in nombres
+    ]
+    return Response(data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def registrar_vista_nombres_ingles(request, cliente_id):
+    """
+    Endpoint específico para registrar cuando el usuario abre el modal de nombres en inglés
+    """
+    nombres = NombreIngles.objects.filter(cliente_id=cliente_id)
+    
+    # Registrar visualización manual del modal
+    registrar_actividad_tarjeta(
+        cliente_id=cliente_id,
+        periodo=date.today().strftime('%Y-%m'),
+        tarjeta='nombres_ingles',
+        accion='view_data',
+        descripcion=f'Abrió modal de nombres en inglés ({nombres.count()} registros)',
+        usuario=request.user,
+        detalles={
+            'total_registros': nombres.count(),
+            'accion_origen': 'modal_manual'
+        },
+        resultado='exito',
+        ip_address=request.META.get('REMOTE_ADDR')
+    )
+    
+    return Response({"mensaje": "Visualización registrada"})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def eliminar_nombres_ingles(request, cliente_id):
+    try:
+        cliente = Cliente.objects.get(id=cliente_id)
+    except Cliente.DoesNotExist:
+        return Response({"error": "Cliente no encontrado"}, status=404)
+    
+    # Contar registros antes de eliminar
+    count = NombreIngles.objects.filter(cliente=cliente).count()
+    
+    # Variables para el log
+    archivos_eliminados = []
+    
+    try:
+        # 1. Buscar y eliminar archivo asociado si existe
+        try:
+            archivo_nombres_ingles = NombreInglesArchivo.objects.get(cliente=cliente)
+            archivo_path = archivo_nombres_ingles.archivo.path if archivo_nombres_ingles.archivo else None
+            archivo_name = archivo_nombres_ingles.archivo.name if archivo_nombres_ingles.archivo else None
+            
+            # Eliminar archivo físico del sistema
+            if archivo_path and os.path.exists(archivo_path):
+                os.remove(archivo_path)
+                archivos_eliminados.append(archivo_name)
+            
+            # Eliminar registro del archivo
+            archivo_nombres_ingles.delete()
+            
+        except NombreInglesArchivo.DoesNotExist:
+            # No hay archivo que eliminar, continuar normalmente
+            pass
+        
+        # 2. Eliminar registros de NombreIngles
+        NombreIngles.objects.filter(cliente=cliente).delete()
+        
+        # 3. Registrar actividad exitosa
+        registrar_actividad_tarjeta(
+            cliente_id=cliente_id,
+            periodo=date.today().strftime('%Y-%m'),
+            tarjeta='nombres_ingles',
+            accion='bulk_delete',
+            descripcion=f'Eliminados todos los nombres en inglés ({count} registros) y archivos asociados',
+            usuario=request.user,
+            detalles={
+                'registros_eliminados': count,
+                'archivos_eliminados': archivos_eliminados,
+                'cliente_nombre': cliente.nombre
+            },
+            resultado='exito',
+            ip_address=request.META.get('REMOTE_ADDR')
+        )
+        
+        return Response({
+            "mensaje": "Nombres en inglés y archivos eliminados correctamente",
+            "registros_eliminados": count,
+            "archivos_eliminados": len(archivos_eliminados)
+        })
+        
+    except Exception as e:
+        # Registrar error
+        registrar_actividad_tarjeta(
+            cliente_id=cliente_id,
+            periodo=date.today().strftime('%Y-%m'),
+            tarjeta='nombres_ingles',
+            accion='bulk_delete',
+            descripcion=f'Error al eliminar nombres en inglés y archivos: {str(e)}',
+            usuario=request.user,
+            detalles={
+                'error': str(e),
+                'registros_contados': count,
+                'cliente_nombre': cliente.nombre
+            },
+            resultado='error',
+            ip_address=request.META.get('REMOTE_ADDR')
+        )
+        return Response({"error": f"Error al eliminar: {str(e)}"}, status=500)
+
+
 class TipoDocumentoViewSet(viewsets.ModelViewSet):
     queryset = TipoDocumento.objects.all()
     serializer_class = TipoDocumentoSerializer
@@ -794,6 +1012,156 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
                 detalles={
                     'error': str(e),
                     **tipo_info
+                },
+                resultado='error',
+                ip_address=self.request.META.get('REMOTE_ADDR')
+            )
+            raise
+
+
+class NombreInglesViewSet(viewsets.ModelViewSet):
+    queryset = NombreIngles.objects.all()
+    serializer_class = NombreInglesSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cliente_id = self.request.query_params.get("cliente")
+        if cliente_id:
+            queryset = queryset.filter(cliente_id=cliente_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        # Validar que el cliente existe
+        cliente_id = self.request.data.get('cliente')
+        if not cliente_id:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError("Cliente es requerido")
+        
+        try:
+            from api.models import Cliente
+            cliente = Cliente.objects.get(id=cliente_id)
+            instance = serializer.save()
+            
+            # Registrar creación manual
+            registrar_actividad_tarjeta(
+                cliente_id=cliente_id,
+                periodo=date.today().strftime('%Y-%m'),
+                tarjeta='nombres_ingles',
+                accion='manual_create',
+                descripcion=f'Creado nombre inglés: {instance.cuenta_codigo} - {instance.nombre_ingles}',
+                usuario=self.request.user,
+                detalles={
+                    'cuenta_codigo': instance.cuenta_codigo,
+                    'nombre_ingles': instance.nombre_ingles,
+                    'id': instance.id
+                },
+                resultado='exito',
+                ip_address=self.request.META.get('REMOTE_ADDR')
+            )
+            
+        except Cliente.DoesNotExist:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError("Cliente no encontrado")
+        except Exception as e:
+            # Registrar error
+            registrar_actividad_tarjeta(
+                cliente_id=cliente_id,
+                periodo=date.today().strftime('%Y-%m'),
+                tarjeta='nombres_ingles',
+                accion='manual_create',
+                descripcion=f'Error al crear nombre inglés: {str(e)}',
+                usuario=self.request.user,
+                detalles={
+                    'error': str(e),
+                    'data': self.request.data
+                },
+                resultado='error',
+                ip_address=self.request.META.get('REMOTE_ADDR')
+            )
+            raise
+
+    def perform_update(self, serializer):
+        old_instance = self.get_object()
+        cliente_id = old_instance.cliente.id
+        
+        try:
+            # No permitir cambiar el cliente en una actualización
+            if 'cliente' in self.request.data:
+                instance = serializer.save(cliente_id=cliente_id)
+            else:
+                instance = serializer.save()
+            
+            # Registrar edición
+            registrar_actividad_tarjeta(
+                cliente_id=cliente_id,
+                periodo=date.today().strftime('%Y-%m'),
+                tarjeta='nombres_ingles',
+                accion='manual_edit',
+                descripcion=f'Editado nombre inglés ID:{instance.id}: {old_instance.cuenta_codigo} → {instance.cuenta_codigo}',
+                usuario=self.request.user,
+                detalles={
+                    'id': instance.id,
+                    'cambios': {
+                        'cuenta_codigo': {'anterior': old_instance.cuenta_codigo, 'nuevo': instance.cuenta_codigo},
+                        'nombre_ingles': {'anterior': old_instance.nombre_ingles, 'nuevo': instance.nombre_ingles}
+                    }
+                },
+                resultado='exito',
+                ip_address=self.request.META.get('REMOTE_ADDR')
+            )
+            
+        except Exception as e:
+            # Registrar error
+            registrar_actividad_tarjeta(
+                cliente_id=cliente_id,
+                periodo=date.today().strftime('%Y-%m'),
+                tarjeta='nombres_ingles',
+                accion='manual_edit',
+                descripcion=f'Error al editar nombre inglés ID:{old_instance.id}: {str(e)}',
+                usuario=self.request.user,
+                detalles={
+                    'error': str(e),
+                    'id': old_instance.id,
+                    'data': self.request.data
+                },
+                resultado='error',
+                ip_address=self.request.META.get('REMOTE_ADDR')
+            )
+            raise
+
+    def perform_destroy(self, instance):
+        cliente_id = instance.cliente.id
+        nombre_info = {'id': instance.id, 'cuenta_codigo': instance.cuenta_codigo, 'nombre_ingles': instance.nombre_ingles}
+        
+        try:
+            instance.delete()
+            
+            # Registrar eliminación
+            registrar_actividad_tarjeta(
+                cliente_id=cliente_id,
+                periodo=date.today().strftime('%Y-%m'),
+                tarjeta='nombres_ingles',
+                accion='manual_delete',
+                descripcion=f'Eliminado nombre inglés: {nombre_info["cuenta_codigo"]} - {nombre_info["nombre_ingles"]}',
+                usuario=self.request.user,
+                detalles=nombre_info,
+                resultado='exito',
+                ip_address=self.request.META.get('REMOTE_ADDR')
+            )
+            
+        except Exception as e:
+            # Registrar error
+            registrar_actividad_tarjeta(
+                cliente_id=cliente_id,
+                periodo=date.today().strftime('%Y-%m'),
+                tarjeta='nombres_ingles',
+                accion='manual_delete',
+                descripcion=f'Error al eliminar nombre inglés ID:{nombre_info["id"]}: {str(e)}',
+                usuario=self.request.user,
+                detalles={
+                    'error': str(e),
+                    **nombre_info
                 },
                 resultado='error',
                 ip_address=self.request.META.get('REMOTE_ADDR')

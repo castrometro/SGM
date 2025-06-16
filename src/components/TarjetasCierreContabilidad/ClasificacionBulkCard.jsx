@@ -53,12 +53,19 @@ const ClasificacionBulkCard = ({ clienteId, onCompletado, disabled, numeroPaso }
           try {
             const registros = await obtenerClasificacionesArchivo(last.id);
             setRegistrosRaw(registros);
+            // Considerar "completado" si hay registros raw (archivo procesado)
+            // independientemente del estado de mapeo
+            const tieneRegistros = registros.length > 0;
+            if (onCompletado) onCompletado(tieneRegistros);
           } catch (err) {
             console.log("No hay registros raw o error cargándolos:", err);
             setRegistrosRaw([]);
+            if (onCompletado) onCompletado(false);
           }
+        } else {
+          // Si no hay ID del upload, no hay registros
+          if (onCompletado) onCompletado(false);
         }
-        if (onCompletado) onCompletado(last.estado === 'completado');
       } else {
         setEstado('pendiente');
         setRegistrosRaw([]);

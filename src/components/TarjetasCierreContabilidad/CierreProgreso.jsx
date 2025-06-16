@@ -26,18 +26,15 @@ const CierreProgreso = ({ cierre, cliente }) => {
       setTipoDocumentoReady(tipoDocOk);
 
       // 2. Clasificación de Cuentas (solo si paso anterior está ok)
-      let clasificacionOk = false;
-      if (tipoDocOk) {
-        // Aquí verificaremos el estado de la clasificación bulk
-        // Por ahora dejamos que se verifique en el componente
-        setClasificacionReady(false); // Se actualizará desde el componente
-      } else {
+      // La lógica de clasificacionReady se maneja directamente en el componente ClasificacionBulkCard
+      // a través del callback handleClasificacionCompletado
+      if (!tipoDocOk) {
         setClasificacionReady(false);
       }
 
       // 3. Nombres en inglés (solo si clasificación está ok y cliente es bilingüe)
       let nombresOk = false;
-      if (clasificacionOk && cliente.bilingue) {
+      if (clasificacionReady && cliente.bilingue) {
         const nombresIngles = await obtenerEstadoNombresIngles(cliente.id, cierre.id);
         // Verificar que tenga cuentas y que todas tengan nombres en inglés
         nombresOk = nombresIngles && 
@@ -49,7 +46,7 @@ const CierreProgreso = ({ cierre, cliente }) => {
       }
 
       // 4. Libro Mayor (solo si pasos anteriores están ok)
-      const prerequisitosLibro = clasificacionOk && (cliente.bilingue ? nombresOk : true);
+      const prerequisitosLibro = clasificacionReady && (cliente.bilingue ? nombresOk : true);
       if (prerequisitosLibro) {
         const libros = await obtenerLibrosMayor(cierre.id);
         const libroActual = libros && libros.length > 0 ? libros[libros.length - 1] : null;

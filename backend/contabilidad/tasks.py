@@ -3,7 +3,7 @@ from celery import shared_task
 from contabilidad.utils.parser_tipo_documento import parsear_tipo_documento_excel
 from contabilidad.utils.parser_libro_mayor import parsear_libro_mayor
 from contabilidad.utils.parser_nombre_ingles import procesar_archivo_nombres_ingles
-from contabilidad.models import LibroMayorUpload, BulkClasificacionUpload, CuentaContable, AccountClassification, ClasificacionSet, ClasificacionOption, TipoDocumento, MovimientoContable, NombresEnInglesUpload, ClasificacionCuentaArchivo
+from contabilidad.models import LibroMayorUpload, BulkClasificacionUpload, CuentaContable, AccountClassification, ClasificacionSet, ClasificacionOption, TipoDocumento, MovimientoContable, NombresEnInglesUpload, ClasificacionCuentaArchivo, NombreIngles, NombreInglesArchivo
 from django.utils import timezone
 from django.core.files.storage import default_storage
 import time
@@ -547,3 +547,168 @@ def limpiar_archivos_temporales_antiguos_task():
     archivos_eliminados = limpiar_archivos_temporales_antiguos()
     logger.info(f"🧹 Limpieza automática: {archivos_eliminados} archivos temporales eliminados")
     return f"Eliminados {archivos_eliminados} archivos temporales"
+
+
+@shared_task
+def parsear_nombres_ingles(cliente_id, ruta_relativa):
+    """
+    Parsea archivo Excel de nombres en inglés y los guarda en la base de datos
+    """
+    from django.core.files.storage import default_storage
+    from api.models import Cliente
+    import pandas as pd
+    import os
+    
+    logger.info(f"Iniciando procesamiento de nombres en inglés para cliente {cliente_id}")
+    
+    try:
+        cliente = Cliente.objects.get(id=cliente_id)
+    except Cliente.DoesNotExist:
+        logger.error(f"Cliente con id {cliente_id} no encontrado")
+        return "Error: Cliente no encontrado"
+    
+    try:
+        # Obtener ruta completa del archivo
+        ruta_completa = default_storage.path(ruta_relativa)
+        logger.info(f"Procesando archivo: {ruta_completa}")
+        
+        # Leer archivo Excel con estructura fija:
+        # Columna 1 (índice 0): código de cuenta
+        # Columna 2 (índice 1): nombre en inglés  
+        # Los datos comienzan desde la fila 2 (skiprows=1)
+        df = pd.read_excel(ruta_completa, skiprows=1, header=None)
+        logger.info(f"Archivo Excel leído con {len(df)} filas de datos y {len(df.columns)} columnas")
+        
+        # Validar que tenga al menos 2 columnas
+        if len(df.columns) < 2:
+            logger.error("El archivo debe tener al menos 2 columnas: código de cuenta y nombre en inglés")
+            return "Error: El archivo debe tener al menos 2 columnas"
+        
+        # Asignar nombres estándar a las columnas
+        df.columns = ['cuenta_codigo', 'nombre_ingles'] + [f'col_{i}' for i in range(2, len(df.columns))]
+        logger.info(f"Usando columna 0 como código de cuenta y columna 1 como nombre en inglés")
+        
+        # Filtrar filas válidas (sin NaN en campos requeridos)
+        df_procesado = df.dropna(subset=['cuenta_codigo', 'nombre_ingles'])
+        
+        # Limpiar datos
+        df_procesado['cuenta_codigo'] = df_procesado['cuenta_codigo'].astype(str).str.strip()
+        df_procesado['nombre_ingles'] = df_procesado['nombre_ingles'].astype(str).str.strip()
+        
+        # Filtrar filas vacías después de limpiar
+        df_procesado = df_procesado[
+            (df_procesado['cuenta_codigo'] != '') & 
+            (df_procesado['cuenta_codigo'] != 'nan') &
+            (df_procesado['nombre_ingles'] != '') & 
+            (df_procesado['nombre_ingles'] != 'nan')
+        ]
+        
+        logger.info(f"Filas válidas después del procesamiento: {len(df_procesado)}")
+        
+        # Eliminar nombres en inglés existentes para este cliente antes de insertar nuevos
+        nombres_eliminados = NombreIngles.objects.filter(cliente=cliente).count()
+        NombreIngles.objects.filter(cliente=cliente).delete()
+        logger.info(f"Eliminados {nombres_eliminados} nombres en inglés existentes")
+        
+        # Insertar nuevos registros
+        nombres_creados = []
+        errores = []
+        
+        for idx, row in df_procesado.iterrows():
+            try:
+                nombre_ingles = NombreIngles.objects.create(
+                    cliente=cliente,
+                    cuenta_codigo=row['cuenta_codigo'],
+                    nombre_ingles=row['nombre_ingles']
+                )
+                nombres_creados.append(nombre_ingles)
+                
+            except Exception as e:
+                # Sumar 3 porque: idx empieza en 0 + 1 fila de header saltada + 1 para base-1 = fila real en Excel
+                error_msg = f"Error en fila {idx + 3}: {str(e)}"
+                errores.append(error_msg)
+                logger.warning(error_msg)
+        
+        # Guardar archivo procesado en el modelo NombreInglesArchivo
+        try:
+            # Eliminar archivo anterior si existe
+            archivo_anterior = NombreInglesArchivo.objects.filter(cliente=cliente).first()
+            if archivo_anterior:
+                if archivo_anterior.archivo and os.path.exists(archivo_anterior.archivo.path):
+                    os.remove(archivo_anterior.archivo.path)
+                archivo_anterior.delete()
+            
+            # Crear nuevo registro de archivo
+            with open(ruta_completa, 'rb') as f:
+                from django.core.files.base import ContentFile
+                contenido = f.read()
+                archivo_final = ContentFile(contenido, name=f"nombres_ingles_{cliente.id}.xlsx")
+                
+                NombreInglesArchivo.objects.create(
+                    cliente=cliente,
+                    archivo=archivo_final
+                )
+                
+        except Exception as e:
+            logger.warning(f"Error al guardar archivo procesado: {str(e)}")
+        
+        # Limpiar archivo temporal
+        try:
+            if os.path.exists(ruta_completa):
+                os.remove(ruta_completa)
+                logger.info("Archivo temporal eliminado")
+        except OSError as e:
+            logger.warning(f"No se pudo eliminar archivo temporal: {str(e)}")
+        
+        # Registrar actividad exitosa
+        from .utils.activity_logger import registrar_actividad_tarjeta
+        from datetime import date
+        
+        registrar_actividad_tarjeta(
+            cliente_id=cliente_id,
+            periodo=date.today().strftime('%Y-%m'),
+            tarjeta='nombres_ingles',
+            accion='process_excel',
+            descripcion=f'Procesado archivo: {len(nombres_creados)} nombres en inglés creados',
+            usuario=None,  # Tarea automática
+            detalles={
+                'total_creados': len(nombres_creados),
+                'total_errores': len(errores),
+                'nombres_eliminados_anteriores': nombres_eliminados,
+                'errores': errores[:10] if errores else []  # Solo primeros 10 errores
+            },
+            resultado='exito',
+            ip_address=None
+        )
+        
+        mensaje_final = f"✅ Procesamiento completado: {len(nombres_creados)} nombres en inglés creados"
+        if errores:
+            mensaje_final += f", {len(errores)} errores encontrados"
+        
+        logger.info(mensaje_final)
+        return mensaje_final
+        
+    except Exception as e:
+        error_msg = f"❌ Error al procesar nombres en inglés: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        
+        # Registrar error
+        from .utils.activity_logger import registrar_actividad_tarjeta
+        from datetime import date
+        
+        registrar_actividad_tarjeta(
+            cliente_id=cliente_id,
+            periodo=date.today().strftime('%Y-%m'),
+            tarjeta='nombres_ingles',
+            accion='process_excel',
+            descripcion=f'Error al procesar archivo de nombres en inglés: {str(e)}',
+            usuario=None,  # Tarea automática
+            detalles={
+                'error': str(e),
+                'archivo': ruta_relativa
+            },
+            resultado='error',
+            ip_address=None
+        )
+        
+        return error_msg

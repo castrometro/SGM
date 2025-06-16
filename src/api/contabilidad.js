@@ -283,16 +283,9 @@ export const obtenerMovimientosCuenta = async (cierreId, cuentaId) => {
 
 // ==================== NOMBRES EN INGLÉS ====================
 export const obtenerEstadoNombresIngles = async (clienteId, cierreId) => {
-  const params = new URLSearchParams({ cliente_id: clienteId, estado: 1 });
-  if (cierreId) params.append("cierre_id", cierreId);
-  const res = await api.get(`/contabilidad/nombres-ingles/?${params}`);
-  return res.data;
-};
-
-export const obtenerNombresEnInglesCliente = async (clienteId, cierreId) => {
-  const params = new URLSearchParams({ cliente_id: clienteId, list: 1 });
-  if (cierreId) params.append("cierre_id", cierreId);
-  const res = await api.get(`/contabilidad/nombres-ingles/?${params}`);
+  const res = await api.get(`/contabilidad/nombres-ingles-crud/${clienteId}/estado/`, {
+    params: cierreId ? { cierre: cierreId } : {}
+  });
   return res.data;
 };
 
@@ -302,12 +295,43 @@ export const obtenerNombresEnIngles = async (cierreId) => {
 };
 
 export const subirNombresIngles = async (formData) => {
-  const res = await api.post("/contabilidad/nombres-ingles/", formData);
+  const res = await api.post("/contabilidad/nombres-ingles-crud/subir-archivo/", formData);
   return res.data;
 };
 
 export const eliminarNombresEnIngles = async (clienteId, cierreId) => {
   const res = await api.delete(`/contabilidad/nombres-ingles/${clienteId}/${cierreId}/`);
+  return res.data;
+};
+
+// ==================== NOMBRES EN INGLÉS CRUD ====================
+export const obtenerNombresInglesCliente = async (clienteId) => {
+  const res = await api.get(`/contabilidad/nombres-ingles-crud/${clienteId}/list/`);
+  return res.data;
+};
+
+export const registrarVistaNombresIngles = async (clienteId) => {
+  const res = await api.post(`/contabilidad/nombres-ingles-crud/${clienteId}/registrar-vista/`);
+  return res.data;
+};
+
+export const crearNombreIngles = async (data) => {
+  const res = await api.post("/contabilidad/nombres-ingles/", data);
+  return res.data;
+};
+
+export const actualizarNombreIngles = async (id, data) => {
+  const res = await api.patch(`/contabilidad/nombres-ingles/${id}/`, data);
+  return res.data;
+};
+
+export const eliminarNombreIngles = async (id) => {
+  const res = await api.delete(`/contabilidad/nombres-ingles/${id}/`);
+  return res.data;
+};
+
+export const eliminarTodosNombresIngles = async (clienteId) => {
+  const res = await api.post(`/contabilidad/nombres-ingles-crud/${clienteId}/eliminar-todos/`);
   return res.data;
 };
 
@@ -406,7 +430,7 @@ export const obtenerNombresInglesUploads = async (clienteId) => {
 
 export const subirNombresInglesUpload = async (clienteId, cierreId, archivo) => {
   const formData = new FormData();
-  formData.append("cliente", clienteId);
+  formData.append("cliente_id", clienteId);
   if (cierreId) {
     formData.append("cierre", cierreId);
   }

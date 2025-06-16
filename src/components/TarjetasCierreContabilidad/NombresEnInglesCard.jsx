@@ -17,7 +17,8 @@ const NombresEnInglesCard = ({
   clienteId,
   clasificacionReady,
   onCompletado,
-  disabled
+  disabled,
+  numeroPaso
 }) => {
   const [estado, setEstado] = useState("pendiente");
   const [archivo, setArchivo] = useState(null);
@@ -183,7 +184,7 @@ const NombresEnInglesCard = ({
   // Render
   return (
     <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${!clasificacionReady || disabled ? "opacity-60 pointer-events-none" : ""}`}>
-      <h3 className="text-lg font-semibold mb-3">3. Nombres en inglés de cuentas</h3>
+      <h3 className="text-lg font-semibold mb-3">{numeroPaso}. Nombres en inglés de cuentas</h3>
 
       {/* Estado global y progreso */}
       <div className="flex flex-col gap-1 mb-2">

@@ -12,7 +12,7 @@ import {
   eliminarTodosTiposDocumento 
 } from "../../api/contabilidad";
 
-const TipoDocumentoCard = ({ clienteId, onCompletado, disabled }) => {
+const TipoDocumentoCard = ({ clienteId, onCompletado, disabled, numeroPaso }) => {
   const [estado, setEstado] = useState("pendiente");
   const [archivoNombre, setArchivoNombre] = useState("");
   const [subiendo, setSubiendo] = useState(false);
@@ -163,7 +163,7 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled }) => {
 
   return (
     <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${disabled ? "opacity-60 pointer-events-none" : ""}`}>
-        <h3 className="text-lg font-semibold mb-3">1. Tipo de Documento</h3>
+        <h3 className="text-lg font-semibold mb-3">{numeroPaso}. Tipo de Documento</h3>
             <div className="flex items-center gap-2 mb-2">
                 <span className="font-semibold">Estado:</span>
                 <EstadoBadge estado={estado === "subido" ? "subido" : "pendiente"} />

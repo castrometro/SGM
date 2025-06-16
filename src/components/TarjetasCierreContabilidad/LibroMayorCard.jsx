@@ -2,13 +2,14 @@ import { useEffect, useState, useRef } from "react";
 import { obtenerLibrosMayor, subirLibroMayor } from "../../api/contabilidad";
 import EstadoBadge from "../EstadoBadge";
 
-const LibroMayorCard = ({ 
-  cierreId, 
-  disabled, 
-  onCompletado, 
-  tipoDocumentoReady, 
-  clasificacionReady, 
-  nombresInglesReady 
+const LibroMayorCard = ({
+  cierreId,
+  disabled,
+  onCompletado,
+  tipoDocumentoReady,
+  clasificacionReady,
+  nombresInglesReady,
+  numeroPaso
 }) => {
   const [libroActual, setLibroActual] = useState(null);
   const [archivoNombre, setArchivoNombre] = useState("");
@@ -97,7 +98,7 @@ const LibroMayorCard = ({
 
   return (
     <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${disabled ? "opacity-60 pointer-events-none" : ""}`}>
-      <h3 className="text-lg font-semibold mb-3">4. Libro Mayor y Procesamiento</h3>
+      <h3 className="text-lg font-semibold mb-3">{numeroPaso}. Libro Mayor y Procesamiento</h3>
 
       {/* Información de prerequisitos */}
       <div className="text-xs text-gray-400 mb-2">

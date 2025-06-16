@@ -1,8 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import ModalTipoDocumentoCRUD from "./ModalTipoDocumentoCRUD";
-import HistorialCambios from "../HistorialCambios";
 import Notificacion from "../Notificacion";
-import { Download, History } from "lucide-react";
+import { Download } from "lucide-react";
 import EstadoBadge from "../EstadoBadge";
 import { 
   descargarPlantillaTipoDocumento, 
@@ -19,7 +18,6 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled }) => {
   const [subiendo, setSubiendo] = useState(false);
   const [error, setError] = useState("");
   const [modalAbierto, setModalAbierto] = useState(false);
-  const [historialAbierto, setHistorialAbierto] = useState(false);
   const [tiposDocumento, setTiposDocumento] = useState([]);
   const [eliminando, setEliminando] = useState(false);
   const [errorEliminando, setErrorEliminando] = useState("");
@@ -225,13 +223,6 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled }) => {
                     >
                         Ver tipos de documento
                     </button>
-                    <button
-                        onClick={() => setHistorialAbierto(true)}
-                        className="px-3 py-1 rounded text-sm font-medium transition bg-gray-700 hover:bg-gray-600 text-white flex items-center gap-2"
-                    >
-                        <History size={16} />
-                        Historial
-                    </button>
                 </div>
                 <ModalTipoDocumentoCRUD
                     abierto={modalAbierto}
@@ -243,14 +234,6 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled }) => {
                     eliminando={eliminando}
                     errorEliminando={errorEliminando}
                     onNotificacion={mostrarNotificacion}
-                />
-
-                {/* Historial de cambios */}
-                <HistorialCambios
-                    tipoUpload="tipo_documento"
-                    clienteId={clienteId}
-                    abierto={historialAbierto}
-                    onClose={() => setHistorialAbierto(false)}
                 />
 
                 <span className="text-xs text-gray-400 italic mt-2">

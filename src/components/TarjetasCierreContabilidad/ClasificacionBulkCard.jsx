@@ -1,8 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import EstadoBadge from '../EstadoBadge';
 import ModalClasificacionRegistrosRaw from '../ModalClasificacionRegistrosRaw';
-import HistorialCambios from '../HistorialCambios';
-import { Download, FileText, Trash2, RefreshCw, History, Settings, Database } from 'lucide-react';
+import { Download, FileText, Trash2, RefreshCw, Settings, Database } from 'lucide-react';
 import { 
   subirClasificacionBulk, 
   obtenerBulkClasificaciones, 
@@ -20,7 +19,6 @@ const ClasificacionBulkCard = ({ clienteId, onCompletado, disabled }) => {
   const [uploads, setUploads] = useState([]);
   const [error, setError] = useState("");
   const [ultimoUpload, setUltimoUpload] = useState(null);
-  const [historialAbierto, setHistorialAbierto] = useState(false);
   const [eliminando, setEliminando] = useState(false);
   const [errorEliminando, setErrorEliminando] = useState("");
   const [registrosRaw, setRegistrosRaw] = useState([]);
@@ -183,13 +181,6 @@ const ClasificacionBulkCard = ({ clienteId, onCompletado, disabled }) => {
           <Settings size={16} />
           Ver clasificaciones
         </button>
-        <button
-          onClick={() => setHistorialAbierto(true)}
-          className="px-3 py-1 rounded text-sm font-medium transition bg-gray-700 hover:bg-gray-600 text-white flex items-center gap-2"
-        >
-          <History size={16} />
-          Historial
-        </button>
       </div>
       
       {/* Información del estado y resumen */}
@@ -241,13 +232,6 @@ const ClasificacionBulkCard = ({ clienteId, onCompletado, disabled }) => {
         }}
       />
 
-      {/* Historial de cambios */}
-      <HistorialCambios
-        tipoUpload="clasificacion"
-        clienteId={clienteId}
-        abierto={historialAbierto}
-        onClose={() => setHistorialAbierto(false)}
-      />
     </div>
   );
 };

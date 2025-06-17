@@ -32,5 +32,13 @@ backend/venv/
 *.njsproj
 *.sln
 *.sw?
+
+# Excel files
 *.xlsx
+*.xls
+*.xlsm
+*.xlsb
+*.xltx
+*.xltm
+
 backend/nomina/__pycache__/serializers.cpython-312.pyc

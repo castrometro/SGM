@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Environment variables
+.env
+.env.local
+.env.development
+.env.production
+
 # Python artifacts
 **/__pycache__/
 backend/venv/
@@ -27,5 +33,4 @@ backend/venv/
 *.sln
 *.sw?
 *.xlsx
-*.env
 backend/nomina/__pycache__/serializers.cpython-312.pyc

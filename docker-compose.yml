@@ -60,5 +60,50 @@ services:
       - redis
       - celery_worker
 
+  streamlit_pruebas:
+    build:
+      context: .
+      dockerfile: streamlit_pruebas/streamlit.Dockerfile
+    volumes:
+      - ./streamlit_pruebas:/app
+    ports:
+      - "8501:8501"
+    depends_on:
+      - ollama
+
+  streamlit_conta:
+    build:
+      context: .
+      dockerfile: streamlit_conta/streamlit.Dockerfile
+    volumes:
+      - ./streamlit_conta:/app
+    ports:
+      - "8502:8502"
+    depends_on:
+      - ollama
+
+  streamlit_nomina:
+    build:
+      context: .
+      dockerfile: streamlit_nomina/streamlit.Dockerfile
+    volumes:
+      - ./streamlit_nomina:/app
+    ports:
+      - "8503:8503"
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: always
+
+
 volumes:
   postgres_data:
+  ollama_data:
+
+

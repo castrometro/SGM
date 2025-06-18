@@ -1,0 +1,27 @@
+{
+  "cierre": {
+    "cliente": "Compañía XYZ",
+    "periodo": "2024-12",
+    "estado": "completado",
+    "num_empleados": 5,
+    "total_haberes": 5600000,
+    "total_descuentos": 1200000
+  },
+  "empleados": [
+    {"rut": "11111111-1", "nombre": "Ana", "cargo": "Analista", "sueldo_base": 1200000, "haberes": 1400000, "descuentos": 200000},
+    {"rut": "22222222-2", "nombre": "Luis", "cargo": "Jefe", "sueldo_base": 1800000, "haberes": 2200000, "descuentos": 400000},
+    {"rut": "33333333-3", "nombre": "Pedro", "cargo": "Técnico", "sueldo_base": 900000, "haberes": 1000000, "descuentos": 150000},
+    {"rut": "44444444-4", "nombre": "Sofía", "cargo": "Asistente", "sueldo_base": 800000, "haberes": 900000, "descuentos": 120000},
+    {"rut": "55555555-5", "nombre": "Carla", "cargo": "Gerente", "sueldo_base": 2200000, "haberes": 2500000, "descuentos": 330000}
+  ],
+  "resumen_haberes": [
+    {"concepto": "Sueldo Base", "total": 6900000},
+    {"concepto": "Horas Extra", "total": 300000},
+    {"concepto": "Bonos", "total": 400000}
+  ],
+  "resumen_descuentos": [
+    {"concepto": "AFP", "total": 600000},
+    {"concepto": "Salud", "total": 400000},
+    {"concepto": "Impuesto", "total": 200000}
+  ]
+}

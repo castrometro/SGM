@@ -34,7 +34,8 @@ def mostrar_info_periodo(data):
         st.metric("Período", "2024-12")
     
     with col2:
-        st.metric("Empresa", data.get('cliente', {}).get('nombre', 'N/A'))
+        empresa = data.get("cierre", {}).get("cliente", "N/A")
+        st.metric("Empresa", empresa)
     
     with col3:
         st.metric("Estado", "Procesado")

@@ -5,6 +5,7 @@ def mostrar_sidebar():
     st.sidebar.markdown("## **Dashboard de Reportería Contable**")
     selected_tab = st.sidebar.radio("Selecciona un reporte:", [
         "📊 Dashboard General",
+        "🧾 Movimientos",
         "🏛️ Estado de Situación Financiera (ESF)",
         "📈 Estado de Resultados (ESR)",
         "📊 Estado de Resultados Integral (ERI)",

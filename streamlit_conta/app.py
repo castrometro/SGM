@@ -2,7 +2,7 @@ import streamlit as st
 from layout.sidebar import mostrar_sidebar
 from layout.header import mostrar_header
 from data import cargar_datos
-from views import dashboard_general, estado_situacion_financiera, estado_resultados, estado_resultados_integral, estado_cambio_patrimonio
+from views import dashboard_general, movimientos, estado_situacion_financiera, estado_resultados, estado_resultados_integral, estado_cambio_patrimonio
 
 st.set_page_config(layout="wide", page_title="SGM - Dashboard Contable", page_icon="📊")
 
@@ -12,6 +12,8 @@ mostrar_header()
 
 if selected_tab == "📊 Dashboard General":
     dashboard_general.mostrar(data)
+elif selected_tab == "🧾 Movimientos":
+    movimientos.mostrar(data)
 elif selected_tab == "🏛️ Estado de Situación Financiera (ESF)":
     estado_situacion_financiera.mostrar(data)
 elif selected_tab == "📈 Estado de Resultados (ESR)":

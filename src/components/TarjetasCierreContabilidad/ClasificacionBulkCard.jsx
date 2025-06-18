@@ -142,7 +142,7 @@ const ClasificacionBulkCard = ({
     setUploadEstado(null);
 
     const form = new FormData();
-    form.append("cliente", clienteId);
+    form.append("cliente_id", clienteId);
     form.append("archivo", archivo);
 
     try {

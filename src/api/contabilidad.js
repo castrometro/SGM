@@ -3,7 +3,9 @@ import api from "./config";
 
 // ==================== RESUMEN CONTABLE ====================
 export const obtenerResumenContable = async (clienteId) => {
-  const response = await api.get(`/contabilidad/clientes/${clienteId}/resumen/`);
+  const response = await api.get(
+    `/contabilidad/clientes/${clienteId}/resumen/`,
+  );
   return response.data;
 };
 
@@ -22,12 +24,17 @@ export const descargarPlantillaClasificacionBulk = () => {
 
 // ==================== TIPO DE DOCUMENTO ====================
 export const obtenerEstadoTipoDocumento = async (clienteId) => {
-  const res = await api.get(`/contabilidad/tipo-documento/${clienteId}/estado/`);
+  const res = await api.get(
+    `/contabilidad/tipo-documento/${clienteId}/estado/`,
+  );
   return typeof res.data === "string" ? res.data : res.data.estado;
 };
 
 export const subirTipoDocumento = async (formData) => {
-  const res = await api.post("/contabilidad/tipo-documento/subir-archivo/", formData);
+  const res = await api.post(
+    "/contabilidad/tipo-documento/subir-archivo/",
+    formData,
+  );
   return res.data;
 };
 
@@ -37,37 +44,52 @@ export const obtenerTiposDocumentoCliente = async (clienteId) => {
 };
 
 export const registrarVistaTiposDocumento = async (clienteId) => {
-  const res = await api.post(`/contabilidad/tipo-documento/${clienteId}/registrar-vista/`);
+  const res = await api.post(
+    `/contabilidad/tipo-documento/${clienteId}/registrar-vista/`,
+  );
   return res.data;
 };
 
-export const registrarVistaClasificaciones = async (clienteId, uploadId = null) => {
-  const res = await api.post(`/contabilidad/clasificacion/${clienteId}/registrar-vista/`, {
-    upload_id: uploadId
-  });
+export const registrarVistaClasificaciones = async (
+  clienteId,
+  uploadId = null,
+) => {
+  const res = await api.post(
+    `/contabilidad/clasificacion/${clienteId}/registrar-vista/`,
+    {
+      upload_log_id: uploadId,
+    },
+  );
   return res.data;
 };
 
 export const registrarVistaSetsClasificacion = async (clienteId) => {
-  const res = await api.post(`/contabilidad/clasificacion/${clienteId}/registrar-vista-sets/`);
+  const res = await api.post(
+    `/contabilidad/clasificacion/${clienteId}/registrar-vista-sets/`,
+  );
   return res.data;
 };
 
 export const eliminarTodosTiposDocumento = async (clienteId) => {
-  const res = await api.post(`/contabilidad/tipo-documento/${clienteId}/eliminar-todos/`);
+  const res = await api.post(
+    `/contabilidad/tipo-documento/${clienteId}/eliminar-todos/`,
+  );
   return res.data;
 };
 
 export const crearTipoDocumento = async (clienteId, tipoDocumento) => {
   const res = await api.post("/contabilidad/tipos-documento/", {
     cliente: clienteId,
-    ...tipoDocumento
+    ...tipoDocumento,
   });
   return res.data;
 };
 
 export const actualizarTipoDocumento = async (id, tipoDocumento) => {
-  const res = await api.patch(`/contabilidad/tipos-documento/${id}/`, tipoDocumento);
+  const res = await api.patch(
+    `/contabilidad/tipos-documento/${id}/`,
+    tipoDocumento,
+  );
   return res.data;
 };
 
@@ -88,7 +110,7 @@ export const subirLibroMayor = async (cierreId, archivo) => {
 
 export const obtenerLibrosMayor = async (cierreId) => {
   const res = await api.get("/contabilidad/libromayor/", {
-    params: { cierre: cierreId }
+    params: { cierre: cierreId },
   });
   return res.data;
 };
@@ -101,7 +123,7 @@ export const eliminarLibroMayor = async (libroId) => {
 // ==================== CUENTAS ====================
 export const obtenerCuentasCliente = async (clienteId) => {
   const res = await api.get(`/contabilidad/cuentas/`, {
-    params: { cliente: clienteId }
+    params: { cliente: clienteId },
   });
   return res.data;
 };
@@ -109,7 +131,7 @@ export const obtenerCuentasCliente = async (clienteId) => {
 // ==================== CIERRES ====================
 export const obtenerCierresCliente = async (clienteId) => {
   const res = await api.get(`/contabilidad/cierres/`, {
-    params: { cliente: clienteId }
+    params: { cliente: clienteId },
   });
   return res.data;
 };
@@ -121,7 +143,7 @@ export const obtenerCierrePorId = async (cierreId) => {
 
 export const obtenerCierreMensual = async (clienteId, periodo) => {
   const res = await api.get(`/contabilidad/cierres/`, {
-    params: { cliente: clienteId, periodo }
+    params: { cliente: clienteId, periodo },
   });
   return res.data.length > 0 ? res.data[0] : null;
 };
@@ -130,33 +152,39 @@ export const crearCierreMensual = async (clienteId, periodo) => {
   const res = await api.post(`/contabilidad/cierres/`, {
     cliente: Number(clienteId),
     periodo,
-    estado: "pendiente"
+    estado: "pendiente",
   });
   return res.data;
 };
 
 export const obtenerProgresoClasificacionTodosLosSets = async (cierreId) => {
-  const res = await api.get(`/contabilidad/clasificacion/${cierreId}/progreso_todos_los_sets/`);
+  const res = await api.get(
+    `/contabilidad/clasificacion/${cierreId}/progreso_todos_los_sets/`,
+  );
   return res.data;
 };
 
 export const obtenerProgresoClasificacionPorSet = async (cierreId, setId) => {
-  const res = await api.get(`/contabilidad/clasificacion/${cierreId}/progreso/`, {
-    params: { set_id: setId }
-  });
+  const res = await api.get(
+    `/contabilidad/clasificacion/${cierreId}/progreso/`,
+    {
+      params: { set_id: setId },
+    },
+  );
   return res.data;
 };
 
 export const obtenerCuentasPendientes = async (cierreId) => {
-  const res = await api.get(`/contabilidad/clasificacion/${cierreId}/cuentas_pendientes/`);
+  const res = await api.get(
+    `/contabilidad/clasificacion/${cierreId}/cuentas_pendientes/`,
+  );
   return res.data;
 };
-
 
 // ==================== CLASIFICACIONES - SETS ====================
 export const obtenerSetsClasificacion = async (clienteId) => {
   const res = await api.get(`/contabilidad/clasificaciones-set/`, {
-    params: { cliente: clienteId }
+    params: { cliente: clienteId },
   });
   return res.data;
 };
@@ -164,20 +192,22 @@ export const obtenerSetsClasificacion = async (clienteId) => {
 export const crearSetClasificacion = async (clienteId, data) => {
   const res = await api.post(`/contabilidad/clasificaciones-set/`, {
     cliente: clienteId,
-    ...data
+    ...data,
   });
   return res.data;
 };
 
 export const eliminarSetClasificacion = async (setClasId) => {
-  const res = await api.delete(`/contabilidad/clasificaciones-set/${setClasId}/`);
+  const res = await api.delete(
+    `/contabilidad/clasificaciones-set/${setClasId}/`,
+  );
   return res.data;
 };
 
 // ==================== CLASIFICACIONES - OPCIONES ====================
 export const obtenerOpcionesClasificacion = async (setClasId) => {
   const res = await api.get(`/contabilidad/clasificaciones-opcion/`, {
-    params: { set_clas: setClasId }
+    params: { set_clas: setClasId },
   });
   return res.data;
 };
@@ -185,13 +215,15 @@ export const obtenerOpcionesClasificacion = async (setClasId) => {
 export const crearOpcionClasificacion = async (setClasId, data) => {
   const res = await api.post(`/contabilidad/clasificaciones-opcion/`, {
     set_clas: setClasId,
-    ...data
+    ...data,
   });
   return res.data;
 };
 
 export const eliminarOpcionClasificacion = async (opcionClasId) => {
-  const res = await api.delete(`/contabilidad/clasificaciones-opcion/${opcionClasId}/`);
+  const res = await api.delete(
+    `/contabilidad/clasificaciones-opcion/${opcionClasId}/`,
+  );
   return res.data;
 };
 
@@ -207,7 +239,9 @@ export const obtenerClasificacionCompleta = async (clienteId) => {
 };
 
 export const obtenerCuentasPendientesPorSet = async (clienteId, setId) => {
-  const res = await api.get(`/contabilidad/clientes/${clienteId}/sets/${setId}/cuentas_pendientes/`);
+  const res = await api.get(
+    `/contabilidad/clientes/${clienteId}/sets/${setId}/cuentas_pendientes/`,
+  );
   return res.data;
 };
 
@@ -222,7 +256,11 @@ export const clasificarCuenta = async (cuentaId, setClasId, opcionId) => {
 };
 
 // Función alternativa para clasificar cuenta usando endpoint específico
-export const clasificarCuentaEspecifico = async (cuentaId, setClasId, opcionId) => {
+export const clasificarCuentaEspecifico = async (
+  cuentaId,
+  setClasId,
+  opcionId,
+) => {
   const res = await api.post(`/contabilidad/clasificacion/clasificar/`, {
     cuenta_id: cuentaId,
     set_clas_id: setClasId,
@@ -233,7 +271,7 @@ export const clasificarCuentaEspecifico = async (cuentaId, setClasId, opcionId) 
 
 export const obtenerClasificacionesCuenta = async (clienteId) => {
   const res = await api.get(`/contabilidad/clasificaciones/`, {
-    params: { cuenta__cliente: clienteId }
+    params: { cuenta__cliente: clienteId },
   });
   return res.data;
 };
@@ -255,8 +293,8 @@ export const eliminarClasificacionCuenta = async (id) => {
 
 export const eliminarTodasClasificacionesCuenta = async (clienteId) => {
   const clasificaciones = await obtenerClasificacionesCuenta(clienteId);
-  const promesas = clasificaciones.map(clasificacion => 
-    eliminarClasificacionCuenta(clasificacion.id)
+  const promesas = clasificaciones.map((clasificacion) =>
+    eliminarClasificacionCuenta(clasificacion.id),
   );
   await Promise.all(promesas);
   return { mensaje: `${clasificaciones.length} clasificaciones eliminadas` };
@@ -264,7 +302,14 @@ export const eliminarTodasClasificacionesCuenta = async (clienteId) => {
 // ==================== MOVIMIENTOS ====================
 export const obtenerMovimientosResumen = async (
   cierreId,
-  { page = 1, page_size = 50, search = "", cuenta = "", auxiliar = "", centro_costo = "" } = {}
+  {
+    page = 1,
+    page_size = 50,
+    search = "",
+    cuenta = "",
+    auxiliar = "",
+    centro_costo = "",
+  } = {},
 ) => {
   const params = { page, page_size };
   if (search) params.search = search;
@@ -272,20 +317,28 @@ export const obtenerMovimientosResumen = async (
   if (auxiliar) params.auxiliar = auxiliar;
   if (centro_costo) params.centro_costo = centro_costo;
 
-  const res = await api.get(`/contabilidad/cierres/${cierreId}/movimientos-resumen/`, { params });
+  const res = await api.get(
+    `/contabilidad/cierres/${cierreId}/movimientos-resumen/`,
+    { params },
+  );
   return res.data;
 };
 
 export const obtenerMovimientosCuenta = async (cierreId, cuentaId) => {
-  const res = await api.get(`/contabilidad/cierres/${cierreId}/cuentas/${cuentaId}/movimientos/`);
+  const res = await api.get(
+    `/contabilidad/cierres/${cierreId}/cuentas/${cuentaId}/movimientos/`,
+  );
   return res.data;
 };
 
 // ==================== NOMBRES EN INGLÉS ====================
 export const obtenerEstadoNombresIngles = async (clienteId, cierreId) => {
-  const res = await api.get(`/contabilidad/nombres-ingles-crud/${clienteId}/estado/`, {
-    params: cierreId ? { cierre: cierreId } : {}
-  });
+  const res = await api.get(
+    `/contabilidad/nombres-ingles-crud/${clienteId}/estado/`,
+    {
+      params: cierreId ? { cierre: cierreId } : {},
+    },
+  );
   return res.data;
 };
 
@@ -295,23 +348,32 @@ export const obtenerNombresEnIngles = async (cierreId) => {
 };
 
 export const subirNombresIngles = async (formData) => {
-  const res = await api.post("/contabilidad/nombres-ingles-crud/subir-archivo/", formData);
+  const res = await api.post(
+    "/contabilidad/nombres-ingles-crud/subir-archivo/",
+    formData,
+  );
   return res.data;
 };
 
 export const eliminarNombresEnIngles = async (clienteId, cierreId) => {
-  const res = await api.delete(`/contabilidad/nombres-ingles/${clienteId}/${cierreId}/`);
+  const res = await api.delete(
+    `/contabilidad/nombres-ingles/${clienteId}/${cierreId}/`,
+  );
   return res.data;
 };
 
 // ==================== NOMBRES EN INGLÉS CRUD ====================
 export const obtenerNombresInglesCliente = async (clienteId) => {
-  const res = await api.get(`/contabilidad/nombres-ingles-crud/${clienteId}/list/`);
+  const res = await api.get(
+    `/contabilidad/nombres-ingles-crud/${clienteId}/list/`,
+  );
   return res.data;
 };
 
 export const registrarVistaNombresIngles = async (clienteId) => {
-  const res = await api.post(`/contabilidad/nombres-ingles-crud/${clienteId}/registrar-vista/`);
+  const res = await api.post(
+    `/contabilidad/nombres-ingles-crud/${clienteId}/registrar-vista/`,
+  );
   return res.data;
 };
 
@@ -331,21 +393,26 @@ export const eliminarNombreIngles = async (id) => {
 };
 
 export const eliminarTodosNombresIngles = async (clienteId) => {
-  const res = await api.post(`/contabilidad/nombres-ingles-crud/${clienteId}/eliminar-todos/`);
+  const res = await api.post(
+    `/contabilidad/nombres-ingles-crud/${clienteId}/eliminar-todos/`,
+  );
   return res.data;
 };
 
 // ==================== BULK CLASIFICACIONES ====================
 export const subirClasificacionBulk = async (formData) => {
-  const res = await api.post("/contabilidad/clasificacion-bulk/", formData);
+  const res = await api.post(
+    "/contabilidad/clasificacion-bulk/subir-archivo/",
+    formData,
+  );
   return res.data;
 };
 
 export const obtenerBulkClasificaciones = async (clienteId) => {
-  const res = await api.get("/contabilidad/clasificacion-bulk/", {
-    params: { cliente: clienteId }
+  const res = await api.get(`/contabilidad/clientes/${clienteId}/uploads/`, {
+    params: { tipo: "clasificacion" },
   });
-  return res.data;
+  return res.data.uploads;
 };
 
 export const eliminarBulkClasificacion = async (uploadId) => {
@@ -354,21 +421,26 @@ export const eliminarBulkClasificacion = async (uploadId) => {
 };
 
 export const eliminarTodosBulkClasificacion = async (clienteId) => {
-  const res = await api.post("/contabilidad/clasificacion-bulk/eliminar-todos/", {
-    cliente_id: clienteId
-  });
+  const res = await api.post(
+    "/contabilidad/clasificacion-bulk/eliminar-todos/",
+    {
+      cliente_id: clienteId,
+    },
+  );
   return res.data;
 };
 
 export const reprocesarBulkClasificacionUpload = async (uploadId) => {
-  const res = await api.post(`/contabilidad/clasificacion-bulk/${uploadId}/reprocesar/`);
+  const res = await api.post(
+    `/contabilidad/clasificacion-bulk/${uploadId}/reprocesar/`,
+  );
   return res.data;
 };
 
 // ==================== CLASIFICACIÓN ARCHIVO (RAW DATA) ====================
 export const obtenerClasificacionesArchivo = async (uploadId) => {
   const res = await api.get("/contabilidad/clasificacion-archivo/", {
-    params: { upload: uploadId }
+    params: { upload_log: uploadId },
   });
   return res.data;
 };
@@ -379,7 +451,10 @@ export const crearClasificacionArchivo = async (data) => {
 };
 
 export const actualizarClasificacionArchivo = async (id, data) => {
-  const res = await api.patch(`/contabilidad/clasificacion-archivo/${id}/`, data);
+  const res = await api.patch(
+    `/contabilidad/clasificacion-archivo/${id}/`,
+    data,
+  );
   return res.data;
 };
 
@@ -389,13 +464,19 @@ export const eliminarClasificacionArchivo = async (id) => {
 };
 
 export const procesarMapeoClasificaciones = async (uploadId) => {
-  const res = await api.post("/contabilidad/clasificacion-archivo/procesar_mapeo/", {
-    upload_id: uploadId
-  });
+  const res = await api.post(
+    "/contabilidad/clasificacion-archivo/procesar_mapeo/",
+    {
+      upload_log_id: uploadId,
+    },
+  );
   return res.data;
 };
 
-export const obtenerClasificacionesArchivoCliente = async (clienteId, procesado = null) => {
+export const obtenerClasificacionesArchivoCliente = async (
+  clienteId,
+  procesado = null,
+) => {
   const params = { cliente: clienteId };
   if (procesado !== null) {
     params.procesado = procesado;
@@ -407,28 +488,32 @@ export const obtenerClasificacionesArchivoCliente = async (clienteId, procesado 
 export const obtenerEstadisticasClasificacionArchivo = async (uploadId) => {
   const registros = await obtenerClasificacionesArchivo(uploadId);
   const total = registros.length;
-  const procesados = registros.filter(r => r.procesado).length;
-  const conErrores = registros.filter(r => r.errores_mapeo).length;
+  const procesados = registros.filter((r) => r.procesado).length;
+  const conErrores = registros.filter((r) => r.errores_mapeo).length;
   const pendientes = total - procesados;
-  
+
   return {
     total,
     procesados,
     pendientes,
     conErrores,
-    registros
+    registros,
   };
 };
 
 // ==================== NOMBRES EN INGLÉS UPLOADS ====================
 export const obtenerNombresInglesUploads = async (clienteId) => {
   const res = await api.get("/contabilidad/nombres-ingles-upload/", {
-    params: { cliente: clienteId }
+    params: { cliente: clienteId },
   });
   return res.data;
 };
 
-export const subirNombresInglesUpload = async (clienteId, cierreId, archivo) => {
+export const subirNombresInglesUpload = async (
+  clienteId,
+  cierreId,
+  archivo,
+) => {
   const formData = new FormData();
   formData.append("cliente_id", clienteId);
   if (cierreId) {
@@ -441,54 +526,68 @@ export const subirNombresInglesUpload = async (clienteId, cierreId, archivo) => 
 };
 
 export const eliminarNombresInglesUpload = async (uploadId) => {
-  const res = await api.delete(`/contabilidad/nombres-ingles-upload/${uploadId}/`);
+  const res = await api.delete(
+    `/contabilidad/nombres-ingles-upload/${uploadId}/`,
+  );
   return res.data;
 };
 
-export const eliminarTodosNombresInglesUpload = async (clienteId, cierreId = null) => {
+export const eliminarTodosNombresInglesUpload = async (
+  clienteId,
+  cierreId = null,
+) => {
   const data = { cliente_id: clienteId };
   if (cierreId) {
     data.cierre_id = cierreId;
   }
-  
-  const res = await api.post("/contabilidad/nombres-ingles-upload/eliminar-todos/", data);
+
+  const res = await api.post(
+    "/contabilidad/nombres-ingles-upload/eliminar-todos/",
+    data,
+  );
   return res.data;
 };
 
 export const reprocesarNombresInglesUpload = async (uploadId) => {
-  const res = await api.post(`/contabilidad/nombres-ingles-upload/${uploadId}/reprocesar/`);
+  const res = await api.post(
+    `/contabilidad/nombres-ingles-upload/${uploadId}/reprocesar/`,
+  );
   return res.data;
 };
 
 // ==================== LOGS Y ACTIVIDAD ====================
-export const obtenerLogsUpload = async (tipoUpload, uploadId = null, clienteId = null) => {
+export const obtenerLogsUpload = async (
+  tipoUpload,
+  uploadId = null,
+  clienteId = null,
+) => {
   const params = { tipo_upload: tipoUpload };
   if (uploadId) params.upload_id = uploadId;
   if (clienteId) params.cliente_id = clienteId;
-  
-  const res = await api.get('/contabilidad/activity-logs/', { params });
+
+  const res = await api.get("/contabilidad/activity-logs/", { params });
   return res.data;
 };
 
 // ==================== FUNCIONES PARA SETS DE CLASIFICACIÓN ====================
 export const obtenerSetsCliente = async (clienteId) => {
-  const res = await api.get('/contabilidad/clasificaciones-set/', {
-    params: { cliente: clienteId }
+  const res = await api.get("/contabilidad/clasificaciones-set/", {
+    params: { cliente: clienteId },
   });
   return res.data;
 };
 
 export const crearSet = async (clienteId, nombre) => {
-  const res = await api.post('/contabilidad/clasificaciones-set/', {
+  const res = await api.post("/contabilidad/clasificaciones-set/", {
     cliente: clienteId,
-    nombre: nombre
+    nombre: nombre,
   });
   return res.data;
 };
 
 export const actualizarSet = async (setId, nombre) => {
   const res = await api.put(`/contabilidad/clasificaciones-set/${setId}/`, {
-    nombre: nombre
+    nombre: nombre,
   });
   return res.data;
 };
@@ -500,29 +599,34 @@ export const eliminarSet = async (setId) => {
 
 // ==================== FUNCIONES PARA OPCIONES DE CLASIFICACIÓN ====================
 export const obtenerOpcionesSet = async (setId) => {
-  const res = await api.get('/contabilidad/clasificaciones-opcion/', {
-    params: { set_clas: setId }
+  const res = await api.get("/contabilidad/clasificaciones-opcion/", {
+    params: { set_clas: setId },
   });
   return res.data;
 };
 
 export const crearOpcion = async (setId, valor) => {
-  const res = await api.post('/contabilidad/clasificaciones-opcion/', {
+  const res = await api.post("/contabilidad/clasificaciones-opcion/", {
     set_clas: setId,
-    valor: valor
+    valor: valor,
   });
   return res.data;
 };
 
 export const actualizarOpcion = async (opcionId, valor) => {
-  const res = await api.put(`/contabilidad/clasificaciones-opcion/${opcionId}/`, {
-    valor: valor
-  });
+  const res = await api.put(
+    `/contabilidad/clasificaciones-opcion/${opcionId}/`,
+    {
+      valor: valor,
+    },
+  );
   return res.data;
 };
 
 export const eliminarOpcion = async (opcionId) => {
-  const res = await api.delete(`/contabilidad/clasificaciones-opcion/${opcionId}/`);
+  const res = await api.delete(
+    `/contabilidad/clasificaciones-opcion/${opcionId}/`,
+  );
   return res.data;
 };
 
@@ -532,12 +636,16 @@ export const obtenerEstadoUploadLog = async (uploadLogId) => {
   return res.data;
 };
 
-export const obtenerHistorialUploads = async (clienteId, tipo = null, limit = 20) => {
+export const obtenerHistorialUploads = async (
+  clienteId,
+  tipo = null,
+  limit = 20,
+) => {
   const params = { limit };
   if (tipo) params.tipo = tipo;
-  
+
   const res = await api.get(`/contabilidad/clientes/${clienteId}/uploads/`, {
-    params
+    params,
   });
   return res.data;
 };

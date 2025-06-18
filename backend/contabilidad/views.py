@@ -1,4 +1,4 @@
-#backend/contabilidadfrom .utils.activity_logger import registrar_actividad_tarjetadad/views.py
+# backend/contabilidad/views.py
 from rest_framework import viewsets
 from rest_framework.decorators import api_view, permission_classes, parser_classes, action
 from rest_framework.parsers import JSONParser, MultiPartParser
@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.views import APIView
 from django.http import HttpResponse, FileResponse
+from django.utils import timezone
 import openpyxl
 import io
 import pandas as pd
@@ -42,6 +43,7 @@ from .models import (
     TipoDocumentoArchivo,
     NombreIngles,
     NombreInglesArchivo,
+    UploadLog,
 )
 from .serializers import (
     TipoDocumentoSerializer,
@@ -77,6 +79,7 @@ from contabilidad.tasks import (
     procesar_bulk_clasificacion,
     procesar_nombres_ingles_upload,
     parsear_nombres_ingles,
+    procesar_tipo_documento_con_upload_log,
     )
 
 
@@ -350,8 +353,59 @@ class AnalisisCuentaCierreViewSet(viewsets.ModelViewSet):
 @permission_classes([IsAuthenticated])
 def estado_tipo_documento(request, cliente_id):
     # Busca si ya existe un tipo de documento asociado al cliente
-    existe = TipoDocumento.objects.filter(cliente_id=cliente_id).exists()
-    return Response({"estado": "subido" if existe else "pendiente"})
+    existe_tipos = TipoDocumento.objects.filter(cliente_id=cliente_id).exists()
+    
+    if existe_tipos:
+        return Response({"estado": "subido"})
+    
+    # Si no hay tipos activos, verificar si hay uploads exitosos anteriores eliminados
+    upload_log_eliminado = UploadLog.objects.filter(
+        cliente_id=cliente_id, 
+        tipo_upload='tipo_documento',
+        estado='datos_eliminados'
+    ).exists()
+    
+    if upload_log_eliminado:
+        return Response({
+            "estado": "pendiente", 
+            "mensaje": "Datos eliminados previamente - puede volver a subir",
+            "historial_eliminado": True
+        })
+    
+    return Response({"estado": "pendiente"})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def estado_upload_log(request, upload_log_id):
+    """
+    Consulta el estado de un UploadLog específico
+    """
+    try:
+        upload_log = UploadLog.objects.get(id=upload_log_id)
+        
+        # Verificar que el usuario tenga acceso al cliente
+        # (Opcional: agregar más validaciones de permisos si es necesario)
+        
+        return Response({
+            "id": upload_log.id,
+            "tipo": upload_log.tipo_upload,
+            "cliente_id": upload_log.cliente.id,
+            "cliente_nombre": upload_log.cliente.nombre,
+            "estado": upload_log.estado,
+            "nombre_archivo": upload_log.nombre_archivo_original,
+            "fecha_creacion": upload_log.fecha_subida,
+            "tiempo_procesamiento": str(upload_log.tiempo_procesamiento) if upload_log.tiempo_procesamiento else None,
+            "errores": upload_log.errores,
+            # Campos que pueden no existir en este modelo
+            "resumen": upload_log.resumen
+        })
+        
+    except UploadLog.DoesNotExist:
+        return Response({"error": "UploadLog no encontrado"}, status=404)
+    except Exception as e:
+        logger.exception("Error al consultar UploadLog: %s", e)
+        return Response({"error": "Error interno del servidor"}, status=500)
 
 
 @api_view(['GET'])
@@ -367,6 +421,58 @@ def cuentas_pendientes_set(request, cliente_id, set_id):
         for c in pendientes
     ]
     return Response({"cuentas_faltantes": data})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def historial_uploads_cliente(request, cliente_id):
+    """
+    Obtiene el historial de uploads para un cliente específico
+    """
+    try:
+        cliente = Cliente.objects.get(id=cliente_id)
+    except Cliente.DoesNotExist:
+        return Response({"error": "Cliente no encontrado"}, status=404)
+    
+    # Obtener parámetros de filtro
+    tipo_upload = request.GET.get('tipo', None)  # TipoDocumento, LibroMayor, etc.
+    limit = int(request.GET.get('limit', 20))  # Límite de resultados
+    
+    try:
+        # Filtrar UploadLogs
+        queryset = UploadLog.objects.filter(cliente=cliente).order_by('-fecha_creacion')
+        
+        if tipo_upload:
+            queryset = queryset.filter(tipo=tipo_upload)
+        
+        # Limitar resultados
+        upload_logs = queryset[:limit]
+        
+        # Serializar datos
+        data = []
+        for log in upload_logs:
+            data.append({
+                "id": log.id,
+                "tipo": log.tipo_upload,
+                "estado": log.estado,
+                "nombre_archivo": log.nombre_archivo_original,
+                "tamaño_archivo": log.tamaño_archivo,
+                "fecha_creacion": log.fecha_subida,
+                "usuario": log.usuario.username if log.usuario else None,
+                "tiempo_procesamiento": str(log.tiempo_procesamiento) if log.tiempo_procesamiento else None,
+                "errores": log.errores[:200] + "..." if log.errores and len(log.errores) > 200 else log.errores  # Truncar errores largos
+            })
+        
+        return Response({
+            "cliente_id": cliente.id,
+            "cliente_nombre": cliente.nombre,
+            "total_uploads": UploadLog.objects.filter(cliente=cliente).count(),
+            "uploads": data
+        })
+        
+    except Exception as e:
+        logger.exception("Error al obtener historial de uploads: %s", e)
+        return Response({"error": "Error interno del servidor"}, status=500)
 
 
 @api_view(['POST'])
@@ -411,41 +517,116 @@ def cargar_tipo_documento(request):
             "accion_requerida": "Usar 'Eliminar todos' primero"
         }, status=409)  # 409 Conflict
 
-    # Limpiar archivos temporales anteriores del mismo cliente
-    patron_temp = f"temp/tipo_doc_cliente_{cliente_id}*"
-    import glob
-    archivos_temp_anteriores = glob.glob(os.path.join(default_storage.location, "temp", f"tipo_doc_cliente_{cliente_id}*"))
-    for archivo_anterior in archivos_temp_anteriores:
+    # Crear registro de UploadLog antes de procesar
+    try:
+        # Primero validar el nombre del archivo
         try:
-            os.remove(archivo_anterior)
-        except OSError:
-            pass  # Ignorar si no se puede eliminar
+            # Validación básica del nombre del archivo usando el método del modelo
+            es_valido, mensaje = UploadLog.validar_nombre_archivo(archivo.name, 'TipoDocumento', cliente.rut)
+            if not es_valido:
+                # Si mensaje es dict, es un error detallado
+                if isinstance(mensaje, dict):
+                    return Response({
+                        "error": mensaje['error'],
+                        "archivo_recibido": mensaje.get('archivo_recibido', archivo.name),
+                        "formato_esperado": mensaje.get('formato_esperado', ''),
+                        "sugerencia": mensaje.get('sugerencia', ''),
+                        "tipos_validos": mensaje.get('tipos_validos', [])
+                    }, status=400)
+                else:
+                    # Mensaje simple
+                    rut_limpio = cliente.rut.replace('.', '').replace('-', '') if cliente.rut else cliente.id
+                    return Response({
+                        "error": "Nombre de archivo inválido",
+                        "mensaje": mensaje,
+                        "formato_esperado": f"{rut_limpio}_TipoDocumento.xlsx",
+                        "archivo_recibido": archivo.name
+                    }, status=400)
+        except Exception as validation_error:
+            logger.exception("Error en validación de nombre de archivo: %s", validation_error)
+            return Response({
+                "error": "Error en validación de archivo",
+                "detalle": str(validation_error)
+            }, status=400)
+        
+        upload_log = UploadLog.objects.create(
+            tipo_upload='tipo_documento',
+            cliente=cliente,
+            usuario=request.user,
+            nombre_archivo_original=archivo.name,
+            tamaño_archivo=archivo.size,
+            estado='subido'
+        )
+        
+        # Limpiar archivos temporales anteriores del mismo cliente
+        patron_temp = f"temp/tipo_doc_cliente_{cliente_id}*"
+        import glob
+        archivos_temp_anteriores = glob.glob(os.path.join(default_storage.location, "temp", f"tipo_doc_cliente_{cliente_id}*"))
+        for archivo_anterior in archivos_temp_anteriores:
+            try:
+                os.remove(archivo_anterior)
+            except OSError:
+                pass  # Ignorar si no se puede eliminar
 
-    # Guardar archivo temporalmente (media/temp/)
-    nombre_archivo = f"temp/tipo_doc_cliente_{cliente_id}.xlsx"
-    ruta_guardada = default_storage.save(nombre_archivo, archivo)
+        # Guardar archivo temporalmente (media/temp/)
+        nombre_archivo = f"temp/tipo_doc_cliente_{cliente_id}_{upload_log.id}.xlsx"
+        ruta_guardada = default_storage.save(nombre_archivo, archivo)
+        
+        # Actualizar UploadLog con la ruta del archivo
+        upload_log.ruta_archivo = ruta_guardada
+        upload_log.save()
 
-    # Registrar actividad de subida
-    registrar_actividad_tarjeta(
-        cliente_id=cliente_id,
-        periodo=date.today().strftime('%Y-%m'),  # Periodo actual por defecto
-        tarjeta='tipo_documento',
-        accion='upload_excel',
-        descripcion=f'Subido archivo: {archivo.name}',
-        usuario=request.user,
-        detalles={
-            'nombre_archivo': archivo.name,
-            'tamaño_bytes': archivo.size,
-            'tipo_contenido': archivo.content_type
-        },
-        resultado='exito',
-        ip_address=request.META.get('REMOTE_ADDR')
-    )
+        # Registrar actividad de subida
+        registrar_actividad_tarjeta(
+            cliente_id=cliente_id,
+            periodo=date.today().strftime('%Y-%m'),
+            tarjeta='tipo_documento',
+            accion='upload_excel',
+            descripcion=f'Subido archivo: {archivo.name} (UploadLog ID: {upload_log.id})',
+            usuario=request.user,
+            detalles={
+                'nombre_archivo': archivo.name,
+                'tamaño_bytes': archivo.size,
+                'tipo_contenido': archivo.content_type,
+                'upload_log_id': upload_log.id,
+                'ruta_archivo': ruta_guardada
+            },
+            resultado='exito',
+            ip_address=request.META.get('REMOTE_ADDR')
+        )
 
-    # Enviar tarea a Celery (con ruta relativa)
-    parsear_tipo_documento.delay(cliente_id, ruta_guardada)
+        # Enviar tarea a Celery usando el nuevo sistema UploadLog
+        procesar_tipo_documento_con_upload_log.delay(upload_log.id)
 
-    return Response({"mensaje": "Archivo recibido y tarea enviada"})
+        return Response({
+            "mensaje": "Archivo recibido y tarea enviada",
+            "upload_log_id": upload_log.id,
+            "estado": upload_log.estado
+        })
+        
+    except Exception as e:
+        logger.exception("Error al crear UploadLog para tipo documento: %s", e)
+        
+        # Registrar error en activity log
+        registrar_actividad_tarjeta(
+            cliente_id=cliente_id,
+            periodo=date.today().strftime('%Y-%m'),
+            tarjeta='tipo_documento',
+            accion='upload_excel',
+            descripcion=f'Error al crear UploadLog: {str(e)}',
+            usuario=request.user,
+            detalles={
+                'nombre_archivo': archivo.name,
+                'error': str(e)
+            },
+            resultado='error',
+            ip_address=request.META.get('REMOTE_ADDR')
+        )
+        
+        return Response({
+            "error": "Error interno al procesar el archivo",
+            "detalle": str(e)
+        }, status=500)
 
 @api_view(['GET'])
 def test_celery(request):
@@ -486,6 +667,7 @@ def eliminar_tipos_documento(request, cliente_id):
     
     # Contar registros antes de eliminar
     count = TipoDocumento.objects.filter(cliente=cliente).count()
+    upload_logs_count = UploadLog.objects.filter(cliente=cliente, tipo_upload='tipo_documento').count()
     
     # Variables para el log
     archivos_eliminados = []
@@ -509,19 +691,42 @@ def eliminar_tipos_documento(request, cliente_id):
             # No hay archivo que eliminar, continuar normalmente
             pass
         
-        # 2. Eliminar registros de TipoDocumento
+        # 2. Limpiar archivos temporales de UploadLogs pero conservar registros para auditoría
+        upload_logs = UploadLog.objects.filter(cliente=cliente, tipo_upload='tipo_documento')
+        for upload_log in upload_logs:
+            # Solo eliminar archivos temporales, conservar registros para historial
+            if upload_log.ruta_archivo:
+                ruta_completa = os.path.join(default_storage.location, upload_log.ruta_archivo)
+                if os.path.exists(ruta_completa):
+                    try:
+                        os.remove(ruta_completa)
+                        archivos_eliminados.append(upload_log.ruta_archivo)
+                    except OSError:
+                        pass
+            
+            # Marcar como eliminado para auditoría, pero conservar el registro
+            if upload_log.estado == 'completado':
+                upload_log.estado = 'datos_eliminados'
+                upload_log.resumen = f"Datos procesados eliminados el {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                upload_log.save()
+        
+        # NO eliminar los UploadLogs - conservar para historial de auditoría
+        
+        # 3. Eliminar registros de TipoDocumento
         TipoDocumento.objects.filter(cliente=cliente).delete()
         
-        # 3. Registrar actividad exitosa
+        # 4. Registrar actividad exitosa
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
             periodo=date.today().strftime('%Y-%m'),
             tarjeta='tipo_documento',
             accion='bulk_delete',
-            descripcion=f'Eliminados todos los tipos de documento ({count} registros) y archivos asociados',
+            descripcion=f'Eliminados todos los tipos de documento ({count} registros) y archivos asociados. UploadLogs conservados para auditoría',
             usuario=request.user,
             detalles={
                 'registros_eliminados': count,
+                'upload_logs_conservados': upload_logs_count,
+                'upload_logs_marcados_eliminados': upload_logs.filter(estado='datos_eliminados').count(),
                 'archivos_eliminados': archivos_eliminados,
                 'cliente_nombre': cliente.nombre
             },
@@ -530,8 +735,9 @@ def eliminar_tipos_documento(request, cliente_id):
         )
         
         return Response({
-            "mensaje": "Tipos de documento y archivos eliminados correctamente",
+            "mensaje": "Tipos de documento y archivos eliminados correctamente. Historial de uploads conservado para auditoría",
             "registros_eliminados": count,
+            "upload_logs_conservados": upload_logs_count,
             "archivos_eliminados": len(archivos_eliminados)
         })
         
@@ -547,6 +753,7 @@ def eliminar_tipos_documento(request, cliente_id):
             detalles={
                 'error': str(e),
                 'registros_contados': count,
+                'upload_logs_contados': upload_logs_count,
                 'cliente_nombre': cliente.nombre
             },
             resultado='error',

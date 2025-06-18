@@ -525,3 +525,19 @@ export const eliminarOpcion = async (opcionId) => {
   const res = await api.delete(`/contabilidad/clasificaciones-opcion/${opcionId}/`);
   return res.data;
 };
+
+// ==================== UPLOAD LOG ====================
+export const obtenerEstadoUploadLog = async (uploadLogId) => {
+  const res = await api.get(`/contabilidad/upload-log/${uploadLogId}/estado/`);
+  return res.data;
+};
+
+export const obtenerHistorialUploads = async (clienteId, tipo = null, limit = 20) => {
+  const params = { limit };
+  if (tipo) params.tipo = tipo;
+  
+  const res = await api.get(`/contabilidad/clientes/${clienteId}/uploads/`, {
+    params
+  });
+  return res.data;
+};

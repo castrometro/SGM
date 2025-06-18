@@ -3,11 +3,13 @@ from django.contrib import admin
 # Register your models here.
 from django.contrib import admin
 from .models import (
+    UploadLog,
     TipoDocumento, TipoDocumentoArchivo, 
     CuentaContable, CierreContabilidad, LibroMayorUpload,
     AperturaCuenta, MovimientoContable, ClasificacionSet,
     ClasificacionOption, AccountClassification, Incidencia, CentroCosto,
-    Auxiliar, BulkClasificacionUpload, ClasificacionCuentaArchivo, NombresEnInglesUpload, TarjetaActivityLog
+    Auxiliar, BulkClasificacionUpload, ClasificacionCuentaArchivo, NombresEnInglesUpload, TarjetaActivityLog,
+    NombreIngles, NombreInglesArchivo, AnalisisCuentaCierre
 )
 
 @admin.register(TipoDocumento)
@@ -18,9 +20,9 @@ class TipoDocumentoAdmin(admin.ModelAdmin):
 
 @admin.register(TipoDocumentoArchivo)
 class TipoDocumentoArchivoAdmin(admin.ModelAdmin):
-    list_display = ('cliente', 'archivo_nombre', 'fecha_subida', 'tamaño_archivo')
+    list_display = ('cliente', 'archivo_nombre', 'fecha_subida', 'tamaño_archivo', 'upload_log_info')
     list_filter = ('cliente', 'fecha_subida')
-    search_fields = ('archivo',)
+    search_fields = ('archivo', 'cliente__nombre')
     readonly_fields = ('fecha_subida',)
     
     def archivo_nombre(self, obj):
@@ -43,6 +45,18 @@ class TipoDocumentoArchivoAdmin(admin.ModelAdmin):
                 return "N/A"
         return "-"
     tamaño_archivo.short_description = "Tamaño"
+    
+    def upload_log_info(self, obj):
+        """Muestra información del upload log asociado"""
+        if obj.upload_log:
+            return f"#{obj.upload_log.id} - {obj.upload_log.get_estado_display()}"
+        return "Sin log"
+    upload_log_info.short_description = "Upload Log"
+    
+    def get_queryset(self, request):
+        """Optimiza queries con select_related"""
+        queryset = super().get_queryset(request)
+        return queryset.select_related('cliente', 'upload_log')
 
 @admin.register(CuentaContable)
 class CuentaContableAdmin(admin.ModelAdmin):
@@ -297,3 +311,183 @@ class TarjetaActivityLogAdmin(admin.ModelAdmin):
     
     def has_delete_permission(self, request, obj=None):
         return request.user.is_superuser  # Solo superusuarios pueden eliminar logs
+
+@admin.register(NombreIngles)
+class NombreInglesAdmin(admin.ModelAdmin):
+    list_display = ('cliente', 'cuenta_codigo', 'nombre_ingles', 'cierre_info', 'fecha_creacion', 'fecha_actualizacion')
+    list_filter = ('cliente', 'cierre', 'fecha_creacion')
+    search_fields = ('cuenta_codigo', 'nombre_ingles', 'cliente__nombre')
+    readonly_fields = ('fecha_creacion', 'fecha_actualizacion')
+    ordering = ('cliente', 'cuenta_codigo')
+    
+    def cierre_info(self, obj):
+        """Información del cierre asociado"""
+        if obj.cierre:
+            return f"{obj.cierre.periodo}"
+        return "General (sin cierre específico)"
+    cierre_info.short_description = "Período/Cierre"
+    cierre_info.admin_order_field = 'cierre__periodo'
+    
+    def get_queryset(self, request):
+        """Optimiza las consultas incluyendo relaciones"""
+        queryset = super().get_queryset(request)
+        return queryset.select_related('cliente', 'cierre')
+
+@admin.register(NombreInglesArchivo)
+class NombreInglesArchivoAdmin(admin.ModelAdmin):
+    list_display = ('cliente', 'archivo_nombre', 'fecha_subida', 'tamaño_archivo')
+    list_filter = ('cliente', 'fecha_subida')
+    search_fields = ('cliente__nombre', 'archivo')
+    readonly_fields = ('fecha_subida',)
+    ordering = ('-fecha_subida',)
+    
+    def archivo_nombre(self, obj):
+        """Muestra solo el nombre del archivo, no la ruta completa"""
+        import os
+        return os.path.basename(obj.archivo.name) if obj.archivo else '-'
+    archivo_nombre.short_description = "Archivo"
+    
+    def tamaño_archivo(self, obj):
+        """Muestra el tamaño del archivo en formato legible"""
+        if obj.archivo:
+            try:
+                size = obj.archivo.size
+                for unit in ['B', 'KB', 'MB', 'GB']:
+                    if size < 1024.0:
+                        return f"{size:.1f} {unit}"
+                    size /= 1024.0
+                return f"{size:.1f} TB"
+            except:
+                return "N/A"
+        return "-"
+    tamaño_archivo.short_description = "Tamaño"
+    
+    def get_queryset(self, request):
+        """Optimiza las consultas incluyendo relaciones"""
+        queryset = super().get_queryset(request)
+        return queryset.select_related('cliente')
+
+@admin.register(AnalisisCuentaCierre)
+class AnalisisCuentaCierreAdmin(admin.ModelAdmin):
+    list_display = ('cierre_info', 'cuenta_info', 'analista', 'texto_analisis_corto', 'creado', 'actualizado')
+    list_filter = ('analista', 'cierre__cliente', 'cierre__periodo', 'creado')
+    search_fields = ('cuenta__codigo', 'cuenta__nombre', 'texto_analisis', 'cierre__cliente__nombre', 'cierre__periodo')
+    readonly_fields = ('creado', 'actualizado')
+    ordering = ('-actualizado',)
+    date_hierarchy = 'creado'
+    
+    def cierre_info(self, obj):
+        """Información del cierre asociado"""
+        return f"{obj.cierre.cliente.nombre} - {obj.cierre.periodo}"
+    cierre_info.short_description = "Cliente - Período"
+    cierre_info.admin_order_field = 'cierre__periodo'
+    
+    def cuenta_info(self, obj):
+        """Información de la cuenta"""
+        return f"{obj.cuenta.codigo} - {obj.cuenta.nombre}"
+    cuenta_info.short_description = "Cuenta"
+    cuenta_info.admin_order_field = 'cuenta__codigo'
+    
+    def texto_analisis_corto(self, obj):
+        """Muestra una versión corta del análisis"""
+        return obj.texto_analisis[:80] + "..." if len(obj.texto_analisis) > 80 else obj.texto_analisis
+    texto_analisis_corto.short_description = "Análisis"
+    
+    def get_queryset(self, request):
+        """Optimiza las consultas incluyendo relaciones"""
+        queryset = super().get_queryset(request)
+        return queryset.select_related('cierre', 'cierre__cliente', 'cuenta', 'analista')
+    
+    fieldsets = (
+        ('Información Principal', {
+            'fields': ('cierre', 'cuenta', 'analista')
+        }),
+        ('Análisis', {
+            'fields': ('texto_analisis',),
+            'classes': ('wide',)
+        }),
+        ('Metadatos', {
+            'fields': ('creado', 'actualizado'),
+            'classes': ('collapse',)
+        }),
+    )
+
+@admin.register(UploadLog)
+class UploadLogAdmin(admin.ModelAdmin):
+    list_display = (
+        'fecha_subida', 'tipo_upload', 'cliente', 'usuario', 'estado', 
+        'nombre_archivo_corto', 'tamaño_legible', 'tiempo_procesamiento_corto'
+    )
+    list_filter = (
+        'tipo_upload', 'estado', 'cliente', 'usuario', 'fecha_subida'
+    )
+    search_fields = (
+        'cliente__nombre', 'usuario__username', 'nombre_archivo_original', 
+        'errores', 'hash_archivo'
+    )
+    readonly_fields = (
+        'fecha_subida', 'hash_archivo', 'tamaño_archivo', 'tiempo_procesamiento'
+    )
+    ordering = ('-fecha_subida',)
+    date_hierarchy = 'fecha_subida'
+    
+    def nombre_archivo_corto(self, obj):
+        """Muestra nombre de archivo truncado"""
+        if len(obj.nombre_archivo_original) > 30:
+            return f"{obj.nombre_archivo_original[:27]}..."
+        return obj.nombre_archivo_original
+    nombre_archivo_corto.short_description = "Archivo"
+    
+    def tamaño_legible(self, obj):
+        """Convierte bytes a formato legible"""
+        size = obj.tamaño_archivo
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size < 1024.0:
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+        return f"{size:.1f} TB"
+    tamaño_legible.short_description = "Tamaño"
+    
+    def tiempo_procesamiento_corto(self, obj):
+        """Muestra tiempo de procesamiento en formato corto"""
+        if obj.tiempo_procesamiento:
+            seconds = obj.tiempo_procesamiento.total_seconds()
+            if seconds < 60:
+                return f"{seconds:.1f}s"
+            elif seconds < 3600:
+                return f"{seconds/60:.1f}m"
+            else:
+                return f"{seconds/3600:.1f}h"
+        return "-"
+    tiempo_procesamiento_corto.short_description = "Tiempo Proc."
+    
+    def get_queryset(self, request):
+        """Optimiza queries con select_related"""
+        queryset = super().get_queryset(request)
+        return queryset.select_related('cliente', 'usuario', 'cierre')
+    
+    fieldsets = (
+        ('Información Principal', {
+            'fields': ('tipo_upload', 'cliente', 'cierre', 'usuario')
+        }),
+        ('Archivo', {
+            'fields': ('nombre_archivo_original', 'tamaño_archivo', 'hash_archivo')
+        }),
+        ('Procesamiento', {
+            'fields': ('estado', 'errores', 'resumen', 'tiempo_procesamiento')
+        }),
+        ('Metadatos', {
+            'fields': ('fecha_subida', 'ip_usuario'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    # Solo lectura para preservar integridad
+    def has_add_permission(self, request):
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser

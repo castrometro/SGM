@@ -73,6 +73,7 @@ const CierreProgreso = ({ cierre, cliente }) => {
       {/* Paso 1: Tipos de Documento */}
       <TipoDocumentoCard
         clienteId={cliente.id}
+        cliente={cliente}
         onCompletado={handleTipoDocumentoCompletado}
         disabled={false}
         numeroPaso={paso++}

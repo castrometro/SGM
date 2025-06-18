@@ -712,3 +712,147 @@ def parsear_nombres_ingles(cliente_id, ruta_relativa):
         )
         
         return error_msg
+
+
+@shared_task
+def procesar_tipo_documento_con_upload_log(upload_log_id):
+    """
+    Nuevo task que procesa tipo documento usando el sistema UploadLog unificado
+    """
+    from datetime import datetime, timedelta
+    from django.utils import timezone
+    import hashlib
+    import os
+    from api.models import Cliente
+    from contabilidad.models import UploadLog, TipoDocumento, TipoDocumentoArchivo
+    from contabilidad.utils.parser_tipo_documento import parsear_tipo_documento_excel
+    
+    logger.info(f"Iniciando procesamiento de tipo documento para upload_log_id: {upload_log_id}")
+    
+    try:
+        upload_log = UploadLog.objects.get(id=upload_log_id)
+    except UploadLog.DoesNotExist:
+        logger.error(f"UploadLog con id {upload_log_id} no encontrado")
+        return f"Error: UploadLog {upload_log_id} no encontrado"
+    
+    # Marcar como procesando
+    upload_log.estado = 'procesando'
+    upload_log.save(update_fields=['estado'])
+    inicio_procesamiento = timezone.now()
+    
+    try:
+        # 1. VALIDAR NOMBRE DE ARCHIVO
+        logger.info(f"Validando nombre de archivo: {upload_log.nombre_archivo_original}")
+        es_valido, resultado_validacion = UploadLog.validar_nombre_archivo(
+            upload_log.nombre_archivo_original, 
+            'TipoDocumento', 
+            upload_log.cliente.rut
+        )
+        
+        if not es_valido:
+            upload_log.estado = 'error'
+            upload_log.errores = f"Nombre de archivo inválido: {resultado_validacion}"
+            upload_log.tiempo_procesamiento = timezone.now() - inicio_procesamiento
+            upload_log.save()
+            logger.error(f"Validación de nombre falló: {resultado_validacion}")
+            return f"Error: {resultado_validacion}"
+        
+        logger.info(f"Nombre de archivo válido: {resultado_validacion}")
+        
+        # 2. VERIFICAR QUE NO EXISTAN DATOS PREVIOS
+        tipos_existentes = TipoDocumento.objects.filter(cliente=upload_log.cliente).count()
+        if tipos_existentes > 0:
+            upload_log.estado = 'error'
+            upload_log.errores = f"Ya existen {tipos_existentes} tipos de documento para este cliente"
+            upload_log.tiempo_procesamiento = timezone.now() - inicio_procesamiento
+            upload_log.resumen = {
+                'tipos_existentes': tipos_existentes,
+                'accion_requerida': 'Eliminar tipos existentes antes de procesar'
+            }
+            upload_log.save()
+            logger.error(f"Cliente ya tiene {tipos_existentes} tipos de documento")
+            return f"Error: Cliente ya tiene tipos de documento existentes"
+        
+        # 3. BUSCAR ARCHIVO TEMPORAL (debe haber sido subido previamente)
+        # Construir la ruta basada en el upload_log_id (como se guarda en la vista)
+        ruta_relativa = f"temp/tipo_doc_cliente_{upload_log.cliente.id}_{upload_log.id}.xlsx"
+        ruta_completa = default_storage.path(ruta_relativa)
+        
+        if not os.path.exists(ruta_completa):
+            upload_log.estado = 'error'
+            upload_log.errores = f"Archivo temporal no encontrado en: {ruta_relativa}"
+            upload_log.tiempo_procesamiento = timezone.now() - inicio_procesamiento
+            upload_log.save()
+            logger.error(f"Archivo temporal no encontrado: {ruta_completa}")
+            return "Error: Archivo temporal no encontrado"
+        
+        # 4. CALCULAR HASH DEL ARCHIVO
+        with open(ruta_completa, 'rb') as f:
+            archivo_hash = hashlib.sha256(f.read()).hexdigest()
+        
+        upload_log.hash_archivo = archivo_hash
+        upload_log.save(update_fields=['hash_archivo'])
+        
+        # 5. PROCESAR ARCHIVO CON PARSER EXISTENTE
+        logger.info(f"Procesando archivo con parser existente: {ruta_completa}")
+        ok, msg = parsear_tipo_documento_excel(upload_log.cliente.id, ruta_relativa)
+        
+        if not ok:
+            upload_log.estado = 'error'
+            upload_log.errores = f"Error en procesamiento: {msg}"
+            upload_log.tiempo_procesamiento = timezone.now() - inicio_procesamiento
+            upload_log.save()
+            logger.error(f"Error en parser: {msg}")
+            return f"Error: {msg}"
+        
+        # 6. CONTAR TIPOS PROCESADOS
+        tipos_creados = TipoDocumento.objects.filter(cliente=upload_log.cliente).count()
+        
+        # 7. ACTUALIZAR/CREAR ARCHIVO ACTUAL
+        archivo_actual, created = TipoDocumentoArchivo.objects.get_or_create(
+            cliente=upload_log.cliente,
+            defaults={
+                'upload_log': upload_log,
+                'fecha_subida': timezone.now()
+            }
+        )
+        
+        if not created:
+            # Actualizar archivo existente
+            archivo_actual.upload_log = upload_log
+            archivo_actual.fecha_subida = timezone.now()
+            archivo_actual.save()
+        
+        # El parser existente ya maneja el guardado del archivo
+        # No necesitamos mover manualmente el archivo
+        
+        # 8. MARCAR COMO COMPLETADO
+        upload_log.estado = 'completado'
+        upload_log.tiempo_procesamiento = timezone.now() - inicio_procesamiento
+        upload_log.resumen = {
+            'tipos_documento_creados': tipos_creados,
+            'archivo_hash': archivo_hash,
+            'procesamiento_exitoso': True,
+            'mensaje_parser': msg
+        }
+        upload_log.save()
+        
+        # 9. LIMPIAR ARCHIVO TEMPORAL
+        try:
+            if os.path.exists(ruta_completa):
+                os.remove(ruta_completa)
+                logger.info("Archivo temporal eliminado")
+        except OSError as e:
+            logger.warning(f"No se pudo eliminar archivo temporal: {str(e)}")
+        
+        logger.info(f"✅ Procesamiento completado: {tipos_creados} tipos de documento creados")
+        return f"Completado: {tipos_creados} tipos de documento procesados"
+        
+    except Exception as e:
+        # Error inesperado
+        upload_log.estado = 'error'
+        upload_log.errores = f"Error inesperado: {str(e)}"
+        upload_log.tiempo_procesamiento = timezone.now() - inicio_procesamiento
+        upload_log.save()
+        logger.exception(f"Error inesperado en procesamiento: {str(e)}")
+        return f"Error inesperado: {str(e)}"

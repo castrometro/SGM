@@ -95,6 +95,8 @@ class TipoDocumentoArchivo(models.Model):
     cliente = models.OneToOneField(Cliente, on_delete=models.CASCADE)
     archivo = models.FileField(upload_to='tipo_documento/')
     fecha_subida = models.DateTimeField(auto_now_add=True)
+    upload_log = models.ForeignKey('UploadLog', on_delete=models.SET_NULL, null=True, blank=True, 
+                                  help_text="Referencia al log del upload que generó este archivo")
 
     def __str__(self):
         return f"Archivo Tipo Documento - {self.cliente.nombre}"
@@ -459,5 +461,218 @@ class ClasificacionCuentaArchivo(models.Model):
     
     def __str__(self):
         return f"{self.numero_cuenta} - {self.cliente.nombre}"
+
+
+# ======================================
+#           UPLOAD LOG UNIFICADO
+# ======================================
+
+class UploadLog(models.Model):
+    """
+    Modelo unificado para tracking de uploads de todas las tarjetas
+    """
+    TIPO_CHOICES = [
+        ('tipo_documento', 'Tipo de Documento'),
+        ('clasificacion', 'Clasificación Bulk'),
+        ('nombres_ingles', 'Nombres en Inglés'),
+        ('libro_mayor', 'Libro Mayor'),
+        # Fácil agregar nuevas tarjetas
+    ]
+    
+    ESTADO_CHOICES = [
+        ("subido", "Archivo subido"),
+        ("procesando", "Procesando"),
+        ("completado", "Procesado correctamente"),
+        ("error", "Con errores"),
+        ("datos_eliminados", "Datos procesados eliminados"),
+    ]
+    
+    # Identificación
+    tipo_upload = models.CharField(max_length=20, choices=TIPO_CHOICES)
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
+    cierre = models.ForeignKey('CierreContabilidad', on_delete=models.CASCADE, null=True, blank=True)
+    
+    # Usuario y tracking
+    usuario = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True)
+    fecha_subida = models.DateTimeField(auto_now_add=True)
+    
+    # Archivo y procesamiento
+    nombre_archivo_original = models.CharField(max_length=255)
+    ruta_archivo = models.CharField(max_length=500, blank=True, help_text="Ruta relativa del archivo en storage")
+    tamaño_archivo = models.BigIntegerField(help_text="Tamaño en bytes")
+    hash_archivo = models.CharField(max_length=64, blank=True, help_text="SHA-256 del archivo")
+    
+    # Estados y resultados
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="subido")
+    errores = models.TextField(blank=True)
+    resumen = models.JSONField(null=True, blank=True)
+    
+    # Metadatos adicionales
+    tiempo_procesamiento = models.DurationField(null=True, blank=True)
+    ip_usuario = models.GenericIPAddressField(null=True, blank=True)
+    
+    class Meta:
+        verbose_name = "Log de Upload"
+        verbose_name_plural = "Logs de Uploads"
+        ordering = ['-fecha_subida']
+        indexes = [
+            models.Index(fields=['cliente', 'tipo_upload']),
+            models.Index(fields=['estado', 'fecha_subida']),
+            models.Index(fields=['tipo_upload', 'estado']),
+        ]
+    
+    def __str__(self):
+        return f"{self.get_tipo_upload_display()} - {self.cliente.nombre} - {self.fecha_subida.strftime('%Y-%m-%d %H:%M')}"
+
+    @staticmethod
+    def validar_nombre_archivo(nombre_archivo_original, tipo_upload, cliente_rut):
+        """
+        Valida que el nombre del archivo corresponda al cliente y tipo de upload
+        
+        Formatos:
+        - Tipo Documento: {rut_limpio}_TipoDocumento.xlsx
+        - Clasificación: {rut_limpio}_Clasificacion.xlsx
+        - Nombres Inglés: {rut_limpio}_NombresIngles.xlsx
+        - Libro Mayor: {rut_limpio}_LibroMayor_MMAAAA.xlsx (ej: 12345678_LibroMayor_042025.xlsx)
+        """
+        import re
+        
+        # Obtener RUT sin puntos ni guión
+        rut_limpio = cliente_rut.replace('.', '').replace('-', '') if cliente_rut else ''
+        
+        # Eliminar extensión
+        nombre_sin_ext = re.sub(r'\.(xlsx|xls)$', '', nombre_archivo_original, flags=re.IGNORECASE)
+        
+        # Validación específica para libro mayor (requiere mes y año)
+        if tipo_upload == 'LibroMayor':
+            patron_libro = rf"^{rut_limpio}_(LibroMayor|Mayor)_(\d{{6}})$"
+            match = re.match(patron_libro, nombre_sin_ext)
+            
+            if match:
+                periodo = match.group(2)
+                mes = int(periodo[:2])
+                año = int(periodo[2:])
+                
+                # Validar mes válido (01-12)
+                if 1 <= mes <= 12 and año >= 2020:
+                    return True, f"Nombre de archivo válido (período: {mes:02d}/{año})"
+                else:
+                    return False, {
+                        'error': 'Período inválido en nombre de archivo',
+                        'periodo_recibido': periodo,
+                        'formato_periodo': 'MMAAAA (ej: 042025 para abril 2025)',
+                        'ejemplo': f"{rut_limpio}_LibroMayor_042025.xlsx"
+                    }
+            
+            return False, {
+                'error': 'Libro Mayor requiere período en el nombre',
+                'formato_requerido': f'{rut_limpio}_LibroMayor_MMAAAA.xlsx',
+                'ejemplo': f"{rut_limpio}_LibroMayor_042025.xlsx",
+                'nota': 'MMAAAA = mes y año (ej: 042025 para abril 2025)'
+            }
+        
+        # Validación para otros tipos (sin período requerido)
+        tipos_validos = {
+            'TipoDocumento': ['TipoDocumento', 'TiposDocumento'],
+            'Clasificacion': ['Clasificacion', 'Clasificaciones'],
+            'NombresIngles': ['NombresIngles', 'NombreIngles']
+        }
+        
+        tipos_permitidos = tipos_validos.get(tipo_upload, [tipo_upload])
+        
+        for tipo in tipos_permitidos:
+            patron_esperado = f"{rut_limpio}_{tipo}"
+            if nombre_sin_ext == patron_esperado:
+                return True, "Nombre de archivo válido"
+        
+        # Generar sugerencia
+        tipo_sugerido = tipos_permitidos[0]
+        sugerencia = f"{rut_limpio}_{tipo_sugerido}.xlsx"
+        
+        return False, {
+            'error': 'Nombre de archivo no corresponde al formato requerido',
+            'archivo_recibido': nombre_archivo_original,
+            'formato_esperado': f'{rut_limpio}_{tipo_sugerido}.xlsx',
+            'sugerencia': sugerencia,
+            'tipos_validos': [f"{rut_limpio}_{t}.xlsx" for t in tipos_permitidos]
+        }
+
+    @classmethod
+    def validar_archivo_cliente_estatico(cls, nombre_archivo, tipo_upload, cliente):
+        """
+        Validación estática que se puede usar antes de crear el UploadLog
+        """
+        import re
+        
+        # Obtener RUT sin puntos ni guión
+        rut_limpio = cliente.rut.replace('.', '').replace('-', '') if cliente.rut else str(cliente.id)
+        
+        # Eliminar extensión
+        nombre_sin_ext = re.sub(r'\.(xlsx|xls)$', '', nombre_archivo, flags=re.IGNORECASE)
+        
+        # Validación específica para libro mayor (requiere período)
+        if tipo_upload == 'libro_mayor':
+            patron_libro = rf"^{rut_limpio}_(LibroMayor|Mayor)_(\d{{6}})$"
+            match = re.match(patron_libro, nombre_sin_ext)
+            
+            if match:
+                periodo = match.group(2)
+                mes = int(periodo[:2])
+                año = int(periodo[2:])
+                
+                # Validar mes válido (01-12) y año razonable
+                if 1 <= mes <= 12 and año >= 2020:
+                    return True, f"Nombre válido (período: {mes:02d}/{año})"
+                else:
+                    return False, {
+                        'error': 'Período inválido en libro mayor',
+                        'periodo_recibido': periodo,
+                        'mes_detectado': mes,
+                        'año_detectado': año,
+                        'formato_correcto': 'MMAAAA (01-12 para mes, año >= 2020)',
+                        'ejemplo': f"{rut_limpio}_LibroMayor_042025.xlsx"
+                    }
+            
+            return False, {
+                'error': 'Libro Mayor requiere período MMAAAA en el nombre',
+                'archivo_recibido': nombre_archivo,
+                'formato_requerido': f'{rut_limpio}_LibroMayor_MMAAAA.xlsx',
+                'ejemplo': f"{rut_limpio}_LibroMayor_042025.xlsx",
+                'explicacion': 'MMAAAA = mes (01-12) + año (ej: 042025 = abril 2025)'
+            }
+        
+        # Validación para otros tipos (sin período requerido)
+        tipos_validos = {
+            'tipo_documento': ['TipoDocumento', 'TiposDocumento'],
+            'clasificacion': ['Clasificacion', 'Clasificaciones'], 
+            'nombres_ingles': ['NombresIngles', 'NombreIngles']
+        }
+        
+        # Verificar formato
+        tipos_permitidos = tipos_validos.get(tipo_upload, [tipo_upload.title()])
+        
+        for tipo in tipos_permitidos:
+            patron_esperado = f"{rut_limpio}_{tipo}"
+            if nombre_sin_ext == patron_esperado:
+                return True, "Nombre de archivo válido"
+        
+        # Si no es válido, devolver error detallado
+        tipo_sugerido = tipos_permitidos[0]
+        
+        return False, {
+            'error': 'Nombre de archivo no corresponde al cliente o tipo',
+            'archivo_recibido': nombre_archivo,
+            'cliente_rut': cliente.rut,
+            'rut_esperado': rut_limpio,
+            'tipo_upload': tipo_upload,
+            'formato_correcto': f'{rut_limpio}_{tipo_sugerido}.xlsx',
+            'formatos_validos': [f"{rut_limpio}_{t}.xlsx" for t in tipos_permitidos],
+            'ejemplos_generales': [
+                f"{rut_limpio}_TipoDocumento.xlsx",
+                f"{rut_limpio}_Clasificacion.xlsx",
+                f"{rut_limpio}_NombresIngles.xlsx", 
+                f"{rut_limpio}_LibroMayor_042025.xlsx"
+            ]
+        }
 
 

@@ -1,0 +1,18 @@
+[
+  {
+    "nombre": "Proyecto A",
+    "estado": "En curso",
+    "fecha_inicio": "2024-01-10",
+    "fecha_termino": "2024-12-20",
+    "responsable": "Carlos Pérez",
+    "avance": 45
+  },
+  {
+    "nombre": "Proyecto B",
+    "estado": "Completado",
+    "fecha_inicio": "2023-06-01",
+    "fecha_termino": "2024-03-15",
+    "responsable": "María González",
+    "avance": 100
+  }
+]

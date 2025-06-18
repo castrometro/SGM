@@ -9,7 +9,8 @@ import {
   eliminarBulkClasificacion,
   eliminarTodosBulkClasificacion,
   reprocesarBulkClasificacionUpload,
-  obtenerClasificacionesArchivo
+  obtenerClasificacionesArchivo,
+  obtenerEstadoUploadLog
 } from '../../api/contabilidad';
 
 const ClasificacionBulkCard = ({ clienteId, onCompletado, disabled, numeroPaso }) => {
@@ -22,23 +23,46 @@ const ClasificacionBulkCard = ({ clienteId, onCompletado, disabled, numeroPaso }
   const [eliminando, setEliminando] = useState(false);
   const [errorEliminando, setErrorEliminando] = useState("");
   const [registrosRaw, setRegistrosRaw] = useState([]);
+
+  // Estados para UploadLog
+  const [uploadLogId, setUploadLogId] = useState(null);
+  const [uploadEstado, setUploadEstado] = useState(null);
+  const [uploadProgreso, setUploadProgreso] = useState("");
+
   const [modalRegistrosRaw, setModalRegistrosRaw] = useState(false);
   const fileInputRef = useRef();
 
   useEffect(() => { cargar(); }, []);
   
-  // Polling para actualizar estado cuando está procesando
+  // Monitorear estado del UploadLog
   useEffect(() => {
-    let interval;
-    if (estado === 'procesando') {
-      interval = setInterval(() => {
-        cargar();
-      }, 3000); // Cada 3 segundos
-    }
-    return () => {
-      if (interval) clearInterval(interval);
+    if (!uploadLogId || !subiendo) return;
+
+    const monitorearUpload = async () => {
+      try {
+        const logData = await obtenerEstadoUploadLog(uploadLogId);
+        setUploadEstado(logData);
+        if (logData.estado === 'procesando') {
+          setUploadProgreso('Procesando archivo...');
+        } else if (logData.estado === 'completado') {
+          setUploadProgreso('¡Procesamiento completado!');
+          setSubiendo(false);
+          setEstado('completado');
+          cargar();
+        } else if (logData.estado === 'error') {
+          setUploadProgreso('Error en el procesamiento');
+          setSubiendo(false);
+          setEstado('error');
+          setError(logData.errores || 'Error en el procesamiento');
+        }
+      } catch (err) {
+        console.error('Error monitoreando upload:', err);
+      }
     };
-  }, [estado]);
+
+    const interval = setInterval(monitorearUpload, 3000);
+    return () => clearInterval(interval);
+  }, [uploadLogId, subiendo]);
   
   const cargar = async () => {
     try {
@@ -80,7 +104,10 @@ const ClasificacionBulkCard = ({ clienteId, onCompletado, disabled, numeroPaso }
     if (!archivo) return;
     setSubiendo(true);
     setError("");
-    
+    setUploadLogId(null);
+    setUploadEstado(null);
+    setUploadProgreso("");
+
     const form = new FormData();
     form.append('cliente', clienteId);
     form.append('archivo', archivo);
@@ -89,11 +116,17 @@ const ClasificacionBulkCard = ({ clienteId, onCompletado, disabled, numeroPaso }
       const response = await subirClasificacionBulk(form);
       console.log('Archivo subido exitosamente:', response);
       setArchivo(null);
-      setEstado('procesando'); // Cambiar estado inmediatamente
-      // Recargar datos en 1 segundo para dar tiempo al backend
-      setTimeout(() => {
-        cargar();
-      }, 1000);
+      if (response.upload_log_id) {
+        setUploadLogId(response.upload_log_id);
+        setSubiendo(true);
+        setUploadProgreso('Archivo recibido, iniciando procesamiento...');
+      } else {
+        setEstado('procesando');
+        // Recargar datos en 1 segundo para dar tiempo al backend
+        setTimeout(() => {
+          cargar();
+        }, 1000);
+      }
     } catch (e) {
       console.error('Error al subir archivo:', e);
       
@@ -177,6 +210,7 @@ const ClasificacionBulkCard = ({ clienteId, onCompletado, disabled, numeroPaso }
         onChange={e => setArchivo(e.target.files[0])}
       />
       {error && <div className="text-xs text-red-400 mt-1">{error}</div>}
+      {uploadProgreso && <div className="text-xs text-yellow-300 mt-1">{uploadProgreso}</div>}
       
       {/* Botones de acciones */}
       <div className="flex gap-2 mt-2">

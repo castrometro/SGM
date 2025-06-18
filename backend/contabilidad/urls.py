@@ -40,6 +40,8 @@ from .views import (
     limpiar_archivos_temporales,
     cuentas_pendientes_set,
     test_celery,
+    estado_upload_log,
+    historial_uploads_cliente,
 )
 
 router = DefaultRouter()
@@ -90,6 +92,11 @@ urlpatterns = [
 
     path('test-celery/', test_celery),
     path('limpiar-archivos-temporales/', limpiar_archivos_temporales),
+    
+    # URLs para UploadLog
+    path('upload-log/<int:upload_log_id>/estado/', estado_upload_log),
+    path('clientes/<int:cliente_id>/uploads/', historial_uploads_cliente),
+    
     path(
         'plantilla-tipo-doc/',
         serve,

@@ -68,6 +68,8 @@ services:
       - ./streamlit_pruebas:/app
     ports:
       - "8501:8501"
+    environment:
+      - PORT=8501
     depends_on:
       - ollama
 
@@ -79,6 +81,8 @@ services:
       - ./streamlit_conta:/app
     ports:
       - "8502:8502"
+    environment:
+      - PORT=8502
     depends_on:
       - ollama
 
@@ -90,6 +94,8 @@ services:
       - ./streamlit_nomina:/app
     ports:
       - "8503:8503"
+    environment:
+      - PORT=8503
     depends_on:
       - ollama
 

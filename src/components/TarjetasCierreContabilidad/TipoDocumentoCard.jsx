@@ -9,10 +9,11 @@ import {
   obtenerTiposDocumentoCliente, 
   registrarVistaTiposDocumento,
   subirTipoDocumento, 
-  eliminarTodosTiposDocumento 
+  eliminarTodosTiposDocumento,
+  obtenerEstadoUploadLog
 } from "../../api/contabilidad";
 
-const TipoDocumentoCard = ({ clienteId, onCompletado, disabled, numeroPaso }) => {
+const TipoDocumentoCard = ({ clienteId, cliente, onCompletado, disabled, numeroPaso }) => {
   const [estado, setEstado] = useState("pendiente");
   const [archivoNombre, setArchivoNombre] = useState("");
   const [subiendo, setSubiendo] = useState(false);
@@ -22,6 +23,12 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled, numeroPaso }) =>
   const [eliminando, setEliminando] = useState(false);
   const [errorEliminando, setErrorEliminando] = useState("");
   const [notificacion, setNotificacion] = useState({ visible: false, tipo: "", mensaje: "" });
+  
+  // Estados para UploadLog
+  const [uploadLogId, setUploadLogId] = useState(null);
+  const [uploadEstado, setUploadEstado] = useState(null);
+  const [uploadProgreso, setUploadProgreso] = useState("");
+  
   const fileInputRef = useRef();
 
   // Función para mostrar notificaciones
@@ -60,20 +67,90 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled, numeroPaso }) =>
     if (clienteId && !disabled) fetchEstado();
   }, [clienteId, disabled, onCompletado]);
 
-  // Handler de subida de archivo
-    const handleSeleccionArchivo = async (e) => {
-      const archivo = e.target.files[0];
-      if (!archivo) return;
-      setArchivoNombre(archivo.name);
-      setSubiendo(true);
-      setError("");
-      try {
-        const formData = new FormData();
-        formData.append("cliente_id", clienteId);
-        formData.append("archivo", archivo);
-        await subirTipoDocumento(formData);
+  // Monitorear el estado del UploadLog cuando está en proceso
+  useEffect(() => {
+    if (!uploadLogId || !subiendo) return;
 
-        // Espera backend/process
+    const monitorearUpload = async () => {
+      try {
+        const logData = await obtenerEstadoUploadLog(uploadLogId);
+        setUploadEstado(logData);
+        
+        // Actualizar el progreso visible
+        if (logData.estado === 'procesando') {
+          setUploadProgreso("Procesando archivo...");
+          
+          // Mostrar notificación amarilla solo la primera vez que entra en procesando
+          if (uploadEstado?.estado !== 'procesando') {
+            mostrarNotificacion("warning", "📊 Procesando archivo... Por favor espere.");
+          }
+          
+        } else if (logData.estado === 'completado') {
+          setUploadProgreso("¡Procesamiento completado!");
+          setSubiendo(false);
+          setEstado("subido");
+          if (onCompletado) onCompletado(true);
+          
+          // Recargar tipos de documento
+          try {
+            const tipos = await obtenerTiposDocumentoCliente(clienteId);
+            setTiposDocumento(tipos);
+          } catch (err) {
+            console.error("Error recargando tipos:", err);
+          }
+          
+          mostrarNotificacion("success", `✅ Archivo procesado exitosamente. ${logData.resumen?.tipos_documento_creados || 0} tipos de documento creados.`);
+          
+        } else if (logData.estado === 'error') {
+          setUploadProgreso("Error en el procesamiento");
+          setSubiendo(false);
+          setError(logData.errores || "Error desconocido en el procesamiento");
+          if (onCompletado) onCompletado(false);
+          mostrarNotificacion("error", `❌ Error: ${logData.errores || "Error desconocido"}`);
+        }
+        
+      } catch (err) {
+        console.error("Error monitoreando upload:", err);
+        setUploadProgreso("Error monitoreando el proceso");
+      }
+    };
+
+    // Iniciar monitoreo
+    const intervalo = setInterval(monitorearUpload, 2000); // Cada 2 segundos
+    
+    // Limpieza
+    return () => clearInterval(intervalo);
+    
+  }, [uploadLogId, subiendo, clienteId, onCompletado]);
+
+  // Handler de subida de archivo
+  const handleSeleccionArchivo = async (e) => {
+    const archivo = e.target.files[0];
+    if (!archivo) return;
+    
+    setArchivoNombre(archivo.name);
+    setSubiendo(true);
+    setError("");
+    setUploadProgreso("Subiendo archivo...");
+    setUploadLogId(null);
+    setUploadEstado(null);
+    
+    try {
+      const formData = new FormData();
+      formData.append("cliente_id", clienteId);
+      formData.append("archivo", archivo);
+      
+      const response = await subirTipoDocumento(formData);
+      
+      // Obtener el ID del UploadLog para monitoreo
+      if (response.upload_log_id) {
+        setUploadLogId(response.upload_log_id);
+        setUploadProgreso("Archivo recibido, iniciando procesamiento...");
+        mostrarNotificacion("info", "📤 Archivo subido correctamente. Procesando...");
+        
+        // El monitoreo se hace automáticamente en el useEffect
+      } else {
+        // Fallback al método anterior si no hay upload_log_id
         await new Promise(r => setTimeout(r, 1500));
         let nuevoEstado = "";
         for (let i = 0; i < 10; i++) {
@@ -83,37 +160,64 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled, numeroPaso }) =>
           if (nuevoEstado === "subido") break;
         }
         setEstado(nuevoEstado);
+        setSubiendo(false);
+        setUploadProgreso("");
+        
         if (nuevoEstado === "subido") {
           onCompletado && onCompletado(true);
+          mostrarNotificacion("success", "✅ Archivo procesado exitosamente");
         } else {
           setError("No se pudo verificar la subida. Intenta refrescar.");
           onCompletado && onCompletado(false);
+          mostrarNotificacion("warning", "⚠️ No se pudo verificar el estado. Intenta refrescar.");
         }
-      } catch (err) {
-        console.error("Error al subir archivo:", err);
-        
-        // Manejo específico para error 409 - Datos existentes
-        if (err.response?.status === 409) {
-          const errorData = err.response.data;
-          setError(`Ya existen ${errorData.tipos_existentes || 'algunos'} tipos de documento. Debe eliminar todos los registros antes de subir un nuevo archivo.`);
-          mostrarNotificacion("warning", 
-            `Archivo rechazado: Ya existen ${errorData.tipos_existentes || 'algunos'} tipos de documento. Use "Eliminar todos" primero.`
-          );
-        } else if (err.response?.data?.error) {
-          // Otros errores del backend
-          setError(err.response.data.error);
-          mostrarNotificacion("error", err.response.data.error);
-        } else {
-          // Error genérico
-          setError("Error al subir el archivo.");
-          mostrarNotificacion("error", "Error al subir el archivo.");
-        }
-        
-        onCompletado && onCompletado(false);
-      } finally {
-        setSubiendo(false);
       }
-    };
+      
+    } catch (err) {
+      console.error("Error al subir archivo:", err);
+      setSubiendo(false);
+      setUploadProgreso("");
+      
+      // Manejo específico para error 409 - Datos existentes
+      if (err.response?.status === 409) {
+        const errorData = err.response.data;
+        setError(`Ya existen ${errorData.tipos_existentes || 'algunos'} tipos de documento. Debe eliminar todos los registros antes de subir un nuevo archivo.`);
+        mostrarNotificacion("warning", 
+          `⚠️ Archivo rechazado: Ya existen ${errorData.tipos_existentes || 'algunos'} tipos de documento. Use "Eliminar todos" primero.`
+        );
+      } else if (err.response?.status === 400) {
+        // Error 400 - Problemas de validación, incluyendo nombre de archivo
+        const errorData = err.response.data;
+        if (errorData.formato_esperado && errorData.archivo_recibido) {
+          // Error específico de formato de nombre
+          setError(`Formato de nombre incorrecto. Esperado: ${errorData.formato_esperado}, Recibido: ${errorData.archivo_recibido}`);
+          mostrarNotificacion("warning", 
+            `❌ Nombre de archivo incorrecto\n\n` +
+            `📋 Formato requerido: ${errorData.formato_esperado}\n` +
+            `📁 Archivo enviado: ${errorData.archivo_recibido}\n\n` +
+            `💡 Asegúrese de que el archivo siga exactamente el formato indicado.`
+          );
+        } else if (errorData.error) {
+          // Otros errores de validación
+          setError(errorData.error);
+          mostrarNotificacion("error", errorData.mensaje || errorData.error);
+        } else {
+          setError("Error de validación en el archivo");
+          mostrarNotificacion("error", "❌ Error de validación en el archivo");
+        }
+      } else if (err.response?.data?.error) {
+        // Otros errores del backend
+        setError(err.response.data.error);
+        mostrarNotificacion("error", err.response.data.error);
+      } else {
+        // Error genérico
+        setError("Error al subir el archivo.");
+        mostrarNotificacion("error", "❌ Error al subir el archivo.");
+      }
+      
+      onCompletado && onCompletado(false);
+    }
+  };
 
 
   // Handler para abrir modal y cargar lista
@@ -148,13 +252,21 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled, numeroPaso }) =>
     setEliminando(true);
     setErrorEliminando("");
     try {
-      await eliminarTodosTiposDocumento(clienteId);
+      const result = await eliminarTodosTiposDocumento(clienteId);
       setEstado("pendiente");
       setTiposDocumento([]);
       setArchivoNombre("");
+      setUploadLogId(null);
+      setUploadEstado(null);
+      setUploadProgreso("");
       if (onCompletado) onCompletado(false);
+      
+      // Mostrar información sobre lo que se eliminó
+      const mensaje = `Eliminados: ${result.registros_eliminados || 0} registros, ${result.upload_logs_eliminados || 0} logs, ${result.archivos_eliminados || 0} archivos`;
+      mostrarNotificacion("success", `🗑️ ${mensaje}`);
     } catch (err) {
       setErrorEliminando("Error eliminando los tipos de documento");
+      mostrarNotificacion("error", "❌ Error eliminando los tipos de documento");
     } finally {
       setEliminando(false);
     }
@@ -179,6 +291,17 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled, numeroPaso }) =>
                 <Download size={16} />
                 Descargar Estructura
                 </a>
+            
+            {/* Información del formato requerido */}
+            <div className="text-xs text-gray-400 bg-gray-900/50 border border-gray-600 rounded p-2 mb-2">
+                <div className="font-medium text-gray-300 mb-1">📋 Formato de archivo requerido:</div>
+                <div className="font-mono text-yellow-300">
+                    {cliente?.rut ? 
+                        `${cliente.rut.replace(/\./g, '').replace('-', '')}_TipoDocumento.xlsx` : 
+                        'RUT_TipoDocumento.xlsx'
+                    }
+                </div>
+            </div>
             <div className="flex gap-3 items-center">
                 <button
                     type="button"
@@ -188,12 +311,32 @@ const TipoDocumentoCard = ({ clienteId, onCompletado, disabled, numeroPaso }) =>
                     subiendo ? "opacity-60 cursor-not-allowed" : ""
                     }`}
                 >
-                    {subiendo ? "Subiendo..." : "Elegir archivo .xlsx"}
+                    {subiendo ? (uploadProgreso || "Subiendo...") : "Elegir archivo .xlsx"}
                 </button>
                 <span className="text-gray-300 text-xs italic truncate max-w-xs">
                     {archivoNombre || "Ningún archivo seleccionado"}
                 </span>
             </div>
+            
+            {/* Indicador de progreso detallado */}
+            {subiendo && uploadEstado && (
+              <div className="text-xs bg-blue-900/20 border border-blue-500/30 rounded p-2 mt-2">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-medium text-blue-200">Procesando:</span>
+                  <span className="text-blue-300">{uploadEstado.estado}</span>
+                </div>
+                {uploadEstado.registros_procesados > 0 && (
+                  <div className="text-blue-300">
+                    Registros: {uploadEstado.registros_exitosos || 0} exitosos, {uploadEstado.registros_fallidos || 0} fallidos
+                  </div>
+                )}
+                {uploadEstado.tiempo_procesamiento_segundos && (
+                  <div className="text-blue-300">
+                    Tiempo: {uploadEstado.tiempo_procesamiento_segundos}s
+                  </div>
+                )}
+              </div>
+            )}
             <input
             type="file"
             accept=".xlsx"

@@ -1,7 +1,7 @@
 import streamlit as st
 from layout.sidebar import mostrar_sidebar
 from layout.header import mostrar_header
-from data.loader_real import cargar_datos
+from data import cargar_datos
 from views import dashboard_general, estado_situacion_financiera, estado_resultados, estado_resultados_integral, estado_cambio_patrimonio
 
 st.set_page_config(layout="wide", page_title="SGM - Dashboard Contable", page_icon="📊")

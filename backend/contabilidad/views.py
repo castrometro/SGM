@@ -447,10 +447,10 @@ def historial_uploads_cliente(request, cliente_id):
 
     try:
         # Filtrar UploadLogs
-        queryset = UploadLog.objects.filter(cliente=cliente).order_by("-fecha_creacion")
+        queryset = UploadLog.objects.filter(cliente=cliente).order_by("-fecha_subida")
 
         if tipo_upload:
-            queryset = queryset.filter(tipo=tipo_upload)
+            queryset = queryset.filter(tipo_upload=tipo_upload)
 
         # Limitar resultados
         upload_logs = queryset[:limit]
@@ -466,7 +466,7 @@ def historial_uploads_cliente(request, cliente_id):
                     "nombre_archivo": log.nombre_archivo_original,
                     "tamaño_archivo": log.tamaño_archivo,
                     "fecha_creacion": log.fecha_subida,
-                    "usuario": log.usuario.username if log.usuario else None,
+                    "usuario": log.usuario.correo_bdo if log.usuario else None,
                     "tiempo_procesamiento": (
                         str(log.tiempo_procesamiento)
                         if log.tiempo_procesamiento

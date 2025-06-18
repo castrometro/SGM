@@ -381,7 +381,13 @@ const TipoDocumentoCard = ({ clienteId, cliente, onCompletado, disabled, numeroP
 
                 <span className="text-xs text-gray-400 italic mt-2">
                 {estado === "subido"
-                    ? `✔ Archivo cargado correctamente${tiposDocumento.length > 0 ? ` (${tiposDocumento.length} tipos de documento)` : ""}`
+                    ? <span className="text-green-400">{`✔ Archivo cargado correctamente${tiposDocumento.length > 0 ? ` (${tiposDocumento.length} tipos de documento)` : ""}`}</span>
+                    : subiendo || uploadProgreso
+                    ? <span className="text-blue-400">🔄 {uploadProgreso || "Procesando archivo..."}</span>
+                    : error
+                    ? <span className="text-red-400">❌ Error: {error}</span>
+                    : tiposDocumento.length > 0
+                    ? <span className="text-yellow-400">📋 Archivo cargado con {tiposDocumento.length} tipos de documento</span>
                     : "Aún no se ha subido el archivo."}
                 </span>
                 

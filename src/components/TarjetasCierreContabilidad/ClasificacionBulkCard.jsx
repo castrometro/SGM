@@ -101,23 +101,30 @@ const ClasificacionBulkCard = ({
       const last = data && data.length > 0 ? data[0] : null;
       setUltimoUpload(last);
       if (last) {
-        setEstado(last.estado);
         // Cargar registros raw si existe el upload
         if (last.id) {
           try {
             const registros = await obtenerClasificacionesArchivo(last.id);
             setRegistrosRaw(registros);
-            // Considerar "completado" si hay registros raw (archivo procesado)
-            // independientemente del estado de mapeo
+            // Determinar estado basado en si hay registros útiles
             const tieneRegistros = registros.length > 0;
+            if (tieneRegistros) {
+              // Si hay registros, usar el estado del upload log
+              setEstado(last.estado);
+            } else {
+              // Si no hay registros, considerar como pendiente
+              setEstado("pendiente");
+            }
             if (onCompletado) onCompletado(tieneRegistros);
           } catch (err) {
             console.log("No hay registros raw o error cargándolos:", err);
             setRegistrosRaw([]);
+            setEstado("pendiente"); // Sin registros = pendiente
             if (onCompletado) onCompletado(false);
           }
         } else {
           // Si no hay ID del upload, no hay registros
+          setEstado("pendiente");
           if (onCompletado) onCompletado(false);
         }
       } else {
@@ -127,6 +134,7 @@ const ClasificacionBulkCard = ({
       }
     } catch (e) {
       console.error("Error al cargar uploads:", e);
+      setEstado("pendiente"); // En caso de error, mostrar pendiente
     }
   };
 
@@ -312,7 +320,7 @@ const ClasificacionBulkCard = ({
 
       {/* Información del estado y resumen */}
       <div className="text-xs text-gray-400 italic mt-2">
-        {estado === "completado" && ultimoUpload?.resumen ? (
+        {(estado === "completado" || (ultimoUpload && registrosRaw.length > 0)) && ultimoUpload?.resumen ? (
           <div className="space-y-2">
             <div className="text-green-400">
               ✔ Archivo procesado correctamente
@@ -350,6 +358,14 @@ const ClasificacionBulkCard = ({
           <div className="text-blue-400">🔄 Procesando clasificaciones…</div>
         ) : estado === "error" && ultimoUpload?.errores ? (
           <div className="text-red-400">❌ Error: {ultimoUpload.errores}</div>
+        ) : ultimoUpload && registrosRaw.length > 0 ? (
+          <div className="text-yellow-400">
+            📋 Archivo cargado con {registrosRaw.length} registros
+          </div>
+        ) : ultimoUpload ? (
+          <div className="text-gray-400">
+            📄 Archivo subido: {ultimoUpload.nombre_archivo_original}
+          </div>
         ) : (
           <div>Aún no se ha subido el archivo.</div>
         )}

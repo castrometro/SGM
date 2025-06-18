@@ -8,7 +8,6 @@ from .views import (
     AnalisisCuentaCierreViewSet,
     AperturaCuentaViewSet,
     AuxiliarViewSet,
-    BulkClasificacionUploadViewSet,
     CentroCostoViewSet,
     CierreContabilidadViewSet,
     ClasificacionCuentaArchivoViewSet,

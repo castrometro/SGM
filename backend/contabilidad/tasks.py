@@ -835,12 +835,7 @@ def procesar_clasificacion_con_upload_log(upload_log_id):
     from django.core.files.base import ContentFile
     from django.utils import timezone
 
-    from .models import (
-        BulkClasificacionUpload,
-        ClasificacionArchivo,
-        ClasificacionCuentaArchivo,
-        UploadLog,
-    )
+    from .models import ClasificacionArchivo, ClasificacionCuentaArchivo, UploadLog
     from .utils.activity_logger import registrar_actividad_tarjeta
 
     logger.info(

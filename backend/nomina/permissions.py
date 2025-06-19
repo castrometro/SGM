@@ -48,6 +48,17 @@ class SupervisorPuedeVerCierresNominaAnalistas(permissions.BasePermission):
                 cliente=cliente
             ).exists()
         
+        # Analistas solo ven cierres de sus clientes asignados
+        if user.tipo_usuario in ['analista', 'senior']:
+            cliente = getattr(obj, 'cliente', None)
+            if not cliente:
+                return False
+            
+            return AsignacionClienteUsuario.objects.filter(
+                usuario=user,
+                cliente=cliente
+            ).exists()
+        
         return False
 
 

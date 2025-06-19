@@ -59,3 +59,62 @@ class SoloContabilidadAsignadoOGerente(permissions.BasePermission):
             return False
 
         return AsignacionClienteUsuario.objects.filter(usuario=user, cliente=cliente).exists()
+
+
+class SupervisorPuedeVerCierresAnalistas(permissions.BasePermission):
+    """
+    Permite a supervisores ver cierres de contabilidad de clientes asignados a sus analistas supervisados
+    """
+    def has_permission(self, request, view):
+        user = request.user
+        if not user.is_active:
+            return False
+        
+        # Gerentes tienen acceso completo
+        if user.tipo_usuario.lower() == 'gerente':
+            return True
+        
+        # Solo usuarios de contabilidad pueden acceder
+        if not user.areas.filter(nombre__iexact='Contabilidad').exists():
+            return False
+        
+        # Supervisores y analistas de contabilidad tienen acceso
+        if user.tipo_usuario in ['supervisor', 'analista', 'senior']:
+            return True
+            
+        return False
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        
+        # Gerentes ven todo
+        if user.tipo_usuario.lower() == 'gerente':
+            return True
+        
+        # Supervisores solo ven cierres de clientes asignados a sus analistas supervisados
+        if user.tipo_usuario.lower() == 'supervisor':
+            cliente = getattr(obj, 'cliente', None)
+            if not cliente:
+                return False
+            
+            # Obtener analistas supervisados por este supervisor
+            analistas_supervisados = user.get_analistas_supervisados()
+            
+            # Verificar si alguno de los analistas supervisados tiene asignado este cliente
+            return AsignacionClienteUsuario.objects.filter(
+                usuario__in=analistas_supervisados,
+                cliente=cliente
+            ).exists()
+        
+        # Analistas solo ven cierres de sus clientes asignados
+        if user.tipo_usuario in ['analista', 'senior']:
+            cliente = getattr(obj, 'cliente', None)
+            if not cliente:
+                return False
+            
+            return AsignacionClienteUsuario.objects.filter(
+                usuario=user,
+                cliente=cliente
+            ).exists()
+        
+        return False

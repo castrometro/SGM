@@ -9,6 +9,7 @@ import pandas as pd
 from contabilidad.permissions import (
     PuedeCrearCierreContabilidad,
     SoloContabilidadAsignadoOGerente,
+    SupervisorPuedeVerCierresAnalistas,
 )
 from django.core.files.storage import default_storage
 from django.db.models import Q, Sum
@@ -33,7 +34,7 @@ from .utils.activity_logger import (
 logger = logging.getLogger(__name__)
 
 
-from api.models import Cliente
+from api.models import Cliente, AsignacionClienteUsuario
 from contabilidad.tasks import (
     parsear_nombres_ingles,
     parsear_tipo_documento,
@@ -2574,21 +2575,42 @@ class TarjetaActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
 class CierreContabilidadViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar los cierres contables.
+    Supervisores pueden ver cierres de clientes asignados a sus analistas supervisados.
     """
 
     queryset = CierreContabilidad.objects.all()
     serializer_class = CierreContabilidadSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, SupervisorPuedeVerCierresAnalistas]
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        user = self.request.user
         cliente_id = self.request.query_params.get("cliente")
         periodo = self.request.query_params.get("periodo")
 
+        # Filtrar por parámetros URL
         if cliente_id:
             queryset = queryset.filter(cliente_id=cliente_id)
         if periodo:
             queryset = queryset.filter(periodo=periodo)
+
+        # Aplicar filtros de acceso según tipo de usuario
+        if user.tipo_usuario.lower() == 'gerente':
+            # Gerentes ven todo (sin filtros adicionales)
+            pass
+        elif user.tipo_usuario.lower() == 'supervisor':
+            # Supervisores solo ven cierres de clientes asignados a sus analistas supervisados
+            analistas_supervisados = user.get_analistas_supervisados()
+            clientes_accesibles = AsignacionClienteUsuario.objects.filter(
+                usuario__in=analistas_supervisados
+            ).values_list('cliente_id', flat=True)
+            queryset = queryset.filter(cliente_id__in=clientes_accesibles)
+        elif user.tipo_usuario in ['analista', 'senior']:
+            # Analistas solo ven cierres de sus clientes asignados
+            clientes_asignados = AsignacionClienteUsuario.objects.filter(
+                usuario=user
+            ).values_list('cliente_id', flat=True)
+            queryset = queryset.filter(cliente_id__in=clientes_asignados)
 
         return queryset.select_related("cliente", "usuario", "area").order_by(
             "-fecha_creacion"

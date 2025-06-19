@@ -42,6 +42,16 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
 
     # Un usuario puede pertenecer a varias áreas de BDO (Contabilidad, Nómina, etc.)
     areas          = models.ManyToManyField('Area', related_name='usuarios', blank=True)
+    
+    # Relación supervisor-analista dentro de la misma área
+    supervisor     = models.ForeignKey(
+        'self', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='analistas_supervisados',
+        help_text="El supervisor asignado a este analista (debe ser de la misma área)"
+    )
 
     is_staff       = models.BooleanField(default=False)
     is_superuser   = models.BooleanField(default=False)
@@ -51,6 +61,57 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
 
     USERNAME_FIELD  = 'correo_bdo'
     REQUIRED_FIELDS = ['nombre', 'apellido']
+
+    def clean(self):
+        """Validar que el supervisor sea del mismo área que el analista"""
+        from django.core.exceptions import ValidationError
+        
+        if self.supervisor:
+            # Verificar que el supervisor sea realmente un supervisor
+            if self.supervisor.tipo_usuario != 'supervisor':
+                raise ValidationError('El usuario asignado como supervisor debe tener tipo_usuario "supervisor"')
+            
+            # Verificar que ambos estén en la misma área (al menos una área en común)
+            if self.pk:  # Solo si el usuario ya existe (tiene pk)
+                supervisor_areas = set(self.supervisor.areas.all())
+                analista_areas = set(self.areas.all())
+                
+                if not supervisor_areas.intersection(analista_areas):
+                    raise ValidationError('El supervisor y el analista deben pertenecer al menos a una área en común')
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
+
+    def get_analistas_supervisados(self):
+        """Obtiene todos los analistas que supervisa este usuario"""
+        if self.tipo_usuario != 'supervisor':
+            return Usuario.objects.none()
+        return self.analistas_supervisados.all()
+    
+    def get_clientes_de_analistas_supervisados(self):
+        """Obtiene todos los clientes asignados a los analistas supervisados"""
+        if self.tipo_usuario != 'supervisor':
+            return []
+        
+        analistas = self.get_analistas_supervisados()
+        clientes = []
+        for analista in analistas:
+            # Obtener clientes asignados a cada analista
+            asignaciones = analista.asignaciones.all()
+            clientes.extend([asignacion.cliente for asignacion in asignaciones])
+        return clientes
+    
+    def puede_supervisar_a(self, analista):
+        """Verifica si este supervisor puede supervisar al analista dado"""
+        if self.tipo_usuario != 'supervisor':
+            return False
+        
+        # Verificar que tengan al menos un área en común
+        supervisor_areas = set(self.areas.all())
+        analista_areas = set(analista.areas.all())
+        
+        return bool(supervisor_areas.intersection(analista_areas))
 
     def __str__(self):
         return self.correo_bdo
@@ -106,6 +167,15 @@ class AsignacionClienteUsuario(models.Model):
         unique_together = ('cliente', 'usuario')
         # TODO: Para enforcement estricto de 1 cliente = 1 analista únicamente,
         # cambiar a: constraints = [models.UniqueConstraint(fields=['cliente'], name='unique_cliente_assignment')]
+
+    @classmethod
+    def get_clientes_por_supervisor(cls, supervisor):
+        """Obtiene todas las asignaciones de clientes para analistas supervisados por este supervisor"""
+        if supervisor.tipo_usuario != 'supervisor':
+            return cls.objects.none()
+        
+        analistas_supervisados = supervisor.get_analistas_supervisados()
+        return cls.objects.filter(usuario__in=analistas_supervisados)
 
     def __str__(self):
         return f"{self.usuario.correo_bdo} ↔ {self.cliente.nombre}"

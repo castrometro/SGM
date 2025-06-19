@@ -18,6 +18,7 @@ import Dashboard from "./pages/Dashboard";
 import GestionAnalistas from "./pages/GestionAnalistas";
 import DashboardGerente from "./pages/DashboardGerente";
 import Tools from "./pages/Tools";
+import MisAnalistas from "./pages/MisAnalistas";
 
 function App() {
   return (
@@ -58,6 +59,9 @@ function App() {
           {/* ----------- ÁREA: NÓMINA ------------- */}
           <Route path="nomina/cierres/:cierreId" element={<CierreDetalleNomina />} />          {/* ----------- ÁREA: GESTIÓN DE ANALISTAS ------------- */}
           <Route path="analistas" element={<GestionAnalistas />} />
+          
+          {/* ----------- ÁREA: MIS ANALISTAS (SUPERVISOR) ------------- */}
+          <Route path="mis-analistas" element={<MisAnalistas />} />
 
           {/* ----------- ÁREA: DASHBOARD GERENTE ------------- */}
           <Route path="dashboard-gerente" element={<DashboardGerente />} />

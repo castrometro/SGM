@@ -6,6 +6,7 @@ import {
 } from "../api/clientes";
 import { obtenerResumenContable } from "../api/contabilidad";
 import { obtenerResumenNomina } from "../api/nomina";
+import { obtenerUsuario } from "../api/auth";
 import ClienteInfoCard from "../components/InfoCards/ClienteInfoCard";
 import ServiciosContratados from "../components/ServiciosContratados";
 import KpiResumenCliente from "../components/KpiResumenCliente";
@@ -17,20 +18,39 @@ const ClienteDetalle = () => {
   const [cliente, setCliente] = useState(null);
   const [resumen, setResumen] = useState(null);
   const [servicios, setServicios] = useState([]);
-  // Puedes obtener el área activa desde localStorage, contexto o prop global
-  const areaActiva = localStorage.getItem("area_activa") || "Contabilidad";
+  const [areaActiva, setAreaActiva] = useState("Contabilidad");
 
   useEffect(() => {
     const fetchDatos = async () => {
       try {
         const c = await obtenerCliente(id);
-        // Pivotea aquí
+        const u = await obtenerUsuario(); // Obtener usuario para determinar área activa
         let r;
-        if (areaActiva === "Contabilidad") {
+
+        // Determinar área activa según el usuario
+        let area = localStorage.getItem("area_activa");
+        
+        if (!area) {
+          if (u.area_activa) {
+            area = u.area_activa;
+          } else if (u.areas && u.areas.length > 0) {
+            area = u.areas[0].nombre || u.areas[0];
+          } else if (u.area) {
+            area = u.area; // fallback al campo area si existe
+          } else {
+            area = "Contabilidad"; // fallback final
+          }
+          localStorage.setItem("area_activa", area);
+        }
+        
+        setAreaActiva(area);
+        
+        if (area === "Contabilidad") {
           r = await obtenerResumenContable(id);
-        } else if (areaActiva === "Nomina") {
+        } else if (area === "Nomina") {
           r = await obtenerResumenNomina(id);
         }
+
         const s = await obtenerServiciosCliente(id);
         setCliente(c);
         setResumen(r);
@@ -41,7 +61,7 @@ const ClienteDetalle = () => {
     };
 
     fetchDatos();
-  }, [id, areaActiva]);
+  }, [id]);
 
   if (!cliente || !resumen) {
     return <p className="text-white">Cargando cliente...</p>;

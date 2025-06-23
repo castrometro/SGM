@@ -1,4 +1,5 @@
 # backend/contabilidad/views.py
+import glob
 import io
 import logging
 import os
@@ -31,6 +32,37 @@ from .utils.activity_logger import (
 )  # Comentado temporalmente
 
 logger = logging.getLogger(__name__)
+
+
+def obtener_periodo_actividad_para_cliente(cliente):
+    """
+    Helper function para obtener el período correcto para registrar actividades de tarjeta.
+    Busca el cierre activo del cliente, si no encuentra usa la fecha actual.
+    """
+    try:
+        cierre_para_actividad = CierreContabilidad.objects.filter(
+            cliente=cliente,
+            estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+        ).order_by('-fecha_creacion').first()
+        
+        if cierre_para_actividad:
+            return cierre_para_actividad.periodo
+        else:
+            return date.today().strftime("%Y-%m")
+    except Exception:
+        return date.today().strftime("%Y-%m")
+
+
+def get_client_ip(request):
+    """
+    Helper function para obtener la IP del cliente desde el request.
+    """
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        ip = x_forwarded_for.split(',')[0]
+    else:
+        ip = request.META.get('REMOTE_ADDR')
+    return ip
 
 
 from api.models import Cliente
@@ -512,10 +544,22 @@ def cargar_tipo_documento(request):
     # Verificar si ya existen datos para este cliente
     tipos_existentes = TipoDocumento.objects.filter(cliente=cliente).count()
     if tipos_existentes > 0:
+        # Buscar cierre para actividad
+        cierre_para_actividad = None
+        try:
+            cierre_para_actividad = CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+            ).order_by('-fecha_creacion').first()
+        except Exception:
+            pass
+        
+        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+        
         # Registrar intento de upload con datos existentes
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
-            periodo=date.today().strftime("%Y-%m"),
+            periodo=periodo_actividad,
             tarjeta="tipo_documento",
             accion="upload_excel",
             descripcion=f"Upload rechazado: ya existen {tipos_existentes} tipos de documento",
@@ -524,6 +568,7 @@ def cargar_tipo_documento(request):
                 "nombre_archivo": archivo.name,
                 "tipos_existentes": tipos_existentes,
                 "razon_rechazo": "datos_existentes",
+                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
             },
             resultado="error",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -590,18 +635,49 @@ def cargar_tipo_documento(request):
                 status=400,
             )
 
+        # Intentar determinar el cierre más reciente del cliente (mismo patrón que clasificación)
+        cierre_relacionado = None
+        cierre_id = request.data.get("cierre_id")  # Si el frontend lo envía
+        
+        print(f"🔍 DEBUG: cierre_id del frontend: {cierre_id}")
+        
+        if cierre_id:
+            try:
+                cierre_relacionado = CierreContabilidad.objects.get(id=cierre_id, cliente=cliente)
+                print(f"✅ DEBUG: Cierre encontrado usando cierre_id del frontend: {cierre_relacionado.id} - {cierre_relacionado.periodo}")
+            except CierreContabilidad.DoesNotExist:
+                print(f"❌ DEBUG: Cierre con id {cierre_id} no encontrado, buscando automáticamente")
+                pass
+        else:
+            print("🔎 DEBUG: No se envió cierre_id desde frontend, buscando automáticamente")
+        
+        # Si no se especifica cierre, buscar el más reciente que no esté cerrado
+        if not cierre_relacionado:
+            cierre_relacionado = CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+            ).order_by('-fecha_creacion').first()
+            
+            if cierre_relacionado:
+                print(f"🔍 DEBUG: Cierre encontrado automáticamente: {cierre_relacionado.id} - {cierre_relacionado.periodo} - Estado: {cierre_relacionado.estado}")
+            else:
+                print("⚠️ DEBUG: No se encontró ningún cierre abierto para el cliente")
+
+        print(f"📄 DEBUG: UploadLog se creará con cierre: {cierre_relacionado.id if cierre_relacionado else 'None'}")
+
         upload_log = UploadLog.objects.create(
             tipo_upload="tipo_documento",
             cliente=cliente,
+            cierre=cierre_relacionado,  # Asociar al cierre encontrado
             usuario=request.user,
             nombre_archivo_original=archivo.name,
             tamaño_archivo=archivo.size,
             estado="subido",
+            ip_usuario=get_client_ip(request),
         )
 
         # Limpiar archivos temporales anteriores del mismo cliente
         patron_temp = f"temp/tipo_doc_cliente_{cliente_id}*"
-        import glob
 
         archivos_temp_anteriores = glob.glob(
             os.path.join(
@@ -623,9 +699,11 @@ def cargar_tipo_documento(request):
         upload_log.save()
 
         # Registrar actividad de subida
+        periodo_actividad = cierre_relacionado.periodo if cierre_relacionado else date.today().strftime("%Y-%m")
+        
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
-            periodo=date.today().strftime("%Y-%m"),
+            periodo=periodo_actividad,
             tarjeta="tipo_documento",
             accion="upload_excel",
             descripcion=f"Subido archivo: {archivo.name} (UploadLog ID: {upload_log.id})",
@@ -636,9 +714,10 @@ def cargar_tipo_documento(request):
                 "tipo_contenido": archivo.content_type,
                 "upload_log_id": upload_log.id,
                 "ruta_archivo": ruta_guardada,
+                "cierre_id": cierre_relacionado.id if cierre_relacionado else None,
             },
             resultado="exito",
-            ip_address=request.META.get("REMOTE_ADDR"),
+            ip_address=get_client_ip(request),
         )
 
         # Enviar tarea a Celery usando el nuevo sistema UploadLog
@@ -655,15 +734,31 @@ def cargar_tipo_documento(request):
     except Exception as e:
         logger.exception("Error al crear UploadLog para tipo documento: %s", e)
 
+        # Buscar cierre para actividad de error
+        cierre_para_actividad = None
+        try:
+            cierre_para_actividad = CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+            ).order_by('-fecha_creacion').first()
+        except Exception:
+            pass
+        
+        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+
         # Registrar error en activity log
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
-            periodo=date.today().strftime("%Y-%m"),
+            periodo=periodo_actividad,
             tarjeta="tipo_documento",
             accion="upload_excel",
             descripcion=f"Error al crear UploadLog: {str(e)}",
             usuario=request.user,
-            detalles={"nombre_archivo": archivo.name, "error": str(e)},
+            detalles={
+                "nombre_archivo": archivo.name, 
+                "error": str(e),
+                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+            },
             resultado="error",
             ip_address=request.META.get("REMOTE_ADDR"),
         )
@@ -680,6 +775,7 @@ def cargar_tipo_documento(request):
 def cargar_clasificacion_bulk(request):
     cliente_id = request.data.get("cliente_id")
     archivo = request.FILES.get("archivo")
+    cierre_id = request.data.get("cierre_id")  # Obtener cierre_id si se envía
 
     if not cliente_id or not archivo:
         return Response({"error": "cliente_id y archivo son requeridos"}, status=400)
@@ -699,18 +795,46 @@ def cargar_clasificacion_bulk(request):
             else:
                 return Response({"error": mensaje}, status=400)
 
+        # BUSCAR EL CIERRE ASOCIADO (igual que en tipo_documento)
+        cierre_relacionado = None
+        
+        # Intentar usar el cierre_id proporcionado desde el frontend
+        if cierre_id:
+            try:
+                cierre_relacionado = CierreContabilidad.objects.get(id=cierre_id, cliente=cliente)
+                logger.info(f"✅ Cierre encontrado usando cierre_id del frontend: {cierre_relacionado.id} - {cierre_relacionado.periodo}")
+            except CierreContabilidad.DoesNotExist:
+                logger.warning(f"❌ Cierre con id {cierre_id} no encontrado, buscando automáticamente")
+                pass
+        else:
+            logger.info("🔎 No se envió cierre_id desde frontend, buscando automáticamente")
+        
+        # Si no se especifica cierre, buscar el más reciente que no esté cerrado
+        if not cierre_relacionado:
+            cierre_relacionado = CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+            ).order_by('-fecha_creacion').first()
+            
+            if cierre_relacionado:
+                logger.info(f"🔍 Cierre encontrado automáticamente: {cierre_relacionado.id} - {cierre_relacionado.periodo} - Estado: {cierre_relacionado.estado}")
+            else:
+                logger.warning("⚠️ No se encontró ningún cierre abierto para el cliente")
+
+        logger.info(f"📋 UploadLog de clasificación se creará con cierre: {cierre_relacionado.id if cierre_relacionado else 'None'}")
+
         upload_log = UploadLog.objects.create(
             tipo_upload="clasificacion",
             cliente=cliente,
+            cierre=cierre_relacionado,  # ✅ Asociar al cierre encontrado
             usuario=request.user,
             nombre_archivo_original=archivo.name,
             tamaño_archivo=archivo.size,
             estado="subido",
+            ip_usuario=get_client_ip(request),
         )
 
         patron_temp = f"temp/clasificacion_cliente_{cliente_id}_*"
-        import glob
-        import os
 
         archivos_temp = glob.glob(
             os.path.join(
@@ -731,9 +855,12 @@ def cargar_clasificacion_bulk(request):
         upload_log.ruta_archivo = ruta_guardada
         upload_log.save()
 
+        # Usar el período del cierre asociado al UploadLog
+        periodo_actividad = cierre_relacionado.periodo if cierre_relacionado else date.today().strftime("%Y-%m")
+
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
-            periodo=date.today().strftime("%Y-%m"),
+            periodo=periodo_actividad,
             tarjeta="clasificacion",
             accion="upload_excel",
             descripcion=f"Subido archivo de clasificaciones: {archivo.name} (UploadLog ID: {upload_log.id})",
@@ -743,6 +870,7 @@ def cargar_clasificacion_bulk(request):
                 "tamaño_bytes": archivo.size,
                 "upload_log_id": upload_log.id,
                 "ruta_archivo": ruta_guardada,
+                "cierre_id": cierre_relacionado.id if cierre_relacionado else None,
             },
             resultado="exito",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -760,14 +888,31 @@ def cargar_clasificacion_bulk(request):
 
     except Exception as e:
         logger.exception("Error al crear UploadLog para clasificacion: %s", e)
+        
+        # Buscar cierre para actividad de error
+        cierre_para_actividad = None
+        try:
+            cierre_para_actividad = CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+            ).order_by('-fecha_creacion').first()
+        except Exception:
+            pass
+        
+        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+        
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
-            periodo=date.today().strftime("%Y-%m"),
+            periodo=periodo_actividad,
             tarjeta="clasificacion",
             accion="upload_excel",
             descripcion=f"Error al crear UploadLog: {str(e)}",
             usuario=request.user,
-            detalles={"nombre_archivo": archivo.name, "error": str(e)},
+            detalles={
+                "nombre_archivo": archivo.name, 
+                "error": str(e),
+                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+            },
             resultado="error",
             ip_address=request.META.get("REMOTE_ADDR"),
         )
@@ -873,10 +1018,22 @@ def eliminar_tipos_documento(request, cliente_id):
         # 3. Eliminar registros de TipoDocumento
         TipoDocumento.objects.filter(cliente=cliente).delete()
 
-        # 4. Registrar actividad exitosa
+        # 4. Buscar cierre para actividad
+        cierre_para_actividad = None
+        try:
+            cierre_para_actividad = CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+            ).order_by('-fecha_creacion').first()
+        except Exception:
+            pass
+        
+        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+
+        # 5. Registrar actividad exitosa
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
-            periodo=date.today().strftime("%Y-%m"),
+            periodo=periodo_actividad,
             tarjeta="tipo_documento",
             accion="bulk_delete",
             descripcion=f"Eliminados todos los tipos de documento ({count} registros) y archivos asociados. UploadLogs conservados para auditoría",
@@ -889,6 +1046,7 @@ def eliminar_tipos_documento(request, cliente_id):
                 ).count(),
                 "archivos_eliminados": archivos_eliminados,
                 "cliente_nombre": cliente.nombre,
+                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
             },
             resultado="exito",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -904,10 +1062,22 @@ def eliminar_tipos_documento(request, cliente_id):
         )
 
     except Exception as e:
+        # Buscar cierre para actividad de error
+        cierre_para_actividad = None
+        try:
+            cierre_para_actividad = CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+            ).order_by('-fecha_creacion').first()
+        except Exception:
+            pass
+        
+        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+        
         # Registrar error
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
-            periodo=date.today().strftime("%Y-%m"),
+            periodo=periodo_actividad,
             tarjeta="tipo_documento",
             accion="bulk_delete",
             descripcion=f"Error al eliminar tipos de documento y archivos: {str(e)}",
@@ -917,6 +1087,7 @@ def eliminar_tipos_documento(request, cliente_id):
                 "registros_contados": count,
                 "upload_logs_contados": upload_logs_count,
                 "cliente_nombre": cliente.nombre,
+                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
             },
             resultado="error",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -949,17 +1120,38 @@ def registrar_vista_tipos_documento(request, cliente_id):
     """
     Endpoint específico para registrar cuando el usuario abre el modal de tipos de documento
     """
+    try:
+        cliente = Cliente.objects.get(id=cliente_id)
+    except Cliente.DoesNotExist:
+        return Response({"error": "Cliente no encontrado"}, status=404)
+    
     tipos = TipoDocumento.objects.filter(cliente_id=cliente_id)
+
+    # Buscar cierre para actividad
+    cierre_para_actividad = None
+    try:
+        cierre_para_actividad = CierreContabilidad.objects.filter(
+            cliente=cliente,
+            estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+        ).order_by('-fecha_creacion').first()
+    except Exception:
+        pass
+    
+    periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
 
     # Registrar visualización manual del modal
     registrar_actividad_tarjeta(
         cliente_id=cliente_id,
-        periodo=date.today().strftime("%Y-%m"),
+        periodo=periodo_actividad,
         tarjeta="tipo_documento",
         accion="view_data",
         descripcion=f"Abrió modal de tipos de documento ({tipos.count()} registros)",
         usuario=request.user,
-        detalles={"total_registros": tipos.count(), "accion_origen": "modal_manual"},
+        detalles={
+            "total_registros": tipos.count(), 
+            "accion_origen": "modal_manual",
+            "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+        },
         resultado="exito",
         ip_address=request.META.get("REMOTE_ADDR"),
     )
@@ -973,8 +1165,25 @@ def registrar_vista_clasificaciones(request, cliente_id):
     """
     Endpoint específico para registrar cuando el usuario abre el modal de clasificaciones
     """
+    try:
+        cliente = Cliente.objects.get(id=cliente_id)
+    except Cliente.DoesNotExist:
+        return Response({"error": "Cliente no encontrado"}, status=404)
+    
     # Obtener el upload ID del request
     upload_log_id = request.data.get("upload_log_id")
+
+    # Buscar cierre para actividad
+    cierre_para_actividad = None
+    try:
+        cierre_para_actividad = CierreContabilidad.objects.filter(
+            cliente=cliente,
+            estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+        ).order_by('-fecha_creacion').first()
+    except Exception:
+        pass
+    
+    periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
 
     try:
         # Contar registros del upload específico
@@ -988,6 +1197,7 @@ def registrar_vista_clasificaciones(request, cliente_id):
                 "total_registros": total_registros,
                 "upload_log_id": upload_log_id,
                 "accion_origen": "modal_manual",
+                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
             }
         else:
             # Si no hay upload_log_id, contar todos los registros del cliente
@@ -997,6 +1207,7 @@ def registrar_vista_clasificaciones(request, cliente_id):
             detalles = {
                 "total_registros": total_registros,
                 "accion_origen": "modal_manual",
+                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
             }
     except Exception as e:
         total_registros = 0
@@ -1007,12 +1218,13 @@ def registrar_vista_clasificaciones(request, cliente_id):
             "error": str(e),
             "upload_log_id": upload_log_id,
             "accion_origen": "modal_manual",
+            "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
         }
 
     # Registrar visualización manual del modal
     registrar_actividad_tarjeta(
         cliente_id=cliente_id,
-        periodo=date.today().strftime("%Y-%m"),
+        periodo=periodo_actividad,
         tarjeta="clasificacion",
         accion="view_data",
         descripcion=descripcion,
@@ -1054,10 +1266,22 @@ def cargar_nombres_ingles(request):
     # Verificar si ya existen datos para este cliente
     nombres_existentes = NombreIngles.objects.filter(cliente=cliente).count()
     if nombres_existentes > 0:
+        # Buscar cierre para actividad
+        cierre_para_actividad = None
+        try:
+            cierre_para_actividad = CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+            ).order_by('-fecha_creacion').first()
+        except Exception:
+            pass
+        
+        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+        
         # Registrar intento de upload con datos existentes
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
-            periodo=date.today().strftime("%Y-%m"),
+            periodo=periodo_actividad,
             tarjeta="nombres_ingles",
             accion="upload_excel",
             descripcion=f"Upload rechazado: ya existen {nombres_existentes} nombres en inglés",
@@ -1066,6 +1290,7 @@ def cargar_nombres_ingles(request):
                 "nombre_archivo": archivo.name,
                 "nombres_existentes": nombres_existentes,
                 "razon_rechazo": "datos_existentes",
+                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
             },
             resultado="error",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -1083,7 +1308,6 @@ def cargar_nombres_ingles(request):
 
     # Limpiar archivos temporales anteriores del mismo cliente
     patron_temp = f"temp/nombres_ingles_cliente_{cliente_id}*"
-    import glob
 
     archivos_temp_anteriores = glob.glob(
         os.path.join(
@@ -1100,10 +1324,22 @@ def cargar_nombres_ingles(request):
     nombre_archivo = f"temp/nombres_ingles_cliente_{cliente_id}.xlsx"
     ruta_guardada = default_storage.save(nombre_archivo, archivo)
 
+    # Buscar cierre para actividad
+    cierre_para_actividad = None
+    try:
+        cierre_para_actividad = CierreContabilidad.objects.filter(
+            cliente=cliente,
+            estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+        ).order_by('-fecha_creacion').first()
+    except Exception:
+        pass
+    
+    periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+
     # Registrar actividad de subida
     registrar_actividad_tarjeta(
         cliente_id=cliente_id,
-        periodo=date.today().strftime("%Y-%m"),  # Periodo actual por defecto
+        periodo=periodo_actividad,
         tarjeta="nombres_ingles",
         accion="upload_excel",
         descripcion=f"Subido archivo: {archivo.name}",
@@ -1112,6 +1348,7 @@ def cargar_nombres_ingles(request):
             "nombre_archivo": archivo.name,
             "tamaño_bytes": archivo.size,
             "tipo_contenido": archivo.content_type,
+            "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
         },
         resultado="exito",
         ip_address=request.META.get("REMOTE_ADDR"),
@@ -1148,17 +1385,38 @@ def registrar_vista_nombres_ingles(request, cliente_id):
     """
     Endpoint específico para registrar cuando el usuario abre el modal de nombres en inglés
     """
+    try:
+        cliente = Cliente.objects.get(id=cliente_id)
+    except Cliente.DoesNotExist:
+        return Response({"error": "Cliente no encontrado"}, status=404)
+    
     nombres = NombreIngles.objects.filter(cliente_id=cliente_id)
+
+    # Buscar cierre para actividad
+    cierre_para_actividad = None
+    try:
+        cierre_para_actividad = CierreContabilidad.objects.filter(
+            cliente=cliente,
+            estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+        ).order_by('-fecha_creacion').first()
+    except Exception:
+        pass
+    
+    periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
 
     # Registrar visualización manual del modal
     registrar_actividad_tarjeta(
         cliente_id=cliente_id,
-        periodo=date.today().strftime("%Y-%m"),
+        periodo=periodo_actividad,
         tarjeta="nombres_ingles",
         accion="view_data",
         descripcion=f"Abrió modal de nombres en inglés ({nombres.count()} registros)",
         usuario=request.user,
-        detalles={"total_registros": nombres.count(), "accion_origen": "modal_manual"},
+        detalles={
+            "total_registros": nombres.count(), 
+            "accion_origen": "modal_manual",
+            "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+        },
         resultado="exito",
         ip_address=request.META.get("REMOTE_ADDR"),
     )
@@ -1210,10 +1468,22 @@ def eliminar_nombres_ingles(request, cliente_id):
         # 2. Eliminar registros de NombreIngles
         NombreIngles.objects.filter(cliente=cliente).delete()
 
-        # 3. Registrar actividad exitosa
+        # 3. Buscar cierre para actividad
+        cierre_para_actividad = None
+        try:
+            cierre_para_actividad = CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+            ).order_by('-fecha_creacion').first()
+        except Exception:
+            pass
+        
+        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+
+        # 4. Registrar actividad exitosa
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
-            periodo=date.today().strftime("%Y-%m"),
+            periodo=periodo_actividad,
             tarjeta="nombres_ingles",
             accion="bulk_delete",
             descripcion=f"Eliminados todos los nombres en inglés ({count} registros) y archivos asociados",
@@ -1222,6 +1492,7 @@ def eliminar_nombres_ingles(request, cliente_id):
                 "registros_eliminados": count,
                 "archivos_eliminados": archivos_eliminados,
                 "cliente_nombre": cliente.nombre,
+                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
             },
             resultado="exito",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -1236,10 +1507,22 @@ def eliminar_nombres_ingles(request, cliente_id):
         )
 
     except Exception as e:
+        # Buscar cierre para actividad de error
+        cierre_para_actividad = None
+        try:
+            cierre_para_actividad = CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+            ).order_by('-fecha_creacion').first()
+        except Exception:
+            pass
+        
+        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+        
         # Registrar error
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
-            periodo=date.today().strftime("%Y-%m"),
+            periodo=periodo_actividad,
             tarjeta="nombres_ingles",
             accion="bulk_delete",
             descripcion=f"Error al eliminar nombres en inglés y archivos: {str(e)}",
@@ -1248,6 +1531,7 @@ def eliminar_nombres_ingles(request, cliente_id):
                 "error": str(e),
                 "registros_contados": count,
                 "cliente_nombre": cliente.nombre,
+                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
             },
             resultado="error",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -1281,10 +1565,13 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
             cliente = Cliente.objects.get(id=cliente_id)
             instance = serializer.save()
 
+            # Obtener período correcto para el cliente
+            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+
             # Registrar creación manual
             registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
-                periodo=date.today().strftime("%Y-%m"),
+                periodo=periodo_actividad,
                 tarjeta="tipo_documento",
                 accion="manual_create",
                 descripcion=f"Creado tipo documento: {instance.codigo} - {instance.descripcion}",
@@ -1303,10 +1590,19 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
 
             raise ValidationError("Cliente no encontrado")
         except Exception as e:
+            # Obtener período correcto para el cliente si hay error
+            periodo_actividad = date.today().strftime("%Y-%m")  # Fallback en caso de error
+            try:
+                if cliente_id:
+                    cliente = Cliente.objects.get(id=cliente_id)
+                    periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+            except:
+                pass
+            
             # Registrar error
             registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
-                periodo=date.today().strftime("%Y-%m"),
+                periodo=periodo_actividad,
                 tarjeta="tipo_documento",
                 accion="manual_create",
                 descripcion=f"Error al crear tipo documento: {str(e)}",
@@ -1320,6 +1616,7 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         old_instance = self.get_object()
         cliente_id = old_instance.cliente.id
+        cliente = old_instance.cliente
 
         try:
             # No permitir cambiar el cliente en una actualización
@@ -1328,10 +1625,13 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
             else:
                 instance = serializer.save()
 
+            # Obtener período correcto para el cliente
+            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+
             # Registrar edición
             registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
-                periodo=date.today().strftime("%Y-%m"),
+                periodo=periodo_actividad,
                 tarjeta="tipo_documento",
                 accion="manual_edit",
                 descripcion=f"Editado tipo documento ID:{instance.id}: {old_instance.codigo} → {instance.codigo}",
@@ -1354,10 +1654,13 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
             )
 
         except Exception as e:
+            # Obtener período correcto para el cliente
+            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+            
             # Registrar error
             registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
-                periodo=date.today().strftime("%Y-%m"),
+                periodo=periodo_actividad,
                 tarjeta="tipo_documento",
                 accion="manual_edit",
                 descripcion=f"Error al editar tipo documento ID:{old_instance.id}: {str(e)}",
@@ -1374,6 +1677,7 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         cliente_id = instance.cliente.id
+        cliente = instance.cliente
         tipo_info = {
             "id": instance.id,
             "codigo": instance.codigo,
@@ -1383,10 +1687,13 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
         try:
             instance.delete()
 
+            # Obtener período correcto para el cliente
+            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+
             # Registrar eliminación
             registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
-                periodo=date.today().strftime("%Y-%m"),
+                periodo=periodo_actividad,
                 tarjeta="tipo_documento",
                 accion="manual_delete",
                 descripcion=f'Eliminado tipo documento: {tipo_info["codigo"]} - {tipo_info["descripcion"]}',
@@ -1397,10 +1704,13 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
             )
 
         except Exception as e:
+            # Obtener período correcto para el cliente
+            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+            
             # Registrar error
             registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
-                periodo=date.today().strftime("%Y-%m"),
+                periodo=periodo_actividad,
                 tarjeta="tipo_documento",
                 accion="manual_delete",
                 descripcion=f'Error al eliminar tipo documento ID:{tipo_info["id"]}: {str(e)}',
@@ -2642,7 +2952,6 @@ def limpiar_archivos_temporales_antiguos():
     """
     Limpia archivos temporales de tipo_documento que tengan más de 24 horas
     """
-    import glob
     import time
 
     try:

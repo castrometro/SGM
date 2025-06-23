@@ -1,6 +1,8 @@
 # backend/contabilidad/tasks.py
+import hashlib
 import logging
 import os
+import re
 import time
 from datetime import date
 
@@ -23,6 +25,7 @@ from contabilidad.models import (
 from contabilidad.utils.parser_libro_mayor import parsear_libro_mayor
 from contabilidad.utils.parser_nombre_ingles import procesar_archivo_nombres_ingles
 from contabilidad.utils.parser_tipo_documento import parsear_tipo_documento_excel
+from contabilidad.utils.activity_logger import registrar_actividad_tarjeta
 from django.core.files.storage import default_storage
 from django.utils import timezone
 
@@ -717,6 +720,21 @@ def procesar_tipo_documento_con_upload_log(upload_log_id):
             upload_log.tiempo_procesamiento = timezone.now() - inicio_procesamiento
             upload_log.save()
             logger.error(f"Validación de nombre falló: {resultado_validacion}")
+            
+            # Registrar actividad de error usando información del upload_log
+            periodo_actividad = upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m")
+            
+            registrar_actividad_tarjeta(
+                cliente_id=upload_log.cliente.id,
+                periodo=periodo_actividad,
+                tarjeta="tipo_documento",
+                accion="process_excel",
+                descripcion=f"Error validación nombre archivo: {resultado_validacion}",
+                usuario=upload_log.usuario,
+                detalles={"upload_log_id": upload_log.id},
+                resultado="error",
+                ip_address=upload_log.ip_usuario,
+            )
             return f"Error: {resultado_validacion}"
 
         logger.info(f"Nombre de archivo válido: {resultado_validacion}")
@@ -737,6 +755,21 @@ def procesar_tipo_documento_con_upload_log(upload_log_id):
             }
             upload_log.save()
             logger.error(f"Cliente ya tiene {tipos_existentes} tipos de documento")
+            
+            # Registrar actividad de error usando información del upload_log
+            periodo_actividad = upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m")
+            
+            registrar_actividad_tarjeta(
+                cliente_id=upload_log.cliente.id,
+                periodo=periodo_actividad,
+                tarjeta="tipo_documento",
+                accion="process_excel",
+                descripcion=f"Error: Cliente ya tiene {tipos_existentes} tipos de documento",
+                usuario=upload_log.usuario,
+                detalles={"upload_log_id": upload_log.id, "tipos_existentes": tipos_existentes},
+                resultado="error",
+                ip_address=upload_log.ip_usuario,
+            )
             return f"Error: Cliente ya tiene tipos de documento existentes"
 
         # 3. BUSCAR ARCHIVO TEMPORAL (debe haber sido subido previamente)
@@ -752,6 +785,21 @@ def procesar_tipo_documento_con_upload_log(upload_log_id):
             upload_log.tiempo_procesamiento = timezone.now() - inicio_procesamiento
             upload_log.save()
             logger.error(f"Archivo temporal no encontrado: {ruta_completa}")
+            
+            # Registrar actividad de error usando información del upload_log
+            periodo_actividad = upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m")
+            
+            registrar_actividad_tarjeta(
+                cliente_id=upload_log.cliente.id,
+                periodo=periodo_actividad,
+                tarjeta="tipo_documento",
+                accion="process_excel",
+                descripcion="Archivo temporal no encontrado",
+                usuario=upload_log.usuario,
+                detalles={"upload_log_id": upload_log.id},
+                resultado="error",
+                ip_address=upload_log.ip_usuario,
+            )
             return "Error: Archivo temporal no encontrado"
 
         # 4. CALCULAR HASH DEL ARCHIVO
@@ -771,6 +819,21 @@ def procesar_tipo_documento_con_upload_log(upload_log_id):
             upload_log.tiempo_procesamiento = timezone.now() - inicio_procesamiento
             upload_log.save()
             logger.error(f"Error en parser: {msg}")
+            
+            # Registrar actividad de error usando información del upload_log
+            periodo_actividad = upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m")
+            
+            registrar_actividad_tarjeta(
+                cliente_id=upload_log.cliente.id,
+                periodo=periodo_actividad,
+                tarjeta="tipo_documento",
+                accion="process_excel",
+                descripcion=f"Error en procesamiento: {msg}",
+                usuario=upload_log.usuario,
+                detalles={"upload_log_id": upload_log.id},
+                resultado="error",
+                ip_address=upload_log.ip_usuario,
+            )
             return f"Error: {msg}"
 
         # 6. CONTAR TIPOS PROCESADOS
@@ -810,6 +873,25 @@ def procesar_tipo_documento_con_upload_log(upload_log_id):
         except OSError as e:
             logger.warning(f"No se pudo eliminar archivo temporal: {str(e)}")
 
+        # 10. REGISTRAR ACTIVIDAD EXITOSA usando información del upload_log
+        periodo_actividad = upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m")
+        
+        registrar_actividad_tarjeta(
+            cliente_id=upload_log.cliente.id,
+            periodo=periodo_actividad,
+            tarjeta="tipo_documento",
+            accion="process_excel",
+            descripcion=f"Procesado archivo de tipo documento: {tipos_creados} tipos creados",
+            usuario=upload_log.usuario,
+            detalles={
+                "upload_log_id": upload_log.id,
+                "tipos_creados": tipos_creados,
+                "archivo_hash": archivo_hash,
+            },
+            resultado="exito",
+            ip_address=upload_log.ip_usuario,
+        )
+
         logger.info(
             f"✅ Procesamiento completado: {tipos_creados} tipos de documento creados"
         )
@@ -822,6 +904,22 @@ def procesar_tipo_documento_con_upload_log(upload_log_id):
         upload_log.tiempo_procesamiento = timezone.now() - inicio_procesamiento
         upload_log.save()
         logger.exception(f"Error inesperado en procesamiento: {str(e)}")
+        
+        # Registrar actividad de error usando información del upload_log
+        periodo_actividad = upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m")
+        
+        registrar_actividad_tarjeta(
+            cliente_id=upload_log.cliente.id,
+            periodo=periodo_actividad,
+            tarjeta="tipo_documento",
+            accion="process_excel",
+            descripcion=f"Error inesperado en procesamiento: {str(e)}",
+            usuario=upload_log.usuario,
+            detalles={"upload_log_id": upload_log.id, "error": str(e)},
+            resultado="error",
+            ip_address=upload_log.ip_usuario,
+        )
+        
         return f"Error inesperado: {str(e)}"
 
 
@@ -864,9 +962,13 @@ def procesar_clasificacion_con_upload_log(upload_log_id):
             upload_log.tiempo_procesamiento = timezone.now() - inicio
             upload_log.save()
             logger.error(f"Validación de nombre falló: {msg_valid}")
+            
+            # Usar el período del cierre asociado o el actual como fallback
+            periodo_actividad = upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m")
+            
             registrar_actividad_tarjeta(
                 cliente_id=upload_log.cliente.id,
-                periodo=date.today().strftime("%Y-%m"),
+                periodo=periodo_actividad,
                 tarjeta="clasificacion",
                 accion="process_excel",
                 descripcion=f"Error validación nombre archivo: {msg_valid}",
@@ -888,9 +990,13 @@ def procesar_clasificacion_con_upload_log(upload_log_id):
             upload_log.tiempo_procesamiento = timezone.now() - inicio
             upload_log.save()
             logger.error(f"Archivo temporal no encontrado: {ruta_completa}")
+            
+            # Usar el período del cierre asociado o el actual como fallback
+            periodo_actividad = upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m")
+            
             registrar_actividad_tarjeta(
                 cliente_id=upload_log.cliente.id,
-                periodo=date.today().strftime("%Y-%m"),
+                periodo=periodo_actividad,
                 tarjeta="clasificacion",
                 accion="process_excel",
                 descripcion="Archivo temporal no encontrado",
@@ -924,9 +1030,13 @@ def procesar_clasificacion_con_upload_log(upload_log_id):
             upload_log.save()
             
             logger.error(f"Validación falló para upload_log {upload_log.id}: {error_msg}")
+            
+            # Usar el período del cierre asociado o el actual como fallback
+            periodo_actividad = upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m")
+            
             registrar_actividad_tarjeta(
                 cliente_id=upload_log.cliente.id,
-                periodo=date.today().strftime("%Y-%m"),
+                periodo=periodo_actividad,
                 tarjeta="clasificacion",
                 accion="process_excel",
                 descripcion=f"Validación de archivo falló: {len(validacion['errores'])} errores",
@@ -1031,9 +1141,12 @@ def procesar_clasificacion_con_upload_log(upload_log_id):
         except OSError:
             pass
 
+        # Usar el período del cierre asociado o el actual como fallback
+        periodo_actividad = upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m")
+
         registrar_actividad_tarjeta(
             cliente_id=upload_log.cliente.id,
-            periodo=date.today().strftime("%Y-%m"),
+            periodo=periodo_actividad,
             tarjeta="clasificacion",
             accion="process_excel",
             descripcion=f"Procesado archivo de clasificacion: {registros} registros",
@@ -1054,9 +1167,13 @@ def procesar_clasificacion_con_upload_log(upload_log_id):
         upload_log.errores = str(e)
         upload_log.tiempo_procesamiento = timezone.now() - inicio
         upload_log.save()
+        
+        # Usar el período del cierre asociado o el actual como fallback
+        periodo_actividad = upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m")
+        
         registrar_actividad_tarjeta(
             cliente_id=upload_log.cliente.id,
-            periodo=date.today().strftime("%Y-%m"),
+            periodo=periodo_actividad,
             tarjeta="clasificacion",
             accion="process_excel",
             descripcion=f"Error al procesar archivo de clasificacion: {str(e)}",
@@ -1156,10 +1273,13 @@ def crear_sets_y_opciones_clasificacion(upload_log_id):
         
         upload_log.save(update_fields=['resumen'])
         
+        # Usar el período del cierre asociado o el actual como fallback
+        periodo_actividad = upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m")
+        
         # Registrar actividad
         registrar_actividad_tarjeta(
             cliente_id=cliente.id,
-            periodo=date.today().strftime("%Y-%m"),
+            periodo=periodo_actividad,
             tarjeta="clasificacion",
             accion="create_sets_options",
             descripcion=f"Creados {sets_creados} sets y {opciones_creadas} opciones de clasificación",
@@ -1180,10 +1300,13 @@ def crear_sets_y_opciones_clasificacion(upload_log_id):
     except Exception as e:
         logger.exception(f"Error creando sets y opciones para upload_log {upload_log_id}: {str(e)}")
         
+        # Usar el período del cierre asociado o el actual como fallback
+        periodo_actividad = upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m")
+        
         # Registrar error en actividad
         registrar_actividad_tarjeta(
             cliente_id=upload_log.cliente.id,
-            periodo=date.today().strftime("%Y-%m"),
+            periodo=periodo_actividad,
             tarjeta="clasificacion",
             accion="create_sets_options",
             descripcion=f"Error creando sets y opciones: {str(e)}",

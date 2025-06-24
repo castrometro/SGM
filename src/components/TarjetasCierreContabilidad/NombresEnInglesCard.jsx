@@ -87,9 +87,6 @@ const NombresEnInglesCard = ({
 
         if (logData.estado === 'procesando') {
           setUploadProgreso('Procesando archivo...');
-          if (uploadEstado?.estado !== 'procesando') {
-            mostrarNotificacion('warning', '📊 Procesando archivo... Por favor espere.');
-          }
         } else if (logData.estado === 'completado') {
           setUploadProgreso('¡Procesamiento completado!');
           setSubiendo(false);
@@ -103,17 +100,12 @@ const NombresEnInglesCard = ({
             console.error('Error recargando nombres:', err);
           }
 
-          mostrarNotificacion(
-            'success',
-            `✅ Archivo procesado exitosamente. ${logData.resumen?.nombres_creados || 0} nombres registrados.`
-          );
-
         } else if (logData.estado === 'error') {
           setUploadProgreso('Error en el procesamiento');
           setSubiendo(false);
-          setError(logData.errores || 'Error desconocido en el procesamiento');
+          setEstado('error');
+          setError(logData.errores || 'Error en el procesamiento');
           if (onCompletado) onCompletado(false);
-          mostrarNotificacion('error', `❌ Error: ${logData.errores || 'Error desconocido'}`);
         }
 
       } catch (err) {
@@ -149,41 +141,42 @@ const NombresEnInglesCard = ({
         setUploadProgreso("Archivo recibido, iniciando procesamiento...");
         mostrarNotificacion("info", "📤 Archivo subido correctamente. Procesando...");
       } else {
-        await new Promise(r => setTimeout(r, 1500));
-        let nuevoEstado = "";
-        for (let i = 0; i < 10; i++) {
-          await new Promise((r) => setTimeout(r, 1200));
-          const data = await obtenerEstadoNombresIngles(clienteId);
-          nuevoEstado = typeof data === "string" ? data : data.estado;
-          if (nuevoEstado === "subido") break;
-        }
-        setEstado(nuevoEstado);
-        setSubiendo(false);
+        setEstado("procesando");
         setUploadProgreso("");
-        if (nuevoEstado === "subido") {
-          onCompletado && onCompletado(true);
-          mostrarNotificacion("success", "✅ Archivo procesado exitosamente");
-        } else {
-          setError("No se pudo verificar la subida. Intenta refrescar.");
-          onCompletado && onCompletado(false);
-          mostrarNotificacion("warning", "⚠️ No se pudo verificar el estado. Intenta refrescar.");
-        }
+        setTimeout(() => {
+          handleActualizarNombresIngles();
+        }, 1000);
       }
     } catch (err) {
       console.error("Error al subir archivo:", err);
       
       // Manejo específico para error 409 - Datos existentes
       if (err.response?.status === 409) {
-        setError("Ya hay archivos de nombres en inglés existentes para este cierre. Para subir un nuevo archivo, primero debe eliminar los archivos anteriores usando el botón 'Eliminar todos'.");
-        mostrarNotificacion("warning", "Archivo rechazado: Ya existen nombres en inglés. Use 'Eliminar todos' primero.");
+        const msg =
+          '⚠️ Ya hay nombres en inglés existentes para este cliente. Para subir un nuevo archivo, primero debe eliminar los nombres en inglés anteriores usando el botón "Eliminar todos".';
+        setError(msg);
+        mostrarNotificacion("warning", msg);
+      } else if (
+        err.response?.status === 400 &&
+        err.response.data?.formato_esperado
+      ) {
+        const errData = err.response.data;
+        setError(
+          `Formato de nombre incorrecto. Esperado: ${errData.formato_esperado}, Recibido: ${errData.archivo_recibido}`
+        );
+        mostrarNotificacion(
+          "warning",
+          `❌ Nombre de archivo incorrecto\n\n` +
+            `📋 Formato requerido: ${errData.formato_esperado}\n` +
+            `📁 Archivo enviado: ${errData.archivo_recibido}\n\n` +
+            "💡 Asegúrese de que el archivo siga exactamente el formato indicado."
+        );
       } else if (err.response?.data?.error) {
-        // Otros errores del backend
         setError(err.response.data.error);
         mostrarNotificacion("error", err.response.data.error);
       } else {
-        // Error genérico
-        setError("Error al subir el archivo.");
-        mostrarNotificacion("error", "Error al subir el archivo.");
+        setError("Error al subir el archivo. Verifique el formato.");
+        mostrarNotificacion("error", "❌ Error al subir el archivo.");
       }
       
       onCompletado && onCompletado(false);
@@ -224,7 +217,7 @@ const NombresEnInglesCard = ({
     setEliminando(true);
     setErrorEliminando("");
     try {
-      const result = await eliminarTodosNombresIngles(clienteId);
+      await eliminarTodosNombresIngles(clienteId);
       setEstado("pendiente");
       setNombresIngles([]);
       setArchivoNombre("");
@@ -233,8 +226,7 @@ const NombresEnInglesCard = ({
       setUploadProgreso("");
       if (onCompletado) onCompletado(false);
 
-      const mensaje = `Eliminados: ${result.registros_eliminados || 0} registros, ${result.archivos_eliminados || 0} archivos`;
-      mostrarNotificacion("success", `🗑️ ${mensaje}`);
+      // No se muestran notificaciones de éxito para mantener consistencia con ClasificacionBulkCard
     } catch (err) {
       setErrorEliminando("Error eliminando los nombres en inglés");
       mostrarNotificacion("error", "❌ Error eliminando los nombres en inglés");
@@ -337,10 +329,10 @@ const NombresEnInglesCard = ({
       <span className="text-xs text-gray-400 italic mt-2">
         {estado === "subido" ? (
           <span className="text-green-400">
-            {`✔ Archivo cargado correctamente${nombresIngles.length > 0 ? ` (${nombresIngles.length} nombres en inglés)` : ""}`}
+            {`✔ Archivo procesado correctamente${nombresIngles.length > 0 ? ` (${nombresIngles.length} nombres en inglés)` : ""}`}
           </span>
         ) : subiendo || uploadProgreso ? (
-          <span className="text-blue-400">🔄 {uploadProgreso || "Procesando archivo..."}</span>
+          <span className="text-blue-400">🔄 Procesando nombres en inglés…</span>
         ) : error ? (
           <span className="text-red-400">❌ Error: {error}</span>
         ) : nombresIngles.length > 0 ? (

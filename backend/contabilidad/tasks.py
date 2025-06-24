@@ -531,6 +531,23 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
             libro_obj.upload_log = upload_log
             libro_obj.save()
 
+        # Cargar datos auxiliares generados por otras tarjetas para
+        # complementar el libro mayor (tipos de documento, nombres en
+        # inglés y clasificaciones)
+        tipos_doc_map = {
+            td.codigo: td
+            for td in TipoDocumento.objects.filter(cliente=upload_log.cliente)
+        }
+        nombres_ingles_set = set(
+            NombreIngles.objects.filter(cliente=upload_log.cliente)
+            .values_list("cuenta_codigo", flat=True)
+        )
+        cuentas_clasificadas = set(
+            AccountClassification.objects.filter(
+                cuenta__cliente=upload_log.cliente
+            ).values_list("cuenta__codigo", flat=True)
+        )
+
         wb = load_workbook(ruta_completa, read_only=True, data_only=True)
         ws = wb.active
 
@@ -626,9 +643,8 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                 td_obj = None
                 if TD and row[TD]:
                     codigo_td = str(row[TD]).strip()
-                    try:
-                        td_obj = TipoDocumento.objects.get(cliente=upload_log.cliente, codigo=codigo_td)
-                    except TipoDocumento.DoesNotExist:
+                    td_obj = tipos_doc_map.get(codigo_td)
+                    if td_obj is None:
                         Incidencia.objects.create(
                             cierre=upload_log.cierre,
                             tipo="negocio",
@@ -653,10 +669,10 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                     descripcion=str(row[DS] or ""),
                 )
 
-                tiene_nombre_ingles = cuenta_obj.nombre_en or NombreIngles.objects.filter(
-                    cliente=upload_log.cliente,
-                    cuenta_codigo=cuenta_obj.codigo,
-                ).exists()
+                tiene_nombre_ingles = (
+                    cuenta_obj.nombre_en
+                    or cuenta_obj.codigo in nombres_ingles_set
+                )
                 if not tiene_nombre_ingles:
                     Incidencia.objects.create(
                         cierre=upload_log.cierre,
@@ -665,7 +681,7 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                     )
                     incidencias_creadas += 1
 
-                if not AccountClassification.objects.filter(cuenta=cuenta_obj).exists():
+                if cuenta_obj.codigo not in cuentas_clasificadas:
                     Incidencia.objects.create(
                         cierre=upload_log.cierre,
                         tipo="negocio",

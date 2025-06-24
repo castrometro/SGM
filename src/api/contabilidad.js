@@ -362,14 +362,14 @@ export const eliminarNombresEnIngles = async (clienteId) => {
 // ==================== NOMBRES EN INGLÉS CRUD ====================
 export const obtenerNombresInglesCliente = async (clienteId) => {
   const res = await api.get(
-    `/contabilidad/nombres-ingles-crud/${clienteId}/list/`,
+    `/contabilidad/nombre-ingles/${clienteId}/list/`,
   );
   return res.data;
 };
 
 export const registrarVistaNombresIngles = async (clienteId) => {
   const res = await api.post(
-    `/contabilidad/nombres-ingles-crud/${clienteId}/registrar-vista/`,
+    `/contabilidad/nombre-ingles/${clienteId}/registrar-vista/`,
   );
   return res.data;
 };
@@ -391,7 +391,7 @@ export const eliminarNombreIngles = async (id) => {
 
 export const eliminarTodosNombresIngles = async (clienteId) => {
   const res = await api.post(
-    `/contabilidad/nombres-ingles-crud/${clienteId}/eliminar-todos/`,
+    `/contabilidad/nombre-ingles/${clienteId}/eliminar-todos/`,
   );
   return res.data;
 };

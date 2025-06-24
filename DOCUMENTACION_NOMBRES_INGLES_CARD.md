@@ -65,6 +65,7 @@ Ubicación: `backend/contabilidad/views.py`
 Ubicación: `backend/contabilidad/tasks.py`
 - Lee el Excel y guarda cada par `código - nombre` en el modelo `NombreIngles`.
 - Elimina cualquier dato previo para el cliente antes de insertar los nuevos registros.
+- Si el archivo contiene códigos repetidos, se conserva la última aparición para evitar errores por claves duplicadas.
 - Actualiza el estado del `UploadLog` a `completado` o `error` y guarda un resumen con la cantidad de nombres creados.
 
 ---

@@ -386,14 +386,17 @@ def procesar_nombres_ingles_con_upload_log(upload_log_id):
         eliminados = NombreIngles.objects.filter(cliente=upload_log.cliente).count()
         NombreIngles.objects.filter(cliente=upload_log.cliente).delete()
 
+        # Eliminar duplicados manteniendo el último registro de cada código
+        df = df.drop_duplicates(subset=["cuenta_codigo"], keep="last")
+
         creados = 0
         errores = []
         for idx, row in df.iterrows():
             try:
-                NombreIngles.objects.create(
+                NombreIngles.objects.update_or_create(
                     cliente=upload_log.cliente,
                     cuenta_codigo=row["cuenta_codigo"],
-                    nombre_ingles=row["nombre_ingles"],
+                    defaults={"nombre_ingles": row["nombre_ingles"]},
                 )
                 creados += 1
             except Exception as e:

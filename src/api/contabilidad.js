@@ -99,12 +99,16 @@ export const eliminarTipoDocumento = async (id) => {
 };
 
 // ==================== LIBRO MAYOR ====================
-export const subirLibroMayor = async (cierreId, archivo) => {
+export const subirLibroMayor = async (clienteId, archivo, cierreId = null) => {
   const formData = new FormData();
-  formData.append("cierre", cierreId);
+  formData.append("cliente_id", clienteId);
   formData.append("archivo", archivo);
+  if (cierreId) formData.append("cierre_id", cierreId);
 
-  const res = await api.post("/contabilidad/libromayor/", formData);
+  const res = await api.post(
+    "/contabilidad/libro-mayor/subir-archivo/",
+    formData,
+  );
   return res.data;
 };
 

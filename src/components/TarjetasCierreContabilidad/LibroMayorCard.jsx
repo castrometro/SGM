@@ -1,67 +1,105 @@
 import { useEffect, useState, useRef } from "react";
-import { obtenerLibrosMayor, subirLibroMayor } from "../../api/contabilidad";
+import {
+  obtenerLibrosMayor,
+  subirLibroMayor,
+  obtenerEstadoUploadLog,
+} from "../../api/contabilidad";
 import EstadoBadge from "../EstadoBadge";
+import Notificacion from "../Notificacion";
 
 const LibroMayorCard = ({
   cierreId,
+  clienteId,
+  cliente = null,
   disabled,
   onCompletado,
   tipoDocumentoReady,
   clasificacionReady,
   nombresInglesReady,
-  numeroPaso
+  numeroPaso,
 }) => {
-  const [libroActual, setLibroActual] = useState(null);
+  const [estado, setEstado] = useState("pendiente");
   const [archivoNombre, setArchivoNombre] = useState("");
   const [subiendo, setSubiendo] = useState(false);
   const [error, setError] = useState("");
-  const [polling, setPolling] = useState(false);
-  const [processingTime, setProcessingTime] = useState(0);
+  const [uploadLogId, setUploadLogId] = useState(null);
+  const [uploadEstado, setUploadEstado] = useState(null);
+  const [uploadProgreso, setUploadProgreso] = useState("");
+  const [movimientosProcesados, setMovimientosProcesados] = useState(0);
+  const [incidenciasDetectadas, setIncidenciasDetectadas] = useState(0);
+  const [notificacion, setNotificacion] = useState({ visible: false, tipo: "", mensaje: "" });
   const fileInputRef = useRef();
 
-  // Fetch libro mayor al montar y al hacer polling
+  const mostrarNotificacion = (tipo, mensaje) => {
+    setNotificacion({ visible: true, tipo, mensaje });
+  };
+
+  const cerrarNotificacion = () => {
+    setNotificacion({ visible: false, tipo: "", mensaje: "" });
+  };
+
+  // Cargar último libro mayor al montar
   useEffect(() => {
-    let interval;
-    const fetchLibros = async () => {
+    const cargarEstado = async () => {
       if (!cierreId) return;
       try {
-        const librosData = await obtenerLibrosMayor(cierreId);
-        const actual = librosData.length > 0 ? librosData[librosData.length - 1] : null;
-        setLibroActual(actual);
-
-        if (actual && actual.estado === "procesando" && !polling) {
-          setPolling(true);
-          setProcessingTime(0);
-        }
-        if (actual && ["completado", "error"].includes(actual.estado) && polling) {
-          setPolling(false);
-          setProcessingTime(0);
-          if (actual.estado === "completado") {
-            onCompletado && onCompletado();
+        const data = await obtenerLibrosMayor(cierreId);
+        const ultimo = data && data.length > 0 ? data[data.length - 1] : null;
+        if (ultimo) {
+          setEstado(ultimo.estado);
+          if (ultimo.estado === "procesando" && ultimo.upload_log) {
+            setUploadLogId(ultimo.upload_log);
+            setSubiendo(true);
+          } else if (ultimo.estado === "completado") {
+            onCompletado && onCompletado(true);
           }
+        } else {
+          setEstado("pendiente");
         }
       } catch (e) {
-        setLibroActual(null);
-        setPolling(false);
-        setProcessingTime(0);
+        console.error("Error cargando libro mayor:", e);
+      }
+    };
+    cargarEstado();
+  }, [cierreId, onCompletado]);
+
+  // Monitoreo en tiempo real
+  useEffect(() => {
+    if (!uploadLogId || !subiendo) return;
+
+    const monitorear = async () => {
+      try {
+        const logData = await obtenerEstadoUploadLog(uploadLogId);
+        setUploadEstado(logData);
+        if (logData.estado === "procesando") {
+          setEstado("procesando");
+          setUploadProgreso("Procesando archivo...");
+        } else if (logData.estado === "completado") {
+          setEstado("completado");
+          setSubiendo(false);
+          setUploadProgreso("¡Procesamiento completado!");
+          setMovimientosProcesados(logData.resumen?.movimientos_creados || 0);
+          setIncidenciasDetectadas(logData.resumen?.incidencias_creadas || 0);
+          mostrarNotificacion(
+            "success",
+            `✅ Archivo procesado exitosamente. ${logData.resumen?.movimientos_creados || 0} movimientos, ${logData.resumen?.incidencias_creadas || 0} incidencias.`
+          );
+          onCompletado && onCompletado(true);
+        } else if (logData.estado === "error") {
+          setEstado("error");
+          setSubiendo(false);
+          setError(logData.errores || "Error en el procesamiento");
+          mostrarNotificacion("error", logData.errores || "Error en el procesamiento");
+          onCompletado && onCompletado(false);
+        }
+      } catch (e) {
+        console.error("Error monitoreando upload:", e);
       }
     };
 
-    fetchLibros();
-    if (polling) {
-      interval = setInterval(() => {
-        fetchLibros();
-        setProcessingTime(prev => prev + 4);
-      }, 4000);
-    }
+    const interval = setInterval(monitorear, 2000);
     return () => clearInterval(interval);
-    // eslint-disable-next-line
-  }, [cierreId, polling, onCompletado]);
-
-  // Reset processingTime al cambiar cierre
-  useEffect(() => {
-    setProcessingTime(0);
-  }, [cierreId]);
+  }, [uploadLogId, subiendo, onCompletado]);
 
   const handleSeleccionArchivo = (e) => {
     const archivo = e.target.files[0];
@@ -69,50 +107,85 @@ const LibroMayorCard = ({
     setArchivoNombre(archivo.name);
   };
 
+  const validarNombreArchivo = (nombre) => {
+    const rut = cliente?.rut ? cliente.rut.replace(/\./g, '').replace('-', '') : '[A-Za-z0-9]+';
+    const regex = new RegExp(`^${rut}_LibroMayor_(0[1-9]|1[0-2])\\d{4}\\.xlsx$`, 'i');
+    return regex.test(nombre);
+  };
+
   const handleSubirLibro = async () => {
+    const archivo = fileInputRef.current.files[0];
+    if (!archivo) {
+      setError("Debes seleccionar un archivo .xlsx");
+      return;
+    }
+
+    if (!validarNombreArchivo(archivo.name)) {
+      setError("Nombre de archivo inválido");
+      mostrarNotificacion(
+        "warning",
+        `❌ Nombre de archivo incorrecto. Formato esperado: ${cliente?.rut ? cliente.rut.replace(/\./g, '').replace('-', '') : 'RUT'}_LibroMayor_MMAAAA.xlsx`
+      );
+      return;
+    }
+
     setSubiendo(true);
+    setEstado("subiendo");
     setError("");
+    setUploadProgreso("Subiendo archivo...");
+    setUploadLogId(null);
+    setUploadEstado(null);
+
     try {
-      const formFile = fileInputRef.current.files[0];
-      if (!formFile) {
-        setError("Debes seleccionar un archivo .xlsx");
+      const res = await subirLibroMayor(clienteId, archivo, cierreId);
+      if (res.upload_log_id) {
+        setUploadLogId(res.upload_log_id);
+        setEstado("procesando");
+        setUploadProgreso("Archivo recibido, iniciando procesamiento...");
+        mostrarNotificacion("info", "📤 Archivo subido correctamente. Procesando...");
+      } else {
         setSubiendo(false);
-        return;
+        mostrarNotificacion("success", "✅ Archivo subido");
       }
-      await subirLibroMayor(cierreId, formFile);
-      setArchivoNombre("");
-      setPolling(true);
     } catch (err) {
-      setError("Error al subir el archivo.");
-    } finally {
+      console.error("Error al subir archivo:", err);
       setSubiendo(false);
+      setEstado("error");
+      if (err.response?.status === 400 && err.response.data?.formato_esperado) {
+        const d = err.response.data;
+        setError(`Formato de nombre incorrecto. Esperado: ${d.formato_esperado}, Recibido: ${d.archivo_recibido}`);
+        mostrarNotificacion(
+          "warning",
+          `❌ Nombre de archivo incorrecto\n\n📋 Formato requerido: ${d.formato_esperado}\n📁 Archivo enviado: ${d.archivo_recibido}`
+        );
+      } else if (err.response?.data?.error) {
+        setError(err.response.data.error);
+        mostrarNotificacion("error", err.response.data.error);
+      } else {
+        setError("Error al subir el archivo.");
+        mostrarNotificacion("error", "❌ Error al subir el archivo.");
+      }
+      onCompletado && onCompletado(false);
     }
   };
 
-  let estado = "pendiente";
-  if (libroActual) {
-    if (libroActual.estado === "completado") estado = "subido";
-    else if (libroActual.estado === "procesando") estado = "procesando";
-    else if (libroActual.estado === "error") estado = "error";
-  }
-
   return (
-    <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${disabled ? "opacity-60 pointer-events-none" : ""}`}>
+    <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${disabled ? 'opacity-60 pointer-events-none' : ''}`}>
       <h3 className="text-lg font-semibold mb-3">{numeroPaso}. Libro Mayor y Procesamiento</h3>
 
       {/* Información de prerequisitos */}
       <div className="text-xs text-gray-400 mb-2">
         <div className="flex items-center gap-2">
           <span>Prerequisitos:</span>
-          <span className={tipoDocumentoReady ? "text-green-400" : "text-red-400"}>
-            {tipoDocumentoReady ? "✓" : "✗"} Tipos de Documento
+          <span className={tipoDocumentoReady ? 'text-green-400' : 'text-red-400'}>
+            {tipoDocumentoReady ? '✓' : '✗'} Tipos de Documento
           </span>
-          <span className={clasificacionReady ? "text-green-400" : "text-red-400"}>
-            {clasificacionReady ? "✓" : "✗"} Clasificación
+          <span className={clasificacionReady ? 'text-green-400' : 'text-red-400'}>
+            {clasificacionReady ? '✓' : '✗'} Clasificación
           </span>
           {nombresInglesReady !== undefined && (
-            <span className={nombresInglesReady ? "text-green-400" : "text-red-400"}>
-              {nombresInglesReady ? "✓" : "✗"} Nombres en Inglés
+            <span className={nombresInglesReady ? 'text-green-400' : 'text-red-400'}>
+              {nombresInglesReady ? '✓' : '✗'} Nombres en Inglés
             </span>
           )}
         </div>
@@ -120,68 +193,77 @@ const LibroMayorCard = ({
 
       <div className="flex items-center gap-2 mb-2">
         <span className="font-semibold">Estado:</span>
-        <EstadoBadge estado={estado} />
+        <EstadoBadge estado={estado === 'completado' ? 'subido' : estado} />
       </div>
 
-      {libroActual && libroActual.fecha_subida && (
-        <span className="text-xs text-gray-400">
-          Subido: {new Date(libroActual.fecha_subida).toLocaleString()}
+      <div className="text-xs text-gray-400 bg-gray-900/50 border border-gray-600 rounded p-2 mb-2">
+        <div className="font-medium text-gray-300 mb-1">📋 Formato de archivo requerido:</div>
+        <div className="font-mono text-yellow-300">
+          {cliente?.rut ? `${cliente.rut.replace(/\./g, '').replace('-', '')}_LibroMayor_MMAAAA.xlsx` : 'RUT_LibroMayor_MMAAAA.xlsx'}
+        </div>
+      </div>
+
+      <div className="flex gap-3 items-center">
+        <button
+          type="button"
+          onClick={() => fileInputRef.current.click()}
+          disabled={subiendo || disabled}
+          className={`bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded text-sm font-medium transition ${subiendo ? 'opacity-60 cursor-not-allowed' : ''}`}
+        >
+          {subiendo ? uploadProgreso || 'Subiendo...' : 'Elegir archivo .xlsx'}
+        </button>
+        <span className="text-gray-300 text-xs italic truncate max-w-xs">
+          {archivoNombre || 'Ningún archivo seleccionado'}
         </span>
-      )}
-      {libroActual && libroActual.errores && (
-        <div className="text-red-400 text-xs mt-1">
-          Errores: {libroActual.errores}
-        </div>
-      )}
-      {estado === "procesando" && processingTime > 120 && (
-        <div className="text-orange-400 text-xs mt-1">
-          El procesamiento está tardando más de lo habitual ({Math.round(processingTime/60)} min). Por favor, espera o revisa más tarde.
-        </div>
-      )}
+      </div>
+      <input
+        type="file"
+        accept=".xlsx"
+        ref={fileInputRef}
+        style={{ display: 'none' }}
+        onChange={handleSeleccionArchivo}
+        disabled={subiendo || disabled}
+      />
 
-      {(estado !== "subido") && (
-        <div className="flex flex-col gap-2">
-          <div className="flex gap-3 items-center">
-            <button
-              type="button"
-              onClick={() => fileInputRef.current.click()}
-              disabled={subiendo || disabled}
-              className={`bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded text-sm font-medium transition ${subiendo ? "opacity-60 cursor-not-allowed" : ""}`}
-            >
-              {subiendo ? "Subiendo..." : "Elegir archivo .xlsx"}
-            </button>
-            <span className="text-gray-300 text-xs italic truncate max-w-xs">
-              {archivoNombre || "Ningún archivo seleccionado"}
-            </span>
+      {subiendo && uploadEstado && (
+        <div className="text-xs bg-blue-900/20 border border-blue-500/30 rounded p-2 mt-2">
+          <div className="flex items-center justify-between mb-1">
+            <span className="font-medium text-blue-200">Procesando:</span>
+            <span className="text-blue-300">{uploadEstado.estado}</span>
           </div>
-          <input
-            type="file"
-            accept=".xlsx"
-            ref={fileInputRef}
-            style={{ display: "none" }}
-            onChange={handleSeleccionArchivo}
-            disabled={subiendo || disabled}
-          />
-          <button
-            onClick={handleSubirLibro}
-            disabled={subiendo || !archivoNombre || disabled}
-            className="px-3 py-1 rounded text-sm font-medium transition bg-blue-700 hover:bg-blue-600 text-white shadow w-fit"
-          >
-            {subiendo ? "Subiendo..." : "Subir libro mayor"}
-          </button>
+          {uploadEstado.tiempo_procesamiento && (
+            <div className="text-blue-300">Tiempo: {uploadEstado.tiempo_procesamiento}</div>
+          )}
         </div>
       )}
 
-      {error && <div className="text-xs text-red-400 mt-1">{error}</div>}
+      {estado === 'completado' && (
+        <div className="text-sm text-green-400 mt-2 space-y-1">
+          <div>✅ Movimientos contables procesados: {movimientosProcesados}</div>
+          <div>⚠️ Incidencias detectadas: {incidenciasDetectadas}</div>
+        </div>
+      )}
+
+      {error && (
+        <div className="text-xs text-red-400 mt-1 p-2 bg-red-900/20 rounded border border-red-500/30">
+          <p className="font-medium">⚠️ {error}</p>
+        </div>
+      )}
+
       <span className="text-xs text-gray-400 italic mt-2">
-        {estado === "subido"
-          ? "✔ Libro mayor procesado correctamente con toda la información previa"
-          : estado === "procesando"
-          ? "🔄 Procesando libro mayor con clasificaciones y configuraciones..."
-          : disabled
-          ? "Complete los pasos anteriores para procesar el libro mayor"
-          : "Suba el libro mayor para completar el procesamiento del cierre"}
+        {estado === 'completado'
+          ? '✔ Libro mayor procesado correctamente'
+          : estado === 'procesando'
+          ? '🔄 Procesando libro mayor...'
+          : 'Suba el libro mayor para completar el cierre'}
       </span>
+
+      <Notificacion
+        tipo={notificacion.tipo}
+        mensaje={notificacion.mensaje}
+        visible={notificacion.visible}
+        onClose={cerrarNotificacion}
+      />
     </div>
   );
 };

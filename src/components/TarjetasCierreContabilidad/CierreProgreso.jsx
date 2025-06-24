@@ -108,6 +108,8 @@ const CierreProgreso = ({ cierre, cliente }) => {
       {/* Paso 4: Libro Mayor (procesamiento final) */}
       <LibroMayorCard
         cierreId={cierre.id}
+        clienteId={cliente.id}
+        cliente={cliente}
         disabled={
           !clasificacionReady || (cliente.bilingue && !nombresInglesReady)
         }

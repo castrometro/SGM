@@ -25,6 +25,7 @@ from .views import (
     TipoDocumentoViewSet,
     cargar_clasificacion_bulk,
     cargar_libro_mayor,
+    reprocesar_movimientos_incompletos,
     cargar_nombres_ingles,
     cargar_tipo_documento,
     cuentas_pendientes_set,
@@ -91,6 +92,7 @@ urlpatterns = [
     path("tipo-documento/subir-archivo/", cargar_tipo_documento),
     path("clasificacion-bulk/subir-archivo/", cargar_clasificacion_bulk),
     path("libro-mayor/subir-archivo/", cargar_libro_mayor),
+    path("libro-mayor/reprocesar-incompletos/", reprocesar_movimientos_incompletos),
     path("tipo-documento/<int:cliente_id>/estado/", estado_tipo_documento),
     path("tipo-documento/<int:cliente_id>/list/", tipos_documento_cliente),
     path(

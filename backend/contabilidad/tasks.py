@@ -641,6 +641,7 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                     )
 
                 td_obj = None
+                mov_incompleto = False
                 if TD and row[TD]:
                     codigo_td = str(row[TD]).strip()
                     td_obj = tipos_doc_map.get(codigo_td)
@@ -654,7 +655,8 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                             ),
                         )
                         incidencias_creadas += 1
-
+                        mov_incompleto = True
+                
                 mov = MovimientoContable.objects.create(
                     cierre=upload_log.cierre,
                     cuenta=cuenta_obj,
@@ -670,6 +672,7 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                     debe=row[D] or 0,
                     haber=row[H] or 0,
                     descripcion=str(row[DS] or ""),
+                    flag_incompleto=mov_incompleto,
                 )
 
                 tiene_nombre_ingles = (
@@ -686,6 +689,7 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                         ),
                     )
                     incidencias_creadas += 1
+                    mov.flag_incompleto = True
 
                 if cuenta_obj.codigo not in cuentas_clasificadas:
                     Incidencia.objects.create(
@@ -697,7 +701,10 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                         ),
                     )
                     incidencias_creadas += 1
+                    mov.flag_incompleto = True
 
+                if mov.flag_incompleto:
+                    mov.save(update_fields=["flag_incompleto"])
                 movimientos_creados += 1
 
         fecha_inicio = min(fechas_mov) if fechas_mov else None

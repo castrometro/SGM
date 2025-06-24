@@ -9,6 +9,7 @@ from contabilidad.models import (
     ClasificacionSet,
     ClasificacionOption,
     AccountClassification,
+    NombreIngles,
 )
 
 
@@ -90,3 +91,74 @@ class MovimientosResumenTests(TestCase):
         data = response.json()
         self.assertEqual(len(data), 1)
         self.assertEqual(data[0]["cuenta_id"], self.c1.id)
+
+
+class ReprocesarIncompletosTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+        area = Area.objects.create(nombre="Contabilidad")
+        self.user = Usuario.objects.create_user(
+            correo_bdo="tester@test.com",
+            password="pass",
+            nombre="Tester",
+            apellido="Test",
+            tipo_usuario="gerente",
+        )
+        self.user.areas.add(area)
+
+        self.cliente = Cliente.objects.create(nombre="Cliente2", rut="2-7")
+        self.cierre = CierreContabilidad.objects.create(
+            cliente=self.cliente,
+            usuario=self.user,
+            area=area,
+            periodo="2024-02",
+        )
+
+        self.c1 = CuentaContable.objects.create(
+            cliente=self.cliente, codigo="2001", nombre="Ventas"
+        )
+        self.c2 = CuentaContable.objects.create(
+            cliente=self.cliente, codigo="2002", nombre="Compras"
+        )
+
+        MovimientoContable.objects.create(
+            cierre=self.cierre,
+            cuenta=self.c1,
+            fecha="2024-02-01",
+            debe=100,
+            flag_incompleto=True,
+        )
+        MovimientoContable.objects.create(
+            cierre=self.cierre,
+            cuenta=self.c2,
+            fecha="2024-02-01",
+            debe=50,
+            flag_incompleto=True,
+        )
+
+        set1 = ClasificacionSet.objects.create(cliente=self.cliente, nombre="G")
+        opt1 = ClasificacionOption.objects.create(set_clas=set1, valor="X")
+
+        AccountClassification.objects.create(
+            cuenta=self.c1, set_clas=set1, opcion=opt1, asignado_por=self.user
+        )
+
+        NombreIngles.objects.create(
+            cliente=self.cliente, cuenta_codigo="2001", nombre_ingles="Sales"
+        )
+
+        self.client.force_authenticate(user=self.user)
+
+    def test_reprocesar_movimientos(self):
+        url = "/api/contabilidad/libro-mayor/reprocesar-incompletos/"
+        response = self.client.post(url, {"cierre_id": self.cierre.id}, format="json")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["reprocesados"], 1)
+        self.assertEqual(data["aun_incompletos"], 1)
+
+        m1 = MovimientoContable.objects.get(cuenta=self.c1)
+        m2 = MovimientoContable.objects.get(cuenta=self.c2)
+        self.assertFalse(m1.flag_incompleto)
+        self.assertTrue(m2.flag_incompleto)

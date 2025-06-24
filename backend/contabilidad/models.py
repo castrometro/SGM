@@ -258,6 +258,7 @@ class MovimientoContable(models.Model):
     debe = models.DecimalField(max_digits=20, decimal_places=2, default=0)
     haber = models.DecimalField(max_digits=20, decimal_places=2, default=0)
     descripcion = models.TextField(blank=True)
+    flag_incompleto = models.BooleanField(default=False)
 
 
 # ======================================

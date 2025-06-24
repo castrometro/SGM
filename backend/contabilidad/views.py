@@ -1464,6 +1464,101 @@ def cargar_libro_mayor(request):
     })
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def reprocesar_movimientos_incompletos(request):
+    """Reprocesa manualmente movimientos con flag_incompleto=True."""
+    cierre_id = request.data.get("cierre_id")
+    if not cierre_id:
+        return Response({"error": "cierre_id es requerido"}, status=400)
+
+    try:
+        cierre = CierreContabilidad.objects.get(id=cierre_id)
+    except CierreContabilidad.DoesNotExist:
+        return Response({"error": "Cierre no encontrado"}, status=404)
+
+    movimientos = (
+        MovimientoContable.objects.filter(cierre=cierre, flag_incompleto=True)
+        .select_related("cuenta")
+    )
+
+    reprocesados = 0
+    incompletos = 0
+
+    for mov in movimientos:
+        sigue_incompleto = False
+
+        if mov.tipo_documento_id is None and mov.tipo:
+            td = TipoDocumento.objects.filter(
+                cliente=cierre.cliente, codigo=mov.tipo
+            ).first()
+            if td:
+                mov.tipo_documento = td
+            else:
+                sigue_incompleto = True
+        elif mov.tipo_documento_id is None:
+            sigue_incompleto = True
+
+        tiene_nombre = mov.cuenta.nombre_en or NombreIngles.objects.filter(
+            cliente=cierre.cliente, cuenta_codigo=mov.cuenta.codigo
+        ).exists()
+        if not tiene_nombre:
+            sigue_incompleto = True
+
+        clas_ok = AccountClassification.objects.filter(
+            cuenta=mov.cuenta
+        ).exists()
+        if not clas_ok:
+            sigue_incompleto = True
+
+        if not sigue_incompleto:
+            mov.flag_incompleto = False
+            mov.save(update_fields=["tipo_documento", "flag_incompleto"])
+
+            Incidencia.objects.filter(
+                cierre=cierre,
+                descripcion__icontains=f"cuenta {mov.cuenta.codigo}"
+            ).update(resuelta=True)
+
+            registrar_actividad_tarjeta(
+                cliente_id=cierre.cliente.id,
+                periodo=cierre.periodo,
+                tarjeta="libro_mayor",
+                accion="manual_edit",
+                descripcion=f"Movimiento {mov.id} completado tras reprocesamiento",
+                usuario=request.user,
+                resultado="exito",
+                detalles={"movimiento_id": mov.id},
+                ip_address=request.META.get("REMOTE_ADDR"),
+            )
+            reprocesados += 1
+        else:
+            incompletos += 1
+
+    registrar_actividad_tarjeta(
+        cliente_id=cierre.cliente.id,
+        periodo=cierre.periodo,
+        tarjeta="libro_mayor",
+        accion="process_complete",
+        descripcion=(
+            f"Reprocesamiento manual completado. {reprocesados} movimientos "
+            f"corregidos, {incompletos} aún incompletos."
+        ),
+        usuario=request.user,
+        resultado="exito" if reprocesados > 0 else "warning",
+        detalles={"total_reprocesados": reprocesados, "aun_incompletos": incompletos},
+        ip_address=request.META.get("REMOTE_ADDR"),
+    )
+
+    return Response(
+        {
+            "reprocesados": reprocesados,
+            "aun_incompletos": incompletos,
+            "total_movimientos": movimientos.count(),
+        }
+    )
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def nombres_ingles_cliente(request, cliente_id):

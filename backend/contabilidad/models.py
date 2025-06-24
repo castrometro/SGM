@@ -236,6 +236,7 @@ class MovimientoContable(models.Model):
     tipo_documento = models.ForeignKey(
         TipoDocumento, on_delete=models.SET_NULL, null=True
     )
+    tipo_doc_codigo = models.CharField(max_length=10, blank=True, default="")
     numero_documento = models.CharField(max_length=50, blank=True)
     tipo = models.CharField(max_length=50, blank=True)
     numero_comprobante = models.CharField(max_length=50, blank=True)

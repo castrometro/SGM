@@ -1494,9 +1494,10 @@ def reprocesar_movimientos_incompletos(request):
             "clasificacion": [],
         }
 
-        if mov.tipo_documento_id is None and mov.tipo:
+        codigo_doc = mov.tipo_doc_codigo or mov.tipo
+        if mov.tipo_documento_id is None and codigo_doc:
             td = TipoDocumento.objects.filter(
-                cliente=cierre.cliente, codigo=mov.tipo
+                cliente=cierre.cliente, codigo=codigo_doc
             ).first()
             if td:
                 mov.tipo_documento = td

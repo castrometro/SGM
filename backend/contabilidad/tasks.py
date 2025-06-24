@@ -703,6 +703,7 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                     cuenta=cuenta_obj,
                     fecha=fecha,
                     tipo_documento=td_obj,
+                    tipo_doc_codigo=codigo_td,
                     numero_documento=str(row[ND] or ""),
                     tipo=str(row[T] or ""),
                     numero_comprobante=str(row[NC] or ""),
@@ -891,10 +892,10 @@ def parsear_libro_mayor_completo(
                     cierre=cierre,
                     cuenta=cuenta,
                     fecha=fecha_mov,
+                    tipo_doc_codigo=tipo_documento_codigo,
                     debe=monto if monto > 0 else 0,
                     haber=abs(monto) if monto < 0 else 0,
                     descripcion=str(row.get("Descripcion", "")),
-                    referencia=str(row.get("Referencia", "")),
                 )
 
                 # Aplicar tipo de documento si existe

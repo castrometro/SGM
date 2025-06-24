@@ -15,6 +15,7 @@ import {
 
 const NombresEnInglesCard = ({
   clienteId,
+  cliente = null,
   onCompletado,
   disabled,
   numeroPaso
@@ -255,6 +256,16 @@ const NombresEnInglesCard = ({
         <Download size={16} />
         Descargar Plantilla
       </a>
+
+      {/* Información del formato requerido */}
+      <div className="text-xs text-gray-400 bg-gray-900/50 border border-gray-600 rounded p-2 mb-2">
+        <div className="font-medium text-gray-300 mb-1">📋 Formato de archivo requerido:</div>
+        <div className="font-mono text-yellow-300">
+          {cliente?.rut
+            ? `${cliente.rut.replace(/\./g, '').replace('-', '')}_NombresIngles.xlsx`
+            : 'RUT_NombresIngles.xlsx'}
+        </div>
+      </div>
       
       <div className="flex gap-3 items-center">
         <button

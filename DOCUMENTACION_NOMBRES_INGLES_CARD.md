@@ -22,7 +22,7 @@ graph TD
 ## 🎨 Frontend: NombresEnInglesCard.jsx
 Ubicación: `src/components/TarjetasCierreContabilidad/NombresEnInglesCard.jsx`
 
-La tarjeta permite subir el archivo de traducciones, monitorea el proceso con UploadLog y ofrece un modal CRUD para editar las traducciones.
+La tarjeta permite subir el archivo de traducciones, monitorea el proceso con UploadLog y ofrece un modal CRUD para editar las traducciones. Al igual que en TipoDocumentoCard, se muestra un cuadro informativo con el formato requerido `{rut}_NombresIngles.xlsx` para guiar al usuario.
 
 Estados principales:
 ```javascript
@@ -44,10 +44,10 @@ Flujo simplificado:
 ## 🌐 APIs del Frontend
 Ubicación: `src/api/contabilidad.js`
 
-- **subirNombresIngles(formData)** → `POST /contabilidad/nombres-ingles/subir-archivo/`
-- **obtenerEstadoNombresIngles(clienteId)** → `GET /contabilidad/nombres-ingles/{clienteId}/estado/`
-- **obtenerNombresInglesCliente(clienteId)** → `GET /contabilidad/nombres-ingles/{clienteId}/list/`
-- **eliminarTodosNombresIngles(clienteId)** → `POST /contabilidad/nombres-ingles/{clienteId}/eliminar-todos/`
+- **subirNombresIngles(formData)** → `POST /contabilidad/nombre-ingles/subir-archivo/`
+- **obtenerEstadoNombresIngles(clienteId)** → `GET /contabilidad/nombre-ingles/{clienteId}/estado/`
+- **obtenerNombresInglesCliente(clienteId)** → `GET /contabilidad/nombre-ingles/{clienteId}/list/`
+- **eliminarTodosNombresIngles(clienteId)** → `POST /contabilidad/nombre-ingles/{clienteId}/eliminar-todos/`
 - **obtenerEstadoUploadLog(uploadLogId)** → monitoreo en tiempo real.
 
 ---

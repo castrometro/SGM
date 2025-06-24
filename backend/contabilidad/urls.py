@@ -96,15 +96,15 @@ urlpatterns = [
         registrar_vista_tipos_documento,
     ),
     path("tipo-documento/<int:cliente_id>/eliminar-todos/", eliminar_tipos_documento),
-    path("nombres-ingles/subir-archivo/", cargar_nombres_ingles),
-    path("nombres-ingles/<int:cliente_id>/estado/", estado_nombres_ingles),
-    path("nombres-ingles/<int:cliente_id>/list/", nombres_ingles_cliente),
+    path("nombre-ingles/subir-archivo/", cargar_nombres_ingles),
+    path("nombre-ingles/<int:cliente_id>/estado/", estado_nombres_ingles),
+    path("nombre-ingles/<int:cliente_id>/list/", nombres_ingles_cliente),
     path(
-        "nombres-ingles/<int:cliente_id>/registrar-vista/",
+        "nombre-ingles/<int:cliente_id>/registrar-vista/",
         registrar_vista_nombres_ingles,
     ),
     path(
-        "nombres-ingles/<int:cliente_id>/eliminar-todos/", eliminar_nombres_ingles
+        "nombre-ingles/<int:cliente_id>/eliminar-todos/", eliminar_nombres_ingles
     ),
     path(
         "clasificacion/<int:cliente_id>/registrar-vista/",

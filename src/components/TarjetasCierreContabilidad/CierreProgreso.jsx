@@ -97,9 +97,8 @@ const CierreProgreso = ({ cierre, cliente }) => {
       {/* Paso 3: Nombres en Inglés (solo si cliente es bilingüe) */}
       {cliente.bilingue && (
         <NombresEnInglesCard
-          cierreId={cierre.id}
           clienteId={cliente.id}
-          clasificacionReady={clasificacionReady}
+          cliente={cliente}
           onCompletado={handleTraduccionCompletada}
           disabled={!clasificacionReady}
           numeroPaso={paso++}

@@ -334,19 +334,19 @@ export const obtenerMovimientosCuenta = async (cierreId, cuentaId) => {
 // ==================== NOMBRES EN INGLÉS ====================
 export const obtenerEstadoNombresIngles = async (clienteId) => {
   const res = await api.get(
-    `/contabilidad/nombres-ingles/${clienteId}/estado/`,
+    `/contabilidad/nombre-ingles/${clienteId}/estado/`,
   );
   return typeof res.data === "string" ? res.data : res.data.estado;
 };
 
 export const obtenerNombresEnIngles = async (clienteId) => {
-  const res = await api.get(`/contabilidad/nombres-ingles/${clienteId}/list/`);
+  const res = await api.get(`/contabilidad/nombre-ingles/${clienteId}/list/`);
   return res.data;
 };
 
 export const subirNombresIngles = async (formData) => {
   const res = await api.post(
-    "/contabilidad/nombres-ingles/subir-archivo/",
+    "/contabilidad/nombre-ingles/subir-archivo/",
     formData,
   );
   return res.data;
@@ -354,7 +354,7 @@ export const subirNombresIngles = async (formData) => {
 
 export const eliminarNombresEnIngles = async (clienteId) => {
   const res = await api.post(
-    `/contabilidad/nombres-ingles/${clienteId}/eliminar-todos/`,
+    `/contabilidad/nombre-ingles/${clienteId}/eliminar-todos/`,
   );
   return res.data;
 };

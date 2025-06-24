@@ -27,6 +27,8 @@ Ubicación: `src/components/TarjetasCierreContabilidad/LibroMayorCard.jsx`
 
 La tarjeta valida el nombre `{RUT}_LibroMayor_MMAAAA.xlsx`, sube el archivo al seleccionarlo y monitorea el proceso de forma automática.
 
+El Excel original incluye una columna llamada `TIPODOC.` (con punto final). Al procesar el archivo, el backend normaliza los encabezados retirando signos de puntuación, por lo que dicha columna se maneja como `TIPODOC` internamente.
+
 ### 📊 Estados Principales
 ```javascript
 const [estado, setEstado] = useState("pendiente");

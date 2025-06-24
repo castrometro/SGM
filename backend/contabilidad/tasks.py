@@ -573,7 +573,10 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
         NI = idx.get("NINTERNO")
         CC = idx.get("CENTRODECOSTO")
         AX = idx.get("AUXILIAR")
-        TD = idx.get("TIPODOC")
+        # La cabecera original suele venir como "TIPODOC." con punto al final.
+        # Al normalizarla se convierte en "TIPODOC", pero dejamos el alias por
+        # claridad.
+        TD = idx.get("TIPODOC") or idx.get("TIPODOC.")
         ND = idx.get("NUMERODOC")
         DG = idx.get("DETDEGASTOINSTFINANCIERO")
         D = idx["DEBE"]

@@ -1605,6 +1605,41 @@ def reprocesar_movimientos_incompletos(request):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def movimientos_incompletos(request, cierre_id):
+    """Devuelve movimientos con flag_incompleto=True e incidencias asociadas."""
+    try:
+        cierre = CierreContabilidad.objects.get(id=cierre_id)
+    except CierreContabilidad.DoesNotExist:
+        return Response({"error": "Cierre no encontrado"}, status=404)
+
+    movimientos = (
+        MovimientoContable.objects.filter(cierre=cierre, flag_incompleto=True)
+        .select_related("cuenta")
+    )
+
+    data = []
+    for mov in movimientos:
+        incidencias = list(
+            Incidencia.objects.filter(
+                cierre=cierre,
+                descripcion__icontains=f"cuenta {mov.cuenta.codigo}"
+            ).values_list("descripcion", flat=True)
+        )
+        data.append(
+            {
+                "id": mov.id,
+                "cuenta_codigo": mov.cuenta.codigo,
+                "cuenta_nombre": mov.cuenta.nombre,
+                "descripcion": mov.descripcion,
+                "incidencias": incidencias,
+            }
+        )
+
+    return Response(data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def nombres_ingles_cliente(request, cliente_id):
     nombres = NombreIngles.objects.filter(cliente_id=cliente_id)
 

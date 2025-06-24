@@ -12,6 +12,7 @@ from contabilidad.models import (
     UploadLog,
     ClasificacionCuentaArchivo,
     NombreIngles,
+    Incidencia,
 )
 
 
@@ -162,6 +163,12 @@ class ReprocesarIncompletosTests(TestCase):
             cliente=self.cliente, cuenta_codigo="2001", nombre_ingles="Sales"
         )
 
+        Incidencia.objects.create(
+            cierre=self.cierre,
+            tipo="negocio",
+            descripcion="Movimiento 1, cuenta 2001: No tiene nombre en inglés",
+        )
+
         self.client.force_authenticate(user=self.user)
 
     def test_reprocesar_movimientos(self):
@@ -193,3 +200,12 @@ class ReprocesarIncompletosTests(TestCase):
         log_general = TarjetaActivityLog.objects.filter(accion="process_complete", cierre=self.cierre).first()
         self.assertIsNotNone(log_general)
         self.assertEqual(log_general.detalles["movimientos_corregidos"], [m1.id])
+
+    def test_listar_movimientos_incompletos(self):
+        url = f"/api/contabilidad/libro-mayor/incompletos/{self.cierre.id}/"
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data), 2)
+        first = data[0]
+        self.assertIn("incidencias", first)

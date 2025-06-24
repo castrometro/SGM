@@ -119,6 +119,13 @@ export const obtenerLibrosMayor = async (cierreId) => {
   return res.data;
 };
 
+export const obtenerMovimientosIncompletos = async (cierreId) => {
+  const res = await api.get(
+    `/contabilidad/libro-mayor/incompletos/${cierreId}/`
+  );
+  return res.data;
+};
+
 export const eliminarLibroMayor = async (libroId) => {
   const res = await api.delete(`/contabilidad/libromayor/${libroId}/`);
   return res.data;

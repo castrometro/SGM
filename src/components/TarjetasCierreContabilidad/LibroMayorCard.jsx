@@ -3,9 +3,11 @@ import {
   obtenerLibrosMayor,
   subirLibroMayor,
   obtenerEstadoUploadLog,
+  obtenerMovimientosIncompletos,
 } from "../../api/contabilidad";
 import EstadoBadge from "../EstadoBadge";
 import Notificacion from "../Notificacion";
+import ModalMovimientosIncompletos from "./ModalMovimientosIncompletos";
 
 const LibroMayorCard = ({
   cierreId,
@@ -28,6 +30,8 @@ const LibroMayorCard = ({
   const [movimientosProcesados, setMovimientosProcesados] = useState(0);
   const [incidenciasDetectadas, setIncidenciasDetectadas] = useState(0);
   const [notificacion, setNotificacion] = useState({ visible: false, tipo: "", mensaje: "" });
+  const [modalIncompletoAbierto, setModalIncompletoAbierto] = useState(false);
+  const [movimientosIncompletos, setMovimientosIncompletos] = useState([]);
   const fileInputRef = useRef();
 
   const mostrarNotificacion = (tipo, mensaje) => {
@@ -180,6 +184,16 @@ const LibroMayorCard = ({
     }
   };
 
+  const handleVerIncidencias = async () => {
+    try {
+      const data = await obtenerMovimientosIncompletos(cierreId);
+      setMovimientosIncompletos(Array.isArray(data) ? data : []);
+      setModalIncompletoAbierto(true);
+    } catch (err) {
+      console.error("Error cargando movimientos incompletos:", err);
+    }
+  };
+
   return (
     <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${disabled ? 'opacity-60 pointer-events-none' : ''}`}>
       <h3 className="text-lg font-semibold mb-3">{numeroPaso}. Libro Mayor y Procesamiento</h3>
@@ -252,6 +266,15 @@ const LibroMayorCard = ({
         <div className="text-sm text-green-400 mt-2 space-y-1">
           <div>✅ Movimientos contables procesados: {movimientosProcesados}</div>
           <div>⚠️ Incidencias detectadas: {incidenciasDetectadas}</div>
+          {incidenciasDetectadas > 0 && (
+            <button
+              type="button"
+              onClick={handleVerIncidencias}
+              className="text-blue-400 hover:text-blue-200 text-xs underline"
+            >
+              Ver movimientos con incidencias
+            </button>
+          )}
         </div>
       )}
 
@@ -274,6 +297,11 @@ const LibroMayorCard = ({
         mensaje={notificacion.mensaje}
         visible={notificacion.visible}
         onClose={cerrarNotificacion}
+      />
+      <ModalMovimientosIncompletos
+        abierto={modalIncompletoAbierto}
+        onClose={() => setModalIncompletoAbierto(false)}
+        movimientos={movimientosIncompletos}
       />
     </div>
   );

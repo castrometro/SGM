@@ -30,27 +30,22 @@ from rest_framework.views import APIView
 from .utils.activity_logger import (
     registrar_actividad_tarjeta,
 )  # Comentado temporalmente
+from .utils import obtener_cierre_activo
 
 logger = logging.getLogger(__name__)
 
 
 def obtener_periodo_actividad_para_cliente(cliente):
-    """
-    Helper function para obtener el período correcto para registrar actividades de tarjeta.
-    Busca el cierre activo del cliente, si no encuentra usa la fecha actual.
-    """
+    """Devuelve el período asociado al cierre activo del cliente."""
+
     try:
-        cierre_para_actividad = CierreContabilidad.objects.filter(
-            cliente=cliente,
-            estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-        ).order_by('-fecha_creacion').first()
-        
+        cierre_para_actividad = obtener_cierre_activo(cliente)
         if cierre_para_actividad:
             return cierre_para_actividad.periodo
-        else:
-            return date.today().strftime("%Y-%m")
     except Exception:
-        return date.today().strftime("%Y-%m")
+        pass
+
+    return date.today().strftime("%Y-%m")
 
 
 def get_client_ip(request):
@@ -636,33 +631,8 @@ def cargar_tipo_documento(request):
                 status=400,
             )
 
-        # Intentar determinar el cierre más reciente del cliente (mismo patrón que clasificación)
-        cierre_relacionado = None
         cierre_id = request.data.get("cierre_id")  # Si el frontend lo envía
-        
-        print(f"🔍 DEBUG: cierre_id del frontend: {cierre_id}")
-        
-        if cierre_id:
-            try:
-                cierre_relacionado = CierreContabilidad.objects.get(id=cierre_id, cliente=cliente)
-                print(f"✅ DEBUG: Cierre encontrado usando cierre_id del frontend: {cierre_relacionado.id} - {cierre_relacionado.periodo}")
-            except CierreContabilidad.DoesNotExist:
-                print(f"❌ DEBUG: Cierre con id {cierre_id} no encontrado, buscando automáticamente")
-                pass
-        else:
-            print("🔎 DEBUG: No se envió cierre_id desde frontend, buscando automáticamente")
-        
-        # Si no se especifica cierre, buscar el más reciente que no esté cerrado
-        if not cierre_relacionado:
-            cierre_relacionado = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
-            
-            if cierre_relacionado:
-                print(f"🔍 DEBUG: Cierre encontrado automáticamente: {cierre_relacionado.id} - {cierre_relacionado.periodo} - Estado: {cierre_relacionado.estado}")
-            else:
-                print("⚠️ DEBUG: No se encontró ningún cierre abierto para el cliente")
+        cierre_relacionado = obtener_cierre_activo(cliente, cierre_id)
 
         print(f"📄 DEBUG: UploadLog se creará con cierre: {cierre_relacionado.id if cierre_relacionado else 'None'}")
 
@@ -796,31 +766,22 @@ def cargar_clasificacion_bulk(request):
             else:
                 return Response({"error": mensaje}, status=400)
 
-        # BUSCAR EL CIERRE ASOCIADO (igual que en tipo_documento)
-        cierre_relacionado = None
-        
-        # Intentar usar el cierre_id proporcionado desde el frontend
-        if cierre_id:
-            try:
-                cierre_relacionado = CierreContabilidad.objects.get(id=cierre_id, cliente=cliente)
-                logger.info(f"✅ Cierre encontrado usando cierre_id del frontend: {cierre_relacionado.id} - {cierre_relacionado.periodo}")
-            except CierreContabilidad.DoesNotExist:
-                logger.warning(f"❌ Cierre con id {cierre_id} no encontrado, buscando automáticamente")
-                pass
+        cierre_relacionado = obtener_cierre_activo(cliente, cierre_id)
+
+        if cierre_id and cierre_relacionado and str(cierre_relacionado.id) == str(cierre_id):
+            logger.info(
+                f"✅ Cierre encontrado usando cierre_id del frontend: {cierre_relacionado.id} - {cierre_relacionado.periodo}"
+            )
+        elif cierre_id:
+            logger.warning(
+                f"❌ Cierre con id {cierre_id} no encontrado, buscando automáticamente"
+            )
+        elif cierre_relacionado:
+            logger.info(
+                f"🔍 Cierre encontrado automáticamente: {cierre_relacionado.id} - {cierre_relacionado.periodo} - Estado: {cierre_relacionado.estado}"
+            )
         else:
-            logger.info("🔎 No se envió cierre_id desde frontend, buscando automáticamente")
-        
-        # Si no se especifica cierre, buscar el más reciente que no esté cerrado
-        if not cierre_relacionado:
-            cierre_relacionado = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
-            
-            if cierre_relacionado:
-                logger.info(f"🔍 Cierre encontrado automáticamente: {cierre_relacionado.id} - {cierre_relacionado.periodo} - Estado: {cierre_relacionado.estado}")
-            else:
-                logger.warning("⚠️ No se encontró ningún cierre abierto para el cliente")
+            logger.warning("⚠️ No se encontró ningún cierre abierto para el cliente")
 
         logger.info(f"📋 UploadLog de clasificación se creará con cierre: {cierre_relacionado.id if cierre_relacionado else 'None'}")
 
@@ -1334,10 +1295,7 @@ def cargar_nombres_ingles(request):
         return Response({"error": msg}, status=400)
 
     # Buscar cierre relacionado automáticamente
-    cierre_relacionado = CierreContabilidad.objects.filter(
-        cliente=cliente,
-        estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-    ).order_by('-fecha_creacion').first()
+    cierre_relacionado = obtener_cierre_activo(cliente)
 
     # Crear UploadLog
     upload_log = UploadLog.objects.create(

@@ -339,6 +339,119 @@ def procesar_nombres_ingles_upload(upload_id):
         upload.save(update_fields=["estado", "errores", "resumen"])
 
 
+@shared_task
+def procesar_nombres_ingles_con_upload_log(upload_log_id):
+    """Procesa archivo de nombres en inglés usando UploadLog"""
+    logger.info(
+        "Iniciando procesamiento de nombres en inglés para upload_log %s",
+        upload_log_id,
+    )
+
+    try:
+        upload_log = UploadLog.objects.get(id=upload_log_id)
+    except UploadLog.DoesNotExist:
+        logger.error("UploadLog con id %s no encontrado", upload_log_id)
+        return f"Error: UploadLog {upload_log_id} no encontrado"
+
+    upload_log.estado = "procesando"
+    upload_log.save(update_fields=["estado"])
+    inicio = timezone.now()
+
+    try:
+        ruta_relativa = (
+            f"temp/nombres_ingles_cliente_{upload_log.cliente.id}_{upload_log.id}.xlsx"
+        )
+        ruta_completa = default_storage.path(ruta_relativa)
+
+        # Calcular hash del archivo para registrarlo en el UploadLog
+        with open(ruta_completa, "rb") as f:
+            archivo_hash = hashlib.sha256(f.read()).hexdigest()
+
+        upload_log.hash_archivo = archivo_hash
+        upload_log.save(update_fields=["hash_archivo"])
+
+        # Validar archivo de nombres en inglés
+        validacion = validar_archivo_nombres_ingles_excel(ruta_completa)
+        if not validacion["es_valido"]:
+            error_msg = "Archivo inválido: " + "; ".join(validacion["errores"])
+            upload_log.estado = "error"
+            upload_log.errores = error_msg
+            upload_log.tiempo_procesamiento = timezone.now() - inicio
+            upload_log.resumen = {"validacion": validacion, "archivo_hash": archivo_hash}
+            upload_log.save()
+            logger.error(f"Validación falló: {error_msg}")
+            return f"Error: {error_msg}"
+
+        df = pd.read_excel(ruta_completa, skiprows=1, header=None)
+        if len(df.columns) < 2:
+            raise ValueError(
+                "El archivo debe tener al menos 2 columnas: código y nombre en inglés"
+            )
+
+        df.columns = ["cuenta_codigo", "nombre_ingles"] + [
+            f"col_{i}" for i in range(2, len(df.columns))
+        ]
+
+        df = df.dropna(subset=["cuenta_codigo", "nombre_ingles"])
+        df["cuenta_codigo"] = df["cuenta_codigo"].astype(str).str.strip()
+        df["nombre_ingles"] = df["nombre_ingles"].astype(str).str.strip()
+        df = df[
+            (df["cuenta_codigo"] != "")
+            & (df["cuenta_codigo"] != "nan")
+            & (df["nombre_ingles"] != "")
+            & (df["nombre_ingles"] != "nan")
+        ]
+
+        eliminados = NombreIngles.objects.filter(cliente=upload_log.cliente).count()
+        NombreIngles.objects.filter(cliente=upload_log.cliente).delete()
+
+        # Eliminar duplicados manteniendo el último registro de cada código
+        df = df.drop_duplicates(subset=["cuenta_codigo"], keep="last")
+
+        creados = 0
+        errores = []
+        for idx, row in df.iterrows():
+            try:
+                NombreIngles.objects.update_or_create(
+                    cliente=upload_log.cliente,
+                    cuenta_codigo=row["cuenta_codigo"],
+                    defaults={"nombre_ingles": row["nombre_ingles"]},
+                )
+                creados += 1
+            except Exception as e:
+                errores.append(f"Fila {idx + 3}: {str(e)}")
+
+        resumen = {
+            "total_filas": len(df),
+            "nombres_creados": creados,
+            "nombres_eliminados_previos": eliminados,
+            "errores_count": len(errores),
+            "archivo_hash": archivo_hash,
+        }
+
+        upload_log.estado = "completado"
+        upload_log.resumen = resumen
+        upload_log.errores = "" if not errores else "\n".join(errores[:10])
+        upload_log.tiempo_procesamiento = timezone.now() - inicio
+        upload_log.save()
+
+        try:
+            if os.path.exists(ruta_completa):
+                os.remove(ruta_completa)
+        except OSError:
+            pass
+
+        return f"Completado: {creados} nombres"
+
+    except Exception as e:
+        upload_log.estado = "error"
+        upload_log.errores = str(e)
+        upload_log.tiempo_procesamiento = timezone.now() - inicio
+        upload_log.save()
+        logger.exception("Error en procesamiento de nombres en ingles")
+        return f"Error: {str(e)}"
+
+
 def parsear_libro_mayor_completo(
     ruta_archivo, libro_upload, tipos_documento, usar_clasificaciones
 ):
@@ -809,7 +922,31 @@ def procesar_tipo_documento_con_upload_log(upload_log_id):
         upload_log.hash_archivo = archivo_hash
         upload_log.save(update_fields=["hash_archivo"])
 
-        # 5. PROCESAR ARCHIVO CON PARSER EXISTENTE
+        # 5. VALIDACIÓN ESTRUCTURA DEL EXCEL
+        validacion = validar_archivo_tipo_documento_excel(ruta_completa)
+        if not validacion["es_valido"]:
+            error_msg = "Archivo inválido: " + "; ".join(validacion["errores"])
+            upload_log.estado = "error"
+            upload_log.errores = error_msg
+            upload_log.tiempo_procesamiento = timezone.now() - inicio_procesamiento
+            upload_log.resumen = {"validacion": validacion, "archivo_hash": archivo_hash}
+            upload_log.save()
+            logger.error(f"Validación falló: {error_msg}")
+            periodo_actividad = upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m")
+            registrar_actividad_tarjeta(
+                cliente_id=upload_log.cliente.id,
+                periodo=periodo_actividad,
+                tarjeta="tipo_documento",
+                accion="process_excel",
+                descripcion=f"Validación archivo falló: {len(validacion['errores'])} errores",
+                usuario=upload_log.usuario,
+                detalles={"upload_log_id": upload_log.id, "errores": validacion["errores"]},
+                resultado="error",
+                ip_address=upload_log.ip_usuario,
+            )
+            return f"Error: {error_msg}"
+
+        # 6. PROCESAR ARCHIVO CON PARSER EXISTENTE
         logger.info(f"Procesando archivo con parser existente: {ruta_completa}")
         ok, msg = parsear_tipo_documento_excel(upload_log.cliente.id, ruta_relativa)
 
@@ -836,10 +973,10 @@ def procesar_tipo_documento_con_upload_log(upload_log_id):
             )
             return f"Error: {msg}"
 
-        # 6. CONTAR TIPOS PROCESADOS
+        # 7. CONTAR TIPOS PROCESADOS
         tipos_creados = TipoDocumento.objects.filter(cliente=upload_log.cliente).count()
 
-        # 7. ACTUALIZAR/CREAR ARCHIVO ACTUAL
+        # 8. ACTUALIZAR/CREAR ARCHIVO ACTUAL
         archivo_actual, created = TipoDocumentoArchivo.objects.get_or_create(
             cliente=upload_log.cliente,
             defaults={"upload_log": upload_log, "fecha_subida": timezone.now()},
@@ -854,7 +991,7 @@ def procesar_tipo_documento_con_upload_log(upload_log_id):
         # El parser existente ya maneja el guardado del archivo
         # No necesitamos mover manualmente el archivo
 
-        # 8. MARCAR COMO COMPLETADO
+        # 9. MARCAR COMO COMPLETADO
         upload_log.estado = "completado"
         upload_log.tiempo_procesamiento = timezone.now() - inicio_procesamiento
         upload_log.resumen = {
@@ -1507,3 +1644,169 @@ def validar_archivo_clasificacion_excel(ruta_archivo, cliente_id):
     except Exception as e:
         errores.append(f"Error inesperado validando archivo: {str(e)}")
         return {'es_valido': False, 'errores': errores, 'advertencias': advertencias, 'estadisticas': estadisticas}
+
+
+def validar_archivo_tipo_documento_excel(ruta_archivo):
+    """Valida un Excel de tipos de documento."""
+    import pandas as pd
+
+    errores = []
+    advertencias = []
+
+    if not os.path.exists(ruta_archivo):
+        errores.append("El archivo no existe en la ruta especificada")
+        return {"es_valido": False, "errores": errores, "advertencias": advertencias, "estadisticas": {}}
+
+    if os.path.getsize(ruta_archivo) == 0:
+        errores.append("El archivo está vacío (0 bytes)")
+        return {"es_valido": False, "errores": errores, "advertencias": advertencias, "estadisticas": {}}
+
+    try:
+        df = pd.read_excel(ruta_archivo)
+    except Exception as e:
+        errores.append(f"Error leyendo el archivo Excel: {str(e)}")
+        return {"es_valido": False, "errores": errores, "advertencias": advertencias, "estadisticas": {}}
+
+    if len(df) == 0:
+        errores.append("El archivo no contiene filas de datos")
+        return {"es_valido": False, "errores": errores, "advertencias": advertencias, "estadisticas": {}}
+
+    if len(df.columns) < 2:
+        errores.append("El archivo debe tener al menos 2 columnas: código y descripción")
+        return {"es_valido": False, "errores": errores, "advertencias": advertencias, "estadisticas": {}}
+
+    col_codigo = df.columns[0]
+    col_desc = df.columns[1]
+
+    codigos_vacios = 0
+    codigos_duplicados = []
+    codigos_largos = []
+    codigos_vistos = set()
+
+    for idx, codigo in df[col_codigo].items():
+        fila = idx + 2
+        if pd.isna(codigo) or str(codigo).strip() == "":
+            codigos_vacios += 1
+            continue
+        codigo_str = str(codigo).strip()
+        if len(codigo_str) > 10:
+            codigos_largos.append(f"Fila {fila}: '{codigo_str}'")
+        if codigo_str in codigos_vistos:
+            codigos_duplicados.append(f"Fila {fila}: '{codigo_str}'")
+        codigos_vistos.add(codigo_str)
+
+    descripciones_vacias = int(
+        df[col_desc].apply(lambda x: pd.isna(x) or str(x).strip() == "").sum()
+    )
+
+    if codigos_largos:
+        errores.append(
+            f"Códigos demasiado largos (máximo 10 caracteres): {', '.join(codigos_largos[:3])}"
+        )
+
+    if codigos_duplicados:
+        errores.append(
+            f"Códigos duplicados ({len(codigos_duplicados)}): {', '.join(codigos_duplicados[:3])}"
+        )
+
+    estadisticas = {
+        "total_filas": len(df),
+        "codigos_vacios": codigos_vacios,
+        "codigos_duplicados": len(codigos_duplicados),
+        "codigos_largos": len(codigos_largos),
+        "descripciones_vacias": descripciones_vacias,
+    }
+
+    es_valido = len(errores) == 0 and (len(df) - codigos_vacios) > 0
+
+    return {
+        "es_valido": es_valido,
+        "errores": errores,
+        "advertencias": advertencias,
+        "estadisticas": estadisticas,
+    }
+
+
+def validar_archivo_nombres_ingles_excel(ruta_archivo):
+    """Valida un Excel de nombres en inglés."""
+    import pandas as pd
+    import re
+
+    errores = []
+    advertencias = []
+
+    if not os.path.exists(ruta_archivo):
+        errores.append("El archivo no existe en la ruta especificada")
+        return {"es_valido": False, "errores": errores, "advertencias": advertencias, "estadisticas": {}}
+
+    if os.path.getsize(ruta_archivo) == 0:
+        errores.append("El archivo está vacío (0 bytes)")
+        return {"es_valido": False, "errores": errores, "advertencias": advertencias, "estadisticas": {}}
+
+    try:
+        df = pd.read_excel(ruta_archivo, skiprows=1, header=None)
+    except Exception as e:
+        errores.append(f"Error leyendo el archivo Excel: {str(e)}")
+        return {"es_valido": False, "errores": errores, "advertencias": advertencias, "estadisticas": {}}
+
+    if len(df) == 0:
+        errores.append("El archivo no contiene filas de datos")
+        return {"es_valido": False, "errores": errores, "advertencias": advertencias, "estadisticas": {}}
+
+    if len(df.columns) < 2:
+        errores.append("El archivo debe tener al menos 2 columnas: código y nombre en inglés")
+        return {"es_valido": False, "errores": errores, "advertencias": advertencias, "estadisticas": {}}
+
+    col_codigo = df.columns[0]
+    col_nombre = df.columns[1]
+
+    codigos_vacios = 0
+    codigos_duplicados = []
+    codigos_invalidos = []
+    codigos_vistos = set()
+
+    patron_codigo = r"^[\d\-]+$"
+
+    for idx, codigo in df[col_codigo].items():
+        fila = idx + 2
+        if pd.isna(codigo) or str(codigo).strip() == "":
+            codigos_vacios += 1
+            continue
+        codigo_str = str(codigo).strip()
+        if not re.match(patron_codigo, codigo_str):
+            codigos_invalidos.append(f"Fila {fila}: '{codigo_str}'")
+            continue
+        if codigo_str in codigos_vistos:
+            codigos_duplicados.append(f"Fila {fila}: '{codigo_str}'")
+        codigos_vistos.add(codigo_str)
+
+    nombres_vacios = int(
+        df[col_nombre].apply(lambda x: pd.isna(x) or str(x).strip() == "").sum()
+    )
+
+    if codigos_invalidos:
+        errores.append(
+            f"Códigos con formato inválido ({len(codigos_invalidos)}): {', '.join(codigos_invalidos[:3])}"
+        )
+
+    if codigos_duplicados:
+        errores.append(
+            f"Códigos duplicados ({len(codigos_duplicados)}): {', '.join(codigos_duplicados[:3])}"
+        )
+
+    estadisticas = {
+        "total_filas": len(df),
+        "codigos_vacios": codigos_vacios,
+        "codigos_invalidos": len(codigos_invalidos),
+        "codigos_duplicados": len(codigos_duplicados),
+        "nombres_vacios": nombres_vacios,
+    }
+
+    es_valido = len(errores) == 0 and (len(df) - codigos_vacios) > 0
+
+    return {
+        "es_valido": es_valido,
+        "errores": errores,
+        "advertencias": advertencias,
+        "estadisticas": estadisticas,
+    }

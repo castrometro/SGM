@@ -70,6 +70,7 @@ from contabilidad.tasks import (
     parsear_nombres_ingles,
     parsear_tipo_documento,
     procesar_clasificacion_con_upload_log,
+    procesar_libro_mayor_con_upload_log,
     procesar_libro_mayor,
     procesar_nombres_ingles,
     procesar_nombres_ingles_upload,
@@ -1376,6 +1377,85 @@ def cargar_nombres_ingles(request):
     )
 
     procesar_nombres_ingles_con_upload_log.delay(upload_log.id)
+
+    return Response({
+        "mensaje": "Archivo recibido y tarea enviada",
+        "upload_log_id": upload_log.id,
+        "estado": upload_log.estado,
+    })
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser])
+@permission_classes([IsAuthenticated])
+def cargar_libro_mayor(request):
+    cliente_id = request.data.get("cliente_id")
+    archivo = request.FILES.get("archivo")
+    cierre_id = request.data.get("cierre_id")
+
+    if not cliente_id or not archivo:
+        return Response({"error": "cliente_id y archivo son requeridos"}, status=400)
+
+    try:
+        cliente = Cliente.objects.get(id=cliente_id)
+    except Cliente.DoesNotExist:
+        return Response({"error": "Cliente no encontrado"}, status=404)
+
+    es_valido, mensaje = UploadLog.validar_nombre_archivo(
+        archivo.name, "LibroMayor", cliente.rut
+    )
+    if not es_valido:
+        if isinstance(mensaje, dict):
+            return Response(mensaje, status=400)
+        return Response({"error": mensaje}, status=400)
+
+    cierre_relacionado = None
+    if cierre_id:
+        try:
+            cierre_relacionado = CierreContabilidad.objects.get(id=cierre_id, cliente=cliente)
+        except CierreContabilidad.DoesNotExist:
+            pass
+    if not cierre_relacionado:
+        cierre_relacionado = CierreContabilidad.objects.filter(
+            cliente=cliente,
+            estado__in=["pendiente", "procesando", "clasificacion", "incidencias", "en_revision"],
+        ).order_by("-fecha_creacion").first()
+
+    upload_log = UploadLog.objects.create(
+        tipo_upload="libro_mayor",
+        cliente=cliente,
+        cierre=cierre_relacionado,
+        usuario=request.user,
+        nombre_archivo_original=archivo.name,
+        tamaño_archivo=archivo.size,
+        estado="subido",
+        ip_usuario=get_client_ip(request),
+    )
+
+    nombre_temp = f"temp/libro_mayor_cliente_{cliente_id}_{upload_log.id}.xlsx"
+    ruta_guardada = default_storage.save(nombre_temp, archivo)
+    upload_log.ruta_archivo = ruta_guardada
+    upload_log.save(update_fields=["ruta_archivo"])
+
+    registrar_actividad_tarjeta(
+        cliente_id=cliente_id,
+        periodo=cierre_relacionado.periodo if cierre_relacionado else date.today().strftime("%Y-%m"),
+        tarjeta="libro_mayor",
+        accion="upload_excel",
+        descripcion=f"Subido archivo de libro mayor: {archivo.name} (UploadLog ID: {upload_log.id})",
+        usuario=request.user,
+        detalles={
+            "nombre_archivo": archivo.name,
+            "tamaño_bytes": archivo.size,
+            "upload_log_id": upload_log.id,
+            "ruta_archivo": ruta_guardada,
+            "cierre_id": cierre_relacionado.id if cierre_relacionado else None,
+        },
+        resultado="exito",
+        ip_address=request.META.get("REMOTE_ADDR"),
+    )
+
+    procesar_libro_mayor_con_upload_log.delay(upload_log.id)
 
     return Response({
         "mensaje": "Archivo recibido y tarea enviada",

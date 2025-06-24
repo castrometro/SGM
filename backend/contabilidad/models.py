@@ -205,6 +205,13 @@ class LibroMayorUpload(models.Model):
         CierreContabilidad, on_delete=models.CASCADE, related_name="libros"
     )
     archivo = models.FileField(upload_to=libro_upload_path)
+    upload_log = models.ForeignKey(
+        "UploadLog",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Referencia al log del upload que generó este archivo",
+    )
     fecha_subida = models.DateTimeField(auto_now_add=True)
     procesado = models.BooleanField(default=False)
     errores = models.TextField(blank=True)

@@ -24,6 +24,7 @@ from .views import (
     TarjetaActivityLogViewSet,
     TipoDocumentoViewSet,
     cargar_clasificacion_bulk,
+    cargar_libro_mayor,
     cargar_nombres_ingles,
     cargar_tipo_documento,
     cuentas_pendientes_set,
@@ -89,6 +90,7 @@ urlpatterns = [
     path("clientes/<int:cliente_id>/resumen/", resumen_cliente),
     path("tipo-documento/subir-archivo/", cargar_tipo_documento),
     path("clasificacion-bulk/subir-archivo/", cargar_clasificacion_bulk),
+    path("libro-mayor/subir-archivo/", cargar_libro_mayor),
     path("tipo-documento/<int:cliente_id>/estado/", estado_tipo_documento),
     path("tipo-documento/<int:cliente_id>/list/", tipos_documento_cliente),
     path(

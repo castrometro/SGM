@@ -14,8 +14,12 @@ from contabilidad.models import (
     ClasificacionOption,
     ClasificacionSet,
     CuentaContable,
+    CentroCosto,
+    Auxiliar,
     LibroMayorUpload,
     MovimientoContable,
+    AperturaCuenta,
+    Incidencia,
     NombreIngles,
     NombreInglesArchivo,
     NombresEnInglesUpload,
@@ -449,6 +453,287 @@ def procesar_nombres_ingles_con_upload_log(upload_log_id):
         upload_log.tiempo_procesamiento = timezone.now() - inicio
         upload_log.save()
         logger.exception("Error en procesamiento de nombres en ingles")
+        return f"Error: {str(e)}"
+
+
+@shared_task
+def procesar_libro_mayor_con_upload_log(upload_log_id):
+    """Procesa archivo de Libro Mayor usando UploadLog"""
+    import hashlib
+    from openpyxl import load_workbook
+    import datetime
+
+    logger.info("Iniciando procesamiento de libro mayor para upload_log %s", upload_log_id)
+
+    try:
+        upload_log = UploadLog.objects.get(id=upload_log_id)
+    except UploadLog.DoesNotExist:
+        logger.error("UploadLog con id %s no encontrado", upload_log_id)
+        return f"Error: UploadLog {upload_log_id} no encontrado"
+
+    upload_log.estado = "procesando"
+    upload_log.save(update_fields=["estado"])
+    inicio = timezone.now()
+
+    libro_obj = None
+
+    try:
+        es_valido, msg_valid = UploadLog.validar_nombre_archivo(
+            upload_log.nombre_archivo_original,
+            "LibroMayor",
+            upload_log.cliente.rut,
+        )
+
+        if not es_valido:
+            upload_log.estado = "error"
+            upload_log.errores = f"Nombre de archivo inválido: {msg_valid}"
+            upload_log.tiempo_procesamiento = timezone.now() - inicio
+            upload_log.save()
+            return f"Error: {msg_valid}"
+
+        ruta_relativa = f"temp/libro_mayor_cliente_{upload_log.cliente.id}_{upload_log.id}.xlsx"
+        ruta_completa = default_storage.path(ruta_relativa)
+
+        if not os.path.exists(ruta_completa):
+            upload_log.estado = "error"
+            upload_log.errores = f"Archivo temporal no encontrado en: {ruta_relativa}"
+            upload_log.tiempo_procesamiento = timezone.now() - inicio
+            upload_log.save()
+            return "Error: Archivo temporal no encontrado"
+
+        with open(ruta_completa, "rb") as f:
+            contenido = f.read()
+            archivo_hash = hashlib.sha256(contenido).hexdigest()
+
+        upload_log.hash_archivo = archivo_hash
+        upload_log.save(update_fields=["hash_archivo"])
+
+        nombre_final = f"libro_mayor_{upload_log.cliente.id}_{timezone.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        libro_obj, created = LibroMayorUpload.objects.get_or_create(
+            cierre=upload_log.cierre,
+            defaults={
+                "archivo": ContentFile(contenido, name=nombre_final),
+                "estado": "procesando",
+                "procesado": False,
+                "upload_log": upload_log,
+            },
+        )
+        if not created:
+            if libro_obj.archivo:
+                try:
+                    libro_obj.archivo.delete()
+                except Exception:
+                    pass
+            libro_obj.archivo.save(nombre_final, ContentFile(contenido))
+            libro_obj.estado = "procesando"
+            libro_obj.procesado = False
+            libro_obj.upload_log = upload_log
+            libro_obj.save()
+
+        wb = load_workbook(ruta_completa, read_only=True, data_only=True)
+        ws = wb.active
+
+        def clean(h):
+            h = h.strip().upper()
+            for a, b in [("Á","A"),("É","E"),("Í","I"),("Ó","O"),("Ú","U"),("Ñ","N")]:
+                h = h.replace(a, b)
+            return re.sub(r"[^A-Z0-9]", "", h)
+
+        raw = next(ws.iter_rows(min_row=9, max_row=9, values_only=True))
+        idx = {clean(h): i for i, h in enumerate(raw) if isinstance(h, str)}
+
+        C = idx["CUENTA"]
+        F = idx["FECHA"]
+        NC = idx.get("NCOMPROBANTE")
+        T = idx.get("TIPO")
+        NI = idx.get("NINTERNO")
+        CC = idx.get("CENTRODECOSTO")
+        AX = idx.get("AUXILIAR")
+        TD = idx.get("TIPODOC")
+        ND = idx.get("NUMERODOC")
+        DG = idx.get("DETDEGASTOINSTFINANCIERO")
+        D = idx["DEBE"]
+        H = idx["HABER"]
+        S = idx["SALDO"]
+        DS = idx["DESCRIPCION"]
+
+        errores = []
+        current_code = None
+        fechas_mov = []
+        movimientos_creados = 0
+        incidencias_creadas = 0
+
+        for row_idx, row in enumerate(ws.iter_rows(min_row=11, values_only=True), start=11):
+            cell = row[C]
+
+            if isinstance(cell, str) and cell.startswith("SALDO ANTERIOR"):
+                try:
+                    resto = cell.split(":", 1)[1].strip()
+                    code, name = resto.split(" ", 1)
+                    saldo_ant = row[S] or 0
+                    cuenta_obj, _ = CuentaContable.objects.get_or_create(
+                        cliente=upload_log.cliente,
+                        codigo=code,
+                        defaults={"nombre": name},
+                    )
+                    AperturaCuenta.objects.update_or_create(
+                        cierre=upload_log.cierre,
+                        cuenta=cuenta_obj,
+                        defaults={"saldo_anterior": saldo_ant},
+                    )
+                    current_code = code
+                except Exception as e:
+                    errores.append(f"F{row_idx} Apertura: {e}")
+                continue
+
+            if current_code and row[F] is not None:
+                raw_fecha = row[F]
+                try:
+                    if isinstance(raw_fecha, str):
+                        s = raw_fecha.strip().strip('"').strip("'")
+                        fecha = datetime.datetime.strptime(s, "%d/%m/%Y").date()
+                    elif isinstance(raw_fecha, datetime.datetime):
+                        fecha = raw_fecha.date()
+                    elif isinstance(raw_fecha, datetime.date):
+                        fecha = raw_fecha
+                    else:
+                        raise ValueError(f"Formato de fecha no soportado: {raw_fecha!r}")
+                    fechas_mov.append(fecha)
+                except Exception as e:
+                    errores.append(f"F{row_idx} Fecha: {e}")
+                    continue
+
+                cuenta_obj, _ = CuentaContable.objects.get_or_create(
+                    cliente=upload_log.cliente,
+                    codigo=current_code,
+                )
+
+                centro_obj = None
+                if CC and row[CC]:
+                    centro_obj, _ = CentroCosto.objects.get_or_create(
+                        cliente=upload_log.cliente,
+                        nombre=str(row[CC]).strip(),
+                    )
+
+                aux_obj = None
+                if AX and row[AX]:
+                    aux_obj, _ = Auxiliar.objects.get_or_create(
+                        rut_auxiliar=str(row[AX]).strip(),
+                        defaults={"nombre": "", "fecha_creacion": timezone.now()},
+                    )
+
+                td_obj = None
+                if TD and row[TD]:
+                    codigo_td = str(row[TD]).strip()
+                    try:
+                        td_obj = TipoDocumento.objects.get(cliente=upload_log.cliente, codigo=codigo_td)
+                    except TipoDocumento.DoesNotExist:
+                        Incidencia.objects.create(
+                            cierre=upload_log.cierre,
+                            tipo="negocio",
+                            descripcion=f"Movimiento {row_idx-10}: Tipo de documento '{codigo_td}' no encontrado",
+                        )
+                        incidencias_creadas += 1
+
+                mov = MovimientoContable.objects.create(
+                    cierre=upload_log.cierre,
+                    cuenta=cuenta_obj,
+                    fecha=fecha,
+                    tipo_documento=td_obj,
+                    numero_documento=str(row[ND] or ""),
+                    tipo=str(row[T] or ""),
+                    numero_comprobante=str(row[NC] or ""),
+                    numero_interno=str(row[NI] or ""),
+                    centro_costo=centro_obj,
+                    auxiliar=aux_obj,
+                    detalle_gasto=str(row[DG] or ""),
+                    debe=row[D] or 0,
+                    haber=row[H] or 0,
+                    descripcion=str(row[DS] or ""),
+                )
+
+                if not cuenta_obj.nombre_en:
+                    Incidencia.objects.create(
+                        cierre=upload_log.cierre,
+                        tipo="negocio",
+                        descripcion=f"Cuenta {cuenta_obj.codigo}: No tiene nombre en inglés",
+                    )
+                    incidencias_creadas += 1
+
+                if not AccountClassification.objects.filter(cuenta=cuenta_obj).exists():
+                    Incidencia.objects.create(
+                        cierre=upload_log.cierre,
+                        tipo="negocio",
+                        descripcion=f"Movimiento {row_idx-10}: Cuenta sin clasificación asignada",
+                    )
+                    incidencias_creadas += 1
+
+                movimientos_creados += 1
+
+        fecha_inicio = min(fechas_mov) if fechas_mov else None
+        fecha_fin = max(fechas_mov) if fechas_mov else None
+
+        libro_obj.estado = "completado" if not errores else "error"
+        libro_obj.procesado = True
+        libro_obj.errores = "\n".join(errores) if errores else ""
+        libro_obj.save()
+
+        upload_log.estado = "completado" if not errores else "error"
+        upload_log.errores = "\n".join(errores) if errores else ""
+        upload_log.resumen = {
+            "movimientos_creados": movimientos_creados,
+            "incidencias_creadas": incidencias_creadas,
+            "archivo_hash": archivo_hash,
+        }
+        upload_log.tiempo_procesamiento = timezone.now() - inicio
+        upload_log.save()
+
+        try:
+            os.remove(ruta_completa)
+        except OSError:
+            pass
+
+        registrar_actividad_tarjeta(
+            cliente_id=upload_log.cliente.id,
+            periodo=upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m"),
+            tarjeta="libro_mayor",
+            accion="process_excel",
+            descripcion=f"Procesado archivo de libro mayor: {movimientos_creados} movimientos",
+            usuario=None,
+            detalles={
+                "upload_log_id": upload_log.id,
+                "movimientos_creados": movimientos_creados,
+                "incidencias_creadas": incidencias_creadas,
+            },
+            resultado="exito" if not errores else "warning",
+            ip_address=None,
+        )
+
+        return f"Completado: {movimientos_creados} movimientos"
+
+    except Exception as e:
+        if libro_obj:
+            libro_obj.estado = "error"
+            libro_obj.errores = str(e)
+            libro_obj.save()
+
+        upload_log.estado = "error"
+        upload_log.errores = str(e)
+        upload_log.tiempo_procesamiento = timezone.now() - inicio
+        upload_log.save()
+
+        registrar_actividad_tarjeta(
+            cliente_id=upload_log.cliente.id,
+            periodo=upload_log.cierre.periodo if upload_log.cierre else date.today().strftime("%Y-%m"),
+            tarjeta="libro_mayor",
+            accion="process_excel",
+            descripcion=f"Error al procesar libro mayor: {str(e)}",
+            usuario=None,
+            detalles={"upload_log_id": upload_log.id},
+            resultado="error",
+            ip_address=None,
+        )
+
         return f"Error: {str(e)}"
 
 

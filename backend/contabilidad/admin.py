@@ -26,6 +26,28 @@ from .models import (
 )
 
 
+class IncidenciaDetalleFilter(admin.SimpleListFilter):
+    title = "Detalle"
+    parameter_name = "detalle"
+
+    def lookups(self, request, model_admin):
+        return [
+            ("sin_nombre_ingles", "Cuenta sin nombre en inglés"),
+            ("sin_clasificacion", "Cuenta sin clasificación"),
+            ("tipo_documento", "Tipo de documento no encontrado"),
+        ]
+
+    def queryset(self, request, queryset):
+        val = self.value()
+        if val == "sin_nombre_ingles":
+            return queryset.filter(descripcion__icontains="nombre en inglés")
+        if val == "sin_clasificacion":
+            return queryset.filter(descripcion__icontains="sin clasificación")
+        if val == "tipo_documento":
+            return queryset.filter(descripcion__icontains="Tipo de documento")
+        return queryset
+
+
 @admin.register(TipoDocumento)
 class TipoDocumentoAdmin(admin.ModelAdmin):
     list_display = ("cliente", "codigo", "descripcion")
@@ -209,7 +231,7 @@ class AccountClassificationAdmin(admin.ModelAdmin):
 @admin.register(Incidencia)
 class IncidenciaAdmin(admin.ModelAdmin):
     list_display = ("cierre", "tipo", "resuelta", "fecha_creacion")
-    list_filter = ("resuelta", "tipo")
+    list_filter = ("resuelta", "tipo", IncidenciaDetalleFilter)
     search_fields = ("descripcion", "respuesta")
 
 

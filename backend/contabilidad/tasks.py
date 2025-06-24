@@ -648,7 +648,10 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                         Incidencia.objects.create(
                             cierre=upload_log.cierre,
                             tipo="negocio",
-                            descripcion=f"Movimiento {row_idx-10}: Tipo de documento '{codigo_td}' no encontrado",
+                            descripcion=(
+                                f"Movimiento {row_idx-10}, cuenta {current_code}: "
+                                f"Tipo de documento '{codigo_td}' no encontrado"
+                            ),
                         )
                         incidencias_creadas += 1
 
@@ -677,7 +680,10 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                     Incidencia.objects.create(
                         cierre=upload_log.cierre,
                         tipo="negocio",
-                        descripcion=f"Cuenta {cuenta_obj.codigo}: No tiene nombre en inglés",
+                        descripcion=(
+                            f"Movimiento {row_idx-10}, cuenta {current_code}: "
+                            "No tiene nombre en inglés"
+                        ),
                     )
                     incidencias_creadas += 1
 
@@ -685,7 +691,10 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                     Incidencia.objects.create(
                         cierre=upload_log.cierre,
                         tipo="negocio",
-                        descripcion=f"Movimiento {row_idx-10}: Cuenta sin clasificación asignada",
+                        descripcion=(
+                            f"Movimiento {row_idx-10}, cuenta {current_code}: "
+                            "Cuenta sin clasificación asignada"
+                        ),
                     )
                     incidencias_creadas += 1
 

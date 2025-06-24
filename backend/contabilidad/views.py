@@ -40,11 +40,21 @@ def obtener_periodo_actividad_para_cliente(cliente):
     Busca el cierre activo del cliente, si no encuentra usa la fecha actual.
     """
     try:
-        cierre_para_actividad = CierreContabilidad.objects.filter(
-            cliente=cliente,
-            estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-        ).order_by('-fecha_creacion').first()
-        
+        cierre_para_actividad = (
+            CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=[
+                    "pendiente",
+                    "procesando",
+                    "clasificacion",
+                    "incidencias",
+                    "en_revision",
+                ],
+            )
+            .order_by("-fecha_creacion")
+            .first()
+        )
+
         if cierre_para_actividad:
             return cierre_para_actividad.periodo
         else:
@@ -57,12 +67,36 @@ def get_client_ip(request):
     """
     Helper function para obtener la IP del cliente desde el request.
     """
-    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
     if x_forwarded_for:
-        ip = x_forwarded_for.split(',')[0]
+        ip = x_forwarded_for.split(",")[0]
     else:
-        ip = request.META.get('REMOTE_ADDR')
+        ip = request.META.get("REMOTE_ADDR")
     return ip
+
+
+def registrar_actividad_auto(
+    cliente,
+    request,
+    tarjeta,
+    accion,
+    descripcion,
+    detalles=None,
+    resultado="exito",
+):
+    """Wrapper para registrar actividad calculando periodo e IP."""
+    periodo = obtener_periodo_actividad_para_cliente(cliente)
+    return registrar_actividad_tarjeta(
+        cliente_id=cliente.id,
+        periodo=periodo,
+        tarjeta=tarjeta,
+        accion=accion,
+        descripcion=descripcion,
+        usuario=request.user,
+        detalles=detalles,
+        resultado=resultado,
+        ip_address=get_client_ip(request),
+    )
 
 
 from api.models import Cliente
@@ -548,15 +582,29 @@ def cargar_tipo_documento(request):
         # Buscar cierre para actividad
         cierre_para_actividad = None
         try:
-            cierre_para_actividad = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
+            cierre_para_actividad = (
+                CierreContabilidad.objects.filter(
+                    cliente=cliente,
+                    estado__in=[
+                        "pendiente",
+                        "procesando",
+                        "clasificacion",
+                        "incidencias",
+                        "en_revision",
+                    ],
+                )
+                .order_by("-fecha_creacion")
+                .first()
+            )
         except Exception:
             pass
-        
-        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
-        
+
+        periodo_actividad = (
+            cierre_para_actividad.periodo
+            if cierre_para_actividad
+            else date.today().strftime("%Y-%m")
+        )
+
         # Registrar intento de upload con datos existentes
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
@@ -569,7 +617,9 @@ def cargar_tipo_documento(request):
                 "nombre_archivo": archivo.name,
                 "tipos_existentes": tipos_existentes,
                 "razon_rechazo": "datos_existentes",
-                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+                "cierre_id": (
+                    cierre_para_actividad.id if cierre_para_actividad else None
+                ),
             },
             resultado="error",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -639,32 +689,54 @@ def cargar_tipo_documento(request):
         # Intentar determinar el cierre más reciente del cliente (mismo patrón que clasificación)
         cierre_relacionado = None
         cierre_id = request.data.get("cierre_id")  # Si el frontend lo envía
-        
+
         print(f"🔍 DEBUG: cierre_id del frontend: {cierre_id}")
-        
+
         if cierre_id:
             try:
-                cierre_relacionado = CierreContabilidad.objects.get(id=cierre_id, cliente=cliente)
-                print(f"✅ DEBUG: Cierre encontrado usando cierre_id del frontend: {cierre_relacionado.id} - {cierre_relacionado.periodo}")
+                cierre_relacionado = CierreContabilidad.objects.get(
+                    id=cierre_id, cliente=cliente
+                )
+                print(
+                    f"✅ DEBUG: Cierre encontrado usando cierre_id del frontend: {cierre_relacionado.id} - {cierre_relacionado.periodo}"
+                )
             except CierreContabilidad.DoesNotExist:
-                print(f"❌ DEBUG: Cierre con id {cierre_id} no encontrado, buscando automáticamente")
+                print(
+                    f"❌ DEBUG: Cierre con id {cierre_id} no encontrado, buscando automáticamente"
+                )
                 pass
         else:
-            print("🔎 DEBUG: No se envió cierre_id desde frontend, buscando automáticamente")
-        
+            print(
+                "🔎 DEBUG: No se envió cierre_id desde frontend, buscando automáticamente"
+            )
+
         # Si no se especifica cierre, buscar el más reciente que no esté cerrado
         if not cierre_relacionado:
-            cierre_relacionado = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
-            
+            cierre_relacionado = (
+                CierreContabilidad.objects.filter(
+                    cliente=cliente,
+                    estado__in=[
+                        "pendiente",
+                        "procesando",
+                        "clasificacion",
+                        "incidencias",
+                        "en_revision",
+                    ],
+                )
+                .order_by("-fecha_creacion")
+                .first()
+            )
+
             if cierre_relacionado:
-                print(f"🔍 DEBUG: Cierre encontrado automáticamente: {cierre_relacionado.id} - {cierre_relacionado.periodo} - Estado: {cierre_relacionado.estado}")
+                print(
+                    f"🔍 DEBUG: Cierre encontrado automáticamente: {cierre_relacionado.id} - {cierre_relacionado.periodo} - Estado: {cierre_relacionado.estado}"
+                )
             else:
                 print("⚠️ DEBUG: No se encontró ningún cierre abierto para el cliente")
 
-        print(f"📄 DEBUG: UploadLog se creará con cierre: {cierre_relacionado.id if cierre_relacionado else 'None'}")
+        print(
+            f"📄 DEBUG: UploadLog se creará con cierre: {cierre_relacionado.id if cierre_relacionado else 'None'}"
+        )
 
         upload_log = UploadLog.objects.create(
             tipo_upload="tipo_documento",
@@ -700,8 +772,12 @@ def cargar_tipo_documento(request):
         upload_log.save()
 
         # Registrar actividad de subida
-        periodo_actividad = cierre_relacionado.periodo if cierre_relacionado else date.today().strftime("%Y-%m")
-        
+        periodo_actividad = (
+            cierre_relacionado.periodo
+            if cierre_relacionado
+            else date.today().strftime("%Y-%m")
+        )
+
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
             periodo=periodo_actividad,
@@ -738,14 +814,28 @@ def cargar_tipo_documento(request):
         # Buscar cierre para actividad de error
         cierre_para_actividad = None
         try:
-            cierre_para_actividad = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
+            cierre_para_actividad = (
+                CierreContabilidad.objects.filter(
+                    cliente=cliente,
+                    estado__in=[
+                        "pendiente",
+                        "procesando",
+                        "clasificacion",
+                        "incidencias",
+                        "en_revision",
+                    ],
+                )
+                .order_by("-fecha_creacion")
+                .first()
+            )
         except Exception:
             pass
-        
-        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+
+        periodo_actividad = (
+            cierre_para_actividad.periodo
+            if cierre_para_actividad
+            else date.today().strftime("%Y-%m")
+        )
 
         # Registrar error en activity log
         registrar_actividad_tarjeta(
@@ -756,9 +846,11 @@ def cargar_tipo_documento(request):
             descripcion=f"Error al crear UploadLog: {str(e)}",
             usuario=request.user,
             detalles={
-                "nombre_archivo": archivo.name, 
+                "nombre_archivo": archivo.name,
                 "error": str(e),
-                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+                "cierre_id": (
+                    cierre_para_actividad.id if cierre_para_actividad else None
+                ),
             },
             resultado="error",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -798,31 +890,53 @@ def cargar_clasificacion_bulk(request):
 
         # BUSCAR EL CIERRE ASOCIADO (igual que en tipo_documento)
         cierre_relacionado = None
-        
+
         # Intentar usar el cierre_id proporcionado desde el frontend
         if cierre_id:
             try:
-                cierre_relacionado = CierreContabilidad.objects.get(id=cierre_id, cliente=cliente)
-                logger.info(f"✅ Cierre encontrado usando cierre_id del frontend: {cierre_relacionado.id} - {cierre_relacionado.periodo}")
+                cierre_relacionado = CierreContabilidad.objects.get(
+                    id=cierre_id, cliente=cliente
+                )
+                logger.info(
+                    f"✅ Cierre encontrado usando cierre_id del frontend: {cierre_relacionado.id} - {cierre_relacionado.periodo}"
+                )
             except CierreContabilidad.DoesNotExist:
-                logger.warning(f"❌ Cierre con id {cierre_id} no encontrado, buscando automáticamente")
+                logger.warning(
+                    f"❌ Cierre con id {cierre_id} no encontrado, buscando automáticamente"
+                )
                 pass
         else:
-            logger.info("🔎 No se envió cierre_id desde frontend, buscando automáticamente")
-        
+            logger.info(
+                "🔎 No se envió cierre_id desde frontend, buscando automáticamente"
+            )
+
         # Si no se especifica cierre, buscar el más reciente que no esté cerrado
         if not cierre_relacionado:
-            cierre_relacionado = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
-            
+            cierre_relacionado = (
+                CierreContabilidad.objects.filter(
+                    cliente=cliente,
+                    estado__in=[
+                        "pendiente",
+                        "procesando",
+                        "clasificacion",
+                        "incidencias",
+                        "en_revision",
+                    ],
+                )
+                .order_by("-fecha_creacion")
+                .first()
+            )
+
             if cierre_relacionado:
-                logger.info(f"🔍 Cierre encontrado automáticamente: {cierre_relacionado.id} - {cierre_relacionado.periodo} - Estado: {cierre_relacionado.estado}")
+                logger.info(
+                    f"🔍 Cierre encontrado automáticamente: {cierre_relacionado.id} - {cierre_relacionado.periodo} - Estado: {cierre_relacionado.estado}"
+                )
             else:
                 logger.warning("⚠️ No se encontró ningún cierre abierto para el cliente")
 
-        logger.info(f"📋 UploadLog de clasificación se creará con cierre: {cierre_relacionado.id if cierre_relacionado else 'None'}")
+        logger.info(
+            f"📋 UploadLog de clasificación se creará con cierre: {cierre_relacionado.id if cierre_relacionado else 'None'}"
+        )
 
         upload_log = UploadLog.objects.create(
             tipo_upload="clasificacion",
@@ -857,7 +971,11 @@ def cargar_clasificacion_bulk(request):
         upload_log.save()
 
         # Usar el período del cierre asociado al UploadLog
-        periodo_actividad = cierre_relacionado.periodo if cierre_relacionado else date.today().strftime("%Y-%m")
+        periodo_actividad = (
+            cierre_relacionado.periodo
+            if cierre_relacionado
+            else date.today().strftime("%Y-%m")
+        )
 
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
@@ -889,19 +1007,33 @@ def cargar_clasificacion_bulk(request):
 
     except Exception as e:
         logger.exception("Error al crear UploadLog para clasificacion: %s", e)
-        
+
         # Buscar cierre para actividad de error
         cierre_para_actividad = None
         try:
-            cierre_para_actividad = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
+            cierre_para_actividad = (
+                CierreContabilidad.objects.filter(
+                    cliente=cliente,
+                    estado__in=[
+                        "pendiente",
+                        "procesando",
+                        "clasificacion",
+                        "incidencias",
+                        "en_revision",
+                    ],
+                )
+                .order_by("-fecha_creacion")
+                .first()
+            )
         except Exception:
             pass
-        
-        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
-        
+
+        periodo_actividad = (
+            cierre_para_actividad.periodo
+            if cierre_para_actividad
+            else date.today().strftime("%Y-%m")
+        )
+
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
             periodo=periodo_actividad,
@@ -910,9 +1042,11 @@ def cargar_clasificacion_bulk(request):
             descripcion=f"Error al crear UploadLog: {str(e)}",
             usuario=request.user,
             detalles={
-                "nombre_archivo": archivo.name, 
+                "nombre_archivo": archivo.name,
                 "error": str(e),
-                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+                "cierre_id": (
+                    cierre_para_actividad.id if cierre_para_actividad else None
+                ),
             },
             resultado="error",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -1022,14 +1156,28 @@ def eliminar_tipos_documento(request, cliente_id):
         # 4. Buscar cierre para actividad
         cierre_para_actividad = None
         try:
-            cierre_para_actividad = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
+            cierre_para_actividad = (
+                CierreContabilidad.objects.filter(
+                    cliente=cliente,
+                    estado__in=[
+                        "pendiente",
+                        "procesando",
+                        "clasificacion",
+                        "incidencias",
+                        "en_revision",
+                    ],
+                )
+                .order_by("-fecha_creacion")
+                .first()
+            )
         except Exception:
             pass
-        
-        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+
+        periodo_actividad = (
+            cierre_para_actividad.periodo
+            if cierre_para_actividad
+            else date.today().strftime("%Y-%m")
+        )
 
         # 5. Registrar actividad exitosa
         registrar_actividad_tarjeta(
@@ -1047,7 +1195,9 @@ def eliminar_tipos_documento(request, cliente_id):
                 ).count(),
                 "archivos_eliminados": archivos_eliminados,
                 "cliente_nombre": cliente.nombre,
-                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+                "cierre_id": (
+                    cierre_para_actividad.id if cierre_para_actividad else None
+                ),
             },
             resultado="exito",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -1066,15 +1216,29 @@ def eliminar_tipos_documento(request, cliente_id):
         # Buscar cierre para actividad de error
         cierre_para_actividad = None
         try:
-            cierre_para_actividad = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
+            cierre_para_actividad = (
+                CierreContabilidad.objects.filter(
+                    cliente=cliente,
+                    estado__in=[
+                        "pendiente",
+                        "procesando",
+                        "clasificacion",
+                        "incidencias",
+                        "en_revision",
+                    ],
+                )
+                .order_by("-fecha_creacion")
+                .first()
+            )
         except Exception:
             pass
-        
-        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
-        
+
+        periodo_actividad = (
+            cierre_para_actividad.periodo
+            if cierre_para_actividad
+            else date.today().strftime("%Y-%m")
+        )
+
         # Registrar error
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
@@ -1088,7 +1252,9 @@ def eliminar_tipos_documento(request, cliente_id):
                 "registros_contados": count,
                 "upload_logs_contados": upload_logs_count,
                 "cliente_nombre": cliente.nombre,
-                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+                "cierre_id": (
+                    cierre_para_actividad.id if cierre_para_actividad else None
+                ),
             },
             resultado="error",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -1125,20 +1291,34 @@ def registrar_vista_tipos_documento(request, cliente_id):
         cliente = Cliente.objects.get(id=cliente_id)
     except Cliente.DoesNotExist:
         return Response({"error": "Cliente no encontrado"}, status=404)
-    
+
     tipos = TipoDocumento.objects.filter(cliente_id=cliente_id)
 
     # Buscar cierre para actividad
     cierre_para_actividad = None
     try:
-        cierre_para_actividad = CierreContabilidad.objects.filter(
-            cliente=cliente,
-            estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-        ).order_by('-fecha_creacion').first()
+        cierre_para_actividad = (
+            CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=[
+                    "pendiente",
+                    "procesando",
+                    "clasificacion",
+                    "incidencias",
+                    "en_revision",
+                ],
+            )
+            .order_by("-fecha_creacion")
+            .first()
+        )
     except Exception:
         pass
-    
-    periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+
+    periodo_actividad = (
+        cierre_para_actividad.periodo
+        if cierre_para_actividad
+        else date.today().strftime("%Y-%m")
+    )
 
     # Registrar visualización manual del modal
     registrar_actividad_tarjeta(
@@ -1149,7 +1329,7 @@ def registrar_vista_tipos_documento(request, cliente_id):
         descripcion=f"Abrió modal de tipos de documento ({tipos.count()} registros)",
         usuario=request.user,
         detalles={
-            "total_registros": tipos.count(), 
+            "total_registros": tipos.count(),
             "accion_origen": "modal_manual",
             "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
         },
@@ -1170,21 +1350,35 @@ def registrar_vista_clasificaciones(request, cliente_id):
         cliente = Cliente.objects.get(id=cliente_id)
     except Cliente.DoesNotExist:
         return Response({"error": "Cliente no encontrado"}, status=404)
-    
+
     # Obtener el upload ID del request
     upload_log_id = request.data.get("upload_log_id")
 
     # Buscar cierre para actividad
     cierre_para_actividad = None
     try:
-        cierre_para_actividad = CierreContabilidad.objects.filter(
-            cliente=cliente,
-            estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-        ).order_by('-fecha_creacion').first()
+        cierre_para_actividad = (
+            CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=[
+                    "pendiente",
+                    "procesando",
+                    "clasificacion",
+                    "incidencias",
+                    "en_revision",
+                ],
+            )
+            .order_by("-fecha_creacion")
+            .first()
+        )
     except Exception:
         pass
-    
-    periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+
+    periodo_actividad = (
+        cierre_para_actividad.periodo
+        if cierre_para_actividad
+        else date.today().strftime("%Y-%m")
+    )
 
     try:
         # Contar registros del upload específico
@@ -1198,7 +1392,9 @@ def registrar_vista_clasificaciones(request, cliente_id):
                 "total_registros": total_registros,
                 "upload_log_id": upload_log_id,
                 "accion_origen": "modal_manual",
-                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+                "cierre_id": (
+                    cierre_para_actividad.id if cierre_para_actividad else None
+                ),
             }
         else:
             # Si no hay upload_log_id, contar todos los registros del cliente
@@ -1208,7 +1404,9 @@ def registrar_vista_clasificaciones(request, cliente_id):
             detalles = {
                 "total_registros": total_registros,
                 "accion_origen": "modal_manual",
-                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+                "cierre_id": (
+                    cierre_para_actividad.id if cierre_para_actividad else None
+                ),
             }
     except Exception as e:
         total_registros = 0
@@ -1287,15 +1485,29 @@ def cargar_nombres_ingles(request):
         # Buscar cierre para actividad
         cierre_para_actividad = None
         try:
-            cierre_para_actividad = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
+            cierre_para_actividad = (
+                CierreContabilidad.objects.filter(
+                    cliente=cliente,
+                    estado__in=[
+                        "pendiente",
+                        "procesando",
+                        "clasificacion",
+                        "incidencias",
+                        "en_revision",
+                    ],
+                )
+                .order_by("-fecha_creacion")
+                .first()
+            )
         except Exception:
             pass
-        
-        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
-        
+
+        periodo_actividad = (
+            cierre_para_actividad.periodo
+            if cierre_para_actividad
+            else date.today().strftime("%Y-%m")
+        )
+
         # Registrar intento de upload con datos existentes
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
@@ -1308,7 +1520,9 @@ def cargar_nombres_ingles(request):
                 "nombre_archivo": archivo.name,
                 "nombres_existentes": nombres_existentes,
                 "razon_rechazo": "datos_existentes",
-                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+                "cierre_id": (
+                    cierre_para_actividad.id if cierre_para_actividad else None
+                ),
             },
             resultado="error",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -1334,10 +1548,20 @@ def cargar_nombres_ingles(request):
         return Response({"error": msg}, status=400)
 
     # Buscar cierre relacionado automáticamente
-    cierre_relacionado = CierreContabilidad.objects.filter(
-        cliente=cliente,
-        estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-    ).order_by('-fecha_creacion').first()
+    cierre_relacionado = (
+        CierreContabilidad.objects.filter(
+            cliente=cliente,
+            estado__in=[
+                "pendiente",
+                "procesando",
+                "clasificacion",
+                "incidencias",
+                "en_revision",
+            ],
+        )
+        .order_by("-fecha_creacion")
+        .first()
+    )
 
     # Crear UploadLog
     upload_log = UploadLog.objects.create(
@@ -1359,7 +1583,11 @@ def cargar_nombres_ingles(request):
 
     registrar_actividad_tarjeta(
         cliente_id=cliente_id,
-        periodo=cierre_relacionado.periodo if cierre_relacionado else date.today().strftime("%Y-%m"),
+        periodo=(
+            cierre_relacionado.periodo
+            if cierre_relacionado
+            else date.today().strftime("%Y-%m")
+        ),
         tarjeta="nombres_ingles",
         accion="upload_excel",
         descripcion=f"Subido archivo: {archivo.name} (UploadLog ID: {upload_log.id})",
@@ -1377,11 +1605,13 @@ def cargar_nombres_ingles(request):
 
     procesar_nombres_ingles_con_upload_log.delay(upload_log.id)
 
-    return Response({
-        "mensaje": "Archivo recibido y tarea enviada",
-        "upload_log_id": upload_log.id,
-        "estado": upload_log.estado,
-    })
+    return Response(
+        {
+            "mensaje": "Archivo recibido y tarea enviada",
+            "upload_log_id": upload_log.id,
+            "estado": upload_log.estado,
+        }
+    )
 
 
 @api_view(["GET"])
@@ -1413,20 +1643,34 @@ def registrar_vista_nombres_ingles(request, cliente_id):
         cliente = Cliente.objects.get(id=cliente_id)
     except Cliente.DoesNotExist:
         return Response({"error": "Cliente no encontrado"}, status=404)
-    
+
     nombres = NombreIngles.objects.filter(cliente_id=cliente_id)
 
     # Buscar cierre para actividad
     cierre_para_actividad = None
     try:
-        cierre_para_actividad = CierreContabilidad.objects.filter(
-            cliente=cliente,
-            estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-        ).order_by('-fecha_creacion').first()
+        cierre_para_actividad = (
+            CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=[
+                    "pendiente",
+                    "procesando",
+                    "clasificacion",
+                    "incidencias",
+                    "en_revision",
+                ],
+            )
+            .order_by("-fecha_creacion")
+            .first()
+        )
     except Exception:
         pass
-    
-    periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+
+    periodo_actividad = (
+        cierre_para_actividad.periodo
+        if cierre_para_actividad
+        else date.today().strftime("%Y-%m")
+    )
 
     # Registrar visualización manual del modal
     registrar_actividad_tarjeta(
@@ -1437,7 +1681,7 @@ def registrar_vista_nombres_ingles(request, cliente_id):
         descripcion=f"Abrió modal de nombres en inglés ({nombres.count()} registros)",
         usuario=request.user,
         detalles={
-            "total_registros": nombres.count(), 
+            "total_registros": nombres.count(),
             "accion_origen": "modal_manual",
             "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
         },
@@ -1508,9 +1752,7 @@ def eliminar_nombres_ingles(request, cliente_id):
 
             if upload_log.estado == "completado":
                 upload_log.estado = "datos_eliminados"
-                upload_log.resumen = (
-                    f"Datos procesados eliminados el {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                )
+                upload_log.resumen = f"Datos procesados eliminados el {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}"
                 upload_log.save()
 
         # 3. Eliminar registros de NombreIngles
@@ -1519,14 +1761,28 @@ def eliminar_nombres_ingles(request, cliente_id):
         # 4. Buscar cierre para actividad
         cierre_para_actividad = None
         try:
-            cierre_para_actividad = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
+            cierre_para_actividad = (
+                CierreContabilidad.objects.filter(
+                    cliente=cliente,
+                    estado__in=[
+                        "pendiente",
+                        "procesando",
+                        "clasificacion",
+                        "incidencias",
+                        "en_revision",
+                    ],
+                )
+                .order_by("-fecha_creacion")
+                .first()
+            )
         except Exception:
             pass
-        
-        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+
+        periodo_actividad = (
+            cierre_para_actividad.periodo
+            if cierre_para_actividad
+            else date.today().strftime("%Y-%m")
+        )
 
         # 5. Registrar actividad exitosa
         registrar_actividad_tarjeta(
@@ -1544,7 +1800,9 @@ def eliminar_nombres_ingles(request, cliente_id):
                 ).count(),
                 "archivos_eliminados": archivos_eliminados,
                 "cliente_nombre": cliente.nombre,
-                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+                "cierre_id": (
+                    cierre_para_actividad.id if cierre_para_actividad else None
+                ),
             },
             resultado="exito",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -1563,15 +1821,29 @@ def eliminar_nombres_ingles(request, cliente_id):
         # Buscar cierre para actividad de error
         cierre_para_actividad = None
         try:
-            cierre_para_actividad = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
+            cierre_para_actividad = (
+                CierreContabilidad.objects.filter(
+                    cliente=cliente,
+                    estado__in=[
+                        "pendiente",
+                        "procesando",
+                        "clasificacion",
+                        "incidencias",
+                        "en_revision",
+                    ],
+                )
+                .order_by("-fecha_creacion")
+                .first()
+            )
         except Exception:
             pass
-        
-        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
-        
+
+        periodo_actividad = (
+            cierre_para_actividad.periodo
+            if cierre_para_actividad
+            else date.today().strftime("%Y-%m")
+        )
+
         # Registrar error
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
@@ -1584,7 +1856,9 @@ def eliminar_nombres_ingles(request, cliente_id):
                 "error": str(e),
                 "registros_contados": count,
                 "cliente_nombre": cliente.nombre,
-                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+                "cierre_id": (
+                    cierre_para_actividad.id if cierre_para_actividad else None
+                ),
             },
             resultado="error",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -1619,23 +1893,17 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
             instance = serializer.save()
 
             # Obtener período correcto para el cliente
-            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
-
-            # Registrar creación manual
-            registrar_actividad_tarjeta(
-                cliente_id=cliente_id,
-                periodo=periodo_actividad,
+            registrar_actividad_auto(
+                cliente,
+                self.request,
                 tarjeta="tipo_documento",
                 accion="manual_create",
                 descripcion=f"Creado tipo documento: {instance.codigo} - {instance.descripcion}",
-                usuario=self.request.user,
                 detalles={
                     "codigo": instance.codigo,
                     "descripcion": instance.descripcion,
                     "id": instance.id,
                 },
-                resultado="exito",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Cliente.DoesNotExist:
@@ -1644,25 +1912,24 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
             raise ValidationError("Cliente no encontrado")
         except Exception as e:
             # Obtener período correcto para el cliente si hay error
-            periodo_actividad = date.today().strftime("%Y-%m")  # Fallback en caso de error
+            periodo_actividad = date.today().strftime(
+                "%Y-%m"
+            )  # Fallback en caso de error
             try:
                 if cliente_id:
                     cliente = Cliente.objects.get(id=cliente_id)
                     periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
             except:
                 pass
-            
-            # Registrar error
-            registrar_actividad_tarjeta(
-                cliente_id=cliente_id,
-                periodo=periodo_actividad,
+
+            registrar_actividad_auto(
+                cliente,
+                self.request,
                 tarjeta="tipo_documento",
                 accion="manual_create",
                 descripcion=f"Error al crear tipo documento: {str(e)}",
-                usuario=self.request.user,
                 detalles={"error": str(e), "data": self.request.data},
                 resultado="error",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
@@ -1678,17 +1945,12 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
             else:
                 instance = serializer.save()
 
-            # Obtener período correcto para el cliente
-            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
-
-            # Registrar edición
-            registrar_actividad_tarjeta(
-                cliente_id=cliente_id,
-                periodo=periodo_actividad,
+            registrar_actividad_auto(
+                cliente,
+                self.request,
                 tarjeta="tipo_documento",
                 accion="manual_edit",
                 descripcion=f"Editado tipo documento ID:{instance.id}: {old_instance.codigo} → {instance.codigo}",
-                usuario=self.request.user,
                 detalles={
                     "id": instance.id,
                     "cambios": {
@@ -1702,29 +1964,21 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
                         },
                     },
                 },
-                resultado="exito",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
-            # Obtener período correcto para el cliente
-            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
-            
-            # Registrar error
-            registrar_actividad_tarjeta(
-                cliente_id=cliente_id,
-                periodo=periodo_actividad,
+            registrar_actividad_auto(
+                cliente,
+                self.request,
                 tarjeta="tipo_documento",
                 accion="manual_edit",
                 descripcion=f"Error al editar tipo documento ID:{old_instance.id}: {str(e)}",
-                usuario=self.request.user,
                 detalles={
                     "error": str(e),
                     "id": old_instance.id,
                     "data": self.request.data,
                 },
                 resultado="error",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
@@ -1740,37 +1994,24 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
         try:
             instance.delete()
 
-            # Obtener período correcto para el cliente
-            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
-
-            # Registrar eliminación
-            registrar_actividad_tarjeta(
-                cliente_id=cliente_id,
-                periodo=periodo_actividad,
+            registrar_actividad_auto(
+                cliente,
+                self.request,
                 tarjeta="tipo_documento",
                 accion="manual_delete",
                 descripcion=f'Eliminado tipo documento: {tipo_info["codigo"]} - {tipo_info["descripcion"]}',
-                usuario=self.request.user,
                 detalles=tipo_info,
-                resultado="exito",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
-            # Obtener período correcto para el cliente
-            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
-            
-            # Registrar error
-            registrar_actividad_tarjeta(
-                cliente_id=cliente_id,
-                periodo=periodo_actividad,
+            registrar_actividad_auto(
+                cliente,
+                self.request,
                 tarjeta="tipo_documento",
                 accion="manual_delete",
                 descripcion=f'Error al eliminar tipo documento ID:{tipo_info["id"]}: {str(e)}',
-                usuario=self.request.user,
                 detalles={"error": str(e), **tipo_info},
                 resultado="error",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
@@ -1802,20 +2043,17 @@ class NombreInglesViewSet(viewsets.ModelViewSet):
             instance = serializer.save()
 
             # Registrar creación manual
-            registrar_actividad_tarjeta(
-                cliente_id=cliente_id,
-                periodo=date.today().strftime("%Y-%m"),
+            registrar_actividad_auto(
+                cliente,
+                self.request,
                 tarjeta="nombres_ingles",
                 accion="manual_create",
                 descripcion=f"Creado nombre inglés: {instance.cuenta_codigo} - {instance.nombre_ingles}",
-                usuario=self.request.user,
                 detalles={
                     "cuenta_codigo": instance.cuenta_codigo,
                     "nombre_ingles": instance.nombre_ingles,
                     "id": instance.id,
                 },
-                resultado="exito",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Cliente.DoesNotExist:
@@ -1824,16 +2062,14 @@ class NombreInglesViewSet(viewsets.ModelViewSet):
             raise ValidationError("Cliente no encontrado")
         except Exception as e:
             # Registrar error
-            registrar_actividad_tarjeta(
-                cliente_id=cliente_id,
-                periodo=date.today().strftime("%Y-%m"),
+            registrar_actividad_auto(
+                cliente,
+                self.request,
                 tarjeta="nombres_ingles",
                 accion="manual_create",
                 descripcion=f"Error al crear nombre inglés: {str(e)}",
-                usuario=self.request.user,
                 detalles={"error": str(e), "data": self.request.data},
                 resultado="error",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
@@ -1849,13 +2085,12 @@ class NombreInglesViewSet(viewsets.ModelViewSet):
                 instance = serializer.save()
 
             # Registrar edición
-            registrar_actividad_tarjeta(
-                cliente_id=cliente_id,
-                periodo=date.today().strftime("%Y-%m"),
+            registrar_actividad_auto(
+                old_instance.cliente,
+                self.request,
                 tarjeta="nombres_ingles",
                 accion="manual_edit",
                 descripcion=f"Editado nombre inglés ID:{instance.id}: {old_instance.cuenta_codigo} → {instance.cuenta_codigo}",
-                usuario=self.request.user,
                 detalles={
                     "id": instance.id,
                     "cambios": {
@@ -1869,26 +2104,22 @@ class NombreInglesViewSet(viewsets.ModelViewSet):
                         },
                     },
                 },
-                resultado="exito",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
             # Registrar error
-            registrar_actividad_tarjeta(
-                cliente_id=cliente_id,
-                periodo=date.today().strftime("%Y-%m"),
+            registrar_actividad_auto(
+                old_instance.cliente,
+                self.request,
                 tarjeta="nombres_ingles",
                 accion="manual_edit",
                 descripcion=f"Error al editar nombre inglés ID:{old_instance.id}: {str(e)}",
-                usuario=self.request.user,
                 detalles={
                     "error": str(e),
                     "id": old_instance.id,
                     "data": self.request.data,
                 },
                 resultado="error",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
@@ -1904,30 +2135,25 @@ class NombreInglesViewSet(viewsets.ModelViewSet):
             instance.delete()
 
             # Registrar eliminación
-            registrar_actividad_tarjeta(
-                cliente_id=cliente_id,
-                periodo=date.today().strftime("%Y-%m"),
+            registrar_actividad_auto(
+                instance.cliente,
+                self.request,
                 tarjeta="nombres_ingles",
                 accion="manual_delete",
                 descripcion=f'Eliminado nombre inglés: {nombre_info["cuenta_codigo"]} - {nombre_info["nombre_ingles"]}',
-                usuario=self.request.user,
                 detalles=nombre_info,
-                resultado="exito",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
             # Registrar error
-            registrar_actividad_tarjeta(
-                cliente_id=cliente_id,
-                periodo=date.today().strftime("%Y-%m"),
+            registrar_actividad_auto(
+                instance.cliente,
+                self.request,
                 tarjeta="nombres_ingles",
                 accion="manual_delete",
                 descripcion=f'Error al eliminar nombre inglés ID:{nombre_info["id"]}: {str(e)}',
-                usuario=self.request.user,
                 detalles={"error": str(e), **nombre_info},
                 resultado="error",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
@@ -1976,20 +2202,17 @@ class ClasificacionSetViewSet(viewsets.ModelViewSet):
         instance = serializer.save()
 
         # Registrar creación de set
-        registrar_actividad_tarjeta(
-            cliente_id=instance.cliente.id,
-            periodo=date.today().strftime("%Y-%m"),
+        registrar_actividad_auto(
+            instance.cliente,
+            self.request,
             tarjeta="clasificacion",
             accion="set_create",
             descripcion=f"Creado set de clasificación: {instance.nombre}",
-            usuario=self.request.user,
             detalles={
                 "set_id": instance.id,
                 "set_nombre": instance.nombre,
                 "accion_origen": "manual_sets_tab",
             },
-            resultado="exito",
-            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
     def perform_update(self, serializer):
@@ -1997,21 +2220,18 @@ class ClasificacionSetViewSet(viewsets.ModelViewSet):
         instance = serializer.save()
 
         # Registrar edición de set
-        registrar_actividad_tarjeta(
-            cliente_id=instance.cliente.id,
-            periodo=date.today().strftime("%Y-%m"),
+        registrar_actividad_auto(
+            instance.cliente,
+            self.request,
             tarjeta="clasificacion",
             accion="set_edit",
             descripcion=f"Editado set de clasificación: {old_instance.nombre} → {instance.nombre}",
-            usuario=self.request.user,
             detalles={
                 "set_id": instance.id,
                 "nombre_anterior": old_instance.nombre,
                 "nombre_nuevo": instance.nombre,
                 "accion_origen": "manual_sets_tab",
             },
-            resultado="exito",
-            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
     def perform_destroy(self, instance):
@@ -2030,38 +2250,33 @@ class ClasificacionSetViewSet(viewsets.ModelViewSet):
             super().perform_destroy(instance)
 
             # Registrar eliminación de set
-            registrar_actividad_tarjeta(
-                cliente_id=set_info["cliente_id"],
-                periodo=date.today().strftime("%Y-%m"),
+            registrar_actividad_auto(
+                instance.cliente,
+                self.request,
                 tarjeta="clasificacion",
                 accion="set_delete",
                 descripcion=f'Eliminado set de clasificación: {set_info["nombre"]} (incluía {opciones_count} opciones)',
-                usuario=self.request.user,
                 detalles={
                     **set_info,
                     "opciones_eliminadas": opciones_count,
                     "accion_origen": "manual_sets_tab",
                 },
-                resultado="exito",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
             # Registrar error
-            registrar_actividad_tarjeta(
-                cliente_id=set_info["cliente_id"],
-                periodo=date.today().strftime("%Y-%m"),
+            registrar_actividad_auto(
+                instance.cliente,
+                self.request,
                 tarjeta="clasificacion",
                 accion="set_delete",
                 descripcion=f'Error al eliminar set de clasificación: {set_info["nombre"]} - {str(e)}',
-                usuario=self.request.user,
                 detalles={
                     **set_info,
                     "error": str(e),
                     "accion_origen": "manual_sets_tab",
                 },
                 resultado="error",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
@@ -2082,13 +2297,12 @@ class ClasificacionOptionViewSet(viewsets.ModelViewSet):
         instance = serializer.save()
 
         # Registrar creación de opción
-        registrar_actividad_tarjeta(
-            cliente_id=instance.set_clas.cliente.id,
-            periodo=date.today().strftime("%Y-%m"),
+        registrar_actividad_auto(
+            instance.set_clas.cliente,
+            self.request,
             tarjeta="clasificacion",
             accion="option_create",
             descripcion=f"Creada opción de clasificación: {instance.valor} en set {instance.set_clas.nombre}",
-            usuario=self.request.user,
             detalles={
                 "opcion_id": instance.id,
                 "opcion_valor": instance.valor,
@@ -2096,8 +2310,6 @@ class ClasificacionOptionViewSet(viewsets.ModelViewSet):
                 "set_nombre": instance.set_clas.nombre,
                 "accion_origen": "manual_sets_tab",
             },
-            resultado="exito",
-            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
     def perform_update(self, serializer):
@@ -2105,13 +2317,12 @@ class ClasificacionOptionViewSet(viewsets.ModelViewSet):
         instance = serializer.save()
 
         # Registrar edición de opción
-        registrar_actividad_tarjeta(
-            cliente_id=instance.set_clas.cliente.id,
-            periodo=date.today().strftime("%Y-%m"),
+        registrar_actividad_auto(
+            instance.set_clas.cliente,
+            self.request,
             tarjeta="clasificacion",
             accion="option_edit",
             descripcion=f"Editada opción de clasificación: {old_instance.valor} → {instance.valor} en set {instance.set_clas.nombre}",
-            usuario=self.request.user,
             detalles={
                 "opcion_id": instance.id,
                 "valor_anterior": old_instance.valor,
@@ -2120,8 +2331,6 @@ class ClasificacionOptionViewSet(viewsets.ModelViewSet):
                 "set_nombre": instance.set_clas.nombre,
                 "accion_origen": "manual_sets_tab",
             },
-            resultado="exito",
-            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
     def perform_destroy(self, instance):
@@ -2137,34 +2346,29 @@ class ClasificacionOptionViewSet(viewsets.ModelViewSet):
             super().perform_destroy(instance)
 
             # Registrar eliminación de opción
-            registrar_actividad_tarjeta(
-                cliente_id=opcion_info["cliente_id"],
-                periodo=date.today().strftime("%Y-%m"),
+            registrar_actividad_auto(
+                instance.set_clas.cliente,
+                self.request,
                 tarjeta="clasificacion",
                 accion="option_delete",
                 descripcion=f'Eliminada opción de clasificación: {opcion_info["valor"]} del set {opcion_info["set_nombre"]}',
-                usuario=self.request.user,
                 detalles={**opcion_info, "accion_origen": "manual_sets_tab"},
-                resultado="exito",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
             # Registrar error
-            registrar_actividad_tarjeta(
-                cliente_id=opcion_info["cliente_id"],
-                periodo=date.today().strftime("%Y-%m"),
+            registrar_actividad_auto(
+                instance.set_clas.cliente,
+                self.request,
                 tarjeta="clasificacion",
                 accion="option_delete",
                 descripcion=f'Error al eliminar opción de clasificación: {opcion_info["valor"]} - {str(e)}',
-                usuario=self.request.user,
                 detalles={
                     **opcion_info,
                     "error": str(e),
                     "accion_origen": "manual_sets_tab",
                 },
                 resultado="error",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
@@ -2191,21 +2395,18 @@ class AccountClassificationViewSet(viewsets.ModelViewSet):
         instance = serializer.save(asignado_por=self.request.user.usuario)
 
         # Registrar actividad
-        registrar_actividad_tarjeta(
-            cliente_id=instance.cuenta.cliente.id,
-            periodo=date.today().strftime("%Y-%m"),
+        registrar_actividad_auto(
+            instance.cuenta.cliente,
+            self.request,
             tarjeta="clasificacion",
             accion="individual_create",
             descripcion=f"Creada clasificación: {instance.cuenta.codigo} → {instance.set_clas.nombre}: {instance.opcion.valor}",
-            usuario=self.request.user,
             detalles={
                 "cuenta_id": instance.cuenta.id,
                 "cuenta_codigo": instance.cuenta.codigo,
                 "set_nombre": instance.set_clas.nombre,
                 "opcion_valor": instance.opcion.valor,
             },
-            resultado="exito",
-            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
     def perform_update(self, serializer):
@@ -2213,13 +2414,12 @@ class AccountClassificationViewSet(viewsets.ModelViewSet):
         instance = serializer.save()
 
         # Registrar actividad
-        registrar_actividad_tarjeta(
-            cliente_id=instance.cuenta.cliente.id,
-            periodo=date.today().strftime("%Y-%m"),
+        registrar_actividad_auto(
+            instance.cuenta.cliente,
+            self.request,
             tarjeta="clasificacion",
             accion="individual_edit",
             descripcion=f"Editada clasificación: {instance.cuenta.codigo} → {instance.set_clas.nombre}: {instance.opcion.valor}",
-            usuario=self.request.user,
             detalles={
                 "cuenta_id": instance.cuenta.id,
                 "cuenta_codigo": instance.cuenta.codigo,
@@ -2230,8 +2430,6 @@ class AccountClassificationViewSet(viewsets.ModelViewSet):
                     "opcion_nueva": instance.opcion.valor,
                 },
             },
-            resultado="exito",
-            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
     def perform_destroy(self, instance):
@@ -2247,16 +2445,13 @@ class AccountClassificationViewSet(viewsets.ModelViewSet):
         instance.delete()
 
         # Registrar actividad
-        registrar_actividad_tarjeta(
-            cliente_id=cliente_id,
-            periodo=date.today().strftime("%Y-%m"),
+        registrar_actividad_auto(
+            instance.cuenta.cliente,
+            self.request,
             tarjeta="clasificacion",
             accion="individual_delete",
             descripcion=f'Eliminada clasificación: {clasificacion_info["cuenta_codigo"]} → {clasificacion_info["set_nombre"]}: {clasificacion_info["opcion_valor"]}',
-            usuario=self.request.user,
             detalles=clasificacion_info,
-            resultado="exito",
-            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
 

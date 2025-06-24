@@ -25,6 +25,13 @@ from .models import (
     UploadLog,
 )
 
+# ✨ NUEVO: Importar modelos de incidencias consolidadas
+from .models_incidencias import (
+    IncidenciaResumen,
+    HistorialReprocesamiento,
+    LogResolucionIncidencia,
+)
+
 
 class IncidenciaDetalleFilter(admin.SimpleListFilter):
     title = "Detalle"
@@ -635,3 +642,275 @@ class UploadLogAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return request.user.is_superuser
+
+
+# ===============================================================
+#                    INCIDENCIAS CONSOLIDADAS
+# ===============================================================
+
+@admin.register(IncidenciaResumen)
+class IncidenciaResumenAdmin(admin.ModelAdmin):
+    """Administración de incidencias consolidadas"""
+    
+    list_display = [
+        'id',
+        'tipo_incidencia_display',
+        'codigo_problema',
+        'cantidad_afectada',
+        'severidad_display',
+        'estado_display',
+        'fecha_deteccion',
+        'upload_log_info',
+    ]
+    
+    list_filter = [
+        'tipo_incidencia',
+        'severidad',
+        'estado',
+        'fecha_deteccion',
+        'upload_log__cliente',
+    ]
+    
+    search_fields = [
+        'codigo_problema',
+        'mensaje_usuario',
+        'upload_log__nombre_archivo_original',
+        'upload_log__cierre__periodo',
+    ]
+    
+    readonly_fields = [
+        'fecha_deteccion',
+        'elementos_afectados',
+        'detalle_muestra',
+        'estadisticas_adicionales',
+    ]
+    
+    date_hierarchy = 'fecha_deteccion'
+    
+    fieldsets = (
+        ('Información Principal', {
+            'fields': (
+                'upload_log',
+                'tipo_incidencia',
+                'codigo_problema',
+                'cantidad_afectada',
+                'estado'
+            )
+        }),
+        ('Severidad y Mensajes', {
+            'fields': (
+                'severidad',
+                'mensaje_usuario',
+                'accion_sugerida'
+            )
+        }),
+        ('Datos Consolidados', {
+            'fields': (
+                'elementos_afectados',
+                'detalle_muestra',
+                'estadisticas_adicionales'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Resolución', {
+            'fields': (
+                'fecha_resolucion',
+                'resuelto_por'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def tipo_incidencia_display(self, obj):
+        """Tipo de incidencia con ícono"""
+        icons = {
+            'tipos_doc_no_reconocidos': '📄',
+            'movimientos_tipodoc_nulo': '❌',
+            'cuentas_sin_clasificacion': '🏷️',
+            'cuentas_sin_nombre_ingles': '🌐',
+            'cuentas_nuevas_detectadas': '✨',
+        }
+        icon = icons.get(obj.tipo_incidencia, '📝')
+        return f"{icon} {obj.get_tipo_incidencia_display()}"
+    tipo_incidencia_display.short_description = 'Tipo'
+    
+    def severidad_display(self, obj):
+        """Severidad con colores"""
+        colors = {
+            'baja': '🟢',
+            'media': '🟡',
+            'alta': '🟠',
+            'critica': '🔴'
+        }
+        color = colors.get(obj.severidad, '⚪')
+        return f"{color} {obj.get_severidad_display()}"
+    severidad_display.short_description = 'Severidad'
+    
+    def estado_display(self, obj):
+        """Estado con íconos"""
+        icons = {
+            'activa': '🔴 Activa',
+            'resuelta': '✅ Resuelta', 
+            'obsoleta': '⏳ Obsoleta'
+        }
+        return icons.get(obj.estado, obj.estado)
+    estado_display.short_description = 'Estado'
+    
+    def upload_log_info(self, obj):
+        """Información del upload log"""
+        return f"{obj.upload_log.cliente.nombre} - {obj.upload_log.nombre_archivo_original}"
+    upload_log_info.short_description = 'Upload Log'
+    
+    actions = ['marcar_como_resueltas', 'generar_reporte_resumen']
+    
+    def marcar_como_resueltas(self, request, queryset):
+        """Acción para marcar incidencias como resueltas"""
+        count = 0
+        for incidencia in queryset.filter(estado='activa'):
+            incidencia.marcar_como_resuelta(usuario=request.user)
+            count += 1
+        
+        self.message_user(
+            request,
+            f'{count} incidencias marcadas como resueltas.'
+        )
+    marcar_como_resueltas.short_description = 'Marcar como resueltas'
+
+
+@admin.register(HistorialReprocesamiento) 
+class HistorialReprocesarAdmin(admin.ModelAdmin):
+    """Administración del historial de reprocesamientos"""
+    
+    list_display = [
+        'id',
+        'upload_log_info',
+        'iteracion',
+        'mejora_display',
+        'trigger_reprocesamiento',
+        'usuario',
+        'fecha_inicio',
+    ]
+    
+    list_filter = [
+        'trigger_reprocesamiento',
+        'fecha_inicio',
+        'upload_log__cliente',
+    ]
+    
+    search_fields = [
+        'upload_log__nombre_archivo_original',
+        'notas',
+    ]
+    
+    readonly_fields = [
+        'fecha_inicio',
+        'tiempo_procesamiento',
+        'incidencias_previas',
+        'incidencias_nuevas',
+        'incidencias_resueltas',
+        'calcular_efectividad',
+        'obtener_mejoras',
+    ]
+    
+    fieldsets = (
+        ('Información Principal', {
+            'fields': (
+                'upload_log',
+                'usuario',
+                'iteracion',
+                'trigger_reprocesamiento'
+            )
+        }),
+        ('Métricas', {
+            'fields': (
+                'incidencias_previas_count',
+                'incidencias_nuevas_count', 
+                'incidencias_resueltas_count',
+                'movimientos_corregidos',
+                'movimientos_total'
+            )
+        }),
+        ('Detalles', {
+            'fields': (
+                'incidencias_previas',
+                'incidencias_nuevas',
+                'incidencias_resueltas',
+                'tiempo_procesamiento',
+                'notas'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def upload_log_info(self, obj):
+        """Info del upload log"""
+        return f"{obj.upload_log.cliente.nombre} - {obj.upload_log.nombre_archivo_original}"
+    upload_log_info.short_description = 'Upload Log'
+    
+    def mejora_display(self, obj):
+        """Muestra porcentaje de mejora"""
+        efectividad = obj.calcular_efectividad()
+        if efectividad == 100:
+            return "✅ 100%"
+        elif efectividad >= 80:
+            return f"🟢 {efectividad:.1f}%"
+        elif efectividad >= 50:
+            return f"🟡 {efectividad:.1f}%" 
+        else:
+            return f"🔴 {efectividad:.1f}%"
+    mejora_display.short_description = 'Efectividad'
+
+
+@admin.register(LogResolucionIncidencia)
+class LogResolucionIncidenciaAdmin(admin.ModelAdmin):
+    """Administración de logs de resolución"""
+    
+    list_display = [
+        'id',
+        'incidencia_info',
+        'accion_realizada',
+        'cantidad_resuelta',
+        'usuario',
+        'fecha_accion',
+    ]
+    
+    list_filter = [
+        'accion_realizada',
+        'fecha_accion',
+    ]
+    
+    search_fields = [
+        'observaciones',
+        'incidencia_resumen__codigo_problema',
+    ]
+    
+    readonly_fields = [
+        'fecha_accion',
+        'elementos_resueltos',
+        'datos_adicionales',
+    ]
+    
+    fieldsets = (
+        ('Información Principal', {
+            'fields': (
+                'incidencia_resumen',
+                'usuario',
+                'accion_realizada',
+                'cantidad_resuelta'
+            )
+        }),
+        ('Detalles', {
+            'fields': (
+                'elementos_resueltos',
+                'upload_log_relacionado',
+                'observaciones',
+                'datos_adicionales'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def incidencia_info(self, obj):
+        """Info de la incidencia"""
+        return f"{obj.incidencia_resumen.get_tipo_incidencia_display()} - {obj.incidencia_resumen.codigo_problema or 'General'}"
+    incidencia_info.short_description = 'Incidencia'

@@ -766,6 +766,36 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
         upload_log.tiempo_procesamiento = timezone.now() - inicio
         upload_log.save()
 
+        # ✨ NUEVO: Generar incidencias consolidadas
+        try:
+            from contabilidad.utils.parser_libro_mayor_consolidado import (
+                analizar_incidencias_consolidadas,
+                crear_incidencias_consolidadas
+            )
+            
+            logger.info(f"Generando incidencias consolidadas para upload_log {upload_log.id}")
+            
+            # Analizar y consolidar incidencias
+            incidencias_acumuladas = analizar_incidencias_consolidadas(upload_log, movimientos_creados)
+            
+            # Crear registros consolidados
+            incidencias_consolidadas = crear_incidencias_consolidadas(upload_log, incidencias_acumuladas)
+            
+            # Actualizar resumen con información consolidada
+            upload_log.resumen.update({
+                "incidencias_consolidadas_creadas": len(incidencias_consolidadas),
+                "tipos_incidencia_detectados": list(incidencias_acumuladas.keys()),
+                "sistema_consolidado": True
+            })
+            upload_log.save(update_fields=['resumen'])
+            
+            logger.info(f"Creadas {len(incidencias_consolidadas)} incidencias consolidadas")
+            
+        except Exception as e:
+            logger.error(f"Error generando incidencias consolidadas: {e}")
+            # No fallar el procesamiento por esto
+            pass
+
         try:
             os.remove(ruta_completa)
         except OSError:

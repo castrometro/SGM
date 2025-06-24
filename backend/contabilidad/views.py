@@ -30,28 +30,25 @@ from rest_framework.views import APIView
 from .utils.activity_logger import (
     registrar_actividad_tarjeta,
 )  # Comentado temporalmente
+
 from .mixins import ActivityLogMixin
+from .utils import obtener_cierre_activo
+
 
 logger = logging.getLogger(__name__)
 
 
 def obtener_periodo_actividad_para_cliente(cliente):
-    """
-    Helper function para obtener el período correcto para registrar actividades de tarjeta.
-    Busca el cierre activo del cliente, si no encuentra usa la fecha actual.
-    """
+    """Devuelve el período asociado al cierre activo del cliente."""
+
     try:
-        cierre_para_actividad = CierreContabilidad.objects.filter(
-            cliente=cliente,
-            estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-        ).order_by('-fecha_creacion').first()
-        
+        cierre_para_actividad = obtener_cierre_activo(cliente)
         if cierre_para_actividad:
             return cierre_para_actividad.periodo
-        else:
-            return date.today().strftime("%Y-%m")
     except Exception:
-        return date.today().strftime("%Y-%m")
+        pass
+
+    return date.today().strftime("%Y-%m")
 
 
 def get_client_ip(request):
@@ -67,6 +64,7 @@ def get_client_ip(request):
 
 
 from api.models import Cliente
+from .utils.clientes import get_cliente_or_404
 from contabilidad.tasks import (
     parsear_nombres_ingles,
     parsear_tipo_documento,
@@ -470,10 +468,7 @@ def historial_uploads_cliente(request, cliente_id):
     """
     Obtiene el historial de uploads para un cliente específico
     """
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     # Obtener parámetros de filtro
     tipo_upload = request.GET.get("tipo", None)  # TipoDocumento, LibroMayor, etc.
@@ -538,10 +533,7 @@ def cargar_tipo_documento(request):
     if not cliente_id or not archivo:
         return Response({"error": "cliente_id y archivo son requeridos"}, status=400)
 
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     # Verificar si ya existen datos para este cliente
     tipos_existentes = TipoDocumento.objects.filter(cliente=cliente).count()
@@ -637,33 +629,8 @@ def cargar_tipo_documento(request):
                 status=400,
             )
 
-        # Intentar determinar el cierre más reciente del cliente (mismo patrón que clasificación)
-        cierre_relacionado = None
         cierre_id = request.data.get("cierre_id")  # Si el frontend lo envía
-        
-        print(f"🔍 DEBUG: cierre_id del frontend: {cierre_id}")
-        
-        if cierre_id:
-            try:
-                cierre_relacionado = CierreContabilidad.objects.get(id=cierre_id, cliente=cliente)
-                print(f"✅ DEBUG: Cierre encontrado usando cierre_id del frontend: {cierre_relacionado.id} - {cierre_relacionado.periodo}")
-            except CierreContabilidad.DoesNotExist:
-                print(f"❌ DEBUG: Cierre con id {cierre_id} no encontrado, buscando automáticamente")
-                pass
-        else:
-            print("🔎 DEBUG: No se envió cierre_id desde frontend, buscando automáticamente")
-        
-        # Si no se especifica cierre, buscar el más reciente que no esté cerrado
-        if not cierre_relacionado:
-            cierre_relacionado = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
-            
-            if cierre_relacionado:
-                print(f"🔍 DEBUG: Cierre encontrado automáticamente: {cierre_relacionado.id} - {cierre_relacionado.periodo} - Estado: {cierre_relacionado.estado}")
-            else:
-                print("⚠️ DEBUG: No se encontró ningún cierre abierto para el cliente")
+        cierre_relacionado = obtener_cierre_activo(cliente, cierre_id)
 
         print(f"📄 DEBUG: UploadLog se creará con cierre: {cierre_relacionado.id if cierre_relacionado else 'None'}")
 
@@ -782,10 +749,7 @@ def cargar_clasificacion_bulk(request):
     if not cliente_id or not archivo:
         return Response({"error": "cliente_id y archivo son requeridos"}, status=400)
 
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     try:
         es_valido, mensaje = UploadLog.validar_nombre_archivo(
@@ -797,31 +761,22 @@ def cargar_clasificacion_bulk(request):
             else:
                 return Response({"error": mensaje}, status=400)
 
-        # BUSCAR EL CIERRE ASOCIADO (igual que en tipo_documento)
-        cierre_relacionado = None
-        
-        # Intentar usar el cierre_id proporcionado desde el frontend
-        if cierre_id:
-            try:
-                cierre_relacionado = CierreContabilidad.objects.get(id=cierre_id, cliente=cliente)
-                logger.info(f"✅ Cierre encontrado usando cierre_id del frontend: {cierre_relacionado.id} - {cierre_relacionado.periodo}")
-            except CierreContabilidad.DoesNotExist:
-                logger.warning(f"❌ Cierre con id {cierre_id} no encontrado, buscando automáticamente")
-                pass
+        cierre_relacionado = obtener_cierre_activo(cliente, cierre_id)
+
+        if cierre_id and cierre_relacionado and str(cierre_relacionado.id) == str(cierre_id):
+            logger.info(
+                f"✅ Cierre encontrado usando cierre_id del frontend: {cierre_relacionado.id} - {cierre_relacionado.periodo}"
+            )
+        elif cierre_id:
+            logger.warning(
+                f"❌ Cierre con id {cierre_id} no encontrado, buscando automáticamente"
+            )
+        elif cierre_relacionado:
+            logger.info(
+                f"🔍 Cierre encontrado automáticamente: {cierre_relacionado.id} - {cierre_relacionado.periodo} - Estado: {cierre_relacionado.estado}"
+            )
         else:
-            logger.info("🔎 No se envió cierre_id desde frontend, buscando automáticamente")
-        
-        # Si no se especifica cierre, buscar el más reciente que no esté cerrado
-        if not cierre_relacionado:
-            cierre_relacionado = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
-            
-            if cierre_relacionado:
-                logger.info(f"🔍 Cierre encontrado automáticamente: {cierre_relacionado.id} - {cierre_relacionado.periodo} - Estado: {cierre_relacionado.estado}")
-            else:
-                logger.warning("⚠️ No se encontró ningún cierre abierto para el cliente")
+            logger.warning("⚠️ No se encontró ningún cierre abierto para el cliente")
 
         logger.info(f"📋 UploadLog de clasificación se creará con cierre: {cierre_relacionado.id if cierre_relacionado else 'None'}")
 
@@ -933,10 +888,7 @@ def test_celery(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, SoloContabilidadAsignadoOGerente])
 def resumen_cliente(request, cliente_id):
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     ultimo = (
         CierreContabilidad.objects.filter(cliente=cliente).order_by("-periodo").first()
@@ -955,10 +907,7 @@ def resumen_cliente(request, cliente_id):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def eliminar_tipos_documento(request, cliente_id):
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     # Contar registros antes de eliminar
     count = TipoDocumento.objects.filter(cliente=cliente).count()
@@ -1122,10 +1071,7 @@ def registrar_vista_tipos_documento(request, cliente_id):
     """
     Endpoint específico para registrar cuando el usuario abre el modal de tipos de documento
     """
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
     
     tipos = TipoDocumento.objects.filter(cliente_id=cliente_id)
 
@@ -1167,10 +1113,7 @@ def registrar_vista_clasificaciones(request, cliente_id):
     """
     Endpoint específico para registrar cuando el usuario abre el modal de clasificaciones
     """
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
     
     # Obtener el upload ID del request
     upload_log_id = request.data.get("upload_log_id")
@@ -1277,10 +1220,7 @@ def cargar_nombres_ingles(request):
     if not cliente_id or not archivo:
         return Response({"error": "cliente_id y archivo son requeridos"}, status=400)
 
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     # Verificar si ya existen datos para este cliente
     nombres_existentes = NombreIngles.objects.filter(cliente=cliente).count()
@@ -1335,10 +1275,7 @@ def cargar_nombres_ingles(request):
         return Response({"error": msg}, status=400)
 
     # Buscar cierre relacionado automáticamente
-    cierre_relacionado = CierreContabilidad.objects.filter(
-        cliente=cliente,
-        estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-    ).order_by('-fecha_creacion').first()
+    cierre_relacionado = obtener_cierre_activo(cliente)
 
     # Crear UploadLog
     upload_log = UploadLog.objects.create(
@@ -1410,10 +1347,7 @@ def registrar_vista_nombres_ingles(request, cliente_id):
     """
     Endpoint específico para registrar cuando el usuario abre el modal de nombres en inglés
     """
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
     
     nombres = NombreIngles.objects.filter(cliente_id=cliente_id)
 
@@ -1452,10 +1386,7 @@ def registrar_vista_nombres_ingles(request, cliente_id):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def eliminar_nombres_ingles(request, cliente_id):
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     # Contar registros antes de eliminar
     count = NombreIngles.objects.filter(cliente=cliente).count()
@@ -1614,9 +1545,7 @@ class TipoDocumentoViewSet(ActivityLogMixin, viewsets.ModelViewSet):
             raise ValidationError("Cliente es requerido")
 
         try:
-            from api.models import Cliente
-
-            cliente = Cliente.objects.get(id=cliente_id)
+            cliente = get_cliente_or_404(cliente_id)
             instance = serializer.save()
 
             # Obtener período correcto para el cliente
@@ -1635,10 +1564,6 @@ class TipoDocumentoViewSet(ActivityLogMixin, viewsets.ModelViewSet):
                 },
             )
 
-        except Cliente.DoesNotExist:
-            from rest_framework.exceptions import ValidationError
-
-            raise ValidationError("Cliente no encontrado")
         except Exception as e:
             # Obtener período correcto para el cliente si hay error
             periodo_actividad = date.today().strftime("%Y-%m")  # Fallback en caso de error
@@ -1776,9 +1701,7 @@ class NombreInglesViewSet(ActivityLogMixin, viewsets.ModelViewSet):
             raise ValidationError("Cliente es requerido")
 
         try:
-            from api.models import Cliente
-
-            cliente = Cliente.objects.get(id=cliente_id)
+            cliente = get_cliente_or_404(cliente_id)
             instance = serializer.save()
 
             # Registrar creación manual
@@ -1794,10 +1717,6 @@ class NombreInglesViewSet(ActivityLogMixin, viewsets.ModelViewSet):
                 },
             )
 
-        except Cliente.DoesNotExist:
-            from rest_framework.exceptions import ValidationError
-
-            raise ValidationError("Cliente no encontrado")
         except Exception as e:
             # Registrar error
             self.log_create(
@@ -2580,8 +2499,17 @@ class NombresEnInglesUploadViewSet(ActivityLogMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def reprocesar(self, request, pk=None):
+        """Reprocesa un archivo de nombres en inglés."""
+        upload = self.get_object()
         try:
-            upload = self.get_object()
+            # Reiniciar estado y limpiar datos previos
+            upload.estado = "subido"
+            upload.errores = ""
+            upload.resumen = {}
+            upload.save(update_fields=["estado", "errores", "resumen"])
+
+            # Disparar tarea de procesamiento en background
+            procesar_nombres_ingles_upload.delay(upload.id)
 
             # Registrar reprocesamiento
             registrar_actividad_tarjeta(
@@ -2601,7 +2529,7 @@ class NombresEnInglesUploadViewSet(ActivityLogMixin, viewsets.ModelViewSet):
                 ip_address=request.META.get("REMOTE_ADDR"),
             )
 
-            return Response({"message": "Archivo reprocesado exitosamente"})
+            return Response({"mensaje": "Reprocesamiento iniciado"})
 
         except Exception as e:
             # Registrar error en reprocesamiento
@@ -2621,24 +2549,6 @@ class NombresEnInglesUploadViewSet(ActivityLogMixin, viewsets.ModelViewSet):
                 ip_address=request.META.get("REMOTE_ADDR"),
             )
             return Response({"error": str(e)}, status=500)
-
-    @action(detail=True, methods=["post"])
-    def reprocesar(self, request, pk=None):
-        upload = self.get_object()
-        try:
-            # Aquí iría la lógica de reprocesamiento
-            # Por ahora solo registramos el log
-            UploadChangeLog.objects.create(
-                tipo_upload="nombres_ingles",
-                upload_id=upload.id,
-                accion="reprocess",
-                usuario=request.user,
-                cliente=upload.cliente,
-                descripcion="Archivo reprocesado",
-            )
-            return Response({"message": "Archivo reprocesado exitosamente"})
-        except Exception as e:
-            return Response({"error": str(e)}, status=400)
 
 
 class LibroMayorUploadViewSet(ActivityLogMixin, viewsets.ModelViewSet):
@@ -2943,10 +2853,7 @@ def eliminar_todos_nombres_ingles_upload(request):
     if not cliente_id:
         return Response({"error": "ID de cliente requerido"}, status=400)
 
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     # Filtrar por cliente y opcionalmente por cierre
     uploads_query = NombresEnInglesUpload.objects.filter(cliente=cliente)

@@ -85,28 +85,34 @@ const NombresEnInglesCard = ({
         const logData = await obtenerEstadoUploadLog(uploadLogId);
         setUploadEstado(logData);
 
-        if (logData.estado === 'procesando') {
-          setUploadProgreso('Procesando archivo...');
-        } else if (logData.estado === 'completado') {
-          setUploadProgreso('¡Procesamiento completado!');
+        if (logData.estado === "procesando") {
+          setUploadProgreso("Procesando archivo...");
+        } else if (logData.estado === "completado") {
+          setUploadProgreso("¡Procesamiento completado!");
           setSubiendo(false);
-          setEstado('subido');
+          setEstado("subido");
           if (onCompletado) onCompletado(true);
 
           try {
             const nombres = await obtenerNombresInglesCliente(clienteId);
             setNombresIngles(nombres);
           } catch (err) {
-            console.error('Error recargando nombres:', err);
+            console.error("Error recargando nombres:", err);
           }
 
-        } else if (logData.estado === 'error') {
-          setUploadProgreso('');
+          const creados = logData.resumen?.nombres_creados || 0;
+          mostrarNotificacion(
+            "success",
+            `✅ Archivo procesado exitosamente. ${creados} nombres almacenados.`
+          );
+
+        } else if (logData.estado === "error") {
+          setUploadProgreso("Error en el procesamiento");
           setSubiendo(false);
-          setEstado('error');
-          const msg = logData.errores || 'Error en el procesamiento';
+          setEstado("error");
+          const msg = logData.errores || "Error en el procesamiento";
           setError(msg);
-          mostrarNotificacion('error', msg);
+          mostrarNotificacion("error", msg);
           if (onCompletado) onCompletado(false);
         }
 
@@ -222,7 +228,7 @@ const NombresEnInglesCard = ({
     setEliminando(true);
     setErrorEliminando("");
     try {
-      await eliminarTodosNombresIngles(clienteId);
+      const result = await eliminarTodosNombresIngles(clienteId);
       setEstado("pendiente");
       setNombresIngles([]);
       setArchivoNombre("");
@@ -230,8 +236,8 @@ const NombresEnInglesCard = ({
       setUploadEstado(null);
       setUploadProgreso("");
       if (onCompletado) onCompletado(false);
-
-      // No se muestran notificaciones de éxito para mantener consistencia con ClasificacionBulkCard
+      const mensaje = `Eliminados: ${result.registros_eliminados || 0} registros, ${result.upload_logs_conservados || 0} logs, ${result.archivos_eliminados || 0} archivos`;
+      mostrarNotificacion("success", `🗑️ ${mensaje}`);
     } catch (err) {
       setErrorEliminando("Error eliminando los nombres en inglés");
       mostrarNotificacion("error", "❌ Error eliminando los nombres en inglés");
@@ -278,7 +284,7 @@ const NombresEnInglesCard = ({
           disabled={subiendo || disabled}
           className={`bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded text-sm font-medium transition ${subiendo ? "opacity-60 cursor-not-allowed" : ""}`}
         >
-          {subiendo ? "Subiendo..." : "Elegir archivo .xlsx"}
+          {subiendo ? uploadProgreso || "Subiendo..." : "Elegir archivo .xlsx"}
         </button>
         <span className="text-gray-300 text-xs italic truncate max-w-xs">
           {archivoNombre || "Ningún archivo seleccionado"}
@@ -293,6 +299,25 @@ const NombresEnInglesCard = ({
         onChange={handleSeleccionArchivo}
         disabled={subiendo || disabled}
       />
+
+      {subiendo && uploadEstado && (
+        <div className="text-xs bg-blue-900/20 border border-blue-500/30 rounded p-2 mt-2">
+          <div className="flex items-center justify-between mb-1">
+            <span className="font-medium text-blue-200">Procesando:</span>
+            <span className="text-blue-300">{uploadEstado.estado}</span>
+          </div>
+          {uploadEstado.resumen?.nombres_creados !== undefined && (
+            <div className="text-blue-300">
+              Nombres: {uploadEstado.resumen.nombres_creados}
+            </div>
+          )}
+          {uploadEstado.tiempo_procesamiento && (
+            <div className="text-blue-300">
+              Tiempo: {uploadEstado.tiempo_procesamiento}
+            </div>
+          )}
+        </div>
+      )}
       
       {error && (
         <div className="text-xs text-red-400 mt-1 p-2 bg-red-900/20 rounded border border-red-500/30">
@@ -337,7 +362,7 @@ const NombresEnInglesCard = ({
             {`✔ Archivo procesado correctamente${nombresIngles.length > 0 ? ` (${nombresIngles.length} nombres en inglés)` : ""}`}
           </span>
         ) : estado === "procesando" ? (
-          <span className="text-blue-400">🔄 Procesando nombres en inglés…</span>
+          <span className="text-blue-400">🔄 {uploadProgreso || 'Procesando nombres en inglés…'}</span>
         ) : estado === "error" && error ? (
           <span className="text-red-400">❌ Error: {error}</span>
         ) : nombresIngles.length > 0 ? (

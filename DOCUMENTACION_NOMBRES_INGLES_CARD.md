@@ -36,8 +36,9 @@ const [uploadProgreso, setUploadProgreso] = useState("");
 Flujo simplificado:
 1. `handleSeleccionArchivo` envía el archivo con `subirNombresIngles` y recibe `upload_log_id`.
 2. Un `useEffect` realiza polling a `/upload-log/{id}/estado/` hasta que el proceso termina.
-3. Al completarse se recargan los nombres y se muestra una notificación de éxito.
-4. `handleEliminarTodos` borra los registros y marca los UploadLogs como `datos_eliminados`, mostrando cuántos registros y archivos se removieron.
+3. Durante el procesamiento se muestra un cuadro de progreso con el estado reportado por el UploadLog.
+4. Al completarse se recargan los nombres y se muestra una notificación de éxito con la cantidad de nombres creados.
+5. `handleEliminarTodos` borra los registros y marca los UploadLogs como `datos_eliminados`, mostrando cuántos registros y archivos se removieron.
 
 ---
 
@@ -82,4 +83,5 @@ Ubicación: `backend/contabilidad/tasks.py`
 - Se realiza polling al mismo endpoint `/upload-log/{id}/estado/`.
 - La estructura de estados y notificaciones en el frontend es idéntica.
 - Los endpoints de subida y eliminación siguen el mismo esquema REST.
+- Las pantallas de progreso y mensajes de éxito se comportan igual que en TipoDocumentoCard.
 

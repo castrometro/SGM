@@ -101,10 +101,21 @@ const LibroMayorCard = ({
     return () => clearInterval(interval);
   }, [uploadLogId, subiendo, onCompletado]);
 
-  const handleSeleccionArchivo = (e) => {
+  const handleSeleccionArchivo = async (e) => {
     const archivo = e.target.files[0];
     if (!archivo) return;
     setArchivoNombre(archivo.name);
+
+    if (!validarNombreArchivo(archivo.name)) {
+      setError("Nombre de archivo inválido");
+      mostrarNotificacion(
+        "warning",
+        `❌ Nombre de archivo incorrecto. Formato esperado: ${cliente?.rut ? cliente.rut.replace(/\./g, '').replace('-', '') : 'RUT'}_LibroMayor_MMAAAA.xlsx`
+      );
+      return;
+    }
+
+    await handleSubirLibro(archivo);
   };
 
   const validarNombreArchivo = (nombre) => {
@@ -113,8 +124,8 @@ const LibroMayorCard = ({
     return regex.test(nombre);
   };
 
-  const handleSubirLibro = async () => {
-    const archivo = fileInputRef.current.files[0];
+  const handleSubirLibro = async (archivoParam = null) => {
+    const archivo = archivoParam || fileInputRef.current.files[0];
     if (!archivo) {
       setError("Debes seleccionar un archivo .xlsx");
       return;

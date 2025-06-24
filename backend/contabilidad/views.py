@@ -66,6 +66,7 @@ def get_client_ip(request):
 
 
 from api.models import Cliente
+from .utils.clientes import get_cliente_or_404
 from contabilidad.tasks import (
     parsear_nombres_ingles,
     parsear_tipo_documento,
@@ -469,10 +470,7 @@ def historial_uploads_cliente(request, cliente_id):
     """
     Obtiene el historial de uploads para un cliente específico
     """
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     # Obtener parámetros de filtro
     tipo_upload = request.GET.get("tipo", None)  # TipoDocumento, LibroMayor, etc.
@@ -537,10 +535,7 @@ def cargar_tipo_documento(request):
     if not cliente_id or not archivo:
         return Response({"error": "cliente_id y archivo son requeridos"}, status=400)
 
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     # Verificar si ya existen datos para este cliente
     tipos_existentes = TipoDocumento.objects.filter(cliente=cliente).count()
@@ -781,10 +776,7 @@ def cargar_clasificacion_bulk(request):
     if not cliente_id or not archivo:
         return Response({"error": "cliente_id y archivo son requeridos"}, status=400)
 
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     try:
         es_valido, mensaje = UploadLog.validar_nombre_archivo(
@@ -932,10 +924,7 @@ def test_celery(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, SoloContabilidadAsignadoOGerente])
 def resumen_cliente(request, cliente_id):
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     ultimo = (
         CierreContabilidad.objects.filter(cliente=cliente).order_by("-periodo").first()
@@ -954,10 +943,7 @@ def resumen_cliente(request, cliente_id):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def eliminar_tipos_documento(request, cliente_id):
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     # Contar registros antes de eliminar
     count = TipoDocumento.objects.filter(cliente=cliente).count()
@@ -1121,10 +1107,7 @@ def registrar_vista_tipos_documento(request, cliente_id):
     """
     Endpoint específico para registrar cuando el usuario abre el modal de tipos de documento
     """
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
     
     tipos = TipoDocumento.objects.filter(cliente_id=cliente_id)
 
@@ -1166,10 +1149,7 @@ def registrar_vista_clasificaciones(request, cliente_id):
     """
     Endpoint específico para registrar cuando el usuario abre el modal de clasificaciones
     """
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
     
     # Obtener el upload ID del request
     upload_log_id = request.data.get("upload_log_id")
@@ -1276,10 +1256,7 @@ def cargar_nombres_ingles(request):
     if not cliente_id or not archivo:
         return Response({"error": "cliente_id y archivo son requeridos"}, status=400)
 
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     # Verificar si ya existen datos para este cliente
     nombres_existentes = NombreIngles.objects.filter(cliente=cliente).count()
@@ -1409,10 +1386,7 @@ def registrar_vista_nombres_ingles(request, cliente_id):
     """
     Endpoint específico para registrar cuando el usuario abre el modal de nombres en inglés
     """
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
     
     nombres = NombreIngles.objects.filter(cliente_id=cliente_id)
 
@@ -1451,10 +1425,7 @@ def registrar_vista_nombres_ingles(request, cliente_id):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def eliminar_nombres_ingles(request, cliente_id):
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     # Contar registros antes de eliminar
     count = NombreIngles.objects.filter(cliente=cliente).count()
@@ -1613,9 +1584,7 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
             raise ValidationError("Cliente es requerido")
 
         try:
-            from api.models import Cliente
-
-            cliente = Cliente.objects.get(id=cliente_id)
+            cliente = get_cliente_or_404(cliente_id)
             instance = serializer.save()
 
             # Obtener período correcto para el cliente
@@ -1638,10 +1607,6 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
                 ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
-        except Cliente.DoesNotExist:
-            from rest_framework.exceptions import ValidationError
-
-            raise ValidationError("Cliente no encontrado")
         except Exception as e:
             # Obtener período correcto para el cliente si hay error
             periodo_actividad = date.today().strftime("%Y-%m")  # Fallback en caso de error
@@ -1796,9 +1761,7 @@ class NombreInglesViewSet(viewsets.ModelViewSet):
             raise ValidationError("Cliente es requerido")
 
         try:
-            from api.models import Cliente
-
-            cliente = Cliente.objects.get(id=cliente_id)
+            cliente = get_cliente_or_404(cliente_id)
             instance = serializer.save()
 
             # Registrar creación manual
@@ -1818,10 +1781,6 @@ class NombreInglesViewSet(viewsets.ModelViewSet):
                 ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
-        except Cliente.DoesNotExist:
-            from rest_framework.exceptions import ValidationError
-
-            raise ValidationError("Cliente no encontrado")
         except Exception as e:
             # Registrar error
             registrar_actividad_tarjeta(
@@ -3059,10 +3018,7 @@ def eliminar_todos_nombres_ingles_upload(request):
     if not cliente_id:
         return Response({"error": "ID de cliente requerido"}, status=400)
 
-    try:
-        cliente = Cliente.objects.get(id=cliente_id)
-    except Cliente.DoesNotExist:
-        return Response({"error": "Cliente no encontrado"}, status=404)
+    cliente = get_cliente_or_404(cliente_id)
 
     # Filtrar por cliente y opcionalmente por cierre
     uploads_query = NombresEnInglesUpload.objects.filter(cliente=cliente)

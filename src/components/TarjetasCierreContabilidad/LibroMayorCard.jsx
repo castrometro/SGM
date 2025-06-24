@@ -51,8 +51,18 @@ const LibroMayorCard = ({
         const ultimo = data && data.length > 0 ? data[data.length - 1] : null;
         if (ultimo) {
           setEstado(ultimo.estado);
-          if (ultimo.estado === "procesando" && ultimo.upload_log) {
+          if (ultimo.upload_log) {
             setUploadLogId(ultimo.upload_log);
+            const logData = await obtenerEstadoUploadLog(ultimo.upload_log);
+            setMovimientosProcesados(
+              logData.resumen?.movimientos_creados || 0,
+            );
+            setIncidenciasDetectadas(
+              logData.resumen?.incidencias_creadas || 0,
+            );
+          }
+
+          if (ultimo.estado === "procesando") {
             setSubiendo(true);
           } else if (ultimo.estado === "completado") {
             onCompletado && onCompletado(true);
@@ -188,9 +198,11 @@ const LibroMayorCard = ({
     try {
       const data = await obtenerMovimientosIncompletos(cierreId);
       setMovimientosIncompletos(Array.isArray(data) ? data : []);
-      setModalIncompletoAbierto(true);
     } catch (err) {
       console.error("Error cargando movimientos incompletos:", err);
+      setMovimientosIncompletos([]);
+    } finally {
+      setModalIncompletoAbierto(true);
     }
   };
 

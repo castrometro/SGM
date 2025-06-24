@@ -341,64 +341,75 @@ def procesar_nombres_ingles_upload(upload_id):
 
 @shared_task
 def procesar_nombres_ingles_con_upload_log(upload_log_id):
-    """Procesa nombres en inglés usando el sistema UploadLog"""
+    """Procesa archivo de nombres en inglés usando UploadLog"""
     logger.info(
-        f"Iniciando procesamiento de nombres en inglés para upload_log {upload_log_id}"
+        "Iniciando procesamiento de nombres en inglés para upload_log %s",
+        upload_log_id,
     )
 
     try:
         upload_log = UploadLog.objects.get(id=upload_log_id)
     except UploadLog.DoesNotExist:
-        logger.error(f"UploadLog con id {upload_log_id} no encontrado")
+        logger.error("UploadLog con id %s no encontrado", upload_log_id)
         return f"Error: UploadLog {upload_log_id} no encontrado"
 
     upload_log.estado = "procesando"
     upload_log.save(update_fields=["estado"])
+    inicio = timezone.now()
 
     try:
-        ruta_relativa = f"temp/nombres_ingles_cliente_{upload_log.cliente.id}_{upload_log.id}.xlsx"
+        ruta_relativa = (
+            f"temp/nombres_ingles_cliente_{upload_log.cliente.id}_{upload_log.id}.xlsx"
+        )
         ruta_completa = default_storage.path(ruta_relativa)
 
-        df = pd.read_excel(ruta_completa)
+        df = pd.read_excel(ruta_completa, skiprows=1, header=None)
         if len(df.columns) < 2:
-            raise ValueError("El archivo debe tener al menos 2 columnas")
+            raise ValueError(
+                "El archivo debe tener al menos 2 columnas: código y nombre en inglés"
+            )
 
-        col_codigo = df.columns[0]
-        col_nombre = df.columns[1]
+        df.columns = ["cuenta_codigo", "nombre_ingles"] + [
+            f"col_{i}" for i in range(2, len(df.columns))
+        ]
 
+        df = df.dropna(subset=["cuenta_codigo", "nombre_ingles"])
+        df["cuenta_codigo"] = df["cuenta_codigo"].astype(str).str.strip()
+        df["nombre_ingles"] = df["nombre_ingles"].astype(str).str.strip()
+        df = df[
+            (df["cuenta_codigo"] != "")
+            & (df["cuenta_codigo"] != "nan")
+            & (df["nombre_ingles"] != "")
+            & (df["nombre_ingles"] != "nan")
+        ]
+
+        eliminados = NombreIngles.objects.filter(cliente=upload_log.cliente).count()
+        NombreIngles.objects.filter(cliente=upload_log.cliente).delete()
+
+        creados = 0
         errores = []
-        actualizadas = 0
-        no_encontradas = 0
-
         for idx, row in df.iterrows():
-            codigo = str(row[col_codigo]).strip()
-            nombre_en = str(row[col_nombre]).strip()
-            if not codigo or pd.isna(row[col_codigo]):
-                continue
-            if not nombre_en or pd.isna(row[col_nombre]) or nombre_en.lower() == "nan":
-                continue
             try:
-                cuenta = CuentaContable.objects.get(codigo=codigo, cliente=upload_log.cliente)
-                cuenta.nombre_en = nombre_en
-                cuenta.save(update_fields=["nombre_en"])
-                actualizadas += 1
-            except CuentaContable.DoesNotExist:
-                errores.append(f"Cuenta no encontrada: {codigo}")
-                no_encontradas += 1
+                NombreIngles.objects.create(
+                    cliente=upload_log.cliente,
+                    cuenta_codigo=row["cuenta_codigo"],
+                    nombre_ingles=row["nombre_ingles"],
+                )
+                creados += 1
             except Exception as e:
-                errores.append(f"Error al actualizar {codigo}: {str(e)}")
+                errores.append(f"Fila {idx + 3}: {str(e)}")
 
         resumen = {
             "total_filas": len(df),
-            "cuentas_actualizadas": actualizadas,
-            "cuentas_no_encontradas": no_encontradas,
+            "nombres_creados": creados,
+            "nombres_eliminados_previos": eliminados,
             "errores_count": len(errores),
         }
 
         upload_log.estado = "completado"
         upload_log.resumen = resumen
         upload_log.errores = "" if not errores else "\n".join(errores[:10])
-        upload_log.tiempo_procesamiento = timezone.now() - upload_log.fecha_subida
+        upload_log.tiempo_procesamiento = timezone.now() - inicio
         upload_log.save()
 
         try:
@@ -407,12 +418,12 @@ def procesar_nombres_ingles_con_upload_log(upload_log_id):
         except OSError:
             pass
 
-        return f"Completado: {actualizadas} cuentas"
+        return f"Completado: {creados} nombres"
 
     except Exception as e:
         upload_log.estado = "error"
         upload_log.errores = str(e)
-        upload_log.tiempo_procesamiento = timezone.now() - upload_log.fecha_subida
+        upload_log.tiempo_procesamiento = timezone.now() - inicio
         upload_log.save()
         logger.exception("Error en procesamiento de nombres en ingles")
         return f"Error: {str(e)}"

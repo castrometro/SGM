@@ -103,7 +103,10 @@ const NombresEnInglesCard = ({
             console.error('Error recargando nombres:', err);
           }
 
-          mostrarNotificacion('success', `✅ Archivo procesado exitosamente. ${logData.resumen?.cuentas_actualizadas || 0} cuentas actualizadas.`);
+          mostrarNotificacion(
+            'success',
+            `✅ Archivo procesado exitosamente. ${logData.resumen?.nombres_creados || 0} nombres registrados.`
+          );
 
         } else if (logData.estado === 'error') {
           setUploadProgreso('Error en el procesamiento');

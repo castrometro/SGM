@@ -63,8 +63,9 @@ Ubicación: `backend/contabilidad/views.py`
 
 ### Tarea Celery `procesar_nombres_ingles_con_upload_log`
 Ubicación: `backend/contabilidad/tasks.py`
-- Lee el Excel, actualiza las cuentas y registra estadísticas.
-- Actualiza el estado del `UploadLog` a `completado` o `error`.
+- Lee el Excel y guarda cada par `código - nombre` en el modelo `NombreIngles`.
+- Elimina cualquier dato previo para el cliente antes de insertar los nuevos registros.
+- Actualiza el estado del `UploadLog` a `completado` o `error` y guarda un resumen con la cantidad de nombres creados.
 
 ---
 

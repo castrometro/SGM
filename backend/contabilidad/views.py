@@ -1306,58 +1306,64 @@ def cargar_nombres_ingles(request):
             status=409,
         )  # 409 Conflict
 
-    # Limpiar archivos temporales anteriores del mismo cliente
-    patron_temp = f"temp/nombres_ingles_cliente_{cliente_id}*"
-
-    archivos_temp_anteriores = glob.glob(
-        os.path.join(
-            default_storage.location, "temp", f"nombres_ingles_cliente_{cliente_id}*"
-        )
+    # Validar nombre de archivo utilizando UploadLog
+    es_valido, msg = UploadLog.validar_nombre_archivo(
+        archivo.name, "NombresIngles", cliente.rut
     )
-    for archivo_anterior in archivos_temp_anteriores:
-        try:
-            os.remove(archivo_anterior)
-        except OSError:
-            pass  # Ignorar si no se puede eliminar
+    if not es_valido:
+        if isinstance(msg, dict):
+            return Response(msg, status=400)
+        return Response({"error": msg}, status=400)
 
-    # Guardar archivo temporalmente (media/temp/)
-    nombre_archivo = f"temp/nombres_ingles_cliente_{cliente_id}.xlsx"
+    # Buscar cierre relacionado automáticamente
+    cierre_relacionado = CierreContabilidad.objects.filter(
+        cliente=cliente,
+        estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+    ).order_by('-fecha_creacion').first()
+
+    # Crear UploadLog
+    upload_log = UploadLog.objects.create(
+        tipo_upload="nombres_ingles",
+        cliente=cliente,
+        cierre=cierre_relacionado,
+        usuario=request.user,
+        nombre_archivo_original=archivo.name,
+        tamaño_archivo=archivo.size,
+        estado="subido",
+        ip_usuario=get_client_ip(request),
+    )
+
+    # Guardar archivo temporal
+    nombre_archivo = f"temp/nombres_ingles_cliente_{cliente_id}_{upload_log.id}.xlsx"
     ruta_guardada = default_storage.save(nombre_archivo, archivo)
+    upload_log.ruta_archivo = ruta_guardada
+    upload_log.save(update_fields=["ruta_archivo"])
 
-    # Buscar cierre para actividad
-    cierre_para_actividad = None
-    try:
-        cierre_para_actividad = CierreContabilidad.objects.filter(
-            cliente=cliente,
-            estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-        ).order_by('-fecha_creacion').first()
-    except Exception:
-        pass
-    
-    periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
-
-    # Registrar actividad de subida
     registrar_actividad_tarjeta(
         cliente_id=cliente_id,
-        periodo=periodo_actividad,
+        periodo=cierre_relacionado.periodo if cierre_relacionado else date.today().strftime("%Y-%m"),
         tarjeta="nombres_ingles",
         accion="upload_excel",
-        descripcion=f"Subido archivo: {archivo.name}",
+        descripcion=f"Subido archivo: {archivo.name} (UploadLog ID: {upload_log.id})",
         usuario=request.user,
         detalles={
             "nombre_archivo": archivo.name,
             "tamaño_bytes": archivo.size,
-            "tipo_contenido": archivo.content_type,
-            "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+            "upload_log_id": upload_log.id,
+            "ruta_archivo": ruta_guardada,
+            "cierre_id": cierre_relacionado.id if cierre_relacionado else None,
         },
         resultado="exito",
         ip_address=request.META.get("REMOTE_ADDR"),
     )
 
-    # Enviar tarea a Celery (con ruta relativa)
-    parsear_nombres_ingles.delay(cliente_id, ruta_guardada)
+    procesar_nombres_ingles_con_upload_log.delay(upload_log.id)
 
-    return Response({"mensaje": "Archivo recibido y tarea enviada"})
+    return Response({
+        "mensaje": "Archivo recibido y tarea enviada",
+        "upload_log_id": upload_log.id,
+        "estado": upload_log.estado,
+    })
 
 
 @api_view(["GET"])

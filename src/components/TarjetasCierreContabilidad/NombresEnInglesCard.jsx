@@ -9,13 +9,12 @@ import {
   obtenerNombresInglesCliente,
   registrarVistaNombresIngles,
   subirNombresIngles,
-  eliminarTodosNombresIngles
+  eliminarTodosNombresIngles,
+  obtenerEstadoUploadLog
 } from "../../api/contabilidad";
 
 const NombresEnInglesCard = ({
-  cierreId,
   clienteId,
-  clasificacionReady,
   onCompletado,
   disabled,
   numeroPaso
@@ -31,6 +30,11 @@ const NombresEnInglesCard = ({
   const [notificacion, setNotificacion] = useState({ visible: false, tipo: "", mensaje: "" });
   const fileInputRef = useRef();
 
+  // Estados para UploadLog (monitoreo en tiempo real)
+  const [uploadLogId, setUploadLogId] = useState(null);
+  const [uploadEstado, setUploadEstado] = useState(null);
+  const [uploadProgreso, setUploadProgreso] = useState("");
+
   // Función para mostrar notificaciones
   const mostrarNotificacion = (tipo, mensaje) => {
     setNotificacion({ visible: true, tipo, mensaje });
@@ -43,13 +47,13 @@ const NombresEnInglesCard = ({
   // Cargar estado de nombres en inglés al montar
   useEffect(() => {
     const fetchEstado = async () => {
-      if (!cierreId || !clienteId || !clasificacionReady) {
+      if (!clienteId) {
         setEstado("pendiente");
         if (onCompletado) onCompletado(false);
         return;
       }
       try {
-        const data = await obtenerEstadoNombresIngles(clienteId, cierreId);
+        const data = await obtenerEstadoNombresIngles(clienteId);
         const estadoActual = typeof data === "string" ? data : data.estado;
         setEstado(estadoActual);
         
@@ -62,7 +66,7 @@ const NombresEnInglesCard = ({
             console.error("Error cargando nombres en inglés:", err);
           }
         }
-        
+
         if (onCompletado) onCompletado(estadoActual === "subido");
       } catch (err) {
         setEstado("pendiente");
@@ -70,7 +74,54 @@ const NombresEnInglesCard = ({
       }
     };
     if (clienteId && !disabled) fetchEstado();
-  }, [cierreId, clienteId, clasificacionReady, disabled, onCompletado]);
+  }, [clienteId, disabled, onCompletado]);
+
+  useEffect(() => {
+    if (!uploadLogId || !subiendo) return;
+
+    const monitorearUpload = async () => {
+      try {
+        const logData = await obtenerEstadoUploadLog(uploadLogId);
+        setUploadEstado(logData);
+
+        if (logData.estado === 'procesando') {
+          setUploadProgreso('Procesando archivo...');
+          if (uploadEstado?.estado !== 'procesando') {
+            mostrarNotificacion('warning', '📊 Procesando archivo... Por favor espere.');
+          }
+        } else if (logData.estado === 'completado') {
+          setUploadProgreso('¡Procesamiento completado!');
+          setSubiendo(false);
+          setEstado('subido');
+          if (onCompletado) onCompletado(true);
+
+          try {
+            const nombres = await obtenerNombresInglesCliente(clienteId);
+            setNombresIngles(nombres);
+          } catch (err) {
+            console.error('Error recargando nombres:', err);
+          }
+
+          mostrarNotificacion('success', `✅ Archivo procesado exitosamente. ${logData.resumen?.cuentas_actualizadas || 0} cuentas actualizadas.`);
+
+        } else if (logData.estado === 'error') {
+          setUploadProgreso('Error en el procesamiento');
+          setSubiendo(false);
+          setError(logData.errores || 'Error desconocido en el procesamiento');
+          if (onCompletado) onCompletado(false);
+          mostrarNotificacion('error', `❌ Error: ${logData.errores || 'Error desconocido'}`);
+        }
+
+      } catch (err) {
+        console.error('Error monitoreando upload:', err);
+        setUploadProgreso('Error monitoreando el proceso');
+      }
+    };
+
+    const intervalo = setInterval(monitorearUpload, 2000);
+    return () => clearInterval(intervalo);
+
+  }, [uploadLogId, subiendo, clienteId, onCompletado, uploadEstado?.estado]);
 
   // Handler de subida de archivo
   const handleSeleccionArchivo = async (e) => {
@@ -79,29 +130,40 @@ const NombresEnInglesCard = ({
     setArchivoNombre(archivo.name);
     setSubiendo(true);
     setError("");
+    setUploadProgreso("Subiendo archivo...");
+    setUploadLogId(null);
+    setUploadEstado(null);
     try {
       const formData = new FormData();
       formData.append('cliente_id', clienteId);
-      formData.append('cierre', cierreId);
       formData.append('archivo', archivo);
-      
-      await subirNombresIngles(formData);
 
-      // Espera backend/process
-      await new Promise(r => setTimeout(r, 1500));
-      let nuevoEstado = "";
-      for (let i = 0; i < 10; i++) {
-        await new Promise((r) => setTimeout(r, 1200));
-        const data = await obtenerEstadoNombresIngles(clienteId, cierreId);
-        nuevoEstado = typeof data === "string" ? data : data.estado;
-        if (nuevoEstado === "subido") break;
-      }
-      setEstado(nuevoEstado);
-      if (nuevoEstado === "subido") {
-        onCompletado && onCompletado(true);
+      const response = await subirNombresIngles(formData);
+
+      if (response.upload_log_id) {
+        setUploadLogId(response.upload_log_id);
+        setUploadProgreso("Archivo recibido, iniciando procesamiento...");
+        mostrarNotificacion("info", "📤 Archivo subido correctamente. Procesando...");
       } else {
-        setError("No se pudo verificar la subida. Intenta refrescar.");
-        onCompletado && onCompletado(false);
+        await new Promise(r => setTimeout(r, 1500));
+        let nuevoEstado = "";
+        for (let i = 0; i < 10; i++) {
+          await new Promise((r) => setTimeout(r, 1200));
+          const data = await obtenerEstadoNombresIngles(clienteId);
+          nuevoEstado = typeof data === "string" ? data : data.estado;
+          if (nuevoEstado === "subido") break;
+        }
+        setEstado(nuevoEstado);
+        setSubiendo(false);
+        setUploadProgreso("");
+        if (nuevoEstado === "subido") {
+          onCompletado && onCompletado(true);
+          mostrarNotificacion("success", "✅ Archivo procesado exitosamente");
+        } else {
+          setError("No se pudo verificar la subida. Intenta refrescar.");
+          onCompletado && onCompletado(false);
+          mostrarNotificacion("warning", "⚠️ No se pudo verificar el estado. Intenta refrescar.");
+        }
       }
     } catch (err) {
       console.error("Error al subir archivo:", err);
@@ -122,7 +184,7 @@ const NombresEnInglesCard = ({
       
       onCompletado && onCompletado(false);
     } finally {
-      setSubiendo(false);
+      if (!uploadLogId) setSubiendo(false);
     }
   };
 
@@ -162,6 +224,9 @@ const NombresEnInglesCard = ({
       setEstado("pendiente");
       setNombresIngles([]);
       setArchivoNombre("");
+      setUploadLogId(null);
+      setUploadEstado(null);
+      setUploadProgreso("");
       if (onCompletado) onCompletado(false);
     } catch (err) {
       setErrorEliminando("Error eliminando los nombres en inglés");
@@ -171,7 +236,7 @@ const NombresEnInglesCard = ({
   };
 
   return (
-    <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${!clasificacionReady || disabled ? "opacity-60 pointer-events-none" : ""}`}>
+    <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${disabled ? "opacity-60 pointer-events-none" : ""}`}>
       <h3 className="text-lg font-semibold mb-3">{numeroPaso}. Nombres en inglés de cuentas</h3>
       
       <div className="flex items-center gap-2 mb-2">
@@ -183,9 +248,9 @@ const NombresEnInglesCard = ({
       <a
         href={descargarPlantillaNombresEnIngles()}
         download
-        className={`flex items-center gap-2 bg-gray-700 hover:bg-blue-600 px-3 py-1 rounded !text-white text-sm font-medium transition shadow w-fit mb-2 ${!clasificacionReady || disabled ? 'opacity-60 pointer-events-none' : ''}`}
-        tabIndex={!clasificacionReady || disabled ? -1 : 0}
-        style={{ pointerEvents: !clasificacionReady || disabled ? "none" : "auto" }}
+        className={`flex items-center gap-2 bg-gray-700 hover:bg-blue-600 px-3 py-1 rounded !text-white text-sm font-medium transition shadow w-fit mb-2 ${disabled ? 'opacity-60 pointer-events-none' : ''}`}
+        tabIndex={disabled ? -1 : 0}
+        style={{ pointerEvents: disabled ? "none" : "auto" }}
       >
         <Download size={16} />
         Descargar Plantilla
@@ -195,7 +260,7 @@ const NombresEnInglesCard = ({
         <button
           type="button"
           onClick={() => fileInputRef.current.click()}
-          disabled={subiendo || !clasificacionReady || disabled}
+          disabled={subiendo || disabled}
           className={`bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded text-sm font-medium transition ${subiendo ? "opacity-60 cursor-not-allowed" : ""}`}
         >
           {subiendo ? "Subiendo..." : "Elegir archivo .xlsx"}
@@ -211,7 +276,7 @@ const NombresEnInglesCard = ({
         ref={fileInputRef}
         style={{ display: "none" }}
         onChange={handleSeleccionArchivo}
-        disabled={subiendo || !clasificacionReady || disabled}
+        disabled={subiendo || disabled}
       />
       
       {error && (
@@ -243,7 +308,6 @@ const NombresEnInglesCard = ({
         abierto={modalAbierto}
         onClose={() => setModalAbierto(false)}
         clienteId={clienteId}
-        cierreId={cierreId}
         nombresIngles={nombresIngles}
         onActualizar={handleActualizarNombresIngles}
         onEliminarTodos={handleEliminarTodos}
@@ -253,9 +317,19 @@ const NombresEnInglesCard = ({
       />
 
       <span className="text-xs text-gray-400 italic mt-2">
-        {estado === "subido"
-          ? `✔ Archivo cargado correctamente${nombresIngles.length > 0 ? ` (${nombresIngles.length} nombres en inglés)` : ""}`
-          : "Aún no se ha subido el archivo de nombres en inglés."}
+        {estado === "subido" ? (
+          <span className="text-green-400">
+            {`✔ Archivo cargado correctamente${nombresIngles.length > 0 ? ` (${nombresIngles.length} nombres en inglés)` : ""}`}
+          </span>
+        ) : subiendo || uploadProgreso ? (
+          <span className="text-blue-400">🔄 {uploadProgreso || "Procesando archivo..."}</span>
+        ) : error ? (
+          <span className="text-red-400">❌ Error: {error}</span>
+        ) : nombresIngles.length > 0 ? (
+          <span className="text-yellow-400">📋 Archivo cargado con {nombresIngles.length} nombres en inglés</span>
+        ) : (
+          "Aún no se ha subido el archivo de nombres en inglés."
+        )}
       </span>
       
       {/* Componente de notificación */}

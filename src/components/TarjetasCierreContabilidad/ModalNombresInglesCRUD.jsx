@@ -11,7 +11,6 @@ const ModalNombresInglesCRUD = ({
   abierto, 
   onClose, 
   clienteId, 
-  cierreId,
   nombresIngles, 
   onActualizar,
   onEliminarTodos,
@@ -71,8 +70,7 @@ const ModalNombresInglesCRUD = ({
       const nombreData = {
         cuenta_codigo: nuevoNombre.cuenta_codigo.trim(),
         nombre_ingles: nuevoNombre.nombre_ingles.trim(),
-        cliente: clienteId,
-        cierre: cierreId
+        cliente: clienteId
       };
       await crearNombreIngles(nombreData);
       setNuevoNombre({ cuenta_codigo: "", nombre_ingles: "" });

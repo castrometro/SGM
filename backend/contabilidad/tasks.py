@@ -543,9 +543,9 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
             .values_list("cuenta_codigo", flat=True)
         )
         cuentas_clasificadas = set(
-            AccountClassification.objects.filter(
-                cuenta__cliente=upload_log.cliente
-            ).values_list("cuenta__codigo", flat=True)
+            ClasificacionCuentaArchivo.objects.filter(
+                cliente=upload_log.cliente
+            ).values_list("numero_cuenta", flat=True)
         )
 
         wb = load_workbook(ruta_completa, read_only=True, data_only=True)

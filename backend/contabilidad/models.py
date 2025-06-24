@@ -400,11 +400,12 @@ class TarjetaActivityLog(models.Model):
 
     # Identificación de la tarjeta
     TARJETA_CHOICES = [
-        ("tipo_documento", "Tarjeta 1: Tipo de Documento"),
-        ("libro_mayor", "Tarjeta 2: Libro Mayor"),
-        ("clasificacion", "Tarjeta 3: Clasificaciones"),
-        ("incidencias", "Tarjeta 4: Incidencias"),
-        ("revision", "Tarjeta 5: Revisión"),
+        ("tipo_documento", "Tarjeta: Tipo de Documento"),
+        ("libro_mayor", "Tarjeta: Libro Mayor"),
+        ("clasificacion", "Tarjeta: Clasificaciones"),
+        ("nombres_ingles", "Tarjeta: Nombres en Inglés"),
+        ("incidencias", "Tarjeta: Incidencias"),
+        ("revision", "Tarjeta: Revisión"),
     ]
     tarjeta = models.CharField(max_length=20, choices=TARJETA_CHOICES)
 

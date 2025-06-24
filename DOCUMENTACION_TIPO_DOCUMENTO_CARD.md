@@ -835,7 +835,18 @@ def procesar_tipo_documento_con_upload_log(upload_log_id):
         upload_log.hash_archivo = archivo_hash
         upload_log.save(update_fields=["hash_archivo"])
 
-        # 5. PROCESAR CON PARSER EXISTENTE (ATÓMICO)
+        # 5. VALIDAR ESTRUCTURA DEL EXCEL CON `validar_archivo_tipo_documento_excel`
+        validacion = validar_archivo_tipo_documento_excel(ruta_completa)
+        if not validacion["es_valido"]:
+            error_msg = "; ".join(validacion["errores"])
+            upload_log.estado = "error"
+            upload_log.errores = error_msg
+            upload_log.resumen = {"validacion": validacion, "archivo_hash": archivo_hash}
+            upload_log.tiempo_procesamiento = timezone.now() - inicio_procesamiento
+            upload_log.save()
+            return f"Error: {error_msg}"
+
+        # 6. PROCESAR CON PARSER EXISTENTE (ATÓMICO)
         logger.info(f"📊 Procesando archivo con parser: {ruta_completa}")
         ok, msg = parsear_tipo_documento_excel(upload_log.cliente.id, ruta_relativa)
 

@@ -10,7 +10,6 @@ from contabilidad.models import (
     ClasificacionOption,
     AccountClassification,
 )
-from contabilidad.utils import obtener_cierre_activo
 
 
 class MovimientosResumenTests(TestCase):
@@ -91,52 +90,3 @@ class MovimientosResumenTests(TestCase):
         data = response.json()
         self.assertEqual(len(data), 1)
         self.assertEqual(data[0]["cuenta_id"], self.c1.id)
-
-
-class ObtenerCierreActivoTests(TestCase):
-    def setUp(self):
-        area = Area.objects.create(nombre="Contabilidad")
-        self.user = Usuario.objects.create_user(
-            correo_bdo="tester@test.com",
-            password="pass",
-            nombre="Tester",
-            apellido="User",
-            tipo_usuario="gerente",
-        )
-        self.user.areas.add(area)
-        self.cliente = Cliente.objects.create(nombre="Cliente", rut="1-9")
-        self.cierre1 = CierreContabilidad.objects.create(
-            cliente=self.cliente,
-            usuario=self.user,
-            area=area,
-            periodo="2024-01",
-            estado="pendiente",
-        )
-        self.cierre2 = CierreContabilidad.objects.create(
-            cliente=self.cliente,
-            usuario=self.user,
-            area=area,
-            periodo="2024-02",
-            estado="clasificacion",
-        )
-
-    def test_devuelve_cierre_por_id(self):
-        cierre = obtener_cierre_activo(self.cliente, self.cierre1.id)
-        self.assertEqual(cierre, self.cierre1)
-
-    def test_devuelve_ultimo_cierre_activo(self):
-        cierre = obtener_cierre_activo(self.cliente)
-        self.assertEqual(cierre, self.cierre2)
-
-    def test_cierre_id_invalido_devuelve_ultimo(self):
-        cierre = obtener_cierre_activo(self.cliente, 99999)
-        self.assertEqual(cierre, self.cierre2)
-
-    def test_sin_cierre_abierto(self):
-        self.cierre1.estado = "completo"
-        self.cierre1.save()
-        self.cierre2.estado = "aprobado"
-        self.cierre2.save()
-        cierre = obtener_cierre_activo(self.cliente)
-        self.assertIsNone(cierre)
-

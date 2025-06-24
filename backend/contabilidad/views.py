@@ -2683,8 +2683,17 @@ class NombresEnInglesUploadViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def reprocesar(self, request, pk=None):
+        """Reprocesa un archivo de nombres en inglés."""
+        upload = self.get_object()
         try:
-            upload = self.get_object()
+            # Reiniciar estado y limpiar datos previos
+            upload.estado = "subido"
+            upload.errores = ""
+            upload.resumen = {}
+            upload.save(update_fields=["estado", "errores", "resumen"])
+
+            # Disparar tarea de procesamiento en background
+            procesar_nombres_ingles_upload.delay(upload.id)
 
             # Registrar reprocesamiento
             registrar_actividad_tarjeta(
@@ -2704,7 +2713,7 @@ class NombresEnInglesUploadViewSet(viewsets.ModelViewSet):
                 ip_address=request.META.get("REMOTE_ADDR"),
             )
 
-            return Response({"message": "Archivo reprocesado exitosamente"})
+            return Response({"mensaje": "Reprocesamiento iniciado"})
 
         except Exception as e:
             # Registrar error en reprocesamiento
@@ -2724,24 +2733,6 @@ class NombresEnInglesUploadViewSet(viewsets.ModelViewSet):
                 ip_address=request.META.get("REMOTE_ADDR"),
             )
             return Response({"error": str(e)}, status=500)
-
-    @action(detail=True, methods=["post"])
-    def reprocesar(self, request, pk=None):
-        upload = self.get_object()
-        try:
-            # Aquí iría la lógica de reprocesamiento
-            # Por ahora solo registramos el log
-            UploadChangeLog.objects.create(
-                tipo_upload="nombres_ingles",
-                upload_id=upload.id,
-                accion="reprocess",
-                usuario=request.user,
-                cliente=upload.cliente,
-                descripcion="Archivo reprocesado",
-            )
-            return Response({"message": "Archivo reprocesado exitosamente"})
-        except Exception as e:
-            return Response({"error": str(e)}, status=400)
 
 
 class LibroMayorUploadViewSet(viewsets.ModelViewSet):

@@ -1482,11 +1482,17 @@ def reprocesar_movimientos_incompletos(request):
         .select_related("cuenta")
     )
 
-    reprocesados = 0
-    incompletos = 0
+    movimientos_corregidos = []
+    td_aplicados = 0
+    nombre_en_aplicados = 0
+    clasificaciones_aplicadas = {}
 
     for mov in movimientos:
-        sigue_incompleto = False
+        campos_rellenados = {
+            "tipo_documento": False,
+            "nombre_ingles": False,
+            "clasificacion": [],
+        }
 
         if mov.tipo_documento_id is None and mov.tipo:
             td = TipoDocumento.objects.filter(
@@ -1494,60 +1500,97 @@ def reprocesar_movimientos_incompletos(request):
             ).first()
             if td:
                 mov.tipo_documento = td
-            else:
-                sigue_incompleto = True
-        elif mov.tipo_documento_id is None:
-            sigue_incompleto = True
+                campos_rellenados["tipo_documento"] = True
 
-        tiene_nombre = mov.cuenta.nombre_en or NombreIngles.objects.filter(
-            cliente=cierre.cliente, cuenta_codigo=mov.cuenta.codigo
-        ).exists()
-        if not tiene_nombre:
-            sigue_incompleto = True
+        if not mov.cuenta.nombre_en:
+            nombre_ing = NombreIngles.objects.filter(
+                cliente=cierre.cliente, cuenta_codigo=mov.cuenta.codigo
+            ).first()
+            if nombre_ing:
+                mov.cuenta.nombre_en = nombre_ing.nombre_ingles
+                mov.cuenta.save(update_fields=["nombre_en"])
+                campos_rellenados["nombre_ingles"] = True
 
-        clas_ok = AccountClassification.objects.filter(
-            cuenta=mov.cuenta
-        ).exists()
-        if not clas_ok:
-            sigue_incompleto = True
+        clas_arch = (
+            ClasificacionCuentaArchivo.objects.filter(
+                cliente=cierre.cliente, numero_cuenta=mov.cuenta.codigo
+            )
+            .select_related("upload_log")
+            .order_by("-upload_log__fecha_subida", "-upload_log__id")
+            .first()
+        )
+        if clas_arch:
+            for set_nombre, opcion_valor in clas_arch.clasificaciones.items():
+                set_obj = ClasificacionSet.objects.filter(
+                    cliente=cierre.cliente, nombre=set_nombre
+                ).first()
+                if not set_obj:
+                    continue
+                opcion_obj = ClasificacionOption.objects.filter(
+                    set_clas=set_obj, valor=opcion_valor
+                ).first()
+                if not opcion_obj:
+                    continue
+                existing, created = AccountClassification.objects.update_or_create(
+                    cuenta=mov.cuenta,
+                    set_clas=set_obj,
+                    defaults={"opcion": opcion_obj, "asignado_por": request.user},
+                )
+                if created or existing.opcion != opcion_obj:
+                    campos_rellenados["clasificacion"].append(set_nombre)
 
-        if not sigue_incompleto:
-            mov.flag_incompleto = False
-            mov.save(update_fields=["tipo_documento", "flag_incompleto"])
+        flag = (
+            mov.tipo_documento_id is None
+            or not mov.cuenta.nombre_en
+            or not AccountClassification.objects.filter(cuenta=mov.cuenta).exists()
+        )
 
+        mov.flag_incompleto = flag
+        mov.save(update_fields=["tipo_documento", "flag_incompleto"])
+
+        if not flag:
             Incidencia.objects.filter(
                 cierre=cierre,
                 descripcion__icontains=f"cuenta {mov.cuenta.codigo}"
             ).update(resuelta=True)
 
-            registrar_actividad_tarjeta(
-                cliente_id=cierre.cliente.id,
-                periodo=cierre.periodo,
+            TarjetaActivityLog.objects.create(
+                cierre=cierre,
                 tarjeta="libro_mayor",
                 accion="manual_edit",
                 descripcion=f"Movimiento {mov.id} completado tras reprocesamiento",
-                usuario=request.user,
                 resultado="exito",
-                detalles={"movimiento_id": mov.id},
-                ip_address=request.META.get("REMOTE_ADDR"),
+                usuario=request.user,
+                detalles=campos_rellenados,
             )
-            reprocesados += 1
-        else:
-            incompletos += 1
 
-    registrar_actividad_tarjeta(
-        cliente_id=cierre.cliente.id,
-        periodo=cierre.periodo,
+            movimientos_corregidos.append(mov.id)
+            if campos_rellenados["tipo_documento"]:
+                td_aplicados += 1
+            if campos_rellenados["nombre_ingles"]:
+                nombre_en_aplicados += 1
+            for set_nombre in campos_rellenados["clasificacion"]:
+                clasificaciones_aplicadas[set_nombre] = clasificaciones_aplicadas.get(set_nombre, 0) + 1
+
+    reprocesados = len(movimientos_corregidos)
+    incompletos = movimientos.count() - reprocesados
+
+    TarjetaActivityLog.objects.create(
+        cierre=cierre,
         tarjeta="libro_mayor",
         accion="process_complete",
+        usuario=request.user,
         descripcion=(
             f"Reprocesamiento manual completado. {reprocesados} movimientos "
             f"corregidos, {incompletos} aún incompletos."
         ),
-        usuario=request.user,
         resultado="exito" if reprocesados > 0 else "warning",
-        detalles={"total_reprocesados": reprocesados, "aun_incompletos": incompletos},
-        ip_address=request.META.get("REMOTE_ADDR"),
+        detalles={
+            "movimientos_corregidos": movimientos_corregidos,
+            "tipo_documento_aplicado": td_aplicados,
+            "nombre_ingles_aplicado": nombre_en_aplicados,
+            "clasificaciones_aplicadas": clasificaciones_aplicadas,
+        },
     )
 
     return Response(

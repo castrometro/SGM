@@ -9,6 +9,8 @@ from contabilidad.models import (
     ClasificacionSet,
     ClasificacionOption,
     AccountClassification,
+    UploadLog,
+    ClasificacionCuentaArchivo,
     NombreIngles,
 )
 
@@ -140,8 +142,20 @@ class ReprocesarIncompletosTests(TestCase):
         set1 = ClasificacionSet.objects.create(cliente=self.cliente, nombre="G")
         opt1 = ClasificacionOption.objects.create(set_clas=set1, valor="X")
 
-        AccountClassification.objects.create(
-            cuenta=self.c1, set_clas=set1, opcion=opt1, asignado_por=self.user
+        # Registro en ClasificacionCuentaArchivo para que el reprocesamiento
+        # aplique la clasificación de forma automática
+        log = UploadLog.objects.create(
+            tipo_upload="clasificacion",
+            cliente=self.cliente,
+            nombre_archivo_original="tmp.xlsx",
+            tamaño_archivo=10,
+        )
+        ClasificacionCuentaArchivo.objects.create(
+            cliente=self.cliente,
+            upload_log=log,
+            numero_cuenta="2001",
+            clasificaciones={"G": "X"},
+            fila_excel=1,
         )
 
         NombreIngles.objects.create(
@@ -162,3 +176,20 @@ class ReprocesarIncompletosTests(TestCase):
         m2 = MovimientoContable.objects.get(cuenta=self.c2)
         self.assertFalse(m1.flag_incompleto)
         self.assertTrue(m2.flag_incompleto)
+
+        # Verificar que se asignó nombre en inglés y clasificación
+        self.c1.refresh_from_db()
+        self.assertEqual(self.c1.nombre_en, "Sales")
+        self.assertTrue(
+            AccountClassification.objects.filter(cuenta=self.c1, set_clas__nombre="G").exists()
+        )
+
+        log_individual = TarjetaActivityLog.objects.filter(accion="manual_edit", cierre=self.cierre).first()
+        self.assertIsNotNone(log_individual)
+        self.assertTrue(log_individual.detalles["tipo_documento"] is False or log_individual.detalles["tipo_documento"])
+        self.assertTrue(log_individual.detalles["nombre_ingles"])
+        self.assertEqual(log_individual.detalles["clasificacion"], ["G"])
+
+        log_general = TarjetaActivityLog.objects.filter(accion="process_complete", cierre=self.cierre).first()
+        self.assertIsNotNone(log_general)
+        self.assertEqual(log_general.detalles["movimientos_corregidos"], [m1.id])

@@ -76,6 +76,32 @@ Se añadió un campo `upload_log` en `LibroMayorUpload` para vincular el archivo
 
 ---
 
+### 🔁 Reprocesamiento Manual de Incompletos
+Para completar movimientos marcados con `flag_incompleto=True` existe el endpoint:
+
+```
+POST /contabilidad/libro-mayor/reprocesar-incompletos/
+Body: { "cierre_id": ID }
+```
+
+El proceso revisa `TipoDocumento`, `NombreIngles` y los registros de `ClasificacionCuentaArchivo`
+(junto a `ClasificacionSet` y `ClasificacionOption`) para rellenar la información faltante.
+
+Por cada movimiento corregido se registra un `TarjetaActivityLog` con los campos rellenados.
+Al finalizar se crea otro log con el resumen total de correcciones y un conteo de datos aplicados.
+
+Ejemplo de detalles en un log individual:
+
+```json
+{
+  "tipo_documento": true,
+  "nombre_ingles": true,
+  "clasificacion": ["Giro", "Naturaleza"]
+}
+```
+
+---
+
 ## 📝 Comparación con Otras Tarjetas
 - Hereda la misma mecánica de UploadLog y polling que **TipoDocumentoCard** y **NombresEnInglesCard**.
 - Registra actividad en `TarjetaActivityLog` para auditoría del proceso.

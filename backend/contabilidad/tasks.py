@@ -671,16 +671,28 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
 
                 td_obj = None
                 mov_incompleto = False
-                if TD and row[TD]:
-                    codigo_td = str(row[TD]).strip()
-                    td_obj = tipos_doc_map.get(codigo_td)
-                    if td_obj is None:
+                if TD is not None:
+                    codigo_td = str(row[TD] or "").strip()
+                    if codigo_td:
+                        td_obj = tipos_doc_map.get(codigo_td)
+                        if td_obj is None:
+                            Incidencia.objects.create(
+                                cierre=upload_log.cierre,
+                                tipo="negocio",
+                                descripcion=(
+                                    f"Movimiento {row_idx-10}, cuenta {current_code}: "
+                                    f"Tipo de documento '{codigo_td}' no encontrado"
+                                ),
+                            )
+                            incidencias_creadas += 1
+                            mov_incompleto = True
+                    else:
                         Incidencia.objects.create(
                             cierre=upload_log.cierre,
                             tipo="negocio",
                             descripcion=(
                                 f"Movimiento {row_idx-10}, cuenta {current_code}: "
-                                f"Tipo de documento '{codigo_td}' no encontrado"
+                                "Tipo de documento vacío"
                             ),
                         )
                         incidencias_creadas += 1

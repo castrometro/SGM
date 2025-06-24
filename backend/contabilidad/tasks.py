@@ -538,15 +538,21 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
             td.codigo: td
             for td in TipoDocumento.objects.filter(cliente=upload_log.cliente)
         }
-        nombres_ingles_set = set(
-            NombreIngles.objects.filter(cliente=upload_log.cliente)
-            .values_list("cuenta_codigo", flat=True)
+
+        nombres_ingles_map = {
+            ni.cuenta_codigo: ni.nombre_ingles
+            for ni in NombreIngles.objects.filter(cliente=upload_log.cliente)
+        }
+
+        clasif_qs = (
+            ClasificacionCuentaArchivo.objects.filter(cliente=upload_log.cliente)
+            .select_related("upload_log")
+            .order_by("-upload_log__fecha_subida", "-upload_log__id")
         )
-        cuentas_clasificadas = set(
-            ClasificacionCuentaArchivo.objects.filter(
-                cliente=upload_log.cliente
-            ).values_list("numero_cuenta", flat=True)
-        )
+        clasificaciones_por_cuenta = {}
+        for reg in clasif_qs:
+            if reg.numero_cuenta not in clasificaciones_por_cuenta:
+                clasificaciones_por_cuenta[reg.numero_cuenta] = reg.clasificaciones
 
         wb = load_workbook(ruta_completa, read_only=True, data_only=True)
         ws = wb.active
@@ -626,6 +632,29 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                     codigo=current_code,
                 )
 
+                # Completar nombre en inglés desde registros previos
+                if not cuenta_obj.nombre_en:
+                    nombre_ing = nombres_ingles_map.get(cuenta_obj.codigo)
+                    if nombre_ing:
+                        cuenta_obj.nombre_en = nombre_ing
+                        cuenta_obj.save(update_fields=["nombre_en"])
+
+                # Aplicar clasificaciones registradas anteriormente
+                clasif_info = clasificaciones_por_cuenta.get(cuenta_obj.codigo)
+                if clasif_info:
+                    for set_nombre, opcion_valor in clasif_info.items():
+                        set_obj, _ = ClasificacionSet.objects.get_or_create(
+                            cliente=upload_log.cliente, nombre=set_nombre
+                        )
+                        opcion_obj, _ = ClasificacionOption.objects.get_or_create(
+                            set_clas=set_obj, valor=str(opcion_valor).strip()
+                        )
+                        AccountClassification.objects.update_or_create(
+                            cuenta=cuenta_obj,
+                            set_clas=set_obj,
+                            defaults={"opcion": opcion_obj, "asignado_por": None},
+                        )
+
                 centro_obj = None
                 if CC and row[CC]:
                     centro_obj, _ = CentroCosto.objects.get_or_create(
@@ -675,11 +704,7 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                     flag_incompleto=mov_incompleto,
                 )
 
-                tiene_nombre_ingles = (
-                    cuenta_obj.nombre_en
-                    or cuenta_obj.codigo in nombres_ingles_set
-                )
-                if not tiene_nombre_ingles:
+                if not cuenta_obj.nombre_en:
                     Incidencia.objects.create(
                         cierre=upload_log.cierre,
                         tipo="negocio",
@@ -691,7 +716,7 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                     incidencias_creadas += 1
                     mov.flag_incompleto = True
 
-                if cuenta_obj.codigo not in cuentas_clasificadas:
+                if not AccountClassification.objects.filter(cuenta=cuenta_obj).exists():
                     Incidencia.objects.create(
                         cierre=upload_log.cierre,
                         tipo="negocio",

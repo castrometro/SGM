@@ -30,10 +30,7 @@ from rest_framework.views import APIView
 from .utils.activity_logger import (
     registrar_actividad_tarjeta,
 )  # Comentado temporalmente
-
-from .mixins import ActivityLogMixin
 from .utils import obtener_cierre_activo
-
 
 logger = logging.getLogger(__name__)
 
@@ -1524,7 +1521,7 @@ def eliminar_nombres_ingles(request, cliente_id):
         return Response({"error": f"Error al eliminar: {str(e)}"}, status=500)
 
 
-class TipoDocumentoViewSet(ActivityLogMixin, viewsets.ModelViewSet):
+class TipoDocumentoViewSet(viewsets.ModelViewSet):
     queryset = TipoDocumento.objects.all()
     serializer_class = TipoDocumentoSerializer
     permission_classes = [IsAuthenticated]
@@ -1552,16 +1549,20 @@ class TipoDocumentoViewSet(ActivityLogMixin, viewsets.ModelViewSet):
             periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
 
             # Registrar creación manual
-            self.log_create(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=periodo_actividad,
                 tarjeta="tipo_documento",
+                accion="manual_create",
                 descripcion=f"Creado tipo documento: {instance.codigo} - {instance.descripcion}",
+                usuario=self.request.user,
                 detalles={
                     "codigo": instance.codigo,
                     "descripcion": instance.descripcion,
                     "id": instance.id,
                 },
+                resultado="exito",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
@@ -1575,13 +1576,16 @@ class TipoDocumentoViewSet(ActivityLogMixin, viewsets.ModelViewSet):
                 pass
             
             # Registrar error
-            self.log_create(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=periodo_actividad,
                 tarjeta="tipo_documento",
+                accion="manual_create",
                 descripcion=f"Error al crear tipo documento: {str(e)}",
+                usuario=self.request.user,
                 detalles={"error": str(e), "data": self.request.data},
                 resultado="error",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
@@ -1601,11 +1605,13 @@ class TipoDocumentoViewSet(ActivityLogMixin, viewsets.ModelViewSet):
             periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
 
             # Registrar edición
-            self.log_update(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=periodo_actividad,
                 tarjeta="tipo_documento",
+                accion="manual_edit",
                 descripcion=f"Editado tipo documento ID:{instance.id}: {old_instance.codigo} → {instance.codigo}",
+                usuario=self.request.user,
                 detalles={
                     "id": instance.id,
                     "cambios": {
@@ -1619,6 +1625,8 @@ class TipoDocumentoViewSet(ActivityLogMixin, viewsets.ModelViewSet):
                         },
                     },
                 },
+                resultado="exito",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
@@ -1626,17 +1634,20 @@ class TipoDocumentoViewSet(ActivityLogMixin, viewsets.ModelViewSet):
             periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
             
             # Registrar error
-            self.log_update(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=periodo_actividad,
                 tarjeta="tipo_documento",
+                accion="manual_edit",
                 descripcion=f"Error al editar tipo documento ID:{old_instance.id}: {str(e)}",
+                usuario=self.request.user,
                 detalles={
                     "error": str(e),
                     "id": old_instance.id,
                     "data": self.request.data,
                 },
                 resultado="error",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
@@ -1656,12 +1667,16 @@ class TipoDocumentoViewSet(ActivityLogMixin, viewsets.ModelViewSet):
             periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
 
             # Registrar eliminación
-            self.log_delete(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=periodo_actividad,
                 tarjeta="tipo_documento",
+                accion="manual_delete",
                 descripcion=f'Eliminado tipo documento: {tipo_info["codigo"]} - {tipo_info["descripcion"]}',
+                usuario=self.request.user,
                 detalles=tipo_info,
+                resultado="exito",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
@@ -1669,18 +1684,21 @@ class TipoDocumentoViewSet(ActivityLogMixin, viewsets.ModelViewSet):
             periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
             
             # Registrar error
-            self.log_delete(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=periodo_actividad,
                 tarjeta="tipo_documento",
+                accion="manual_delete",
                 descripcion=f'Error al eliminar tipo documento ID:{tipo_info["id"]}: {str(e)}',
+                usuario=self.request.user,
                 detalles={"error": str(e), **tipo_info},
                 resultado="error",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
 
-class NombreInglesViewSet(ActivityLogMixin, viewsets.ModelViewSet):
+class NombreInglesViewSet(viewsets.ModelViewSet):
     queryset = NombreIngles.objects.all()
     serializer_class = NombreInglesSerializer
     permission_classes = [IsAuthenticated]
@@ -1705,27 +1723,34 @@ class NombreInglesViewSet(ActivityLogMixin, viewsets.ModelViewSet):
             instance = serializer.save()
 
             # Registrar creación manual
-            self.log_create(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=date.today().strftime("%Y-%m"),
                 tarjeta="nombres_ingles",
+                accion="manual_create",
                 descripcion=f"Creado nombre inglés: {instance.cuenta_codigo} - {instance.nombre_ingles}",
+                usuario=self.request.user,
                 detalles={
                     "cuenta_codigo": instance.cuenta_codigo,
                     "nombre_ingles": instance.nombre_ingles,
                     "id": instance.id,
                 },
+                resultado="exito",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
             # Registrar error
-            self.log_create(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=date.today().strftime("%Y-%m"),
                 tarjeta="nombres_ingles",
+                accion="manual_create",
                 descripcion=f"Error al crear nombre inglés: {str(e)}",
+                usuario=self.request.user,
                 detalles={"error": str(e), "data": self.request.data},
                 resultado="error",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
@@ -1741,11 +1766,13 @@ class NombreInglesViewSet(ActivityLogMixin, viewsets.ModelViewSet):
                 instance = serializer.save()
 
             # Registrar edición
-            self.log_update(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=date.today().strftime("%Y-%m"),
                 tarjeta="nombres_ingles",
+                accion="manual_edit",
                 descripcion=f"Editado nombre inglés ID:{instance.id}: {old_instance.cuenta_codigo} → {instance.cuenta_codigo}",
+                usuario=self.request.user,
                 detalles={
                     "id": instance.id,
                     "cambios": {
@@ -1759,21 +1786,26 @@ class NombreInglesViewSet(ActivityLogMixin, viewsets.ModelViewSet):
                         },
                     },
                 },
+                resultado="exito",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
             # Registrar error
-            self.log_update(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=date.today().strftime("%Y-%m"),
                 tarjeta="nombres_ingles",
+                accion="manual_edit",
                 descripcion=f"Error al editar nombre inglés ID:{old_instance.id}: {str(e)}",
+                usuario=self.request.user,
                 detalles={
                     "error": str(e),
                     "id": old_instance.id,
                     "data": self.request.data,
                 },
                 resultado="error",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
@@ -1789,23 +1821,30 @@ class NombreInglesViewSet(ActivityLogMixin, viewsets.ModelViewSet):
             instance.delete()
 
             # Registrar eliminación
-            self.log_delete(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=date.today().strftime("%Y-%m"),
                 tarjeta="nombres_ingles",
+                accion="manual_delete",
                 descripcion=f'Eliminado nombre inglés: {nombre_info["cuenta_codigo"]} - {nombre_info["nombre_ingles"]}',
+                usuario=self.request.user,
                 detalles=nombre_info,
+                resultado="exito",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
             # Registrar error
-            self.log_delete(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=date.today().strftime("%Y-%m"),
                 tarjeta="nombres_ingles",
+                accion="manual_delete",
                 descripcion=f'Error al eliminar nombre inglés ID:{nombre_info["id"]}: {str(e)}',
+                usuario=self.request.user,
                 detalles={"error": str(e), **nombre_info},
                 resultado="error",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
@@ -1838,7 +1877,7 @@ class MovimientoContableViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
 
-class ClasificacionSetViewSet(ActivityLogMixin, viewsets.ModelViewSet):
+class ClasificacionSetViewSet(viewsets.ModelViewSet):
     queryset = ClasificacionSet.objects.all()
     serializer_class = ClasificacionSetSerializer
     permission_classes = [IsAuthenticated]
@@ -1854,17 +1893,20 @@ class ClasificacionSetViewSet(ActivityLogMixin, viewsets.ModelViewSet):
         instance = serializer.save()
 
         # Registrar creación de set
-        self.log_create(
+        registrar_actividad_tarjeta(
             cliente_id=instance.cliente.id,
             periodo=date.today().strftime("%Y-%m"),
             tarjeta="clasificacion",
             accion="set_create",
             descripcion=f"Creado set de clasificación: {instance.nombre}",
+            usuario=self.request.user,
             detalles={
                 "set_id": instance.id,
                 "set_nombre": instance.nombre,
                 "accion_origen": "manual_sets_tab",
             },
+            resultado="exito",
+            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
     def perform_update(self, serializer):
@@ -1872,18 +1914,21 @@ class ClasificacionSetViewSet(ActivityLogMixin, viewsets.ModelViewSet):
         instance = serializer.save()
 
         # Registrar edición de set
-        self.log_update(
+        registrar_actividad_tarjeta(
             cliente_id=instance.cliente.id,
             periodo=date.today().strftime("%Y-%m"),
             tarjeta="clasificacion",
             accion="set_edit",
             descripcion=f"Editado set de clasificación: {old_instance.nombre} → {instance.nombre}",
+            usuario=self.request.user,
             detalles={
                 "set_id": instance.id,
                 "nombre_anterior": old_instance.nombre,
                 "nombre_nuevo": instance.nombre,
                 "accion_origen": "manual_sets_tab",
             },
+            resultado="exito",
+            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
     def perform_destroy(self, instance):
@@ -1902,38 +1947,43 @@ class ClasificacionSetViewSet(ActivityLogMixin, viewsets.ModelViewSet):
             super().perform_destroy(instance)
 
             # Registrar eliminación de set
-            self.log_delete(
+            registrar_actividad_tarjeta(
                 cliente_id=set_info["cliente_id"],
                 periodo=date.today().strftime("%Y-%m"),
                 tarjeta="clasificacion",
                 accion="set_delete",
                 descripcion=f'Eliminado set de clasificación: {set_info["nombre"]} (incluía {opciones_count} opciones)',
+                usuario=self.request.user,
                 detalles={
                     **set_info,
                     "opciones_eliminadas": opciones_count,
                     "accion_origen": "manual_sets_tab",
                 },
+                resultado="exito",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
             # Registrar error
-            self.log_delete(
+            registrar_actividad_tarjeta(
                 cliente_id=set_info["cliente_id"],
                 periodo=date.today().strftime("%Y-%m"),
                 tarjeta="clasificacion",
                 accion="set_delete",
                 descripcion=f'Error al eliminar set de clasificación: {set_info["nombre"]} - {str(e)}',
+                usuario=self.request.user,
                 detalles={
                     **set_info,
                     "error": str(e),
                     "accion_origen": "manual_sets_tab",
                 },
                 resultado="error",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
 
-class ClasificacionOptionViewSet(ActivityLogMixin, viewsets.ModelViewSet):
+class ClasificacionOptionViewSet(viewsets.ModelViewSet):
     queryset = ClasificacionOption.objects.all()
     serializer_class = ClasificacionOptionSerializer
     permission_classes = [IsAuthenticated]
@@ -1949,12 +1999,13 @@ class ClasificacionOptionViewSet(ActivityLogMixin, viewsets.ModelViewSet):
         instance = serializer.save()
 
         # Registrar creación de opción
-        self.log_create(
+        registrar_actividad_tarjeta(
             cliente_id=instance.set_clas.cliente.id,
             periodo=date.today().strftime("%Y-%m"),
             tarjeta="clasificacion",
             accion="option_create",
             descripcion=f"Creada opción de clasificación: {instance.valor} en set {instance.set_clas.nombre}",
+            usuario=self.request.user,
             detalles={
                 "opcion_id": instance.id,
                 "opcion_valor": instance.valor,
@@ -1962,6 +2013,8 @@ class ClasificacionOptionViewSet(ActivityLogMixin, viewsets.ModelViewSet):
                 "set_nombre": instance.set_clas.nombre,
                 "accion_origen": "manual_sets_tab",
             },
+            resultado="exito",
+            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
     def perform_update(self, serializer):
@@ -1969,12 +2022,13 @@ class ClasificacionOptionViewSet(ActivityLogMixin, viewsets.ModelViewSet):
         instance = serializer.save()
 
         # Registrar edición de opción
-        self.log_update(
+        registrar_actividad_tarjeta(
             cliente_id=instance.set_clas.cliente.id,
             periodo=date.today().strftime("%Y-%m"),
             tarjeta="clasificacion",
             accion="option_edit",
             descripcion=f"Editada opción de clasificación: {old_instance.valor} → {instance.valor} en set {instance.set_clas.nombre}",
+            usuario=self.request.user,
             detalles={
                 "opcion_id": instance.id,
                 "valor_anterior": old_instance.valor,
@@ -1983,6 +2037,8 @@ class ClasificacionOptionViewSet(ActivityLogMixin, viewsets.ModelViewSet):
                 "set_nombre": instance.set_clas.nombre,
                 "accion_origen": "manual_sets_tab",
             },
+            resultado="exito",
+            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
     def perform_destroy(self, instance):
@@ -1998,34 +2054,39 @@ class ClasificacionOptionViewSet(ActivityLogMixin, viewsets.ModelViewSet):
             super().perform_destroy(instance)
 
             # Registrar eliminación de opción
-            self.log_delete(
+            registrar_actividad_tarjeta(
                 cliente_id=opcion_info["cliente_id"],
                 periodo=date.today().strftime("%Y-%m"),
                 tarjeta="clasificacion",
                 accion="option_delete",
                 descripcion=f'Eliminada opción de clasificación: {opcion_info["valor"]} del set {opcion_info["set_nombre"]}',
+                usuario=self.request.user,
                 detalles={**opcion_info, "accion_origen": "manual_sets_tab"},
+                resultado="exito",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
             # Registrar error
-            self.log_delete(
+            registrar_actividad_tarjeta(
                 cliente_id=opcion_info["cliente_id"],
                 periodo=date.today().strftime("%Y-%m"),
                 tarjeta="clasificacion",
                 accion="option_delete",
                 descripcion=f'Error al eliminar opción de clasificación: {opcion_info["valor"]} - {str(e)}',
+                usuario=self.request.user,
                 detalles={
                     **opcion_info,
                     "error": str(e),
                     "accion_origen": "manual_sets_tab",
                 },
                 resultado="error",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
 
-class AccountClassificationViewSet(ActivityLogMixin, viewsets.ModelViewSet):
+class AccountClassificationViewSet(viewsets.ModelViewSet):
     queryset = AccountClassification.objects.select_related(
         "cuenta", "set_clas", "opcion", "asignado_por"
     ).all()
@@ -2047,18 +2108,21 @@ class AccountClassificationViewSet(ActivityLogMixin, viewsets.ModelViewSet):
         instance = serializer.save(asignado_por=self.request.user.usuario)
 
         # Registrar actividad
-        self.log_create(
+        registrar_actividad_tarjeta(
             cliente_id=instance.cuenta.cliente.id,
             periodo=date.today().strftime("%Y-%m"),
             tarjeta="clasificacion",
             accion="individual_create",
             descripcion=f"Creada clasificación: {instance.cuenta.codigo} → {instance.set_clas.nombre}: {instance.opcion.valor}",
+            usuario=self.request.user,
             detalles={
                 "cuenta_id": instance.cuenta.id,
                 "cuenta_codigo": instance.cuenta.codigo,
                 "set_nombre": instance.set_clas.nombre,
                 "opcion_valor": instance.opcion.valor,
             },
+            resultado="exito",
+            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
     def perform_update(self, serializer):
@@ -2066,12 +2130,13 @@ class AccountClassificationViewSet(ActivityLogMixin, viewsets.ModelViewSet):
         instance = serializer.save()
 
         # Registrar actividad
-        self.log_update(
+        registrar_actividad_tarjeta(
             cliente_id=instance.cuenta.cliente.id,
             periodo=date.today().strftime("%Y-%m"),
             tarjeta="clasificacion",
             accion="individual_edit",
             descripcion=f"Editada clasificación: {instance.cuenta.codigo} → {instance.set_clas.nombre}: {instance.opcion.valor}",
+            usuario=self.request.user,
             detalles={
                 "cuenta_id": instance.cuenta.id,
                 "cuenta_codigo": instance.cuenta.codigo,
@@ -2082,6 +2147,8 @@ class AccountClassificationViewSet(ActivityLogMixin, viewsets.ModelViewSet):
                     "opcion_nueva": instance.opcion.valor,
                 },
             },
+            resultado="exito",
+            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
     def perform_destroy(self, instance):
@@ -2097,13 +2164,16 @@ class AccountClassificationViewSet(ActivityLogMixin, viewsets.ModelViewSet):
         instance.delete()
 
         # Registrar actividad
-        self.log_delete(
+        registrar_actividad_tarjeta(
             cliente_id=cliente_id,
             periodo=date.today().strftime("%Y-%m"),
             tarjeta="clasificacion",
             accion="individual_delete",
             descripcion=f'Eliminada clasificación: {clasificacion_info["cuenta_codigo"]} → {clasificacion_info["set_nombre"]}: {clasificacion_info["opcion_valor"]}',
+            usuario=self.request.user,
             detalles=clasificacion_info,
+            resultado="exito",
+            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
 
@@ -2128,7 +2198,7 @@ class AuxiliarViewSet(viewsets.ModelViewSet):
 # ViewSets para uploads con logging de cambios
 
 
-class ClasificacionCuentaArchivoViewSet(ActivityLogMixin, viewsets.ModelViewSet):
+class ClasificacionCuentaArchivoViewSet(viewsets.ModelViewSet):
     """
     ViewSet para manejar los registros raw de clasificaciones antes del mapeo
     """
@@ -2165,18 +2235,21 @@ class ClasificacionCuentaArchivoViewSet(ActivityLogMixin, viewsets.ModelViewSet)
                 )
 
                 # Registrar creación manual
-                self.log_create(
+                registrar_actividad_tarjeta(
                     cliente_id=upload_log.cliente.id,
                     periodo=date.today().strftime("%Y-%m"),
                     tarjeta="clasificacion",
                     accion="manual_create",
                     descripcion=f"Creado registro clasificación: {instance.numero_cuenta}",
+                    usuario=self.request.user,
                     detalles={
                         "numero_cuenta": instance.numero_cuenta,
                         "clasificaciones": instance.clasificaciones,
                         "upload_log_id": upload_log_id,
                         "id": instance.id,
                     },
+                    resultado="exito",
+                    ip_address=self.request.META.get("REMOTE_ADDR"),
                 )
 
             except UploadLog.DoesNotExist:
@@ -2185,17 +2258,20 @@ class ClasificacionCuentaArchivoViewSet(ActivityLogMixin, viewsets.ModelViewSet)
             instance = serializer.save()
             # Si no hay upload_log_id, registrar sin cliente específico
             if hasattr(instance, "cliente") and instance.cliente:
-                self.log_create(
+                registrar_actividad_tarjeta(
                     cliente_id=instance.cliente.id,
                     periodo=date.today().strftime("%Y-%m"),
                     tarjeta="clasificacion",
                     accion="manual_create",
                     descripcion=f"Creado registro clasificación: {instance.numero_cuenta}",
+                    usuario=self.request.user,
                     detalles={
                         "numero_cuenta": instance.numero_cuenta,
                         "clasificaciones": instance.clasificaciones,
                         "id": instance.id,
                     },
+                    resultado="exito",
+                    ip_address=self.request.META.get("REMOTE_ADDR"),
                 )
 
     def perform_update(self, serializer):
@@ -2214,12 +2290,13 @@ class ClasificacionCuentaArchivoViewSet(ActivityLogMixin, viewsets.ModelViewSet)
 
             # Registrar edición
             if cliente_id:
-                self.log_update(
+                registrar_actividad_tarjeta(
                     cliente_id=cliente_id,
                     periodo=date.today().strftime("%Y-%m"),
                     tarjeta="clasificacion",
                     accion="manual_edit",
                     descripcion=f"Editado registro clasificación ID:{instance.id}: {old_instance.numero_cuenta} → {instance.numero_cuenta}",
+                    usuario=self.request.user,
                     detalles={
                         "id": instance.id,
                         "cambios": {
@@ -2236,23 +2313,27 @@ class ClasificacionCuentaArchivoViewSet(ActivityLogMixin, viewsets.ModelViewSet)
                             instance.upload_log.id if instance.upload_log else None
                         ),
                     },
+                    resultado="exito",
+                    ip_address=self.request.META.get("REMOTE_ADDR"),
                 )
 
         except Exception as e:
             # Registrar error
             if cliente_id:
-                self.log_update(
+                registrar_actividad_tarjeta(
                     cliente_id=cliente_id,
                     periodo=date.today().strftime("%Y-%m"),
                     tarjeta="clasificacion",
                     accion="manual_edit",
                     descripcion=f"Error al editar registro clasificación ID:{old_instance.id}: {str(e)}",
+                    usuario=self.request.user,
                     detalles={
                         "error": str(e),
                         "id": old_instance.id,
                         "data": self.request.data,
                     },
                     resultado="error",
+                    ip_address=self.request.META.get("REMOTE_ADDR"),
                 )
             raise
 
@@ -2274,26 +2355,31 @@ class ClasificacionCuentaArchivoViewSet(ActivityLogMixin, viewsets.ModelViewSet)
 
             # Registrar eliminación
             if cliente_id:
-                self.log_delete(
+                registrar_actividad_tarjeta(
                     cliente_id=cliente_id,
                     periodo=date.today().strftime("%Y-%m"),
                     tarjeta="clasificacion",
                     accion="manual_delete",
                     descripcion=f'Eliminado registro clasificación: {registro_info["numero_cuenta"]}',
+                    usuario=self.request.user,
                     detalles=registro_info,
+                    resultado="exito",
+                    ip_address=self.request.META.get("REMOTE_ADDR"),
                 )
 
         except Exception as e:
             # Registrar error
             if cliente_id:
-                self.log_delete(
+                registrar_actividad_tarjeta(
                     cliente_id=cliente_id,
                     periodo=date.today().strftime("%Y-%m"),
                     tarjeta="clasificacion",
                     accion="manual_delete",
                     descripcion=f'Error al eliminar registro clasificación ID:{registro_info["id"]}: {str(e)}',
+                    usuario=self.request.user,
                     detalles={"error": str(e), **registro_info},
                     resultado="error",
+                    ip_address=self.request.META.get("REMOTE_ADDR"),
                 )
             raise
 
@@ -2383,7 +2469,7 @@ class ClasificacionCuentaArchivoViewSet(ActivityLogMixin, viewsets.ModelViewSet)
         )
 
 
-class NombresEnInglesUploadViewSet(ActivityLogMixin, viewsets.ModelViewSet):
+class NombresEnInglesUploadViewSet(viewsets.ModelViewSet):
     queryset = NombresEnInglesUpload.objects.all()
     serializer_class = NombresEnInglesUploadSerializer
     permission_classes = [IsAuthenticated]
@@ -2405,18 +2491,21 @@ class NombresEnInglesUploadViewSet(ActivityLogMixin, viewsets.ModelViewSet):
             logger.warning(f"Error al limpiar archivos temporales: {str(e)}")
 
         # Registrar actividad
-        self.log_create(
+        registrar_actividad_tarjeta(
             cliente_id=instance.cliente.id,
             periodo=date.today().strftime("%Y-%m"),
             tarjeta="clasificacion",  # Nombres en inglés forma parte de clasificaciones
             accion="upload_excel",
             descripcion=f"Subido archivo de nombres en inglés: {instance.archivo.name}",
+            usuario=self.request.user,
             detalles={
                 "nombre_archivo": instance.archivo.name,
                 "tamaño_bytes": instance.archivo.size if instance.archivo else None,
                 "upload_id": instance.id,
                 "tipo_archivo": "nombres_ingles",
             },
+            resultado="exito",
+            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
         # Disparar tarea de procesamiento en background
@@ -2425,12 +2514,13 @@ class NombresEnInglesUploadViewSet(ActivityLogMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Error al disparar tarea de procesamiento: {str(e)}")
             # Registrar error en el procesamiento
-            self.log_create(
+            registrar_actividad_tarjeta(
                 cliente_id=instance.cliente.id,
                 periodo=date.today().strftime("%Y-%m"),
                 tarjeta="clasificacion",
                 accion="process_error",
                 descripcion=f"Error al iniciar procesamiento de {instance.archivo.name}: {str(e)}",
+                usuario=self.request.user,
                 detalles={
                     "error": str(e),
                     "nombre_archivo": instance.archivo.name,
@@ -2438,23 +2528,27 @@ class NombresEnInglesUploadViewSet(ActivityLogMixin, viewsets.ModelViewSet):
                     "tipo_archivo": "nombres_ingles",
                 },
                 resultado="error",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
     def perform_update(self, serializer):
         instance = serializer.save()
 
         # Registrar actividad
-        self.log_update(
+        registrar_actividad_tarjeta(
             cliente_id=instance.cliente.id,
             periodo=date.today().strftime("%Y-%m"),
             tarjeta="clasificacion",
             accion="manual_edit",
             descripcion=f"Actualizado archivo de nombres en inglés: {instance.archivo.name}",
+            usuario=self.request.user,
             detalles={
                 "nombre_archivo": instance.archivo.name,
                 "upload_id": instance.id,
                 "tipo_archivo": "nombres_ingles",
             },
+            resultado="exito",
+            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
     def perform_destroy(self, instance):
@@ -2477,23 +2571,30 @@ class NombresEnInglesUploadViewSet(ActivityLogMixin, viewsets.ModelViewSet):
             instance.delete()
 
             # Registrar eliminación exitosa
-            self.log_delete(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=date.today().strftime("%Y-%m"),
                 tarjeta="clasificacion",
+                accion="manual_delete",
                 descripcion=f'Eliminado archivo de nombres en inglés: {archivo_info["nombre_archivo"]}',
+                usuario=self.request.user,
                 detalles=archivo_info,
+                resultado="exito",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
             # Registrar error en eliminación
-            self.log_delete(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=date.today().strftime("%Y-%m"),
                 tarjeta="clasificacion",
+                accion="manual_delete",
                 descripcion=f"Error al eliminar archivo de nombres en inglés: {str(e)}",
+                usuario=self.request.user,
                 detalles={"error": str(e), **archivo_info},
                 resultado="error",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 
@@ -2551,7 +2652,7 @@ class NombresEnInglesUploadViewSet(ActivityLogMixin, viewsets.ModelViewSet):
             return Response({"error": str(e)}, status=500)
 
 
-class LibroMayorUploadViewSet(ActivityLogMixin, viewsets.ModelViewSet):
+class LibroMayorUploadViewSet(viewsets.ModelViewSet):
     queryset = LibroMayorUpload.objects.all()
     serializer_class = LibroMayorUploadSerializer
     permission_classes = [IsAuthenticated]
@@ -2567,34 +2668,40 @@ class LibroMayorUploadViewSet(ActivityLogMixin, viewsets.ModelViewSet):
         instance = serializer.save()
 
         # Registrar actividad
-        self.log_create(
+        registrar_actividad_tarjeta(
             cliente_id=instance.cierre.cliente.id,
             periodo=date.today().strftime("%Y-%m"),
             tarjeta="libro_mayor",
             accion="upload_excel",
             descripcion=f"Subido archivo de libro mayor: {instance.archivo.name}",
+            usuario=self.request.user,
             detalles={
                 "nombre_archivo": instance.archivo.name,
                 "cierre_id": instance.cierre.id,
                 "upload_id": instance.id,
             },
+            resultado="exito",
+            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
     def perform_update(self, serializer):
         instance = serializer.save()
 
         # Registrar actividad
-        self.log_update(
+        registrar_actividad_tarjeta(
             cliente_id=instance.cierre.cliente.id,
             periodo=date.today().strftime("%Y-%m"),
             tarjeta="libro_mayor",
             accion="manual_edit",
             descripcion=f"Actualizado archivo de libro mayor: {instance.archivo.name}",
+            usuario=self.request.user,
             detalles={
                 "nombre_archivo": instance.archivo.name,
                 "cierre_id": instance.cierre.id,
                 "upload_id": instance.id,
             },
+            resultado="exito",
+            ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
     def perform_destroy(self, instance):
@@ -2617,23 +2724,30 @@ class LibroMayorUploadViewSet(ActivityLogMixin, viewsets.ModelViewSet):
             instance.delete()
 
             # Registrar eliminación exitosa
-            self.log_delete(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=date.today().strftime("%Y-%m"),
                 tarjeta="libro_mayor",
+                accion="manual_delete",
                 descripcion=f'Eliminado archivo de libro mayor: {archivo_info["nombre_archivo"]}',
+                usuario=self.request.user,
                 detalles=archivo_info,
+                resultado="exito",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
 
         except Exception as e:
             # Registrar error en eliminación
-            self.log_delete(
+            registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=date.today().strftime("%Y-%m"),
                 tarjeta="libro_mayor",
+                accion="manual_delete",
                 descripcion=f"Error al eliminar archivo de libro mayor: {str(e)}",
+                usuario=self.request.user,
                 detalles={"error": str(e), **archivo_info},
                 resultado="error",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
             )
             raise
 

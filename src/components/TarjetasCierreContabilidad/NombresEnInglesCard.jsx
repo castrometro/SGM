@@ -101,10 +101,12 @@ const NombresEnInglesCard = ({
           }
 
         } else if (logData.estado === 'error') {
-          setUploadProgreso('Error en el procesamiento');
+          setUploadProgreso('');
           setSubiendo(false);
           setEstado('error');
-          setError(logData.errores || 'Error en el procesamiento');
+          const msg = logData.errores || 'Error en el procesamiento';
+          setError(msg);
+          mostrarNotificacion('error', msg);
           if (onCompletado) onCompletado(false);
         }
 
@@ -138,6 +140,7 @@ const NombresEnInglesCard = ({
 
       if (response.upload_log_id) {
         setUploadLogId(response.upload_log_id);
+        setEstado("procesando");
         setUploadProgreso("Archivo recibido, iniciando procesamiento...");
         mostrarNotificacion("info", "📤 Archivo subido correctamente. Procesando...");
       } else {
@@ -331,9 +334,9 @@ const NombresEnInglesCard = ({
           <span className="text-green-400">
             {`✔ Archivo procesado correctamente${nombresIngles.length > 0 ? ` (${nombresIngles.length} nombres en inglés)` : ""}`}
           </span>
-        ) : subiendo || uploadProgreso ? (
+        ) : estado === "procesando" ? (
           <span className="text-blue-400">🔄 Procesando nombres en inglés…</span>
-        ) : error ? (
+        ) : estado === "error" && error ? (
           <span className="text-red-400">❌ Error: {error}</span>
         ) : nombresIngles.length > 0 ? (
           <span className="text-yellow-400">📋 Archivo cargado con {nombresIngles.length} nombres en inglés</span>

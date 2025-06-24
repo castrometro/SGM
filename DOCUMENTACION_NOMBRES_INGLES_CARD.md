@@ -66,9 +66,10 @@ Ubicación: `backend/contabilidad/tasks.py`
 - Calcula un hash SHA‑256 del archivo y lo almacena en `UploadLog`.
 - **Valida la estructura del Excel** con `validar_archivo_nombres_ingles_excel` para asegurar que tenga las columnas requeridas y códigos válidos.
 - Lee el Excel y guarda cada par `código - nombre` en el modelo `NombreIngles`.
-- Elimina cualquier dato previo para el cliente antes de insertar los nuevos registros.
-- Si el archivo contiene códigos repetidos se conserva la última aparición para evitar claves duplicadas.
-- Actualiza el estado del `UploadLog` con un resumen de nombres creados, hash y posibles advertencias.
+  - Elimina cualquier dato previo para el cliente antes de insertar los nuevos registros.
+  - Si el archivo contiene códigos repetidos se conserva la última aparición para evitar claves duplicadas.
+  - Si la validación detecta errores (por ejemplo, códigos duplicados), el `UploadLog` cambia a `error` y el mensaje se muestra en la tarjeta, igual que en ClasificacionBulk.
+  - Actualiza el estado del `UploadLog` con un resumen de nombres creados, hash y posibles advertencias.
 
 ---
 

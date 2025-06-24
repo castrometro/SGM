@@ -37,7 +37,7 @@ Flujo simplificado:
 1. `handleSeleccionArchivo` envía el archivo con `subirNombresIngles` y recibe `upload_log_id`.
 2. Un `useEffect` realiza polling a `/upload-log/{id}/estado/` hasta que el proceso termina.
 3. Al completarse se recargan los nombres y se muestra una notificación de éxito.
-4. `handleEliminarTodos` borra los registros y muestra las estadísticas de la eliminación mientras marca los UploadLogs como eliminados.
+4. `handleEliminarTodos` borra los registros y marca los UploadLogs como `datos_eliminados`, mostrando cuántos registros y archivos se removieron.
 
 ---
 
@@ -60,6 +60,10 @@ Ubicación: `backend/contabilidad/views.py`
 - Crea un `UploadLog` de tipo `nombres_ingles` y guarda el archivo temporal.
 - Lanza la tarea Celery `procesar_nombres_ingles_con_upload_log`.
 - Retorna `upload_log_id` para que el frontend monitoree el progreso.
+
+### Endpoint `estado_nombres_ingles`
+Devuelve `subido` si existen nombres para el cliente o `pendiente` en caso contrario.
+Si previamente se eliminaron datos, incluye `historial_eliminado: true` para informar que puede volver a subir.
 
 ### Tarea Celery `procesar_nombres_ingles_con_upload_log`
 Ubicación: `backend/contabilidad/tasks.py`

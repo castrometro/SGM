@@ -1246,7 +1246,24 @@ def registrar_vista_clasificaciones(request, cliente_id):
 def estado_nombres_ingles(request, cliente_id):
     # Busca si ya existen nombres en inglés asociados al cliente
     existe = NombreIngles.objects.filter(cliente_id=cliente_id).exists()
-    return Response({"estado": "subido" if existe else "pendiente"})
+    if existe:
+        return Response({"estado": "subido"})
+
+    # Si no hay datos activos, verificar si hubo uploads eliminados previamente
+    upload_log_eliminado = UploadLog.objects.filter(
+        cliente_id=cliente_id, tipo_upload="nombres_ingles", estado="datos_eliminados"
+    ).exists()
+
+    if upload_log_eliminado:
+        return Response(
+            {
+                "estado": "pendiente",
+                "mensaje": "Datos eliminados previamente - puede volver a subir",
+                "historial_eliminado": True,
+            }
+        )
+
+    return Response({"estado": "pendiente"})
 
 
 @api_view(["POST"])
@@ -1472,10 +1489,34 @@ def eliminar_nombres_ingles(request, cliente_id):
             # No hay archivo que eliminar, continuar normalmente
             pass
 
-        # 2. Eliminar registros de NombreIngles
+        # 2. Limpiar archivos temporales de UploadLogs pero conservar registros
+        upload_logs = UploadLog.objects.filter(
+            cliente=cliente, tipo_upload="nombres_ingles"
+        )
+        upload_logs_count = upload_logs.count()
+        for upload_log in upload_logs:
+            if upload_log.ruta_archivo:
+                ruta_completa = os.path.join(
+                    default_storage.location, upload_log.ruta_archivo
+                )
+                if os.path.exists(ruta_completa):
+                    try:
+                        os.remove(ruta_completa)
+                        archivos_eliminados.append(upload_log.ruta_archivo)
+                    except OSError:
+                        pass
+
+            if upload_log.estado == "completado":
+                upload_log.estado = "datos_eliminados"
+                upload_log.resumen = (
+                    f"Datos procesados eliminados el {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+                upload_log.save()
+
+        # 3. Eliminar registros de NombreIngles
         NombreIngles.objects.filter(cliente=cliente).delete()
 
-        # 3. Buscar cierre para actividad
+        # 4. Buscar cierre para actividad
         cierre_para_actividad = None
         try:
             cierre_para_actividad = CierreContabilidad.objects.filter(
@@ -1487,7 +1528,7 @@ def eliminar_nombres_ingles(request, cliente_id):
         
         periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
 
-        # 4. Registrar actividad exitosa
+        # 5. Registrar actividad exitosa
         registrar_actividad_tarjeta(
             cliente_id=cliente_id,
             periodo=periodo_actividad,
@@ -1497,6 +1538,10 @@ def eliminar_nombres_ingles(request, cliente_id):
             usuario=request.user,
             detalles={
                 "registros_eliminados": count,
+                "upload_logs_conservados": upload_logs_count,
+                "upload_logs_marcados_eliminados": upload_logs.filter(
+                    estado="datos_eliminados"
+                ).count(),
                 "archivos_eliminados": archivos_eliminados,
                 "cliente_nombre": cliente.nombre,
                 "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
@@ -1509,6 +1554,7 @@ def eliminar_nombres_ingles(request, cliente_id):
             {
                 "mensaje": "Nombres en inglés y archivos eliminados correctamente",
                 "registros_eliminados": count,
+                "upload_logs_conservados": upload_logs_count,
                 "archivos_eliminados": len(archivos_eliminados),
             }
         )

@@ -131,6 +131,7 @@ const NombresEnInglesCard = ({
     setUploadProgreso("Subiendo archivo...");
     setUploadLogId(null);
     setUploadEstado(null);
+    let newUploadId = null;
     try {
       const formData = new FormData();
       formData.append('cliente_id', clienteId);
@@ -139,7 +140,8 @@ const NombresEnInglesCard = ({
       const response = await subirNombresIngles(formData);
 
       if (response.upload_log_id) {
-        setUploadLogId(response.upload_log_id);
+        newUploadId = response.upload_log_id;
+        setUploadLogId(newUploadId);
         setEstado("procesando");
         setUploadProgreso("Archivo recibido, iniciando procesamiento...");
         mostrarNotificacion("info", "📤 Archivo subido correctamente. Procesando...");
@@ -184,7 +186,7 @@ const NombresEnInglesCard = ({
       
       onCompletado && onCompletado(false);
     } finally {
-      if (!uploadLogId) setSubiendo(false);
+      if (!newUploadId) setSubiendo(false);
     }
   };
 

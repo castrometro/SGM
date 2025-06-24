@@ -8,6 +8,7 @@ from datetime import date
 
 import pandas as pd
 from celery import shared_task
+from django.core.files.base import ContentFile
 from contabilidad.models import (
     AccountClassification,
     ClasificacionCuentaArchivo,

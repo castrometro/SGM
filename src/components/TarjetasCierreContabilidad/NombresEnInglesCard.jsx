@@ -221,7 +221,7 @@ const NombresEnInglesCard = ({
     setEliminando(true);
     setErrorEliminando("");
     try {
-      await eliminarTodosNombresIngles(clienteId);
+      const result = await eliminarTodosNombresIngles(clienteId);
       setEstado("pendiente");
       setNombresIngles([]);
       setArchivoNombre("");
@@ -229,8 +229,12 @@ const NombresEnInglesCard = ({
       setUploadEstado(null);
       setUploadProgreso("");
       if (onCompletado) onCompletado(false);
+
+      const mensaje = `Eliminados: ${result.registros_eliminados || 0} registros, ${result.archivos_eliminados || 0} archivos`;
+      mostrarNotificacion("success", `🗑️ ${mensaje}`);
     } catch (err) {
       setErrorEliminando("Error eliminando los nombres en inglés");
+      mostrarNotificacion("error", "❌ Error eliminando los nombres en inglés");
     } finally {
       setEliminando(false);
     }

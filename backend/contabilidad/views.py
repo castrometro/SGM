@@ -73,6 +73,7 @@ from contabilidad.tasks import (
     procesar_libro_mayor,
     procesar_nombres_ingles,
     procesar_nombres_ingles_upload,
+    procesar_nombres_ingles_con_upload_log,
     procesar_tipo_documento_con_upload_log,
     tarea_de_prueba,
 )

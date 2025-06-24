@@ -37,7 +37,7 @@ Flujo simplificado:
 1. `handleSeleccionArchivo` envía el archivo con `subirNombresIngles` y recibe `upload_log_id`.
 2. Un `useEffect` realiza polling a `/upload-log/{id}/estado/` hasta que el proceso termina.
 3. Al completarse se recargan los nombres y se muestra una notificación de éxito.
-4. `handleEliminarTodos` borra los registros y marca los UploadLogs como eliminados.
+4. `handleEliminarTodos` borra los registros y muestra las estadísticas de la eliminación mientras marca los UploadLogs como eliminados.
 
 ---
 

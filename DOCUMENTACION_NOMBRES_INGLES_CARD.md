@@ -63,10 +63,11 @@ Ubicación: `backend/contabilidad/views.py`
 
 ### Tarea Celery `procesar_nombres_ingles_con_upload_log`
 Ubicación: `backend/contabilidad/tasks.py`
+- Calcula un hash SHA‑256 del archivo y lo almacena en `UploadLog` para registrar la integridad del archivo procesado.
 - Lee el Excel y guarda cada par `código - nombre` en el modelo `NombreIngles`.
 - Elimina cualquier dato previo para el cliente antes de insertar los nuevos registros.
 - Si el archivo contiene códigos repetidos, se conserva la última aparición para evitar errores por claves duplicadas.
-- Actualiza el estado del `UploadLog` a `completado` o `error` y guarda un resumen con la cantidad de nombres creados.
+- Actualiza el estado del `UploadLog` a `completado` o `error` y guarda un resumen con la cantidad de nombres creados y el hash.
 
 ---
 

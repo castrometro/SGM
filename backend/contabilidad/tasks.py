@@ -363,6 +363,13 @@ def procesar_nombres_ingles_con_upload_log(upload_log_id):
         )
         ruta_completa = default_storage.path(ruta_relativa)
 
+        # Calcular hash del archivo para registrarlo en el UploadLog
+        with open(ruta_completa, "rb") as f:
+            archivo_hash = hashlib.sha256(f.read()).hexdigest()
+
+        upload_log.hash_archivo = archivo_hash
+        upload_log.save(update_fields=["hash_archivo"])
+
         df = pd.read_excel(ruta_completa, skiprows=1, header=None)
         if len(df.columns) < 2:
             raise ValueError(
@@ -407,6 +414,7 @@ def procesar_nombres_ingles_con_upload_log(upload_log_id):
             "nombres_creados": creados,
             "nombres_eliminados_previos": eliminados,
             "errores_count": len(errores),
+            "archivo_hash": archivo_hash,
         }
 
         upload_log.estado = "completado"

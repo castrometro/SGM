@@ -653,7 +653,11 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
                     descripcion=str(row[DS] or ""),
                 )
 
-                if not cuenta_obj.nombre_en:
+                tiene_nombre_ingles = cuenta_obj.nombre_en or NombreIngles.objects.filter(
+                    cliente=upload_log.cliente,
+                    cuenta_codigo=cuenta_obj.codigo,
+                ).exists()
+                if not tiene_nombre_ingles:
                     Incidencia.objects.create(
                         cierre=upload_log.cierre,
                         tipo="negocio",

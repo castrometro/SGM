@@ -14,6 +14,17 @@ from .views import (
     CierreContabilidadViewSet,
     TarjetaActivityLogViewSet,
     NombresEnInglesView,
+    # ViewSets migrados
+    ClasificacionViewSet,
+    ClasificacionSetViewSet,
+    ClasificacionOptionViewSet,
+    AccountClassificationViewSet,
+    IncidenciaViewSet,
+    CentroCostoViewSet,
+    AuxiliarViewSet,
+    NombresEnInglesUploadViewSet,
+    AnalisisCuentaCierreViewSet,
+    # Function views
     cargar_libro_mayor,
     reprocesar_movimientos_incompletos,
     movimientos_incompletos,
@@ -46,20 +57,10 @@ from .views import (
     test_celery,
     limpiar_archivos_temporales,
     estado_upload_log,
+    estado_clasificaciones,
 )
 
-# Importar ViewSets faltantes desde views_legacy temporalmente
-from .views_legacy import (
-    AccountClassificationViewSet,
-    AnalisisCuentaCierreViewSet,
-    AuxiliarViewSet,
-    CentroCostoViewSet,
-    ClasificacionOptionViewSet,
-    ClasificacionSetViewSet,
-    ClasificacionViewSet,
-    IncidenciaViewSet,
-    NombresEnInglesUploadViewSet,
-)
+# Ya no necesitamos importar desde views_legacy
 
 router = DefaultRouter()
 router.register(r"cuentas", CuentaContableViewSet)
@@ -124,6 +125,9 @@ urlpatterns = [
     path("tipo-documento/<int:cliente_id>/registrar-vista/", registrar_vista_tipos_documento, name="registrar_vista_tipos_documento"),
     path("tipo-documento/<int:cliente_id>/eliminar-todos/", eliminar_tipos_documento),
     
+    # Clasificaciones
+    path("clasificacion/<int:cliente_id>/estado/", estado_clasificaciones, name="estado_clasificaciones"),
+    
     # Nombres en inglés
     path("nombre-ingles/<int:cliente_id>/estado/", estado_nombres_ingles),
     path("nombre-ingles/<int:cliente_id>/list/", nombres_ingles_cliente),
@@ -131,9 +135,6 @@ urlpatterns = [
     path("nombre-ingles/<int:cliente_id>/eliminar-todos/", eliminar_nombres_ingles),
     path("nombres-ingles-upload/eliminar-todos/", eliminar_todos_nombres_ingles_upload),
     path("nombres-ingles/", NombresEnInglesView.as_view(), name="nombres_ingles"),
-    
-    # Clasificaciones
-    path("clasificacion/<int:cliente_id>/registrar-vista/", registrar_vista_clasificaciones),
     
     # Upload logs
     path("upload-log/<int:upload_log_id>/estado/", estado_upload_log),

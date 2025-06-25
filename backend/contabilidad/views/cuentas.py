@@ -1,11 +1,19 @@
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
 
-from ..models import CuentaContable, AperturaCuenta, MovimientoContable
+from ..models import (
+    CuentaContable,
+    AperturaCuenta,
+    MovimientoContable,
+    CentroCosto,
+    Auxiliar,
+)
 from ..serializers import (
     CuentaContableSerializer,
     AperturaCuentaSerializer,
     MovimientoContableSerializer,
+    CentroCostoSerializer,
+    AuxiliarSerializer,
 )
 
 
@@ -32,3 +40,26 @@ class MovimientoContableViewSet(viewsets.ModelViewSet):
     queryset = MovimientoContable.objects.all()
     serializer_class = MovimientoContableSerializer
     permission_classes = [IsAuthenticated]
+
+
+class CentroCostoViewSet(viewsets.ModelViewSet):
+    queryset = CentroCosto.objects.all()
+    serializer_class = CentroCostoSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cliente_id = self.request.query_params.get("cliente")
+        if cliente_id:
+            queryset = queryset.filter(cliente_id=cliente_id)
+        return queryset.order_by("nombre")
+
+
+class AuxiliarViewSet(viewsets.ModelViewSet):
+    queryset = Auxiliar.objects.all()
+    serializer_class = AuxiliarSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        return queryset.order_by("nombre")

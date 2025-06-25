@@ -115,34 +115,56 @@ def estado_upload_log(request, upload_log_id):
     Obtiene el estado detallado de un upload log específico
     """
     try:
-        upload_log = UploadLog.objects.get(id=upload_log_id)
+        upload_log = UploadLog.objects.select_related('cliente', 'usuario').get(id=upload_log_id)
         
+        # Construir datos de forma segura, manejando campos que podrían no existir
         data = {
             "id": upload_log.id,
-            "cliente": upload_log.cliente.nombre,
-            "tipo_upload": upload_log.tipo_upload,
+            "tipo": upload_log.tipo_upload,
+            "cliente_id": upload_log.cliente.id if upload_log.cliente else None,
+            "cliente_nombre": upload_log.cliente.nombre if upload_log.cliente else None,
             "estado": upload_log.estado,
             "nombre_archivo": upload_log.nombre_archivo_original,
-            "fecha_subida": upload_log.fecha_subida,
-            "fecha_procesamiento": upload_log.fecha_procesamiento,
-            "registros_totales": upload_log.registros_totales,
-            "registros_procesados": upload_log.registros_procesados,
-            "registros_errores": upload_log.registros_errores,
-            "resumen": upload_log.resumen,
-            "errores": upload_log.errores,
-            "ruta_archivo": upload_log.ruta_archivo,
-            "hash_archivo": upload_log.hash_archivo,
+            "fecha_creacion": upload_log.fecha_subida,
+            "tiempo_procesamiento": (
+                str(upload_log.tiempo_procesamiento)
+                if hasattr(upload_log, 'tiempo_procesamiento') and upload_log.tiempo_procesamiento
+                else None
+            ),
+            "errores": upload_log.errores if hasattr(upload_log, 'errores') else None,
+            "resumen": upload_log.resumen if hasattr(upload_log, 'resumen') else None,
         }
         
+        # Agregar campos opcionales si existen
+        if hasattr(upload_log, 'fecha_procesamiento'):
+            data["fecha_procesamiento"] = upload_log.fecha_procesamiento
+        if hasattr(upload_log, 'registros_totales'):
+            data["registros_totales"] = upload_log.registros_totales
+        if hasattr(upload_log, 'registros_procesados'):
+            data["registros_procesados"] = upload_log.registros_procesados
+        if hasattr(upload_log, 'registros_errores'):
+            data["registros_errores"] = upload_log.registros_errores
+        if hasattr(upload_log, 'ruta_archivo'):
+            data["ruta_archivo"] = upload_log.ruta_archivo
+        if hasattr(upload_log, 'hash_archivo'):
+            data["hash_archivo"] = upload_log.hash_archivo
+        if hasattr(upload_log, 'tamaño_archivo'):
+            data["tamaño_archivo"] = upload_log.tamaño_archivo
+        if hasattr(upload_log, 'usuario') and upload_log.usuario:
+            data["usuario"] = getattr(upload_log.usuario, 'correo_bdo', str(upload_log.usuario))
+            
         return Response(data)
         
     except UploadLog.DoesNotExist:
         return Response(
-            {"error": "Upload log no encontrado"}, 
+            {"error": "UploadLog no encontrado"}, 
             status=status.HTTP_404_NOT_FOUND
         )
     except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Error al consultar UploadLog: %s", e)
         return Response(
-            {"error": f"Error al obtener estado del upload log: {str(e)}"},
+            {"error": "Error interno del servidor"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )

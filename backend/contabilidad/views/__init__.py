@@ -5,12 +5,21 @@ from .libro_mayor import (
     movimientos_incompletos,
 )
 from .tipo_documento import TipoDocumentoViewSet, cargar_tipo_documento
-from .nombres_ingles import NombreInglesViewSet, cargar_nombres_ingles, NombresEnInglesView
-from .clasificacion import ClasificacionCuentaArchivoViewSet, cargar_clasificacion_bulk
+from .nombres_ingles import NombreInglesViewSet, cargar_nombres_ingles, NombresEnInglesView, NombresEnInglesUploadViewSet
+from .clasificacion import (
+    ClasificacionCuentaArchivoViewSet, 
+    cargar_clasificacion_bulk,
+    ClasificacionViewSet,
+    ClasificacionSetViewSet,
+    ClasificacionOptionViewSet,
+    AccountClassificationViewSet,
+)
 from .cuentas import (
     CuentaContableViewSet,
     AperturaCuentaViewSet,
     MovimientoContableViewSet,
+    CentroCostoViewSet,
+    AuxiliarViewSet,
 )
 from .cierre import CierreContabilidadViewSet
 from .actividad import TarjetaActivityLogViewSet
@@ -21,6 +30,15 @@ from .incidencias import (
     historial_reprocesamiento,
     resumen_tipos_incidencia,
     estadisticas_globales_incidencias,
+    IncidenciaViewSet,
+)
+from .analisis import AnalisisCuentaCierreViewSet
+
+# Helper functions
+from .helpers import (
+    obtener_periodo_actividad_para_cliente,
+    get_client_ip,
+    verificar_y_marcar_completo,
 )
 
 # Cliente views
@@ -29,6 +47,7 @@ from .cliente import (
     detalle_cliente, 
     historial_uploads_cliente, 
     estado_tipo_documento,
+    estado_clasificaciones,
     tipos_documento_cliente,
     registrar_vista_tipos_documento,
     # Nuevas funciones agregadas
@@ -59,13 +78,22 @@ __all__ = [
     "NombreInglesViewSet",
     "cargar_nombres_ingles",
     "NombresEnInglesView",
+    "NombresEnInglesUploadViewSet",
     "ClasificacionCuentaArchivoViewSet",
     "cargar_clasificacion_bulk",
+    "ClasificacionViewSet",
+    "ClasificacionSetViewSet",
+    "ClasificacionOptionViewSet",
+    "AccountClassificationViewSet",
     "CuentaContableViewSet",
     "AperturaCuentaViewSet",
     "MovimientoContableViewSet",
+    "CentroCostoViewSet",
+    "AuxiliarViewSet",
     "CierreContabilidadViewSet",
     "TarjetaActivityLogViewSet",
+    "AnalisisCuentaCierreViewSet",
+    "IncidenciaViewSet",
     # Incidencias consolidadas
     "obtener_incidencias_consolidadas",
     "dashboard_incidencias", 
@@ -78,6 +106,7 @@ __all__ = [
     "detalle_cliente",
     "historial_uploads_cliente",
     "estado_tipo_documento",
+    "estado_clasificaciones",
     "tipos_documento_cliente",
     "registrar_vista_tipos_documento",
     # Nuevas funciones
@@ -93,4 +122,8 @@ __all__ = [
     "test_celery",
     "limpiar_archivos_temporales", 
     "estado_upload_log",
+    # Helper functions
+    "obtener_periodo_actividad_para_cliente",
+    "get_client_ip",
+    "verificar_y_marcar_completo",
 ]

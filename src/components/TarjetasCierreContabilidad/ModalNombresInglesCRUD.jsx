@@ -40,9 +40,11 @@ const ModalNombresInglesCRUD = ({
   };
 
   // Función para ordenar nombres en inglés alfabéticamente por código de cuenta
-  const nombresOrdenados = [...nombresIngles].sort((a, b) => 
-    a.cuenta_codigo.localeCompare(b.cuenta_codigo, 'es', { sensitivity: 'base' })
-  );
+  const nombresOrdenados = Array.isArray(nombresIngles) 
+    ? [...nombresIngles].sort((a, b) => 
+        a.cuenta_codigo.localeCompare(b.cuenta_codigo, 'es', { sensitivity: 'base' })
+      )
+    : [];
 
   // Reset states when modal opens/closes
   useEffect(() => {
@@ -409,7 +411,7 @@ const ModalNombresInglesCRUD = ({
         )}
 
         {/* Botón Eliminar Todos */}
-        {nombresIngles.length > 0 && (
+        {Array.isArray(nombresIngles) && nombresIngles.length > 0 && (
           <div className="mt-5 flex justify-end">
             {confirmandoEliminarTodos ? (
               <div className="flex gap-2 items-center">

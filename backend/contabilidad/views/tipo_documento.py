@@ -38,8 +38,23 @@ def cargar_tipo_documento(request):
     es_valido, _ = validar_nombre_archivo(archivo.name, "tipo_documento", cliente)
     if not es_valido:
         return Response({"error": "Nombre de archivo inválido"}, status=400)
-    upload_log = UploadLogMixin().crear_upload_log(cliente, archivo)
-    ruta = guardar_temporal(f"tipo_documento_{upload_log.id}.xlsx", archivo)
+    
+    # Crear una instancia del mixin con el tipo correcto
+    mixin = UploadLogMixin()
+    mixin.tipo_upload = "tipo_documento"
+    upload_log = mixin.crear_upload_log(cliente, archivo)
+    
+    # Buscar un cierre relacionado y asignar usuario
+    cierre_relacionado = CierreContabilidad.objects.filter(
+        cliente=cliente,
+        estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+    ).order_by('-fecha_creacion').first()
+    
+    upload_log.cierre = cierre_relacionado
+    upload_log.usuario = request.user
+    upload_log.save()
+    
+    ruta = guardar_temporal(f"tipo_doc_cliente_{cliente_id}_{upload_log.id}.xlsx", archivo)
     upload_log.ruta_archivo = ruta
     upload_log.save()
     procesar_tipo_documento_con_upload_log.delay(upload_log.id)

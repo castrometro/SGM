@@ -17,9 +17,10 @@ from ..models import (
     NombreInglesArchivo,
     NombresEnInglesUpload,
     ClasificacionCuentaArchivo,
+    ClasificacionArchivo,
 )
 from ..utils.activity_logger import registrar_actividad_tarjeta
-from ..utils.activity_logger import registrar_actividad_tarjeta
+from .helpers import obtener_periodo_actividad_para_cliente, get_client_ip
 
 
 @api_view(["GET"])
@@ -544,29 +545,53 @@ def estado_nombres_ingles(request, cliente_id):
         return Response({"error": "Cliente no encontrado"}, status=status.HTTP_404_NOT_FOUND)
 
     try:
+        # Contar nombres en inglés
         nombres_count = NombreIngles.objects.filter(cliente=cliente).count()
-        archivo = NombreInglesArchivo.objects.filter(cliente=cliente).first()
         
+        # Intentar obtener archivo de nombres, pero de forma segura
+        archivo = None
+        archivo_nombre = None
+        try:
+            archivo = NombreInglesArchivo.objects.filter(cliente=cliente).first()
+            archivo_nombre = archivo.archivo.name if archivo and hasattr(archivo, 'archivo') and archivo.archivo else None
+        except Exception:
+            # Si el modelo NombreInglesArchivo no existe o hay error, continuar sin él
+            pass
+        
+        # Obtener último upload log
         ultimo_upload = UploadLog.objects.filter(
             cliente=cliente, tipo_upload="nombres_ingles"
         ).order_by("-fecha_subida").first()
+
+        # Determinar estado basado en datos disponibles
+        if nombres_count > 0:
+            estado = "subido"
+        elif ultimo_upload and ultimo_upload.estado == "datos_eliminados":
+            estado = "pendiente"
+        else:
+            estado = "pendiente"
 
         return Response(
             {
                 "cliente_id": cliente.id,
                 "cliente": cliente.nombre,
+                "estado": estado,
                 "total_nombres": nombres_count,
                 "archivo_activo": bool(archivo),
-                "archivo_nombre": archivo.archivo.name if archivo and archivo.archivo else None,
+                "archivo_nombre": archivo_nombre,
                 "ultimo_upload": {
+                    "id": ultimo_upload.id if ultimo_upload else None,
                     "fecha": ultimo_upload.fecha_subida if ultimo_upload else None,
                     "estado": ultimo_upload.estado if ultimo_upload else None,
-                    "registros_procesados": ultimo_upload.registros_procesados if ultimo_upload else 0,
+                    "registros_procesados": getattr(ultimo_upload, 'registros_procesados', 0) if ultimo_upload else 0,
                 } if ultimo_upload else None,
             }
         )
 
     except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Error al obtener estado de nombres en inglés: %s", e)
         return Response(
             {"error": f"Error al obtener estado: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -584,13 +609,13 @@ def nombres_ingles_cliente(request, cliente_id):
     except Cliente.DoesNotExist:
         return Response({"error": "Cliente no encontrado"}, status=status.HTTP_404_NOT_FOUND)
 
-    nombres = NombreIngles.objects.filter(cliente=cliente).order_by("cuenta_contable")
+    nombres = NombreIngles.objects.filter(cliente=cliente).order_by("cuenta_codigo")
     
     data = []
     for nombre in nombres:
         data.append({
             "id": nombre.id,
-            "cuenta_contable": nombre.cuenta_contable,
+            "cuenta_codigo": nombre.cuenta_codigo,
             "nombre_ingles": nombre.nombre_ingles,
             "fecha_creacion": nombre.fecha_creacion,
         })
@@ -715,6 +740,52 @@ def cuentas_pendientes_set(request, cliente_id, set_id):
     pendientes = cuentas.exclude(id__in=clasificadas)
     data = [{"id": c.id, "codigo": c.codigo, "nombre": c.nombre} for c in pendientes]
     return Response({"cuentas_faltantes": data})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def estado_clasificaciones(request, cliente_id):
+    """
+    Verifica el estado de las clasificaciones para un cliente específico
+    
+    Returns:
+    - estado: "subido" | "pendiente"
+    - total_registros: cantidad de registros en el diccionario maestro
+    - archivo_nombre: nombre del archivo subido (opcional)
+    """
+    try:
+        # Buscar si existe archivo de clasificación (persiste entre cierres)
+        archivo_clasificacion = ClasificacionArchivo.objects.filter(cliente_id=cliente_id).first()
+
+        if archivo_clasificacion:
+            # Contar registros en el diccionario maestro
+            total_registros = ClasificacionCuentaArchivo.objects.filter(cliente_id=cliente_id).count()
+            
+            return Response({
+                "estado": "subido",
+                "total_registros": total_registros,
+                "archivo_nombre": archivo_clasificacion.archivo.name.split('/')[-1] if archivo_clasificacion.archivo else None,
+                "fecha_subida": archivo_clasificacion.fecha_subida,
+            })
+
+        # Si no hay archivo, verificar si hay uploads exitosos anteriores eliminados
+        upload_log_eliminado = UploadLog.objects.filter(
+            cliente_id=cliente_id, 
+            tipo_upload="clasificacion", 
+            estado="datos_eliminados"
+        ).exists()
+
+        if upload_log_eliminado:
+            return Response({
+                "estado": "pendiente",
+                "mensaje": "Datos eliminados previamente - puede volver a subir",
+                "historial_eliminado": True,
+            })
+
+        return Response({"estado": "pendiente"})
+        
+    except Exception as e:
+        return Response({"error": "Error interno del servidor"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # Helper function que podría usarse en otras vistas

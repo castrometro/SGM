@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from django.db.models import Q, Count, Sum
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
+from rest_framework import viewsets
 
 from ..models_incidencias import IncidenciaResumen, HistorialReprocesamiento, LogResolucionIncidencia
 from ..models import CierreContabilidad, UploadLog
@@ -415,3 +416,16 @@ def estadisticas_globales_incidencias(request):
         return Response({
             'error': f'Error obteniendo estadísticas globales: {str(e)}'
         }, status=500)
+
+
+class IncidenciaViewSet(viewsets.ModelViewSet):
+    queryset = IncidenciaResumen.objects.all()
+    serializer_class = IncidenciaResumen
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cierre_id = self.request.query_params.get("cierre")
+        if cierre_id:
+            queryset = queryset.filter(cierre_id=cierre_id)
+        return queryset.order_by("-fecha_creacion")

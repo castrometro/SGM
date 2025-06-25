@@ -375,7 +375,8 @@ export const obtenerNombresInglesCliente = async (clienteId) => {
   const res = await api.get(
     `/contabilidad/nombre-ingles/${clienteId}/list/`,
   );
-  return res.data;
+  // El backend devuelve { cliente, total, nombres }, necesitamos solo el array nombres
+  return res.data.nombres || [];
 };
 
 export const registrarVistaNombresIngles = async (clienteId) => {
@@ -408,6 +409,13 @@ export const eliminarTodosNombresIngles = async (clienteId) => {
 };
 
 // ==================== BULK CLASIFICACIONES ====================
+export const obtenerEstadoClasificaciones = async (clienteId) => {
+  const res = await api.get(
+    `/contabilidad/clasificacion/${clienteId}/estado/`,
+  );
+  return res.data;
+};
+
 export const subirClasificacionBulk = async (formData) => {
   const res = await api.post(
     "/contabilidad/clasificacion-bulk/subir-archivo/",

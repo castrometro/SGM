@@ -474,7 +474,10 @@ class ClasificacionCuentaArchivo(models.Model):
     cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
     upload_log = models.ForeignKey(
         "UploadLog",
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Referencia al log del upload que generó este archivo",
         related_name="clasificaciones_archivo",
     )
 

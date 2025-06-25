@@ -61,8 +61,18 @@ def cargar_libro_mayor(request):
     if not cierre_id or not archivo:
         return Response({"error": "cierre_id y archivo son requeridos"}, status=400)
     cierre = CierreContabilidad.objects.get(id=cierre_id)
-    upload_log = UploadLogMixin().crear_upload_log(cierre.cliente, archivo)
-    ruta = guardar_temporal(f"libro_mayor_{upload_log.id}.xlsx", archivo)
+    
+    # Crear una instancia del mixin con el tipo correcto
+    mixin = UploadLogMixin()
+    mixin.tipo_upload = "libro_mayor"
+    upload_log = mixin.crear_upload_log(cierre.cliente, archivo)
+    
+    # Asignar el cierre y usuario al upload log
+    upload_log.cierre = cierre
+    upload_log.usuario = request.user
+    upload_log.save()
+    
+    ruta = guardar_temporal(f"libro_mayor_cliente_{cierre.cliente.id}_{upload_log.id}.xlsx", archivo)
     upload_log.ruta_archivo = ruta
     upload_log.save()
     procesar_libro_mayor_con_upload_log.delay(upload_log.id)

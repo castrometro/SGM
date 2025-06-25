@@ -363,9 +363,15 @@ def procesar_nombres_ingles_con_upload_log(upload_log_id):
     inicio = timezone.now()
 
     try:
-        ruta_relativa = (
-            f"temp/nombres_ingles_cliente_{upload_log.cliente.id}_{upload_log.id}.xlsx"
-        )
+        # Usar la ruta que se guardó en el upload_log
+        ruta_relativa = upload_log.ruta_archivo
+        if not ruta_relativa:
+            upload_log.estado = "error"
+            upload_log.errores = "No hay ruta de archivo especificada en el upload_log"
+            upload_log.tiempo_procesamiento = timezone.now() - inicio
+            upload_log.save()
+            return "Error: No hay ruta de archivo especificada"
+
         ruta_completa = default_storage.path(ruta_relativa)
 
         # Calcular hash del archivo para registrarlo en el UploadLog
@@ -492,7 +498,15 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
             upload_log.save()
             return f"Error: {msg_valid}"
 
-        ruta_relativa = f"temp/libro_mayor_cliente_{upload_log.cliente.id}_{upload_log.id}.xlsx"
+        # Usar la ruta que se guardó en el upload_log
+        ruta_relativa = upload_log.ruta_archivo
+        if not ruta_relativa:
+            upload_log.estado = "error"
+            upload_log.errores = "No hay ruta de archivo especificada en el upload_log"
+            upload_log.tiempo_procesamiento = timezone.now() - inicio
+            upload_log.save()
+            return "Error: No hay ruta de archivo especificada"
+
         ruta_completa = default_storage.path(ruta_relativa)
 
         if not os.path.exists(ruta_completa):
@@ -508,6 +522,14 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
 
         upload_log.hash_archivo = archivo_hash
         upload_log.save(update_fields=["hash_archivo"])
+
+        # Verificar que el upload_log tenga un cierre asignado
+        if not upload_log.cierre:
+            upload_log.estado = "error"
+            upload_log.errores = "LibroMayorUpload has no cierre."
+            upload_log.tiempo_procesamiento = timezone.now() - inicio
+            upload_log.save()
+            return "Error: LibroMayorUpload has no cierre."
 
         nombre_final = f"libro_mayor_{upload_log.cliente.id}_{timezone.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         libro_obj, created = LibroMayorUpload.objects.get_or_create(
@@ -1279,10 +1301,15 @@ def procesar_tipo_documento_con_upload_log(upload_log_id):
             return f"Error: Cliente ya tiene tipos de documento existentes"
 
         # 3. BUSCAR ARCHIVO TEMPORAL (debe haber sido subido previamente)
-        # Construir la ruta basada en el upload_log_id (como se guarda en la vista)
-        ruta_relativa = (
-            f"temp/tipo_doc_cliente_{upload_log.cliente.id}_{upload_log.id}.xlsx"
-        )
+        # Usar la ruta que se guardó en el upload_log
+        ruta_relativa = upload_log.ruta_archivo
+        if not ruta_relativa:
+            upload_log.estado = "error"
+            upload_log.errores = "No hay ruta de archivo especificada en el upload_log"
+            upload_log.tiempo_procesamiento = timezone.now() - inicio_procesamiento
+            upload_log.save()
+            return "Error: No hay ruta de archivo especificada"
+
         ruta_completa = default_storage.path(ruta_relativa)
 
         if not os.path.exists(ruta_completa):
@@ -1509,9 +1536,15 @@ def procesar_clasificacion_con_upload_log(upload_log_id):
             )
             return f"Error: {msg_valid}"
 
-        ruta_relativa = (
-            f"temp/clasificacion_cliente_{upload_log.cliente.id}_{upload_log.id}.xlsx"
-        )
+        # Usar la ruta que se guardó en el upload_log
+        ruta_relativa = upload_log.ruta_archivo
+        if not ruta_relativa:
+            upload_log.estado = "error"
+            upload_log.errores = "No hay ruta de archivo especificada en el upload_log"
+            upload_log.tiempo_procesamiento = timezone.now() - inicio
+            upload_log.save()
+            return "Error: No hay ruta de archivo especificada"
+
         ruta_completa = default_storage.path(ruta_relativa)
 
         if not os.path.exists(ruta_completa):

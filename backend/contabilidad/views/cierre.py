@@ -25,6 +25,12 @@ class CierreContabilidadViewSet(viewsets.ModelViewSet):
             qs = qs.filter(cliente_id=cliente)
         return qs.order_by("-fecha_creacion")
 
+    def perform_create(self, serializer):
+        """
+        Asigna automáticamente el usuario actual al crear un nuevo cierre
+        """
+        serializer.save(usuario=self.request.user)
+
     @action(detail=True, methods=["get"])
     def movimientos_resumen(self, request, pk=None):
         cierre = self.get_object()

@@ -32,8 +32,13 @@ class LibroMayorUploadViewSet(UploadLogMixin, ActivityLoggerMixin, viewsets.Mode
     def get_queryset(self):
         qs = super().get_queryset()
         cliente = self.request.query_params.get("cliente")
+        cierre = self.request.query_params.get("cierre")
+        
         if cliente:
             qs = qs.filter(cierre__cliente_id=cliente)
+        elif cierre:
+            qs = qs.filter(cierre_id=cierre)
+            
         return qs
 
     @action(detail=True, methods=["post"])
@@ -65,8 +70,14 @@ class LibroMayorArchivoViewSet(UploadLogMixin, ActivityLoggerMixin, viewsets.Mod
     def get_queryset(self):
         qs = super().get_queryset()
         cliente = self.request.query_params.get("cliente")
+        cierre = self.request.query_params.get("cierre")
+        
         if cliente:
             qs = qs.filter(cliente_id=cliente)
+        elif cierre:
+            # Filtrar por cierre a través del upload_log
+            qs = qs.filter(upload_log__cierre_id=cierre)
+            
         return qs
 
     @action(detail=True, methods=["get"])

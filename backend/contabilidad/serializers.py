@@ -134,22 +134,34 @@ class ProgresoClasificacionSerializer(serializers.Serializer):
 
 
 class LibroMayorUploadSerializer(serializers.ModelSerializer):
+    archivo_nombre = serializers.SerializerMethodField()
+    
     class Meta:
         model = LibroMayorUpload
         fields = [
             "id",
             "cierre",
             "archivo",
+            "archivo_nombre",
             "fecha_subida",
             "procesado",
             "errores",
             "estado",
+            "upload_log",
         ]
-        read_only_fields = ["fecha_subida", "procesado", "errores", "estado"]
+        read_only_fields = ["fecha_subida", "procesado", "errores", "estado", "upload_log", "archivo_nombre"]
+    
+    def get_archivo_nombre(self, obj):
+        """Extrae el nombre del archivo del path completo"""
+        if obj.archivo:
+            import os
+            return os.path.basename(obj.archivo.name)
+        return None
 
 
 class LibroMayorArchivoSerializer(serializers.ModelSerializer):
     """Serializer para el nuevo modelo LibroMayorArchivo que persiste entre cierres"""
+    archivo_nombre = serializers.SerializerMethodField()
     
     class Meta:
         model = LibroMayorArchivo
@@ -157,6 +169,7 @@ class LibroMayorArchivoSerializer(serializers.ModelSerializer):
             "id",
             "cliente",
             "archivo", 
+            "archivo_nombre",
             "fecha_subida",
             "periodo",
             "procesado",
@@ -164,7 +177,14 @@ class LibroMayorArchivoSerializer(serializers.ModelSerializer):
             "estado",
             "upload_log",
         ]
-        read_only_fields = ["fecha_subida", "procesado", "errores", "estado", "upload_log"]
+        read_only_fields = ["fecha_subida", "procesado", "errores", "estado", "upload_log", "archivo_nombre"]
+    
+    def get_archivo_nombre(self, obj):
+        """Extrae el nombre del archivo del path completo"""
+        if obj.archivo:
+            import os
+            return os.path.basename(obj.archivo.name)
+        return None
 
 
 class AperturaCuentaSerializer(serializers.ModelSerializer):

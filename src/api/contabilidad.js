@@ -113,7 +113,7 @@ export const subirLibroMayor = async (clienteId, archivo, cierreId = null) => {
 };
 
 export const obtenerLibrosMayor = async (cierreId) => {
-  const res = await api.get("/contabilidad/libromayor/", {
+  const res = await api.get("/contabilidad/libromayor-archivo/", {
     params: { cierre: cierreId },
   });
   return res.data;

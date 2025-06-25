@@ -1,5 +1,6 @@
 from .libro_mayor import (
     LibroMayorUploadViewSet,
+    LibroMayorArchivoViewSet,  # ✅ Nuevo ViewSet
     cargar_libro_mayor,
     reprocesar_movimientos_incompletos,
     movimientos_incompletos,

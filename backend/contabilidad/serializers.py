@@ -13,6 +13,7 @@ from .models import (
     CuentaContable,
     Incidencia,
     LibroMayorUpload,
+    LibroMayorArchivo,  # ✅ Nuevo modelo
     MovimientoContable,
     NombreIngles,
     NombreInglesArchivo,
@@ -145,6 +146,25 @@ class LibroMayorUploadSerializer(serializers.ModelSerializer):
             "estado",
         ]
         read_only_fields = ["fecha_subida", "procesado", "errores", "estado"]
+
+
+class LibroMayorArchivoSerializer(serializers.ModelSerializer):
+    """Serializer para el nuevo modelo LibroMayorArchivo que persiste entre cierres"""
+    
+    class Meta:
+        model = LibroMayorArchivo
+        fields = [
+            "id",
+            "cliente",
+            "archivo", 
+            "fecha_subida",
+            "periodo",
+            "procesado",
+            "errores",
+            "estado",
+            "upload_log",
+        ]
+        read_only_fields = ["fecha_subida", "procesado", "errores", "estado", "upload_log"]
 
 
 class AperturaCuentaSerializer(serializers.ModelSerializer):

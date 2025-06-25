@@ -5,6 +5,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     LibroMayorUploadViewSet,
+    LibroMayorArchivoViewSet,  # ✅ Nuevo ViewSet
     TipoDocumentoViewSet,
     NombreInglesViewSet,
     ClasificacionCuentaArchivoViewSet,
@@ -68,6 +69,7 @@ router.register(r"tipos-documento", TipoDocumentoViewSet)
 router.register(r"nombres-ingles", NombreInglesViewSet)
 router.register(r"cierres", CierreContabilidadViewSet, basename="cierres")
 router.register(r"libromayor", LibroMayorUploadViewSet, basename="libromayor")
+router.register(r"libromayor-archivo", LibroMayorArchivoViewSet, basename="libromayor-archivo")  # ✅ Nuevo endpoint
 router.register(r"aperturas", AperturaCuentaViewSet)
 router.register(r"movimientos", MovimientoContableViewSet)
 router.register(r"clasificacion-archivo", ClasificacionCuentaArchivoViewSet, basename="clasificacion-archivo")

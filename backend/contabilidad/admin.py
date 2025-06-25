@@ -1,5 +1,9 @@
 # Register your models here.
+
 from django.contrib import admin
+from django.utils.html import format_html
+from django.utils.safestring import mark_safe
+import json
 
 from .models import (
     AccountClassification,
@@ -15,6 +19,7 @@ from .models import (
     CuentaContable,
     Incidencia,
     LibroMayorUpload,
+    LibroMayorArchivo,  # Nuevo modelo para manejar archivos de libro mayor
     MovimientoContable,
     NombreIngles,
     NombreInglesArchivo,
@@ -197,6 +202,76 @@ class LibroMayorUploadAdmin(admin.ModelAdmin):
 
     tamaño_archivo.short_description = "Tamaño"
 
+@admin.register(LibroMayorArchivo)
+class LibroMayorArchivoAdmin(admin.ModelAdmin):
+    list_display = (
+        "cliente",
+        "archivo_nombre",
+        "fecha_subida",
+        "periodo",
+        "estado",           # ← mostrar si está subido, procesando o completado
+        "upload_log_info",  # ← link al UploadLog para ver errores o tiempos
+        "tamaño_archivo",
+    )
+    list_filter = ("cliente", "fecha_subida", "periodo")
+    search_fields = ("archivo", "cliente__nombre")
+    readonly_fields = ("fecha_subida",)
+
+    def archivo_nombre(self, obj):
+        """Muestra solo el nombre del archivo"""
+        import os
+
+        return os.path.basename(obj.archivo.name) if obj.archivo else "-"
+
+    archivo_nombre.short_description = "Archivo"
+
+    def tamaño_archivo(self, obj):
+        """Muestra el tamaño del archivo"""
+        if obj.archivo:
+            try:
+                size = obj.archivo.size
+                for unit in ["B", "KB", "MB", "GB"]:
+                    if size < 1024.0:
+                        return f"{size:.1f} {unit}"
+                    size /= 1024.0
+                return f"{size:.1f} TB"
+            except:
+                return "N/A"
+        return "-"
+
+    tamaño_archivo.short_description = "Tamaño"
+
+    def estado(self, obj):
+        """Muestra el estado del procesamiento del archivo"""
+        if not obj.upload_log:
+            return "Sin procesar"
+        
+        # Usar el campo 'estado' del UploadLog
+        if obj.upload_log.estado == 'error':
+            return "Con errores"
+        elif obj.upload_log.estado == 'completado':
+            return "Completado"
+        elif obj.upload_log.estado == 'procesando':
+            return "Procesando"
+        else:
+            return "Subido"
+
+    estado.short_description = "Estado"
+
+    def upload_log_info(self, obj):
+        """Muestra link al UploadLog para ver detalles"""
+        if obj.upload_log:
+            from django.urls import reverse
+            from django.utils.html import format_html
+            url = reverse("admin:contabilidad_uploadlog_change", args=[obj.upload_log.pk])
+            # Usar el campo 'estado' en lugar de 'completado'
+            status = "✓" if obj.upload_log.estado == 'completado' else "⚠️" if obj.upload_log.estado == 'error' else "⏳"
+            return format_html('<a href="{}">{} Ver log</a>', url, status)
+        return "-"
+
+    upload_log_info.short_description = "Log"
+    upload_log_info.allow_tags = True
+
 
 @admin.register(AperturaCuenta)
 class AperturaCuentaAdmin(admin.ModelAdmin):
@@ -207,6 +282,7 @@ class AperturaCuentaAdmin(admin.ModelAdmin):
 class MovimientoContableAdmin(admin.ModelAdmin):
     list_display = (
         "cierre",
+        "periodo",        # ← añade el periodo para ver en qué cierre quedó
         "cuenta",
         "debe",
         "haber",
@@ -218,6 +294,12 @@ class MovimientoContableAdmin(admin.ModelAdmin):
     )
     list_filter = ("fecha", "numero_interno", "tipo_documento", "cuenta")
     search_fields = ("descripcion",)
+
+    def periodo(self, obj):
+        """Muestra el periodo del cierre asociado"""
+        return obj.cierre.periodo if obj.cierre else "-"
+
+    periodo.short_description = "Periodo"
 
 
 @admin.register(ClasificacionSet)
@@ -659,6 +741,7 @@ class IncidenciaResumenAdmin(admin.ModelAdmin):
         'cantidad_afectada',
         'severidad_display',
         'estado_display',
+        'elementos_afectados_display',
         'fecha_deteccion',
         'upload_log_info',
     ]
@@ -680,9 +763,10 @@ class IncidenciaResumenAdmin(admin.ModelAdmin):
     
     readonly_fields = [
         'fecha_deteccion',
-        'elementos_afectados',
-        'detalle_muestra',
+        'elementos_afectados_display',
+        'ver_todos_elementos',
         'estadisticas_adicionales',
+        'detalle_muestra_json',
     ]
     
     date_hierarchy = 'fecha_deteccion'
@@ -706,8 +790,9 @@ class IncidenciaResumenAdmin(admin.ModelAdmin):
         }),
         ('Datos Consolidados', {
             'fields': (
-                'elementos_afectados',
-                'detalle_muestra',
+                'elementos_afectados_display',
+                'ver_todos_elementos',
+                'detalle_muestra_json',
                 'estadisticas_adicionales'
             ),
             'classes': ('collapse',)
@@ -720,7 +805,35 @@ class IncidenciaResumenAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         })
     )
+    def detalle_muestra_json(self, obj):
+        """Muestra el JSON completo de detalle_muestra."""
+        if not obj.detalle_muestra:
+            return "N/A"
+        pretty = json.dumps(obj.detalle_muestra, indent=2, ensure_ascii=False)
+        return format_html(
+            '<pre style="background-color: #000080; color: #FFD700; '
+            'padding:10px; border:1px solid #444; max-height:300px; overflow:auto;">'
+            '{}'
+            '</pre>',
+            pretty
+        )
+    detalle_muestra_json.short_description = "Detalle Completo (raw JSON)"
     
+    def estadisticas_adicionales(self, obj):
+        """Muestra el JSON de estadísticas de forma legible."""
+        stats = getattr(obj, 'detalle_muestra', None) or obj.upload_log.resumen.get('conteos_por_tipo')
+        if not stats:
+            return "N/A"
+        pretty = json.dumps(stats, indent=2, ensure_ascii=False)
+        return format_html(
+            '<pre style="background-color: #000080; color: #FFD700; '
+            'padding:10px; border:1px solid #444; max-height:300px; overflow:auto;">'
+            '{}'
+            '</pre>',
+            pretty
+        )
+    estadisticas_adicionales.short_description = "Estadísticas Consolidadas"
+
     def tipo_incidencia_display(self, obj):
         """Tipo de incidencia con ícono"""
         icons = {
@@ -761,7 +874,45 @@ class IncidenciaResumenAdmin(admin.ModelAdmin):
         return f"{obj.upload_log.cliente.nombre} - {obj.upload_log.nombre_archivo_original}"
     upload_log_info.short_description = 'Upload Log'
     
-    actions = ['marcar_como_resueltas', 'generar_reporte_resumen']
+    def elementos_afectados_display(self, obj):
+        """Muestra los elementos afectados de forma resumida"""
+        if not obj.elementos_afectados:
+            return "Sin elementos específicos"
+        
+        elementos = obj.elementos_afectados
+        if len(elementos) <= 5:
+            return ", ".join(elementos)
+        else:
+            primeros_cinco = ", ".join(elementos[:5])
+            return f"{primeros_cinco}... (+{len(elementos)-5} más)"
+    elementos_afectados_display.short_description = 'Elementos Afectados'
+    
+    def ver_todos_elementos(self, obj):
+        """Link para ver todos los elementos afectados"""
+        if not obj.elementos_afectados:
+            return "N/A"
+        
+        # Construimos el HTML de los elementos con <br> y lo marcamos como seguro
+        elementos_html = mark_safe("<br>".join(obj.elementos_afectados))
+        
+        return format_html(
+            '<details>'
+                '<summary style="background-color:#000080; color:#FFD700; padding:4px; '
+                            'border-radius:4px; cursor:pointer;">'
+                    'Ver {} elementos'
+                '</summary>'
+                '<div style="background-color:#000080; color:#FFD700; '
+                            'max-height:200px; overflow-y:auto; padding:10px; '
+                            'border:1px solid #444; border-top:none;">'
+                    '{}'
+                '</div>'
+            '</details>',
+            len(obj.elementos_afectados),
+            elementos_html,  # ya es HTML “seguro”
+        )
+    ver_todos_elementos.short_description = 'Detalle Completo'
+   
+
     
     def marcar_como_resueltas(self, request, queryset):
         """Acción para marcar incidencias como resueltas"""

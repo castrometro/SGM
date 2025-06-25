@@ -188,11 +188,54 @@ class CierreContabilidad(models.Model):
 
 
 def libro_upload_path(instance, filename):
-    cliente_id = instance.cierre.cliente.id
-    periodo = instance.cierre.periodo
-    return f"libros/{cliente_id}/{periodo}/{filename}"
+    cliente_id = instance.cliente.id  # ✅ Ahora directo al cliente
+    return f"libros/{cliente_id}/{filename}"
 
 
+class LibroMayorArchivo(models.Model):
+    """Almacena el archivo Excel de libro mayor (persiste entre cierres)"""
+    
+    ESTADO_CHOICES = [
+        ("subido", "Archivo subido"),
+        ("procesando", "Procesando"),
+        ("completado", "Procesado correctamente"),
+        ("error", "Con errores"),
+    ]
+    
+    id = models.BigAutoField(primary_key=True)
+    cliente = models.OneToOneField(Cliente, on_delete=models.CASCADE)  # ✅ OneToOne como las otras
+    archivo = models.FileField(upload_to=libro_upload_path)
+    fecha_subida = models.DateTimeField(auto_now_add=True)
+    
+    # ✅ Solo enlace a UploadLog (persiste)
+    upload_log = models.ForeignKey(
+        "UploadLog",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Referencia al log del upload que generó este archivo",
+    )
+    
+    # ✅ Nuevo: período extraído del nombre del archivo
+    periodo = models.CharField(
+        max_length=6, 
+        help_text="Período MMAAAA extraído del nombre del archivo (ej: 042025)"
+    )
+    
+    # Estados
+    procesado = models.BooleanField(default=False)
+    errores = models.TextField(blank=True)
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="subido")
+
+    def __str__(self):
+        return f"Libro Mayor {self.periodo} - {self.cliente.nombre}"
+
+    class Meta:
+        verbose_name = "Archivo de Libro Mayor"
+        verbose_name_plural = "Archivos de Libro Mayor"
+
+
+# Mantener LibroMayorUpload por compatibilidad durante la transición
 class LibroMayorUpload(models.Model):
     ESTADO_CHOICES = [
         ("subido", "Archivo subido"),
@@ -204,7 +247,7 @@ class LibroMayorUpload(models.Model):
     cierre = models.ForeignKey(
         CierreContabilidad, on_delete=models.CASCADE, related_name="libros"
     )
-    archivo = models.FileField(upload_to=libro_upload_path)
+    archivo = models.FileField(upload_to="libros/legacy/")  # Cambiar path para evitar conflictos
     upload_log = models.ForeignKey(
         "UploadLog",
         on_delete=models.SET_NULL,
@@ -219,6 +262,10 @@ class LibroMayorUpload(models.Model):
 
     def __str__(self):
         return f"{self.cierre} | {self.archivo.name.split('/')[-1]}"
+
+    class Meta:
+        verbose_name = "Libro Mayor Upload (Legacy)"
+        verbose_name_plural = "Libro Mayor Uploads (Legacy)"
 
 
 class AperturaCuenta(models.Model):

@@ -1,4 +1,7 @@
 # backend/contabilidad/tasks.py
+
+
+import datetime
 import hashlib
 import logging
 import os
@@ -17,7 +20,7 @@ from contabilidad.models import (
     CuentaContable,
     CentroCosto,
     Auxiliar,
-    LibroMayorUpload,
+    LibroMayorArchivo,  # ✅ Cambiado de LibroMayorUpload
     MovimientoContable,
     AperturaCuenta,
     Incidencia,
@@ -27,6 +30,8 @@ from contabilidad.models import (
     TipoDocumento,
     UploadLog,
 )
+# ✨ NUEVO: Importar modelo de incidencias consolidadas
+from contabilidad.models_incidencias import IncidenciaResumen
 from contabilidad.utils.parser_libro_mayor import parsear_libro_mayor
 from contabilidad.utils.parser_nombre_ingles import procesar_archivo_nombres_ingles
 from contabilidad.utils.parser_tipo_documento import parsear_tipo_documento_excel
@@ -55,7 +60,7 @@ def parsear_tipo_documento(cliente_id, ruta_relativa):
     return msg
 
 
-@shared_task
+""" @shared_task
 def procesar_libro_mayor(libro_mayor_id):
     logger.info(
         f"Iniciando procesamiento de libro mayor para upload_id: {libro_mayor_id}"
@@ -138,7 +143,11 @@ def procesar_libro_mayor(libro_mayor_id):
         libro.errores = str(e)
         libro.save()
         cierre.estado = "error"
-        cierre.save(update_fields=["estado"])
+        cierre.save(update_fields=["estado"]) """
+
+
+# Esta función ya está implementada más adelante en el archivo
+# La versión simplificada del diff del comentario no es correcta
 
 
 @shared_task
@@ -464,9 +473,11 @@ def procesar_nombres_ingles_con_upload_log(upload_log_id):
 
 
 @shared_task
-def procesar_libro_mayor_con_upload_log(upload_log_id):
+def procesar_libro_mayor(upload_log_id):
     """Procesa archivo de Libro Mayor usando UploadLog"""
     import hashlib
+    import os
+    import re
     from openpyxl import load_workbook
     import datetime
 
@@ -482,7 +493,7 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
     upload_log.save(update_fields=["estado"])
     inicio = timezone.now()
 
-    libro_obj = None
+    archivo_obj = None
 
     try:
         es_valido, msg_valid = UploadLog.validar_nombre_archivo(
@@ -531,27 +542,37 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
             upload_log.save()
             return "Error: LibroMayorUpload has no cierre."
 
+        # Extraer período del nombre del archivo
+        import re
+        rut_limpio = upload_log.cliente.rut.replace(".", "").replace("-", "") if upload_log.cliente.rut else str(upload_log.cliente.id)
+        nombre_sin_ext = re.sub(r"\.(xlsx|xls)$", "", upload_log.nombre_archivo_original, flags=re.IGNORECASE)
+        patron_periodo = rf"^{rut_limpio}_(LibroMayor|Mayor)_(\d{{6}})$"
+        match = re.match(patron_periodo, nombre_sin_ext)
+        periodo = match.group(2) if match else "000000"
+
         nombre_final = f"libro_mayor_{upload_log.cliente.id}_{timezone.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        libro_obj, created = LibroMayorUpload.objects.get_or_create(
-            cierre=upload_log.cierre,
+        archivo_obj, created = LibroMayorArchivo.objects.get_or_create(
+            cliente=upload_log.cliente,
             defaults={
                 "archivo": ContentFile(contenido, name=nombre_final),
                 "estado": "procesando",
                 "procesado": False,
                 "upload_log": upload_log,
+                "periodo": periodo,
             },
         )
         if not created:
-            if libro_obj.archivo:
+            if archivo_obj.archivo:
                 try:
-                    libro_obj.archivo.delete()
+                    archivo_obj.archivo.delete()
                 except Exception:
                     pass
-            libro_obj.archivo.save(nombre_final, ContentFile(contenido))
-            libro_obj.estado = "procesando"
-            libro_obj.procesado = False
-            libro_obj.upload_log = upload_log
-            libro_obj.save()
+            archivo_obj.archivo.save(nombre_final, ContentFile(contenido))
+            archivo_obj.estado = "procesando"
+            archivo_obj.procesado = False
+            archivo_obj.upload_log = upload_log
+            archivo_obj.periodo = periodo
+            archivo_obj.save()
 
         # Cargar datos auxiliares generados por otras tarjetas para
         # complementar el libro mayor (tipos de documento, nombres en
@@ -773,10 +794,10 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
         fecha_inicio = min(fechas_mov) if fechas_mov else None
         fecha_fin = max(fechas_mov) if fechas_mov else None
 
-        libro_obj.estado = "completado" if not errores else "error"
-        libro_obj.procesado = True
-        libro_obj.errores = "\n".join(errores) if errores else ""
-        libro_obj.save()
+        archivo_obj.estado = "completado" if not errores else "error"
+        archivo_obj.procesado = True
+        archivo_obj.errores = "\n".join(errores) if errores else ""
+        archivo_obj.save()
 
         upload_log.estado = "completado" if not errores else "error"
         upload_log.errores = "\n".join(errores) if errores else ""
@@ -788,30 +809,184 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
         upload_log.tiempo_procesamiento = timezone.now() - inicio
         upload_log.save()
 
-        # ✨ NUEVO: Generar incidencias consolidadas
+        # ✨ NUEVO: Generar incidencias consolidadas por sub-tipo
         try:
-            from contabilidad.utils.parser_libro_mayor_consolidado import (
-                analizar_incidencias_consolidadas,
-                crear_incidencias_consolidadas
-            )
-            
             logger.info(f"Generando incidencias consolidadas para upload_log {upload_log.id}")
             
-            # Analizar y consolidar incidencias
-            incidencias_acumuladas = analizar_incidencias_consolidadas(upload_log, movimientos_creados)
+            # Definir mensajes y acciones predefinidas por tipo de incidencia
+            _MENSAJES = {
+                "movimientos_tipodoc_nulo": "Se encontraron movimientos sin tipo de documento asignado (campo vacío)",
+                "tipos_doc_no_reconocidos": "Se encontraron códigos de tipo de documento que no están registrados en el sistema",
+                "cuentas_sin_clasificacion": "Se detectaron cuentas contables sin clasificación asignada",
+                "cuentas_sin_nombre_ingles": "Se encontraron cuentas sin nombre en inglés configurado",
+                "cuentas_nuevas_detectadas": "Se detectaron nuevas cuentas contables en el libro mayor",
+            }
             
-            # Crear registros consolidados
-            incidencias_consolidadas = crear_incidencias_consolidadas(upload_log, incidencias_acumuladas)
+            _ACCIONES = {
+                "movimientos_tipodoc_nulo": "Revisar el archivo fuente y completar los tipos de documento faltantes",
+                "tipos_doc_no_reconocidos": "Cargar archivo de tipos de documento actualizado con los códigos faltantes",
+                "cuentas_sin_clasificacion": "Cargar archivo de clasificaciones o asignar clasificaciones manualmente", 
+                "cuentas_sin_nombre_ingles": "Cargar archivo de nombres en inglés actualizado",
+                "cuentas_nuevas_detectadas": "Revisar nuevas cuentas y configurar nombres en inglés y clasificaciones",
+            }
+            
+            # Analizar incidencias del upload_log actual y generar conteos por tipo
+            from django.db.models import Q
+            import re
+            
+            raw_counts = {}
+            elementos_detallados = {}
+            
+            # 1. Contar movimientos con tipo de documento vacío y extraer elementos afectados
+            incidencias_tipodoc_vacio = Incidencia.objects.filter(
+                cierre=upload_log.cierre,
+                descripcion__icontains="Tipo de documento vacío"
+            )
+            if incidencias_tipodoc_vacio.exists():
+                count = incidencias_tipodoc_vacio.count()
+                raw_counts["movimientos_tipodoc_nulo"] = count
+                # Extraer cuentas afectadas de las descripciones
+                # Formato: "Movimiento X, cuenta CODIGO: Tipo de documento vacío"
+                cuentas_afectadas = []
+                for inc in incidencias_tipodoc_vacio[:50]:  # Limitar a primeras 50 para rendimiento
+                    match = re.search(r'cuenta\s+([\d\-]+):', inc.descripcion, flags=re.IGNORECASE)
+                    if match:
+                        codigo_cuenta = match.group(1)
+                        if codigo_cuenta not in cuentas_afectadas:
+                            cuentas_afectadas.append(codigo_cuenta)
+                    else:
+                        # Debug: Ver el formato real de la descripción
+                        logger.debug(f"Descripción no coincide con regex: {inc.descripcion}")
+                elementos_detallados["movimientos_tipodoc_nulo"] = cuentas_afectadas
+            
+            # 2. Contar incidencias de tipos de documento no encontrados
+            incidencias_tipodoc_no_reconocido = Incidencia.objects.filter(
+                cierre=upload_log.cierre,
+                descripcion__icontains="no encontrado"
+            ).exclude(
+                descripcion__icontains="vacío"
+            )
+            if incidencias_tipodoc_no_reconocido.exists():
+                count = incidencias_tipodoc_no_reconocido.count()
+                raw_counts["tipos_doc_no_reconocidos"] = count
+                # Extraer códigos de tipo de documento no reconocidos
+                codigos_no_reconocidos = []
+                for inc in incidencias_tipodoc_no_reconocido[:50]:
+                    match = re.search(r"'([^']+)' no encontrado", inc.descripcion)
+                    if match:
+                        codigo_td = match.group(1)
+                        if codigo_td not in codigos_no_reconocidos:
+                            codigos_no_reconocidos.append(codigo_td)
+                    else:
+                        # Debug: Ver el formato real de la descripción
+                        logger.debug(f"Descripción TD no reconocido no coincide: {inc.descripcion}")
+                elementos_detallados["tipos_doc_no_reconocidos"] = codigos_no_reconocidos
+            
+            # 3. Contar cuentas sin clasificación
+            incidencias_sin_clasif = Incidencia.objects.filter(
+                cierre=upload_log.cierre,
+                descripcion__icontains="sin clasificación"
+            )
+            if incidencias_sin_clasif.exists():
+                count = incidencias_sin_clasif.count()
+                raw_counts["cuentas_sin_clasificacion"] = count
+                # Extraer cuentas sin clasificación
+                cuentas_sin_clasif = []
+                for inc in incidencias_sin_clasif[:50]:
+                    match = re.search(r'cuenta\s+([\d\-]+):', inc.descripcion, flags=re.IGNORECASE)
+                    if match:
+                        codigo_cuenta = match.group(1)
+                        if codigo_cuenta not in cuentas_sin_clasif:
+                            cuentas_sin_clasif.append(codigo_cuenta)
+                    else:
+                        # Debug: Ver el formato real de la descripción
+                        logger.debug(f"Descripción sin clasificación no coincide: {inc.descripcion}")
+                elementos_detallados["cuentas_sin_clasificacion"] = cuentas_sin_clasif
+            
+            # 4. Contar cuentas sin nombre en inglés
+            incidencias_sin_nombre = Incidencia.objects.filter(
+                cierre=upload_log.cierre,
+                descripcion__icontains="nombre en inglés"
+            )
+            if incidencias_sin_nombre.exists():
+                count = incidencias_sin_nombre.count()
+                raw_counts["cuentas_sin_nombre_ingles"] = count
+                # Extraer cuentas sin nombre en inglés
+                cuentas_sin_nombre = []
+                for inc in incidencias_sin_nombre[:50]:
+                    match = re.search(r'cuenta\s+([\d\-]+):', inc.descripcion, flags=re.IGNORECASE)
+                    if match:
+                        codigo_cuenta = match.group(1)
+                        if codigo_cuenta not in cuentas_sin_nombre:
+                            cuentas_sin_nombre.append(codigo_cuenta)
+                    else:
+                        # Debug: Ver el formato real de la descripción
+                        logger.debug(f"Descripción sin nombre inglés no coincide: {inc.descripcion}")
+                elementos_detallados["cuentas_sin_nombre_ingles"] = cuentas_sin_nombre
+            
+            # 5. Contar cuentas nuevas detectadas (usando las cuentas creadas durante el procesamiento)
+            cuentas_nuevas = upload_log.resumen.get("cuentas_nuevas", 0)
+            if cuentas_nuevas > 0:
+                raw_counts["cuentas_nuevas_detectadas"] = cuentas_nuevas
+                # Para cuentas nuevas, como no tenemos timestamp de creación,
+                # obtenemos una muestra de las últimas cuentas del cliente
+                cuentas_recientes = list(
+                    CuentaContable.objects.filter(
+                        cliente=upload_log.cliente
+                    ).order_by('-id')[:50].values_list('codigo', flat=True)
+                )
+                elementos_detallados["cuentas_nuevas_detectadas"] = cuentas_recientes
+            
+            # Crear registros individuales de IncidenciaResumen por cada sub-tipo
+            incidencias_consolidadas_creadas = 0
+            for sub_tipo, count in raw_counts.items():
+                # Determinar severidad basada en cantidad
+                if count > 100:
+                    severidad = "critica"
+                elif count > 50:
+                    severidad = "alta"
+                elif count > 10:
+                    severidad = "media"
+                else:
+                    severidad = "baja"
+                
+                # Obtener elementos afectados para este sub-tipo
+                elementos_afectados = elementos_detallados.get(sub_tipo, [])
+                
+                # Debug: log de elementos extraídos
+                logger.info(f"Sub-tipo {sub_tipo}: {count} incidencias, {len(elementos_afectados)} elementos extraídos: {elementos_afectados[:5]}")
+                
+                # Crear registro consolidado para este sub-tipo
+                IncidenciaResumen.objects.create(
+                    upload_log=upload_log,
+                    tipo_incidencia=sub_tipo,
+                    cantidad_afectada=count,
+                    estado="activa",
+                    severidad=severidad,
+                    mensaje_usuario=_MENSAJES.get(sub_tipo, f"Incidencia detectada: {sub_tipo}"),
+                    accion_sugerida=_ACCIONES.get(sub_tipo, "Revisar y corregir manualmente"),
+                    codigo_problema=f"{sub_tipo.upper()}_{upload_log.id}",
+                    elementos_afectados=elementos_afectados,
+                    detalle_muestra={
+                        "upload_log_id": upload_log.id,
+                        "cantidad": count,
+                        "tipo": sub_tipo,
+                        "elementos_muestra": elementos_afectados[:10],  # Solo primeros 10 para la muestra
+                        "total_elementos": len(elementos_afectados)
+                    }
+                )
+                incidencias_consolidadas_creadas += 1
             
             # Actualizar resumen con información consolidada
             upload_log.resumen.update({
-                "incidencias_consolidadas_creadas": len(incidencias_consolidadas),
-                "tipos_incidencia_detectados": list(incidencias_acumuladas.keys()),
+                "incidencias_consolidadas_creadas": incidencias_consolidadas_creadas,
+                "tipos_incidencia_detectados": list(raw_counts.keys()),
+                "conteos_por_tipo": raw_counts,
                 "sistema_consolidado": True
             })
             upload_log.save(update_fields=['resumen'])
             
-            logger.info(f"Creadas {len(incidencias_consolidadas)} incidencias consolidadas")
+            logger.info(f"Creadas {incidencias_consolidadas_creadas} incidencias consolidadas por sub-tipo")
             
         except Exception as e:
             logger.error(f"Error generando incidencias consolidadas: {e}")
@@ -842,10 +1017,10 @@ def procesar_libro_mayor_con_upload_log(upload_log_id):
         return f"Completado: {movimientos_creados} movimientos"
 
     except Exception as e:
-        if libro_obj:
-            libro_obj.estado = "error"
-            libro_obj.errores = str(e)
-            libro_obj.save()
+        if archivo_obj:
+            archivo_obj.estado = "error"
+            archivo_obj.errores = str(e)
+            archivo_obj.save()
 
         upload_log.estado = "error"
         upload_log.errores = str(e)

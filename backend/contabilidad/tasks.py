@@ -29,6 +29,7 @@ from contabilidad.models import (
     NombresEnInglesUpload,
     TipoDocumento,
     UploadLog,
+    ExcepcionValidacion,  # ✨ NUEVO: Modelo de excepciones
 )
 # ✨ NUEVO: Importar modelo de incidencias consolidadas
 from contabilidad.models_incidencias import IncidenciaResumen
@@ -574,6 +575,14 @@ def procesar_libro_mayor(upload_log_id):
             archivo_obj.periodo = periodo
             archivo_obj.save()
 
+        # Cargar excepciones de validación para este cliente
+        excepciones_por_cuenta = {}
+        for exc in ExcepcionValidacion.objects.filter(cliente=upload_log.cliente):
+            key = f"{exc.codigo_cuenta}_{exc.tipo_excepcion}"
+            excepciones_por_cuenta[key] = exc
+        
+        logger.info(f"Cargadas {len(excepciones_por_cuenta)} excepciones de validación para cliente {upload_log.cliente.id}")
+
         # Cargar datos auxiliares generados por otras tarjetas para
         # complementar el libro mayor (tipos de documento, nombres en
         # inglés y clasificaciones)
@@ -719,9 +728,13 @@ def procesar_libro_mayor(upload_log_id):
                 mov_incompleto = False
                 if TD is not None:
                     codigo_td = str(row[TD] or "").strip()
+                    # Verificar si esta cuenta tiene excepción para tipo de documento
+                    tiene_excepcion_tipodoc = f"{current_code}_tipos_doc_no_reconocidos" in excepciones_por_cuenta or \
+                                            f"{current_code}_movimientos_tipodoc_nulo" in excepciones_por_cuenta
+                    
                     if codigo_td:
                         td_obj = tipos_doc_map.get(codigo_td)
-                        if td_obj is None:
+                        if td_obj is None and not tiene_excepcion_tipodoc:
                             Incidencia.objects.create(
                                 cierre=upload_log.cierre,
                                 tipo="negocio",
@@ -733,16 +746,17 @@ def procesar_libro_mayor(upload_log_id):
                             incidencias_creadas += 1
                             mov_incompleto = True
                     else:
-                        Incidencia.objects.create(
-                            cierre=upload_log.cierre,
-                            tipo="negocio",
-                            descripcion=(
-                                f"Movimiento {row_idx-10}, cuenta {current_code}: "
-                                "Tipo de documento vacío"
-                            ),
-                        )
-                        incidencias_creadas += 1
-                        mov_incompleto = True
+                        if not tiene_excepcion_tipodoc:
+                            Incidencia.objects.create(
+                                cierre=upload_log.cierre,
+                                tipo="negocio",
+                                descripcion=(
+                                    f"Movimiento {row_idx-10}, cuenta {current_code}: "
+                                    "Tipo de documento vacío"
+                                ),
+                            )
+                            incidencias_creadas += 1
+                            mov_incompleto = True
                 
                 mov = MovimientoContable.objects.create(
                     cierre=upload_log.cierre,
@@ -763,7 +777,11 @@ def procesar_libro_mayor(upload_log_id):
                     flag_incompleto=mov_incompleto,
                 )
 
-                if not cuenta_obj.nombre_en:
+                # Verificar excepciones para nombres en inglés y clasificaciones
+                tiene_excepcion_nombre = f"{current_code}_cuentas_sin_nombre_ingles" in excepciones_por_cuenta
+                tiene_excepcion_clasificacion = f"{current_code}_cuentas_sin_clasificacion" in excepciones_por_cuenta
+
+                if not cuenta_obj.nombre_en and not tiene_excepcion_nombre:
                     Incidencia.objects.create(
                         cierre=upload_log.cierre,
                         tipo="negocio",
@@ -775,7 +793,7 @@ def procesar_libro_mayor(upload_log_id):
                     incidencias_creadas += 1
                     mov.flag_incompleto = True
 
-                if not AccountClassification.objects.filter(cuenta=cuenta_obj).exists():
+                if not AccountClassification.objects.filter(cuenta=cuenta_obj).exists() and not tiene_excepcion_clasificacion:
                     Incidencia.objects.create(
                         cierre=upload_log.cierre,
                         tipo="negocio",

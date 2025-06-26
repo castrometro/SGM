@@ -131,6 +131,13 @@ export const eliminarLibroMayor = async (libroId) => {
   return res.data;
 };
 
+export const reprocesarConExcepciones = async (cierreId) => {
+  const res = await api.post('/contabilidad/libro-mayor/reprocesar-con-excepciones/', {
+    cierre_id: cierreId
+  });
+  return res.data;
+};
+
 // ==================== CUENTAS ====================
 export const obtenerCuentasCliente = async (clienteId) => {
   const res = await api.get(`/contabilidad/cuentas/`, {
@@ -668,5 +675,20 @@ export const obtenerHistorialUploads = async (
 
 export const obtenerIncidenciasConsolidadas = async (cierreId) => {
   const res = await api.get(`/contabilidad/libro-mayor/${cierreId}/incidencias-consolidadas/`);
+  return res.data;
+};
+
+export const obtenerCuentasDetalleIncidencia = async (cierreId, tipoIncidencia) => {
+  const res = await api.get(`/contabilidad/libro-mayor/${cierreId}/incidencias/${tipoIncidencia}/detalle/`);
+  return res.data;
+};
+
+export const marcarCuentaNoAplica = async (cierreId, codigoCuenta, tipoExcepcion, motivo = '') => {
+  const res = await api.post('/contabilidad/libro-mayor/marcar-no-aplica/', {
+    cierre_id: cierreId,
+    codigo_cuenta: codigoCuenta,
+    tipo_excepcion: tipoExcepcion,
+    motivo: motivo
+  });
   return res.data;
 };

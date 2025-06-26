@@ -353,6 +353,11 @@ const LibroMayorCard = ({
         abierto={modalIncompletoAbierto}
         onClose={() => setModalIncompletoAbierto(false)}
         incidencias={incidenciasConsolidadas}
+        cierreId={cierreId}
+        onReprocesar={() => {
+          // Recargar el estado del libro mayor después del reprocesamiento
+          cargarEstado();
+        }}
       />
     </div>
   );

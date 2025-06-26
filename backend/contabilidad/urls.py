@@ -158,4 +158,13 @@ urlpatterns = [
     path('libro-mayor/<int:cierre_id>/incidencias-consolidadas/', 
          libro_mayor.incidencias_consolidadas, 
          name='libro_mayor_incidencias_consolidadas'),
+    path('libro-mayor/<int:cierre_id>/incidencias/<str:tipo_incidencia>/detalle/',
+         libro_mayor.obtener_cuentas_detalle_incidencia, 
+         name="detalle_incidencia"),
+    path("libro-mayor/marcar-no-aplica/", 
+         libro_mayor.marcar_cuenta_no_aplica, 
+         name="marcar_no_aplica"),
+    path("libro-mayor/reprocesar-con-excepciones/", 
+         libro_mayor.reprocesar_con_excepciones, 
+         name="reprocesar_con_excepciones"),
 ]

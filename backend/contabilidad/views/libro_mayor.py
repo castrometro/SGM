@@ -325,3 +325,225 @@ def incidencias_consolidadas(request, cierre_id):
     )
     
     return Response(list(incidencias))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def marcar_cuenta_no_aplica(request):
+    """Marcar una cuenta como 'No aplica' para un tipo de validación específico"""
+    from ..models import ExcepcionValidacion
+    
+    cierre_id = request.data.get("cierre_id")
+    codigo_cuenta = request.data.get("codigo_cuenta")
+    tipo_excepcion = request.data.get("tipo_excepcion")
+    motivo = request.data.get("motivo", "")
+    
+    if not all([cierre_id, codigo_cuenta, tipo_excepcion]):
+        return Response({
+            "error": "cierre_id, codigo_cuenta y tipo_excepcion son requeridos"
+        }, status=400)
+    
+    try:
+        cierre = CierreContabilidad.objects.get(id=cierre_id)
+        
+        # Crear o actualizar la excepción
+        excepcion, created = ExcepcionValidacion.objects.get_or_create(
+            cliente=cierre.cliente,
+            tipo_excepcion=tipo_excepcion,
+            codigo_cuenta=codigo_cuenta,
+            defaults={
+                'motivo': motivo,
+                'usuario_creador': request.user,
+                'activa': True
+            }
+        )
+        
+        if not created:
+            excepcion.motivo = motivo
+            excepcion.activa = True
+            excepcion.save()
+        
+        # Actualizar las incidencias existentes para esta cuenta
+        if tipo_excepcion in ['tipos_doc_no_reconocidos', 'movimientos_tipodoc_nulo']:
+            # Marcar movimientos como no incompletos si solo faltaba tipo de documento
+            MovimientoContable.objects.filter(
+                cierre=cierre,
+                cuenta__codigo=codigo_cuenta,
+                flag_incompleto=True,
+                tipo_documento__isnull=True
+            ).update(flag_incompleto=False)
+        
+        return Response({
+            "mensaje": f"Cuenta {codigo_cuenta} marcada como 'No aplica' para {tipo_excepcion}",
+            "created": created
+        })
+        
+    except CierreContabilidad.DoesNotExist:
+        return Response({"error": "Cierre no encontrado"}, status=404)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def obtener_cuentas_detalle_incidencia(request, cierre_id, tipo_incidencia):
+    """Obtener el detalle de cuentas afectadas por un tipo de incidencia específico"""
+    from ..models import ExcepcionValidacion
+    
+    try:
+        cierre = CierreContabilidad.objects.get(id=cierre_id)
+        
+        # Obtener el último upload_log para este cierre
+        upload_log = UploadLog.objects.filter(
+            cierre=cierre,
+            tipo_upload="libro_mayor"
+        ).order_by('-fecha_subida').first()
+        
+        if not upload_log:
+            return Response([])
+        
+        # Obtener la incidencia específica
+        incidencia = IncidenciaResumen.objects.filter(
+            upload_log=upload_log,
+            tipo_incidencia=tipo_incidencia,
+            estado='activa'
+        ).first()
+        
+        if not incidencia:
+            return Response([])
+        
+        # Obtener excepciones existentes para este cliente
+        excepciones_existentes = set(
+            ExcepcionValidacion.objects.filter(
+                cliente=cierre.cliente,
+                tipo_excepcion=tipo_incidencia,
+                activa=True
+            ).values_list('codigo_cuenta', flat=True)
+        )
+        
+        # Procesar el detalle de la incidencia - manejar diferentes estructuras
+        cuentas_detalle = []
+        
+        # Debug: Ver qué estructura tienen los datos
+        print(f"DEBUG - tipo_incidencia: {tipo_incidencia}")
+        print(f"DEBUG - detalle_muestra: {incidencia.detalle_muestra}")
+        print(f"DEBUG - elementos_afectados: {incidencia.elementos_afectados}")
+        
+        # Primero intentar con elementos_afectados
+        if hasattr(incidencia, 'elementos_afectados') and incidencia.elementos_afectados:
+            for codigo in incidencia.elementos_afectados:
+                cuentas_detalle.append({
+                    'codigo': codigo,
+                    'nombre': f'Cuenta {codigo}',
+                    'descripcion': '',
+                    'monto': 0,
+                    'tiene_excepcion': codigo in excepciones_existentes
+                })
+        
+        # Si no hay elementos_afectados, usar detalle_muestra
+        elif incidencia.detalle_muestra:
+            for detalle in incidencia.detalle_muestra:
+                if isinstance(detalle, dict):
+                    codigo = detalle.get('codigo') or detalle.get('cuenta')
+                    if codigo:
+                        cuentas_detalle.append({
+                            'codigo': codigo,
+                            'nombre': detalle.get('nombre', f'Cuenta {codigo}'),
+                            'descripcion': detalle.get('descripcion', ''),
+                            'monto': detalle.get('monto', 0),
+                            'tiene_excepcion': codigo in excepciones_existentes
+                        })
+                elif isinstance(detalle, str):
+                    # Si es solo un string, asumimos que es el código de cuenta
+                    cuentas_detalle.append({
+                        'codigo': detalle,
+                        'nombre': f'Cuenta {detalle}',
+                        'descripcion': '',
+                        'monto': 0,
+                        'tiene_excepcion': detalle in excepciones_existentes
+                    })
+        
+        # Si aún no tenemos datos, intentar extraer de movimientos incompletos
+        if not cuentas_detalle and tipo_incidencia in ['movimientos_tipodoc_nulo', 'tipos_doc_no_reconocidos']:
+            movimientos = MovimientoContable.objects.filter(
+                cierre=cierre,
+                flag_incompleto=True
+            ).select_related('cuenta')
+            
+            cuentas_vistas = set()
+            for mov in movimientos:
+                if mov.cuenta.codigo not in cuentas_vistas:
+                    cuentas_vistas.add(mov.cuenta.codigo)
+                    cuentas_detalle.append({
+                        'codigo': mov.cuenta.codigo,
+                        'nombre': mov.cuenta.nombre,
+                        'descripcion': f'Movimientos: {MovimientoContable.objects.filter(cierre=cierre, cuenta=mov.cuenta).count()}',
+                        'monto': 0,
+                        'tiene_excepcion': mov.cuenta.codigo in excepciones_existentes
+                    })
+        
+        return Response({
+            'cuentas': cuentas_detalle,
+            'total_elementos': incidencia.cantidad_afectada,
+            'tipo_incidencia': tipo_incidencia,
+            'debug_info': {
+                'detalle_muestra_count': len(incidencia.detalle_muestra) if incidencia.detalle_muestra else 0,
+                'elementos_afectados_count': len(incidencia.elementos_afectados) if hasattr(incidencia, 'elementos_afectados') and incidencia.elementos_afectados else 0,
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        return Response({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }, status=500)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def reprocesar_con_excepciones(request):
+    """Reprocesar libro mayor considerando las excepciones marcadas"""
+    from ..utils.procesamiento_incidencias import reprocesar_con_incidencias_consolidadas
+    
+    cierre_id = request.data.get("cierre_id")
+    if not cierre_id:
+        return Response({"error": "cierre_id requerido"}, status=400)
+    
+    try:
+        cierre = CierreContabilidad.objects.get(id=cierre_id)
+        
+        # Obtener el último upload_log para este cierre
+        upload_log = UploadLog.objects.filter(
+            cierre=cierre,
+            tipo_upload="libro_mayor"
+        ).order_by('-fecha_subida').first()
+        
+        if not upload_log:
+            return Response({"error": "No se encontró upload_log para este cierre"}, status=404)
+        
+        # Ejecutar reprocesamiento
+        historial = reprocesar_con_incidencias_consolidadas(
+            upload_log=upload_log,
+            usuario=request.user,
+            trigger='user_manual_excepciones',
+            notas='Reprocesamiento considerando excepciones marcadas'
+        )
+        
+        return Response({
+            "mensaje": "Reprocesamiento completado con excepciones",
+            "historial_id": historial.id,
+            "incidencias_resueltas": historial.incidencias_resueltas_count,
+            "incidencias_nuevas": historial.incidencias_nuevas_count,
+            "movimientos_corregidos": historial.movimientos_corregidos,
+            "iteracion": historial.iteracion
+        })
+        
+    except CierreContabilidad.DoesNotExist:
+        return Response({"error": "Cierre no encontrado"}, status=404)
+    except Exception as e:
+        import traceback
+        return Response({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }, status=500)

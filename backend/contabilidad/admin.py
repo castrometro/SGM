@@ -36,6 +36,8 @@ from .models_incidencias import (
     HistorialReprocesamiento,
     LogResolucionIncidencia,
 )
+# ✨ NUEVO: Importar modelo de excepciones
+from .models import ExcepcionValidacion
 
 
 class IncidenciaDetalleFilter(admin.SimpleListFilter):
@@ -201,6 +203,7 @@ class LibroMayorUploadAdmin(admin.ModelAdmin):
         return "-"
 
     tamaño_archivo.short_description = "Tamaño"
+
 
 @admin.register(LibroMayorArchivo)
 class LibroMayorArchivoAdmin(admin.ModelAdmin):
@@ -1065,3 +1068,58 @@ class LogResolucionIncidenciaAdmin(admin.ModelAdmin):
         """Info de la incidencia"""
         return f"{obj.incidencia_resumen.get_tipo_incidencia_display()} - {obj.incidencia_resumen.codigo_problema or 'General'}"
     incidencia_info.short_description = 'Incidencia'
+
+
+@admin.register(ExcepcionValidacion)
+class ExcepcionValidacionAdmin(admin.ModelAdmin):
+    """Admin para gestionar excepciones de validación"""
+    list_display = [
+        'cliente', 
+        'codigo_cuenta', 
+        'tipo_excepcion', 
+        'activa', 
+        'fecha_creacion',
+        'usuario_creador'
+    ]
+    list_filter = [
+        'tipo_excepcion',
+        'activa',
+        'fecha_creacion',
+        'cliente'
+    ]
+    search_fields = [
+        'codigo_cuenta',
+        'nombre_cuenta',
+        'cliente__nombre',
+        'cliente__rut',
+        'motivo'
+    ]
+    readonly_fields = [
+        'fecha_creacion'
+    ]
+    fieldsets = (
+        ('Información básica', {
+            'fields': (
+                'cliente',
+                'codigo_cuenta',
+                'nombre_cuenta',
+                'tipo_excepcion',
+                'activa'
+            )
+        }),
+        ('Detalles', {
+            'fields': (
+                'motivo',
+                'usuario_creador'
+            )
+        }),
+        ('Fechas', {
+            'fields': (
+                'fecha_creacion',
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('cliente', 'usuario_creador')

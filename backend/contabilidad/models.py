@@ -795,3 +795,46 @@ class UploadLog(models.Model):
                 f"{rut_limpio}_LibroMayor_042025.xlsx",
             ],
         }
+
+
+# ======================================
+#       EXCEPCIONES DE VALIDACIÓN
+# ======================================
+
+class ExcepcionValidacion(models.Model):
+    """
+    Modelo para manejar excepciones de validación por cliente.
+    Permite marcar cuentas como "No aplica" para ciertos tipos de validación.
+    """
+    TIPOS_EXCEPCION = [
+        ('tipos_doc_no_reconocidos', 'Tipo de Documento No Aplica'),
+        ('movimientos_tipodoc_nulo', 'Tipo de Documento No Requerido'),
+        ('cuentas_sin_nombre_ingles', 'Nombre en Inglés No Aplica'),
+        ('cuentas_sin_clasificacion', 'Clasificación No Aplica'),
+    ]
+    
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
+    tipo_excepcion = models.CharField(max_length=50, choices=TIPOS_EXCEPCION)
+    codigo_cuenta = models.CharField(max_length=20)
+    nombre_cuenta = models.CharField(max_length=200, blank=True)
+    motivo = models.TextField(blank=True, help_text="Motivo por el cual no aplica")
+    usuario_creador = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.SET_NULL, 
+        null=True,
+        help_text="Usuario que creó la excepción"
+    )
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    activa = models.BooleanField(default=True)
+    
+    class Meta:
+        unique_together = ['cliente', 'tipo_excepcion', 'codigo_cuenta']
+        indexes = [
+            models.Index(fields=['cliente', 'tipo_excepcion', 'activa']),
+            models.Index(fields=['codigo_cuenta']),
+        ]
+        verbose_name = "Excepción de Validación"
+        verbose_name_plural = "Excepciones de Validación"
+    
+    def __str__(self):
+        return f"{self.cliente.nombre} - {self.codigo_cuenta} - {self.get_tipo_excepcion_display()}"

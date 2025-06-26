@@ -9,7 +9,8 @@ from contabilidad.models import (
     TipoDocumento, 
     NombreIngles, 
     AccountClassification,
-    CuentaContable
+    CuentaContable,
+    ExcepcionValidacion
 )
 from contabilidad.models_incidencias import (
     IncidenciaResumen, 
@@ -26,6 +27,35 @@ def analizar_incidencias_consolidadas(upload_log, total_movimientos):
     Retorna un diccionario con incidencias agrupadas para crear IncidenciaResumen
     """
     logger.info(f"Iniciando análisis consolidado para upload_log {upload_log.id}")
+    
+    # Obtener excepciones existentes para este cliente
+    excepciones_tipo_doc = set(
+        ExcepcionValidacion.objects.filter(
+            cliente=upload_log.cliente,
+            tipo_excepcion__in=['tipos_doc_no_reconocidos', 'movimientos_tipodoc_nulo'],
+            activa=True
+        ).values_list('codigo_cuenta', flat=True)
+    )
+    
+    excepciones_clasificacion = set(
+        ExcepcionValidacion.objects.filter(
+            cliente=upload_log.cliente,
+            tipo_excepcion='cuentas_sin_clasificacion',
+            activa=True
+        ).values_list('codigo_cuenta', flat=True)
+    )
+    
+    excepciones_nombre_ingles = set(
+        ExcepcionValidacion.objects.filter(
+            cliente=upload_log.cliente,
+            tipo_excepcion='cuentas_sin_nombre_ingles',
+            activa=True
+        ).values_list('codigo_cuenta', flat=True)
+    )
+    
+    logger.info(f"Excepciones cargadas: {len(excepciones_tipo_doc)} tipo_doc, "
+                f"{len(excepciones_clasificacion)} clasificacion, "
+                f"{len(excepciones_nombre_ingles)} nombre_ingles")
     
     incidencias_acumuladas = {
         'tipos_doc_no_reconocidos': defaultdict(lambda: {
@@ -67,7 +97,8 @@ def analizar_incidencias_consolidadas(upload_log, total_movimientos):
         monto_movimiento = (mov.debe or 0) + (mov.haber or 0)
         
         # 1. TIPOS DE DOCUMENTO PROBLEMÁTICOS
-        if not mov.tipo_documento and mov.tipo_doc_codigo:
+        # Solo considerar como incidencia si la cuenta NO tiene excepción
+        if not mov.tipo_documento and mov.tipo_doc_codigo and mov.cuenta.codigo not in excepciones_tipo_doc:
             # Código existe pero no está en BD
             codigo = mov.tipo_doc_codigo
             incidencias_acumuladas['tipos_doc_no_reconocidos'][codigo]['movimientos'].append({
@@ -82,8 +113,8 @@ def analizar_incidencias_consolidadas(upload_log, total_movimientos):
             incidencias_acumuladas['tipos_doc_no_reconocidos'][codigo]['cuentas_afectadas'].add(mov.cuenta.codigo)
             incidencias_acumuladas['tipos_doc_no_reconocidos'][codigo]['monto_total'] += float(monto_movimiento)
         
-        elif not mov.tipo_documento and not mov.tipo_doc_codigo:
-            # Campo TIPODOC completamente vacío
+        elif not mov.tipo_documento and not mov.tipo_doc_codigo and mov.cuenta.codigo not in excepciones_tipo_doc:
+            # Campo TIPODOC completamente vacío - solo si no hay excepción
             incidencias_acumuladas['movimientos_tipodoc_nulo']['movimientos'].append({
                 'id': mov.id,
                 'cuenta': mov.cuenta.codigo,
@@ -95,8 +126,9 @@ def analizar_incidencias_consolidadas(upload_log, total_movimientos):
             incidencias_acumuladas['movimientos_tipodoc_nulo']['cuentas_afectadas'].add(mov.cuenta.codigo)
             incidencias_acumuladas['movimientos_tipodoc_nulo']['monto_total'] += float(monto_movimiento)
         
-        # 2. CUENTAS SIN CLASIFICACIÓN
-        if not AccountClassification.objects.filter(cuenta=mov.cuenta).exists():
+        # 2. CUENTAS SIN CLASIFICACIÓN - solo si no hay excepción
+        if (not AccountClassification.objects.filter(cuenta=mov.cuenta).exists() and 
+            mov.cuenta.codigo not in excepciones_clasificacion):
             if mov.cuenta.codigo not in [c['codigo'] for c in incidencias_acumuladas['cuentas_sin_clasificacion']['cuentas']]:
                 # Contar movimientos de esta cuenta
                 mov_cuenta = MovimientoContable.objects.filter(
@@ -120,8 +152,9 @@ def analizar_incidencias_consolidadas(upload_log, total_movimientos):
                 incidencias_acumuladas['cuentas_sin_clasificacion']['movimientos_afectados'] += mov_cuenta
                 incidencias_acumuladas['cuentas_sin_clasificacion']['monto_total'] += float(monto_cuenta)
         
-        # 3. CUENTAS SIN NOMBRE EN INGLÉS
-        if upload_log.cliente.bilingue and not mov.cuenta.nombre_en:
+        # 3. CUENTAS SIN NOMBRE EN INGLÉS - solo si no hay excepción
+        if (upload_log.cliente.bilingue and not mov.cuenta.nombre_en and 
+            mov.cuenta.codigo not in excepciones_nombre_ingles):
             if mov.cuenta.codigo not in [c['codigo'] for c in incidencias_acumuladas['cuentas_sin_nombre_ingles']['cuentas']]:
                 # Contar movimientos de esta cuenta
                 mov_cuenta = MovimientoContable.objects.filter(
@@ -322,6 +355,31 @@ def marcar_movimientos_incompletos(upload_log):
     """
     logger.info(f"Re-marcando movimientos incompletos para upload_log {upload_log.id}")
     
+    # Obtener excepciones existentes para este cliente
+    excepciones_tipo_doc = set(
+        ExcepcionValidacion.objects.filter(
+            cliente=upload_log.cliente,
+            tipo_excepcion__in=['tipos_doc_no_reconocidos', 'movimientos_tipodoc_nulo'],
+            activa=True
+        ).values_list('codigo_cuenta', flat=True)
+    )
+    
+    excepciones_clasificacion = set(
+        ExcepcionValidacion.objects.filter(
+            cliente=upload_log.cliente,
+            tipo_excepcion='cuentas_sin_clasificacion',
+            activa=True
+        ).values_list('codigo_cuenta', flat=True)
+    )
+    
+    excepciones_nombre_ingles = set(
+        ExcepcionValidacion.objects.filter(
+            cliente=upload_log.cliente,
+            tipo_excepcion='cuentas_sin_nombre_ingles',
+            activa=True
+        ).values_list('codigo_cuenta', flat=True)
+    )
+    
     movimientos_corregidos = 0
     
     # Obtener todos los movimientos del cierre
@@ -335,16 +393,19 @@ def marcar_movimientos_incompletos(upload_log):
         # Re-evaluar si el movimiento está incompleto
         problemas = []
         
-        # 1. Verificar tipo de documento
-        if mov.tipo_doc_codigo and not mov.tipo_documento:
+        # 1. Verificar tipo de documento - solo si no hay excepción
+        if (mov.tipo_doc_codigo and not mov.tipo_documento and 
+            mov.cuenta.codigo not in excepciones_tipo_doc):
             problemas.append('tipo_documento')
         
-        # 2. Verificar nombre en inglés (solo si cliente es bilingüe)
-        if upload_log.cliente.bilingue and not mov.cuenta.nombre_en:
+        # 2. Verificar nombre en inglés - solo si cliente es bilingüe y no hay excepción
+        if (upload_log.cliente.bilingue and not mov.cuenta.nombre_en and 
+            mov.cuenta.codigo not in excepciones_nombre_ingles):
             problemas.append('nombre_ingles')
         
-        # 3. Verificar clasificación
-        if not AccountClassification.objects.filter(cuenta=mov.cuenta).exists():
+        # 3. Verificar clasificación - solo si no hay excepción
+        if (not AccountClassification.objects.filter(cuenta=mov.cuenta).exists() and 
+            mov.cuenta.codigo not in excepciones_clasificacion):
             problemas.append('clasificacion')
         
         # Actualizar flag

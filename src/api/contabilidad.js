@@ -665,3 +665,8 @@ export const obtenerHistorialUploads = async (
   });
   return res.data;
 };
+
+export const obtenerIncidenciasConsolidadas = async (cierreId) => {
+  const res = await api.get(`/contabilidad/libro-mayor/${cierreId}/incidencias-consolidadas/`);
+  return res.data;
+};

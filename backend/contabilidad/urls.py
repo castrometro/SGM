@@ -3,6 +3,7 @@ from django.urls import include, path
 from django.views.static import serve
 from rest_framework.routers import DefaultRouter
 
+from .views import libro_mayor
 from .views import (
     LibroMayorUploadViewSet,
     LibroMayorArchivoViewSet,  # ✅ Nuevo ViewSet
@@ -154,4 +155,7 @@ urlpatterns = [
         "document_root": settings.BASE_DIR / "static/plantillas",
         "path": "plantilla_clasificacion.xlsx",
     }, name="descargar_plantilla_clasificacion_bulk"),
+    path('libro-mayor/<int:cierre_id>/incidencias-consolidadas/', 
+         libro_mayor.incidencias_consolidadas, 
+         name='libro_mayor_incidencias_consolidadas'),
 ]

@@ -15,7 +15,9 @@ from ..models import (
     ClasificacionCuentaArchivo,
     Incidencia,
     CierreContabilidad,
+    UploadLog,
 )
+from ..models_incidencias import IncidenciaResumen
 from ..serializers import LibroMayorUploadSerializer, LibroMayorArchivoSerializer
 from ..tasks import procesar_libro_mayor
 from ..utils.clientes import obtener_periodo_cierre_activo, get_client_ip
@@ -291,3 +293,35 @@ def movimientos_incompletos(request, cierre_id):
             "incidencias": incidencias,
         })
     return Response(data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def incidencias_consolidadas(request, cierre_id):
+    """Obtener incidencias consolidadas para un cierre específico"""
+    cierre = CierreContabilidad.objects.get(id=cierre_id)
+    
+    # Obtener el último upload_log para este cierre
+    upload_log = UploadLog.objects.filter(
+        cierre=cierre,
+        tipo_upload="libro_mayor"
+    ).order_by('-fecha_subida').first()
+    
+    if not upload_log:
+        return Response([])
+    
+    incidencias = IncidenciaResumen.objects.filter(
+        upload_log=upload_log,
+        estado='activa'
+    ).values(
+        'tipo_incidencia',
+        'codigo_problema',
+        'cantidad_afectada',
+        'detalle_muestra',
+        'severidad',
+        'mensaje_usuario',
+        'accion_sugerida',
+        'estadisticas_adicionales'
+    )
+    
+    return Response(list(incidencias))

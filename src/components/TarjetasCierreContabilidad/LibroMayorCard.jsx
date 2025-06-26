@@ -4,10 +4,12 @@ import {
   subirLibroMayor,
   obtenerEstadoUploadLog,
   obtenerMovimientosIncompletos,
+  obtenerIncidenciasConsolidadas,
 } from "../../api/contabilidad";
 import EstadoBadge from "../EstadoBadge";
 import Notificacion from "../Notificacion";
 import ModalMovimientosIncompletos from "./ModalMovimientosIncompletos";
+import ModalIncidenciasConsolidadas from "./ModalIncidenciasConsolidadas";
 
 const LibroMayorCard = ({
   cierreId,
@@ -32,6 +34,7 @@ const LibroMayorCard = ({
   const [notificacion, setNotificacion] = useState({ visible: false, tipo: "", mensaje: "" });
   const [modalIncompletoAbierto, setModalIncompletoAbierto] = useState(false);
   const [movimientosIncompletos, setMovimientosIncompletos] = useState([]);
+  const [incidenciasConsolidadas, setIncidenciasConsolidadas] = useState([]);
   const fileInputRef = useRef();
 
   const mostrarNotificacion = (tipo, mensaje) => {
@@ -204,13 +207,13 @@ const LibroMayorCard = ({
 
   const handleVerIncidencias = async () => {
     try {
-      const data = await obtenerMovimientosIncompletos(cierreId);
-      setMovimientosIncompletos(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error("Error cargando movimientos incompletos:", err);
-      setMovimientosIncompletos([]);
-    } finally {
+      const data = await obtenerIncidenciasConsolidadas(cierreId);
+      setIncidenciasConsolidadas(data);
       setModalIncompletoAbierto(true);
+    } catch (err) {
+      console.error("Error cargando incidencias consolidadas:", err);
+      setIncidenciasConsolidadas([]);
+      mostrarNotificacion("error", "Error al cargar las incidencias");
     }
   };
 
@@ -346,10 +349,10 @@ const LibroMayorCard = ({
         visible={notificacion.visible}
         onClose={cerrarNotificacion}
       />
-      <ModalMovimientosIncompletos
+      <ModalIncidenciasConsolidadas
         abierto={modalIncompletoAbierto}
         onClose={() => setModalIncompletoAbierto(false)}
-        movimientos={movimientosIncompletos}
+        incidencias={incidenciasConsolidadas}
       />
     </div>
   );

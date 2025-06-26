@@ -21,8 +21,13 @@ class CierreContabilidadViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = super().get_queryset()
         cliente = self.request.query_params.get("cliente")
+        periodo = self.request.query_params.get("periodo")
+
         if cliente:
             qs = qs.filter(cliente_id=cliente)
+        if periodo:
+            qs = qs.filter(periodo=periodo)
+
         return qs.order_by("-fecha_creacion")
 
     def perform_create(self, serializer):

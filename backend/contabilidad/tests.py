@@ -9,6 +9,10 @@ from contabilidad.models import (
     ClasificacionSet,
     ClasificacionOption,
     AccountClassification,
+    UploadLog,
+    ClasificacionCuentaArchivo,
+    NombreIngles,
+    Incidencia,
 )
 
 
@@ -90,3 +94,118 @@ class MovimientosResumenTests(TestCase):
         data = response.json()
         self.assertEqual(len(data), 1)
         self.assertEqual(data[0]["cuenta_id"], self.c1.id)
+
+
+class ReprocesarIncompletosTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+        area = Area.objects.create(nombre="Contabilidad")
+        self.user = Usuario.objects.create_user(
+            correo_bdo="tester@test.com",
+            password="pass",
+            nombre="Tester",
+            apellido="Test",
+            tipo_usuario="gerente",
+        )
+        self.user.areas.add(area)
+
+        self.cliente = Cliente.objects.create(nombre="Cliente2", rut="2-7")
+        self.cierre = CierreContabilidad.objects.create(
+            cliente=self.cliente,
+            usuario=self.user,
+            area=area,
+            periodo="2024-02",
+        )
+
+        self.c1 = CuentaContable.objects.create(
+            cliente=self.cliente, codigo="2001", nombre="Ventas"
+        )
+        self.c2 = CuentaContable.objects.create(
+            cliente=self.cliente, codigo="2002", nombre="Compras"
+        )
+
+        MovimientoContable.objects.create(
+            cierre=self.cierre,
+            cuenta=self.c1,
+            fecha="2024-02-01",
+            debe=100,
+            flag_incompleto=True,
+        )
+        MovimientoContable.objects.create(
+            cierre=self.cierre,
+            cuenta=self.c2,
+            fecha="2024-02-01",
+            debe=50,
+            flag_incompleto=True,
+        )
+
+        set1 = ClasificacionSet.objects.create(cliente=self.cliente, nombre="G")
+        opt1 = ClasificacionOption.objects.create(set_clas=set1, valor="X")
+
+        # Registro en ClasificacionCuentaArchivo para que el reprocesamiento
+        # aplique la clasificación de forma automática
+        log = UploadLog.objects.create(
+            tipo_upload="clasificacion",
+            cliente=self.cliente,
+            nombre_archivo_original="tmp.xlsx",
+            tamaño_archivo=10,
+        )
+        ClasificacionCuentaArchivo.objects.create(
+            cliente=self.cliente,
+            upload_log=log,
+            numero_cuenta="2001",
+            clasificaciones={"G": "X"},
+            fila_excel=1,
+        )
+
+        NombreIngles.objects.create(
+            cliente=self.cliente, cuenta_codigo="2001", nombre_ingles="Sales"
+        )
+
+        Incidencia.objects.create(
+            cierre=self.cierre,
+            tipo="negocio",
+            descripcion="Movimiento 1, cuenta 2001: No tiene nombre en inglés",
+        )
+
+        self.client.force_authenticate(user=self.user)
+
+    def test_reprocesar_movimientos(self):
+        url = "/api/contabilidad/libro-mayor/reprocesar-incompletos/"
+        response = self.client.post(url, {"cierre_id": self.cierre.id}, format="json")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["reprocesados"], 1)
+        self.assertEqual(data["aun_incompletos"], 1)
+
+        m1 = MovimientoContable.objects.get(cuenta=self.c1)
+        m2 = MovimientoContable.objects.get(cuenta=self.c2)
+        self.assertFalse(m1.flag_incompleto)
+        self.assertTrue(m2.flag_incompleto)
+
+        # Verificar que se asignó nombre en inglés y clasificación
+        self.c1.refresh_from_db()
+        self.assertEqual(self.c1.nombre_en, "Sales")
+        self.assertTrue(
+            AccountClassification.objects.filter(cuenta=self.c1, set_clas__nombre="G").exists()
+        )
+
+        log_individual = TarjetaActivityLog.objects.filter(accion="manual_edit", cierre=self.cierre).first()
+        self.assertIsNotNone(log_individual)
+        self.assertTrue(log_individual.detalles["tipo_documento"] is False or log_individual.detalles["tipo_documento"])
+        self.assertTrue(log_individual.detalles["nombre_ingles"])
+        self.assertEqual(log_individual.detalles["clasificacion"], ["G"])
+
+        log_general = TarjetaActivityLog.objects.filter(accion="process_complete", cierre=self.cierre).first()
+        self.assertIsNotNone(log_general)
+        self.assertEqual(log_general.detalles["movimientos_corregidos"], [m1.id])
+
+    def test_listar_movimientos_incompletos(self):
+        url = f"/api/contabilidad/libro-mayor/incompletos/{self.cierre.id}/"
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data), 2)
+        first = data[0]
+        self.assertIn("incidencias", first)

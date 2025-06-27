@@ -62,9 +62,10 @@ const NombresEnInglesCard = ({
         if (estadoActual === "subido") {
           try {
             const nombres = await obtenerNombresInglesCliente(clienteId);
-            setNombresIngles(nombres);
+            setNombresIngles(Array.isArray(nombres) ? nombres : []);
           } catch (err) {
             console.error("Error cargando nombres en inglés:", err);
+            setNombresIngles([]);
           }
         }
 
@@ -95,9 +96,10 @@ const NombresEnInglesCard = ({
 
           try {
             const nombres = await obtenerNombresInglesCliente(clienteId);
-            setNombresIngles(nombres);
+            setNombresIngles(Array.isArray(nombres) ? nombres : []);
           } catch (err) {
             console.error("Error recargando nombres:", err);
+            setNombresIngles([]);
           }
 
           const creados = logData.resumen?.nombres_creados || 0;
@@ -204,7 +206,7 @@ const NombresEnInglesCard = ({
       
       // Cargar los datos
       const datos = await obtenerNombresInglesCliente(clienteId);
-      setNombresIngles(datos);
+      setNombresIngles(Array.isArray(datos) ? datos : []);
       setModalAbierto(true);
     } catch (err) {
       console.error("Error al abrir modal o registrar vista:", err);
@@ -217,9 +219,10 @@ const NombresEnInglesCard = ({
   const handleActualizarNombresIngles = async () => {
     try {
       const datos = await obtenerNombresInglesCliente(clienteId);
-      setNombresIngles(datos);
+      setNombresIngles(Array.isArray(datos) ? datos : []);
     } catch (err) {
       console.error("Error al actualizar nombres en inglés:", err);
+      setNombresIngles([]);
     }
   };
 
@@ -359,7 +362,7 @@ const NombresEnInglesCard = ({
       <span className="text-xs text-gray-400 italic mt-2">
         {estado === "subido" ? (
           <span className="text-green-400">
-            {`✔ Archivo procesado correctamente${nombresIngles.length > 0 ? ` (${nombresIngles.length} nombres en inglés)` : ""}`}
+            {`✔ Archivo procesado correctamente${Array.isArray(nombresIngles) && nombresIngles.length > 0 ? ` (${nombresIngles.length} nombres en inglés)` : ""}`}
           </span>
         ) : estado === "procesando" ? (
           <span className="text-blue-400">🔄 {uploadProgreso || 'Procesando nombres en inglés…'}</span>

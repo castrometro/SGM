@@ -1,5 +1,9 @@
 # Register your models here.
+
 from django.contrib import admin
+from django.utils.html import format_html
+from django.utils.safestring import mark_safe
+import json
 
 from .models import (
     AccountClassification,
@@ -15,6 +19,7 @@ from .models import (
     CuentaContable,
     Incidencia,
     LibroMayorUpload,
+    LibroMayorArchivo,  # Nuevo modelo para manejar archivos de libro mayor
     MovimientoContable,
     NombreIngles,
     NombreInglesArchivo,
@@ -24,6 +29,37 @@ from .models import (
     TipoDocumentoArchivo,
     UploadLog,
 )
+
+# ✨ NUEVO: Importar modelos de incidencias consolidadas
+from .models_incidencias import (
+    IncidenciaResumen,
+    HistorialReprocesamiento,
+    LogResolucionIncidencia,
+)
+# ✨ NUEVO: Importar modelo de excepciones
+from .models import ExcepcionValidacion
+
+
+class IncidenciaDetalleFilter(admin.SimpleListFilter):
+    title = "Detalle"
+    parameter_name = "detalle"
+
+    def lookups(self, request, model_admin):
+        return [
+            ("sin_nombre_ingles", "Cuenta sin nombre en inglés"),
+            ("sin_clasificacion", "Cuenta sin clasificación"),
+            ("tipo_documento", "Tipo de documento no encontrado"),
+        ]
+
+    def queryset(self, request, queryset):
+        val = self.value()
+        if val == "sin_nombre_ingles":
+            return queryset.filter(descripcion__icontains="nombre en inglés")
+        if val == "sin_clasificacion":
+            return queryset.filter(descripcion__icontains="sin clasificación")
+        if val == "tipo_documento":
+            return queryset.filter(descripcion__icontains="Tipo de documento")
+        return queryset
 
 
 @admin.register(TipoDocumento)
@@ -169,6 +205,77 @@ class LibroMayorUploadAdmin(admin.ModelAdmin):
     tamaño_archivo.short_description = "Tamaño"
 
 
+@admin.register(LibroMayorArchivo)
+class LibroMayorArchivoAdmin(admin.ModelAdmin):
+    list_display = (
+        "cliente",
+        "archivo_nombre",
+        "fecha_subida",
+        "periodo",
+        "estado",           # ← mostrar si está subido, procesando o completado
+        "upload_log_info",  # ← link al UploadLog para ver errores o tiempos
+        "tamaño_archivo",
+    )
+    list_filter = ("cliente", "fecha_subida", "periodo")
+    search_fields = ("archivo", "cliente__nombre")
+    readonly_fields = ("fecha_subida",)
+
+    def archivo_nombre(self, obj):
+        """Muestra solo el nombre del archivo"""
+        import os
+
+        return os.path.basename(obj.archivo.name) if obj.archivo else "-"
+
+    archivo_nombre.short_description = "Archivo"
+
+    def tamaño_archivo(self, obj):
+        """Muestra el tamaño del archivo"""
+        if obj.archivo:
+            try:
+                size = obj.archivo.size
+                for unit in ["B", "KB", "MB", "GB"]:
+                    if size < 1024.0:
+                        return f"{size:.1f} {unit}"
+                    size /= 1024.0
+                return f"{size:.1f} TB"
+            except:
+                return "N/A"
+        return "-"
+
+    tamaño_archivo.short_description = "Tamaño"
+
+    def estado(self, obj):
+        """Muestra el estado del procesamiento del archivo"""
+        if not obj.upload_log:
+            return "Sin procesar"
+        
+        # Usar el campo 'estado' del UploadLog
+        if obj.upload_log.estado == 'error':
+            return "Con errores"
+        elif obj.upload_log.estado == 'completado':
+            return "Completado"
+        elif obj.upload_log.estado == 'procesando':
+            return "Procesando"
+        else:
+            return "Subido"
+
+    estado.short_description = "Estado"
+
+    def upload_log_info(self, obj):
+        """Muestra link al UploadLog para ver detalles"""
+        if obj.upload_log:
+            from django.urls import reverse
+            from django.utils.html import format_html
+            url = reverse("admin:contabilidad_uploadlog_change", args=[obj.upload_log.pk])
+            # Usar el campo 'estado' en lugar de 'completado'
+            status = "✓" if obj.upload_log.estado == 'completado' else "⚠️" if obj.upload_log.estado == 'error' else "⏳"
+            return format_html('<a href="{}">{} Ver log</a>', url, status)
+        return "-"
+
+    upload_log_info.short_description = "Log"
+    upload_log_info.allow_tags = True
+
+
 @admin.register(AperturaCuenta)
 class AperturaCuentaAdmin(admin.ModelAdmin):
     list_display = ("cierre", "cuenta", "saldo_anterior")
@@ -178,6 +285,7 @@ class AperturaCuentaAdmin(admin.ModelAdmin):
 class MovimientoContableAdmin(admin.ModelAdmin):
     list_display = (
         "cierre",
+        "periodo",        # ← añade el periodo para ver en qué cierre quedó
         "cuenta",
         "debe",
         "haber",
@@ -189,6 +297,12 @@ class MovimientoContableAdmin(admin.ModelAdmin):
     )
     list_filter = ("fecha", "numero_interno", "tipo_documento", "cuenta")
     search_fields = ("descripcion",)
+
+    def periodo(self, obj):
+        """Muestra el periodo del cierre asociado"""
+        return obj.cierre.periodo if obj.cierre else "-"
+
+    periodo.short_description = "Periodo"
 
 
 @admin.register(ClasificacionSet)
@@ -209,7 +323,7 @@ class AccountClassificationAdmin(admin.ModelAdmin):
 @admin.register(Incidencia)
 class IncidenciaAdmin(admin.ModelAdmin):
     list_display = ("cierre", "tipo", "resuelta", "fecha_creacion")
-    list_filter = ("resuelta", "tipo")
+    list_filter = ("resuelta", "tipo", IncidenciaDetalleFilter)
     search_fields = ("descripcion", "respuesta")
 
 
@@ -613,3 +727,399 @@ class UploadLogAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return request.user.is_superuser
+
+
+# ===============================================================
+#                    INCIDENCIAS CONSOLIDADAS
+# ===============================================================
+
+@admin.register(IncidenciaResumen)
+class IncidenciaResumenAdmin(admin.ModelAdmin):
+    """Administración de incidencias consolidadas"""
+    
+    list_display = [
+        'id',
+        'tipo_incidencia_display',
+        'codigo_problema',
+        'cantidad_afectada',
+        'severidad_display',
+        'estado_display',
+        'elementos_afectados_display',
+        'fecha_deteccion',
+        'upload_log_info',
+    ]
+    
+    list_filter = [
+        'tipo_incidencia',
+        'severidad',
+        'estado',
+        'fecha_deteccion',
+        'upload_log__cliente',
+    ]
+    
+    search_fields = [
+        'codigo_problema',
+        'mensaje_usuario',
+        'upload_log__nombre_archivo_original',
+        'upload_log__cierre__periodo',
+    ]
+    
+    readonly_fields = [
+        'fecha_deteccion',
+        'elementos_afectados_display',
+        'ver_todos_elementos',
+        'estadisticas_adicionales',
+        'detalle_muestra_json',
+    ]
+    
+    date_hierarchy = 'fecha_deteccion'
+    
+    fieldsets = (
+        ('Información Principal', {
+            'fields': (
+                'upload_log',
+                'tipo_incidencia',
+                'codigo_problema',
+                'cantidad_afectada',
+                'estado'
+            )
+        }),
+        ('Severidad y Mensajes', {
+            'fields': (
+                'severidad',
+                'mensaje_usuario',
+                'accion_sugerida'
+            )
+        }),
+        ('Datos Consolidados', {
+            'fields': (
+                'elementos_afectados_display',
+                'ver_todos_elementos',
+                'detalle_muestra_json',
+                'estadisticas_adicionales'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Resolución', {
+            'fields': (
+                'fecha_resolucion',
+                'resuelto_por'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    def detalle_muestra_json(self, obj):
+        """Muestra el JSON completo de detalle_muestra."""
+        if not obj.detalle_muestra:
+            return "N/A"
+        pretty = json.dumps(obj.detalle_muestra, indent=2, ensure_ascii=False)
+        return format_html(
+            '<pre style="background-color: #000080; color: #FFD700; '
+            'padding:10px; border:1px solid #444; max-height:300px; overflow:auto;">'
+            '{}'
+            '</pre>',
+            pretty
+        )
+    detalle_muestra_json.short_description = "Detalle Completo (raw JSON)"
+    
+    def estadisticas_adicionales(self, obj):
+        """Muestra el JSON de estadísticas de forma legible."""
+        stats = getattr(obj, 'detalle_muestra', None) or obj.upload_log.resumen.get('conteos_por_tipo')
+        if not stats:
+            return "N/A"
+        pretty = json.dumps(stats, indent=2, ensure_ascii=False)
+        return format_html(
+            '<pre style="background-color: #000080; color: #FFD700; '
+            'padding:10px; border:1px solid #444; max-height:300px; overflow:auto;">'
+            '{}'
+            '</pre>',
+            pretty
+        )
+    estadisticas_adicionales.short_description = "Estadísticas Consolidadas"
+
+    def tipo_incidencia_display(self, obj):
+        """Tipo de incidencia con ícono"""
+        icons = {
+            'tipos_doc_no_reconocidos': '📄',
+            'movimientos_tipodoc_nulo': '❌',
+            'cuentas_sin_clasificacion': '🏷️',
+            'cuentas_sin_nombre_ingles': '🌐',
+            'cuentas_nuevas_detectadas': '✨',
+        }
+        icon = icons.get(obj.tipo_incidencia, '📝')
+        return f"{icon} {obj.get_tipo_incidencia_display()}"
+    tipo_incidencia_display.short_description = 'Tipo'
+    
+    def severidad_display(self, obj):
+        """Severidad con colores"""
+        colors = {
+            'baja': '🟢',
+            'media': '🟡',
+            'alta': '🟠',
+            'critica': '🔴'
+        }
+        color = colors.get(obj.severidad, '⚪')
+        return f"{color} {obj.get_severidad_display()}"
+    severidad_display.short_description = 'Severidad'
+    
+    def estado_display(self, obj):
+        """Estado con íconos"""
+        icons = {
+            'activa': '🔴 Activa',
+            'resuelta': '✅ Resuelta', 
+            'obsoleta': '⏳ Obsoleta'
+        }
+        return icons.get(obj.estado, obj.estado)
+    estado_display.short_description = 'Estado'
+    
+    def upload_log_info(self, obj):
+        """Información del upload log"""
+        return f"{obj.upload_log.cliente.nombre} - {obj.upload_log.nombre_archivo_original}"
+    upload_log_info.short_description = 'Upload Log'
+    
+    def elementos_afectados_display(self, obj):
+        """Muestra los elementos afectados de forma resumida"""
+        if not obj.elementos_afectados:
+            return "Sin elementos específicos"
+        
+        elementos = obj.elementos_afectados
+        if len(elementos) <= 5:
+            return ", ".join(elementos)
+        else:
+            primeros_cinco = ", ".join(elementos[:5])
+            return f"{primeros_cinco}... (+{len(elementos)-5} más)"
+    elementos_afectados_display.short_description = 'Elementos Afectados'
+    
+    def ver_todos_elementos(self, obj):
+        """Link para ver todos los elementos afectados"""
+        if not obj.elementos_afectados:
+            return "N/A"
+        
+        # Construimos el HTML de los elementos con <br> y lo marcamos como seguro
+        elementos_html = mark_safe("<br>".join(obj.elementos_afectados))
+        
+        return format_html(
+            '<details>'
+                '<summary style="background-color:#000080; color:#FFD700; padding:4px; '
+                            'border-radius:4px; cursor:pointer;">'
+                    'Ver {} elementos'
+                '</summary>'
+                '<div style="background-color:#000080; color:#FFD700; '
+                            'max-height:200px; overflow-y:auto; padding:10px; '
+                            'border:1px solid #444; border-top:none;">'
+                    '{}'
+                '</div>'
+            '</details>',
+            len(obj.elementos_afectados),
+            elementos_html,  # ya es HTML “seguro”
+        )
+    ver_todos_elementos.short_description = 'Detalle Completo'
+   
+
+    
+    def marcar_como_resueltas(self, request, queryset):
+        """Acción para marcar incidencias como resueltas"""
+        count = 0
+        for incidencia in queryset.filter(estado='activa'):
+            incidencia.marcar_como_resuelta(usuario=request.user)
+            count += 1
+        
+        self.message_user(
+            request,
+            f'{count} incidencias marcadas como resueltas.'
+        )
+    marcar_como_resueltas.short_description = 'Marcar como resueltas'
+
+
+@admin.register(HistorialReprocesamiento) 
+class HistorialReprocesarAdmin(admin.ModelAdmin):
+    """Administración del historial de reprocesamientos"""
+    
+    list_display = [
+        'id',
+        'upload_log_info',
+        'iteracion',
+        'mejora_display',
+        'trigger_reprocesamiento',
+        'usuario',
+        'fecha_inicio',
+    ]
+    
+    list_filter = [
+        'trigger_reprocesamiento',
+        'fecha_inicio',
+        'upload_log__cliente',
+    ]
+    
+    search_fields = [
+        'upload_log__nombre_archivo_original',
+        'notas',
+    ]
+    
+    readonly_fields = [
+        'fecha_inicio',
+        'tiempo_procesamiento',
+        'incidencias_previas',
+        'incidencias_nuevas',
+        'incidencias_resueltas',
+        'calcular_efectividad',
+        'obtener_mejoras',
+    ]
+    
+    fieldsets = (
+        ('Información Principal', {
+            'fields': (
+                'upload_log',
+                'usuario',
+                'iteracion',
+                'trigger_reprocesamiento'
+            )
+        }),
+        ('Métricas', {
+            'fields': (
+                'incidencias_previas_count',
+                'incidencias_nuevas_count', 
+                'incidencias_resueltas_count',
+                'movimientos_corregidos',
+                'movimientos_total'
+            )
+        }),
+        ('Detalles', {
+            'fields': (
+                'incidencias_previas',
+                'incidencias_nuevas',
+                'incidencias_resueltas',
+                'tiempo_procesamiento',
+                'notas'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def upload_log_info(self, obj):
+        """Info del upload log"""
+        return f"{obj.upload_log.cliente.nombre} - {obj.upload_log.nombre_archivo_original}"
+    upload_log_info.short_description = 'Upload Log'
+    
+    def mejora_display(self, obj):
+        """Muestra porcentaje de mejora"""
+        efectividad = obj.calcular_efectividad()
+        if efectividad == 100:
+            return "✅ 100%"
+        elif efectividad >= 80:
+            return f"🟢 {efectividad:.1f}%"
+        elif efectividad >= 50:
+            return f"🟡 {efectividad:.1f}%" 
+        else:
+            return f"🔴 {efectividad:.1f}%"
+    mejora_display.short_description = 'Efectividad'
+
+
+@admin.register(LogResolucionIncidencia)
+class LogResolucionIncidenciaAdmin(admin.ModelAdmin):
+    """Administración de logs de resolución"""
+    
+    list_display = [
+        'id',
+        'incidencia_info',
+        'accion_realizada',
+        'cantidad_resuelta',
+        'usuario',
+        'fecha_accion',
+    ]
+    
+    list_filter = [
+        'accion_realizada',
+        'fecha_accion',
+    ]
+    
+    search_fields = [
+        'observaciones',
+        'incidencia_resumen__codigo_problema',
+    ]
+    
+    readonly_fields = [
+        'fecha_accion',
+        'elementos_resueltos',
+        'datos_adicionales',
+    ]
+    
+    fieldsets = (
+        ('Información Principal', {
+            'fields': (
+                'incidencia_resumen',
+                'usuario',
+                'accion_realizada',
+                'cantidad_resuelta'
+            )
+        }),
+        ('Detalles', {
+            'fields': (
+                'elementos_resueltos',
+                'upload_log_relacionado',
+                'observaciones',
+                'datos_adicionales'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def incidencia_info(self, obj):
+        """Info de la incidencia"""
+        return f"{obj.incidencia_resumen.get_tipo_incidencia_display()} - {obj.incidencia_resumen.codigo_problema or 'General'}"
+    incidencia_info.short_description = 'Incidencia'
+
+
+@admin.register(ExcepcionValidacion)
+class ExcepcionValidacionAdmin(admin.ModelAdmin):
+    """Admin para gestionar excepciones de validación"""
+    list_display = [
+        'cliente', 
+        'codigo_cuenta', 
+        'tipo_excepcion', 
+        'activa', 
+        'fecha_creacion',
+        'usuario_creador'
+    ]
+    list_filter = [
+        'tipo_excepcion',
+        'activa',
+        'fecha_creacion',
+        'cliente'
+    ]
+    search_fields = [
+        'codigo_cuenta',
+        'nombre_cuenta',
+        'cliente__nombre',
+        'cliente__rut',
+        'motivo'
+    ]
+    readonly_fields = [
+        'fecha_creacion'
+    ]
+    fieldsets = (
+        ('Información básica', {
+            'fields': (
+                'cliente',
+                'codigo_cuenta',
+                'nombre_cuenta',
+                'tipo_excepcion',
+                'activa'
+            )
+        }),
+        ('Detalles', {
+            'fields': (
+                'motivo',
+                'usuario_creador'
+            )
+        }),
+        ('Fechas', {
+            'fields': (
+                'fecha_creacion',
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('cliente', 'usuario_creador')

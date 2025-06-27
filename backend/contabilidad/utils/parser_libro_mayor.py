@@ -45,7 +45,9 @@ def parsear_libro_mayor(ruta_excel, upload):
     NI = idx.get("NINTERNO")
     CC = idx.get("CENTRODECOSTO")
     AX = idx.get("AUXILIAR")
-    TD = idx.get("TIPODOC")
+    # La columna puede venir como "TIPODOC." con punto final, que al normalizar
+    # queda solo como "TIPODOC". Se consulta ambos nombres para mayor claridad.
+    TD = idx.get("TIPODOC") or idx.get("TIPODOC.")
     ND = idx.get("NUMERODOC")
     DG = idx.get("DETDEGASTOINSTFINANCIERO")
     D  = idx["DEBE"]

@@ -11,7 +11,8 @@ import {
   Search,
   Filter,
   Download,
-  RefreshCw
+  RefreshCw,
+  UserCheck
 } from "lucide-react";
 import { 
   obtenerAnalistasDetallado, 
@@ -21,9 +22,10 @@ import {
   removerAsignacion,
   obtenerEstadisticasAnalista
 } from "../api/analistas";
+import { obtenerSupervisoresDisponibles, asignarSupervisor } from "../api/supervisores";
 import AreaIndicator from "../components/AreaIndicator";
 
-const AnalistaCard = ({ analista, onViewDetails, onEditAssignments }) => (
+const AnalistaCard = ({ analista, onViewDetails, onEditAssignments, onAssignSupervisor }) => (
   <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 hover:border-gray-600 transition-colors">
     <div className="flex items-center justify-between mb-4">
       <div className="flex items-center">
@@ -33,18 +35,32 @@ const AnalistaCard = ({ analista, onViewDetails, onEditAssignments }) => (
         <div className="ml-4">
           <h3 className="font-semibold text-white">{analista.nombre} {analista.apellido}</h3>
           <p className="text-gray-400 text-sm">{analista.correo_bdo}</p>
+          {analista.supervisor_nombre && (
+            <p className="text-green-400 text-xs mt-1">
+              Supervisor: {analista.supervisor_nombre}
+            </p>
+          )}
         </div>
       </div>
       <div className="flex space-x-2">
         <button
           onClick={() => onViewDetails(analista)}
           className="p-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+          title="Ver detalles"
         >
           <Eye className="w-4 h-4" />
         </button>
         <button
+          onClick={() => onAssignSupervisor(analista)}
+          className="p-2 bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors"
+          title="Asignar supervisor"
+        >
+          <UserCheck className="w-4 h-4" />
+        </button>
+        <button
           onClick={() => onEditAssignments(analista)}
           className="p-2 bg-green-600 hover:bg-green-700 rounded-lg transition-colors"
+          title="Editar asignaciones"
         >
           <Edit className="w-4 h-4" />
         </button>
@@ -354,7 +370,7 @@ const DetalleAnalistaModal = ({ analista, isOpen, onClose }) => {
             <p>{error}</p>
             <button
               onClick={cargarEstadisticas}
-              className="mt-3 px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white text-sm"
+              className="mt-3 px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white"
             >
               Reintentar
             </button>
@@ -447,12 +463,100 @@ const DetalleAnalistaModal = ({ analista, isOpen, onClose }) => {
   );
 };
 
+const SupervisorModal = ({ analista, supervisores, isOpen, onClose, onAssign }) => {
+  const [selectedSupervisor, setSelectedSupervisor] = useState("");
+
+  if (!isOpen || !analista) return null;
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (selectedSupervisor) {
+      onAssign(selectedSupervisor);
+      setSelectedSupervisor("");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-bold text-white">
+            Asignar Supervisor
+          </h2>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="mb-4">
+          <p className="text-gray-300 mb-2">
+            Analista: <span className="font-semibold text-white">{analista.nombre} {analista.apellido}</span>
+          </p>
+          {analista.supervisor_nombre && (
+            <p className="text-green-400 text-sm">
+              Supervisor actual: {analista.supervisor_nombre}
+            </p>
+          )}
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div className="mb-6">
+            <label className="block text-gray-300 font-medium mb-2">
+              Seleccionar Supervisor:
+            </label>
+            <select
+              value={selectedSupervisor}
+              onChange={(e) => setSelectedSupervisor(e.target.value)}
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+              required
+            >
+              <option value="">-- Seleccionar supervisor --</option>
+              {supervisores.map((supervisor) => (
+                <option key={supervisor.id} value={supervisor.id}>
+                  {supervisor.nombre} {supervisor.apellido} ({supervisor.correo_bdo})
+                </option>
+              ))}
+            </select>
+            {supervisores.length === 0 && (
+              <p className="text-yellow-400 text-sm mt-2">
+                No hay supervisores disponibles para las áreas de este analista.
+              </p>
+            )}
+          </div>
+
+          <div className="flex justify-end space-x-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded-lg text-white transition-colors"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={!selectedSupervisor}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg text-white transition-colors"
+            >
+              Asignar
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 const GestionAnalistas = () => {
   const [analistas, setAnalistas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedAnalista, setSelectedAnalista] = useState(null);
   const [showAsignacionModal, setShowAsignacionModal] = useState(false);
   const [showDetalleModal, setShowDetalleModal] = useState(false);
+  const [showSupervisorModal, setShowSupervisorModal] = useState(false);
+  const [supervisoresDisponibles, setSupervisoresDisponibles] = useState([]);
   const [filtroArea, setFiltroArea] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
 
@@ -483,6 +587,36 @@ const GestionAnalistas = () => {
   const handleEditAssignments = (analista) => {
     setSelectedAnalista(analista);
     setShowAsignacionModal(true);
+  };
+
+  const handleAssignSupervisor = async (analista) => {
+    setSelectedAnalista(analista);
+    try {
+      const supervisores = await obtenerSupervisoresDisponibles();
+      // Filtrar supervisores que compartan al menos un área con el analista
+      const supervisoresFiltrados = supervisores.filter(supervisor => {
+        const supervisorAreas = supervisor.areas || [];
+        const analistaAreas = analista.areas || [];
+        return supervisorAreas.some(supArea => 
+          analistaAreas.some(anaArea => supArea.id === anaArea.id)
+        );
+      });
+      setSupervisoresDisponibles(supervisoresFiltrados);
+      setShowSupervisorModal(true);
+    } catch (error) {
+      console.error("Error al cargar supervisores:", error);
+    }
+  };
+
+  const handleAsignarSupervisor = async (supervisorId) => {
+    try {
+      await asignarSupervisor(selectedAnalista.id, supervisorId);
+      await cargarAnalistas(); // Recargar los datos
+      setShowSupervisorModal(false);
+      setSelectedAnalista(null);
+    } catch (error) {
+      console.error("Error al asignar supervisor:", error);
+    }
   };
 
   const filteredAnalistas = analistas.filter(analista => {
@@ -599,6 +733,7 @@ const GestionAnalistas = () => {
               analista={analista}
               onViewDetails={handleViewDetails}
               onEditAssignments={handleEditAssignments}
+              onAssignSupervisor={handleAssignSupervisor}
             />
           ))}
         </div>
@@ -616,6 +751,14 @@ const GestionAnalistas = () => {
         analista={selectedAnalista}
         isOpen={showDetalleModal}
         onClose={() => setShowDetalleModal(false)}
+      />
+
+      <SupervisorModal
+        analista={selectedAnalista}
+        supervisores={supervisoresDisponibles}
+        isOpen={showSupervisorModal}
+        onClose={() => setShowSupervisorModal(false)}
+        onAssign={handleAsignarSupervisor}
       />
     </div>
   );

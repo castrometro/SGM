@@ -1,10 +1,12 @@
 from rest_framework import viewsets, mixins, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from celery import chain
 from rest_framework.decorators import api_view
 from rest_framework.views import APIView
-from api.models import Cliente
+from api.models import Cliente, AsignacionClienteUsuario
+from .permissions import SupervisorPuedeVerCierresNominaAnalistas
 from django.contrib.auth import get_user_model
 import logging
 
@@ -80,18 +82,47 @@ from .tasks import (
 logger = logging.getLogger(__name__)
 
 class CierreNominaViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar los cierres de nómina.
+    Supervisores pueden ver cierres de clientes asignados a sus analistas supervisados.
+    """
     queryset = CierreNomina.objects.all()
     serializer_class = CierreNominaSerializer
+    permission_classes = [IsAuthenticated, SupervisorPuedeVerCierresNominaAnalistas]
     
     def get_queryset(self):
         queryset = super().get_queryset()
+        user = self.request.user
         cliente_id = self.request.query_params.get('cliente')
         periodo = self.request.query_params.get('periodo')
+        
+        # Filtrar por parámetros URL
         if cliente_id:
             queryset = queryset.filter(cliente_id=cliente_id)
         if periodo:
             queryset = queryset.filter(periodo=periodo)
-        return queryset
+
+        # Aplicar filtros de acceso según tipo de usuario
+        if user.tipo_usuario.lower() == 'gerente':
+            # Gerentes ven todo (sin filtros adicionales)
+            pass
+        elif user.tipo_usuario.lower() == 'supervisor':
+            # Supervisores solo ven cierres de clientes asignados a sus analistas supervisados
+            analistas_supervisados = user.get_analistas_supervisados()
+            clientes_accesibles = AsignacionClienteUsuario.objects.filter(
+                usuario__in=analistas_supervisados
+            ).values_list('cliente_id', flat=True)
+            queryset = queryset.filter(cliente_id__in=clientes_accesibles)
+        elif user.tipo_usuario in ['analista', 'senior']:
+            # Analistas solo ven cierres de sus clientes asignados
+            clientes_asignados = AsignacionClienteUsuario.objects.filter(
+                usuario=user
+            ).values_list('cliente_id', flat=True)
+            queryset = queryset.filter(cliente_id__in=clientes_asignados)
+
+        return queryset.select_related("cliente", "usuario_analista").order_by(
+            "-periodo"
+        )
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -107,6 +138,32 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='resumen/(?P<cliente_id>[^/.]+)')
     def resumen_cliente(self, request, cliente_id=None):
+        user = request.user
+        
+        # Verificar si el usuario tiene acceso a este cliente
+        tiene_acceso = False
+        
+        if user.tipo_usuario.lower() == 'gerente':
+            # Gerentes tienen acceso a todos los clientes
+            tiene_acceso = True
+        elif user.tipo_usuario.lower() == 'supervisor':
+            # Supervisores solo ven clientes de sus analistas supervisados
+            analistas_supervisados = user.get_analistas_supervisados()
+            tiene_acceso = AsignacionClienteUsuario.objects.filter(
+                usuario__in=analistas_supervisados,
+                cliente_id=cliente_id
+            ).exists()
+        elif user.tipo_usuario in ['analista', 'senior']:
+            # Analistas solo ven sus clientes asignados
+            tiene_acceso = AsignacionClienteUsuario.objects.filter(
+                usuario=user,
+                cliente_id=cliente_id
+            ).exists()
+        
+        if not tiene_acceso:
+            return Response({"detail": "No tienes permisos para ver este cliente."}, 
+                          status=status.HTTP_403_FORBIDDEN)
+        
         # Trae el último cierre de nómina por fecha para este cliente
         cierre = (
             CierreNomina.objects
@@ -651,7 +708,7 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
                         'concepto_libro_clasificacion': mapeo.concepto_libro.clasificacion,
                     }
                 else:
-                    mapeos_existentes[mapeo.nombre_concepto_novedas] = {
+                    mapeos_existentes[mapeo.nombre_concepto_novedades] = {
                         'concepto_libro_id': None,
                     }
         

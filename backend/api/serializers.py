@@ -21,14 +21,22 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 class UsuarioSerializer(serializers.ModelSerializer):
     areas = AreaSerializer(many=True, read_only=True)  # <--- Aquí va el cambio
+    supervisor = serializers.PrimaryKeyRelatedField(read_only=True)
+    supervisor_nombre = serializers.SerializerMethodField()
 
     class Meta:
         model = Usuario
         fields = [
             'id', 'nombre', 'apellido', 'correo_bdo',
             'tipo_usuario', 'is_active', 'fecha_registro', 'cargo_bdo', 'areas',
+            'supervisor', 'supervisor_nombre'
         ]
         read_only_fields = ['id', 'fecha_registro']
+
+    def get_supervisor_nombre(self, obj):
+        if obj.supervisor:
+            return f"{obj.supervisor.nombre} {obj.supervisor.apellido}"
+        return None
 
 
 class IndustriaSerializer(serializers.ModelSerializer):
@@ -160,5 +168,53 @@ class EstadisticasAnalistaSerializer(serializers.Serializer):
     tiempo_promedio_dias = serializers.FloatField()
     cierres_por_estado = serializers.DictField()
     clientes = ClienteSimpleSerializer(many=True)
+
+
+class UsuarioSupervisorSerializer(serializers.ModelSerializer):
+    """Serializer para usuarios con tipo supervisor, incluyendo analistas supervisados"""
+    areas = AreaSerializer(many=True, read_only=True)
+    analistas_supervisados = serializers.SerializerMethodField()
+    total_analistas = serializers.SerializerMethodField()
+    total_clientes_supervisados = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Usuario
+        fields = [
+            'id', 'nombre', 'apellido', 'correo_bdo', 'cargo_bdo', 'areas',
+            'analistas_supervisados', 'total_analistas', 'total_clientes_supervisados'
+        ]
+        read_only_fields = fields
+
+    def get_analistas_supervisados(self, obj):
+        analistas = obj.get_analistas_supervisados()
+        return UsuarioAnalistaSerializer(analistas, many=True).data
+
+    def get_total_analistas(self, obj):
+        return obj.get_analistas_supervisados().count()
+
+    def get_total_clientes_supervisados(self, obj):
+        return len(obj.get_clientes_de_analistas_supervisados())
+
+
+class UsuarioAnalistaSerializer(serializers.ModelSerializer):
+    """Serializer simplificado para analistas supervisados"""
+    areas = AreaSerializer(many=True, read_only=True)
+    clientes_asignados = serializers.SerializerMethodField()
+    total_clientes = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Usuario
+        fields = [
+            'id', 'nombre', 'apellido', 'correo_bdo', 'cargo_bdo', 'areas',
+            'clientes_asignados', 'total_clientes'
+        ]
+        read_only_fields = fields
+
+    def get_clientes_asignados(self, obj):
+        asignaciones = obj.asignaciones.all()
+        return ClienteSimpleSerializer([asig.cliente for asig in asignaciones], many=True).data
+
+    def get_total_clientes(self, obj):
+        return obj.asignaciones.count()
 
 

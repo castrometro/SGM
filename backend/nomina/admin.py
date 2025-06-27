@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.utils.html import format_html
 from .models import (
     CierreNomina, EmpleadoCierre, ConceptoRemuneracion, RegistroConceptoEmpleado,
     MovimientoAltaBaja, MovimientoAusentismo, MovimientoVacaciones, 
@@ -50,9 +51,8 @@ class CierreNominaAdmin(admin.ModelAdmin):
         """Incidencias pendientes"""
         pendientes = obj.incidencias.filter(estado='pendiente').count()
         if pendientes > 0:
-            return f'<span style="color: #f59e0b; font-weight: bold;">{pendientes}</span>'
+            return format_html('<span style="color: #f59e0b; font-weight: bold;">{}</span>', pendientes)
         return pendientes
-    incidencias_pendientes.allow_tags = True
     incidencias_pendientes.short_description = 'Pendientes'
     
     def resumen_incidencias(self, obj):
@@ -437,8 +437,7 @@ class IncidenciaCierreAdmin(admin.ModelAdmin):
             'baja': '#16a34a'        # verde
         }
         color = colors.get(obj.prioridad, '#6b7280')
-        return f'<span style="color: {color}; font-weight: bold;">●</span> {obj.prioridad.title()}'
-    prioridad_display.allow_tags = True
+        return format_html('<span style="color: {}; font-weight: bold;">●</span> {}', color, obj.prioridad.title())
     prioridad_display.short_description = 'Prioridad'
     
     def estado_display(self, obj):
@@ -450,8 +449,7 @@ class IncidenciaCierreAdmin(admin.ModelAdmin):
             'rechazada_supervisor': '#ef4444' # rojo
         }
         color = colors.get(obj.estado, '#6b7280')
-        return f'<span style="color: {color};">●</span> {obj.get_estado_display()}'
-    estado_display.allow_tags = True
+        return format_html('<span style="color: {};">●</span> {}', color, obj.get_estado_display())
     estado_display.short_description = 'Estado'
     
     def get_queryset(self, request):

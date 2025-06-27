@@ -6,7 +6,8 @@ import {
   UserCog,
   FileText,
   BarChart3,
-  Activity
+  Activity,
+  Users
 } from "lucide-react";
 
 const MenuUsuario = () => {
@@ -21,8 +22,9 @@ const MenuUsuario = () => {
     );
   }
 
-  if (usuario.tipo_usuario === "senior") {
+  if (usuario.tipo_usuario === "supervisor") {
     opciones.push(
+      { label: "Mis Analistas", descripcion: "Gestión y supervisión de analistas asignados", icon: Users, color: "#EC4899", path: "/menu/mis-analistas" },
       { label: "Clientes", descripcion: "Ver y validar clientes asignados", icon: FolderKanban, color: "#4F46E5", path: "/menu/clientes" },
       { label: "Validaciones", descripcion: "Revisar y aprobar cierres", icon: ShieldCheck, color: "#F59E0B", path: "/menu/validaciones" }
     );

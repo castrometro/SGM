@@ -17,7 +17,8 @@ from .serializers import (
     AsignacionClienteUsuarioSerializer, CustomTokenObtainPairSerializer,
     ServicioClienteMiniSerializer, AnalistaPerformanceSerializer,
     AnalistaDetalladoSerializer, DashboardDataSerializer, 
-    EstadisticasAnalistaSerializer, ClienteSimpleSerializer
+    EstadisticasAnalistaSerializer, ClienteSimpleSerializer,
+    UsuarioSupervisorSerializer, UsuarioAnalistaSerializer
 )
 from .permissions import (
     IsAuthenticatedAndActive, IsGerente, IsSupervisor, IsAnalista,
@@ -43,11 +44,79 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     serializer_class = UsuarioSerializer
     permission_classes = [IsAuthenticatedAndActive & (IsGerente | IsSupervisor)]
 
+    def get_queryset(self):
+        """Filtrar usuarios por tipo si se especifica en los parámetros."""
+        queryset = super().get_queryset()
+        tipo_usuario = self.request.query_params.get('tipo_usuario', None)
+        if tipo_usuario:
+            queryset = queryset.filter(tipo_usuario=tipo_usuario)
+        return queryset
+
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="me")
     def me(self, request):
         """Devuelve los datos del usuario autenticado."""
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated & IsSupervisor], url_path="mis-analistas")
+    def mis_analistas(self, request):
+        """Devuelve los analistas supervisados por el supervisor autenticado."""
+        if request.user.tipo_usuario != 'supervisor':
+            return Response({"error": "Solo los supervisores pueden acceder a esta información"}, status=403)
+        
+        # Usar el serializer específico para supervisores
+        serializer = UsuarioSupervisorSerializer(request.user)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated & IsSupervisor], url_path="clientes-supervisados")
+    def clientes_supervisados(self, request):
+        """Devuelve todos los clientes asignados a los analistas supervisados."""
+        if request.user.tipo_usuario != 'supervisor':
+            return Response({"error": "Solo los supervisores pueden acceder a esta información"}, status=403)
+        
+        # Obtener asignaciones de clientes de analistas supervisados
+        asignaciones = AsignacionClienteUsuario.get_clientes_por_supervisor(request.user)
+        
+        # Serializar los datos
+        data = []
+        for asignacion in asignaciones:
+            data.append({
+                'cliente': ClienteSimpleSerializer(asignacion.cliente).data,
+                'analista': {
+                    'id': asignacion.usuario.id,
+                    'nombre': asignacion.usuario.nombre,
+                    'apellido': asignacion.usuario.apellido,
+                    'correo_bdo': asignacion.usuario.correo_bdo
+                },
+                'fecha_asignacion': asignacion.fecha_asignacion
+            })
+        
+        return Response(data)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated & (IsGerente | IsSupervisor)], url_path="asignar-supervisor")
+    def asignar_supervisor(self, request, pk=None):
+        """Asigna un supervisor a un analista."""
+        analista = self.get_object()
+        supervisor_id = request.data.get('supervisor_id')
+        
+        if not supervisor_id:
+            return Response({"error": "Se requiere supervisor_id"}, status=400)
+        
+        try:
+            supervisor = Usuario.objects.get(id=supervisor_id, tipo_usuario='supervisor')
+        except Usuario.DoesNotExist:
+            return Response({"error": "Supervisor no encontrado"}, status=404)
+        
+        # Verificar que supervisor puede supervisar al analista (misma área)
+        if not supervisor.puede_supervisar_a(analista):
+            return Response({"error": "El supervisor y analista deben compartir al menos un área"}, status=400)
+        
+        analista.supervisor = supervisor
+        analista.save()
+        
+        serializer = self.get_serializer(analista)
+        return Response(serializer.data)
+    
 
 class ClienteViewSet(viewsets.ModelViewSet):
     queryset = Cliente.objects.all()

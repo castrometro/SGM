@@ -13,6 +13,7 @@ import {
 import {
   subirClasificacionBulk,
   obtenerBulkClasificaciones,
+  obtenerEstadoClasificaciones,
   descargarPlantillaClasificacionBulk,
   eliminarBulkClasificacion,
   eliminarTodosBulkClasificacion,
@@ -60,9 +61,29 @@ const ClasificacionBulkCard = ({
   const [modalRegistrosRaw, setModalRegistrosRaw] = useState(false);
   const fileInputRef = useRef();
 
+  // Cargar estado inicial al montar el componente
   useEffect(() => {
-    cargar();
-  }, []);
+    const fetchEstadoInicial = async () => {
+      try {
+        const data = await obtenerEstadoClasificaciones(clienteId);
+        setEstado(data.estado);
+        setArchivoNombre(data.archivo_nombre || "");
+        
+        // Si hay archivo subido, también notificar como completado
+        if (onCompletado) onCompletado(data.estado === "subido");
+      } catch (err) {
+        setEstado("pendiente");
+        if (onCompletado) onCompletado(false);
+      }
+    };
+    
+    if (clienteId && !disabled) fetchEstadoInicial();
+  }, [clienteId, disabled, onCompletado]);
+
+  useEffect(() => {
+    // Cargar datos detallados solo si hay estado subido
+    if (!disabled && estado === "subido") cargar();
+  }, [estado, disabled]);
 
   // Monitorear estado del UploadLog
   useEffect(() => {
@@ -77,7 +98,18 @@ const ClasificacionBulkCard = ({
         } else if (logData.estado === "completado") {
           setUploadProgreso("¡Procesamiento completado!");
           setSubiendo(false);
-          setEstado("completado");
+          
+          // Actualizar estado desde el servidor
+          try {
+            const data = await obtenerEstadoClasificaciones(clienteId);
+            setEstado(data.estado);
+            setArchivoNombre(data.archivo_nombre || "");
+            if (onCompletado) onCompletado(data.estado === "subido");
+          } catch (err) {
+            setEstado("pendiente");
+            if (onCompletado) onCompletado(false);
+          }
+          
           cargar();
         } else if (logData.estado === "error") {
           setUploadProgreso("Error en el procesamiento");
@@ -100,41 +132,22 @@ const ClasificacionBulkCard = ({
       setUploads(data);
       const last = data && data.length > 0 ? data[0] : null;
       setUltimoUpload(last);
-      if (last) {
-        // Cargar registros raw si existe el upload
-        if (last.id) {
-          try {
-            const registros = await obtenerClasificacionesArchivo(last.id);
-            setRegistrosRaw(registros);
-            // Determinar estado basado en si hay registros útiles
-            const tieneRegistros = registros.length > 0;
-            if (tieneRegistros) {
-              // Si hay registros, usar el estado del upload log
-              setEstado(last.estado);
-            } else {
-              // Si no hay registros, considerar como pendiente
-              setEstado("pendiente");
-            }
-            if (onCompletado) onCompletado(tieneRegistros);
-          } catch (err) {
-            console.log("No hay registros raw o error cargándolos:", err);
-            setRegistrosRaw([]);
-            setEstado("pendiente"); // Sin registros = pendiente
-            if (onCompletado) onCompletado(false);
-          }
-        } else {
-          // Si no hay ID del upload, no hay registros
-          setEstado("pendiente");
-          if (onCompletado) onCompletado(false);
+      
+      if (last && last.id) {
+        // Cargar registros raw para mostrar información
+        try {
+          const registros = await obtenerClasificacionesArchivo(last.id);
+          setRegistrosRaw(registros);
+        } catch (err) {
+          console.log("No hay registros raw o error cargándolos:", err);
+          setRegistrosRaw([]);
         }
       } else {
-        setEstado("pendiente");
         setRegistrosRaw([]);
-        if (onCompletado) onCompletado(false);
       }
     } catch (e) {
       console.error("Error al cargar uploads:", e);
-      setEstado("pendiente"); // En caso de error, mostrar pendiente
+      setRegistrosRaw([]);
     }
   };
 
@@ -164,9 +177,17 @@ const ClasificacionBulkCard = ({
           "📤 Archivo subido correctamente. Procesando...",
         );
       } else {
-        setEstado("procesando");
         setUploadProgreso("");
-        setTimeout(() => {
+        setTimeout(async () => {
+          try {
+            const data = await obtenerEstadoClasificaciones(clienteId);
+            setEstado(data.estado);
+            setArchivoNombre(data.archivo_nombre || "");
+            if (onCompletado) onCompletado(data.estado === "subido");
+          } catch (err) {
+            setEstado("pendiente");
+            if (onCompletado) onCompletado(false);
+          }
           cargar();
         }, 1000);
       }
@@ -213,12 +234,21 @@ const ClasificacionBulkCard = ({
     setErrorEliminando("");
     try {
       await eliminarTodosBulkClasificacion(clienteId);
-      setEstado("pendiente");
+      
+      // Actualizar estado desde el servidor
+      try {
+        const data = await obtenerEstadoClasificaciones(clienteId);
+        setEstado(data.estado);
+        setArchivoNombre(data.archivo_nombre || "");
+        if (onCompletado) onCompletado(data.estado === "subido");
+      } catch (err) {
+        setEstado("pendiente");
+        setArchivoNombre("");
+        if (onCompletado) onCompletado(false);
+      }
+      
       setUploads([]);
       setRegistrosRaw([]);
-      // Recargar el estado de la tarjeta
-      await cargar();
-      if (onCompletado) onCompletado(false);
     } catch (err) {
       setErrorEliminando("Error al eliminar los archivos.");
     } finally {
@@ -235,7 +265,7 @@ const ClasificacionBulkCard = ({
       </h3>
       <div className="flex items-center gap-2 mb-2">
         <span className="font-semibold">Estado:</span>
-        <EstadoBadge estado={estado === "completado" ? "subido" : estado} />
+        <EstadoBadge estado={estado} />
       </div>
       <a
         href={descargarPlantillaClasificacionBulk()}
@@ -320,52 +350,56 @@ const ClasificacionBulkCard = ({
 
       {/* Información del estado y resumen */}
       <div className="text-xs text-gray-400 italic mt-2">
-        {(estado === "completado" || (ultimoUpload && registrosRaw.length > 0)) && ultimoUpload?.resumen ? (
+        {estado === "subido" ? (
           <div className="space-y-2">
             <div className="text-green-400">
-              ✔ Archivo procesado correctamente
+              ✔ Archivo subido correctamente
             </div>
-            <div>
-              📊 {ultimoUpload.resumen.registros_guardados || 0} registros
-              guardados de {ultimoUpload.resumen.total_filas || 0} filas
-              {ultimoUpload.resumen.filas_vacias > 0 && (
-                <span className="text-gray-500">
-                  {" "}
-                  • {ultimoUpload.resumen.filas_vacias} filas vacías omitidas
-                </span>
-              )}
-            </div>
-            <div>
-              📋 Sets encontrados:{" "}
-              {ultimoUpload.resumen.sets_encontrados?.join(", ") || "Ninguno"}
-            </div>
-
-            {/* Mostrar información de registros raw */}
-            {registrosRaw.length > 0 && (
-              <div className="flex items-center gap-2">
-                <span>📋 {registrosRaw.length} registros cargados</span>
+            {archivoNombre && (
+              <div className="text-gray-300">
+                📄 Archivo: {archivoNombre}
               </div>
             )}
-
-            {ultimoUpload.resumen.errores_count > 0 && (
-              <div className="text-yellow-400">
-                ⚠ {ultimoUpload.resumen.errores_count} errores encontrados en
-                el procesamiento
+            
+            {/* Mostrar información de registros raw si están disponibles */}
+            {registrosRaw.length > 0 && (
+              <div className="text-blue-300">
+                📋 {registrosRaw.length} registros disponibles para mapeo
+              </div>
+            )}
+            
+            {/* Mostrar resumen del procesamiento si está disponible */}
+            {ultimoUpload?.resumen && (
+              <div className="space-y-1">
+                <div>
+                  📊 {ultimoUpload.resumen.registros_guardados || 0} registros
+                  guardados de {ultimoUpload.resumen.total_filas || 0} filas
+                  {ultimoUpload.resumen.filas_vacias > 0 && (
+                    <span className="text-gray-500">
+                      {" "}
+                      • {ultimoUpload.resumen.filas_vacias} filas vacías omitidas
+                    </span>
+                  )}
+                </div>
+                {ultimoUpload.resumen.sets_encontrados?.length > 0 && (
+                  <div>
+                    📋 Sets encontrados:{" "}
+                    {ultimoUpload.resumen.sets_encontrados.join(", ")}
+                  </div>
+                )}
+                {ultimoUpload.resumen.errores_count > 0 && (
+                  <div className="text-yellow-400">
+                    ⚠ {ultimoUpload.resumen.errores_count} errores encontrados en
+                    el procesamiento
+                  </div>
+                )}
               </div>
             )}
           </div>
         ) : estado === "procesando" ? (
-          <div className="text-blue-400">🔄 Procesando clasificaciones…</div>
-        ) : estado === "error" && ultimoUpload?.errores ? (
-          <div className="text-red-400">❌ Error: {ultimoUpload.errores}</div>
-        ) : ultimoUpload && registrosRaw.length > 0 ? (
-          <div className="text-yellow-400">
-            📋 Archivo cargado con {registrosRaw.length} registros
-          </div>
-        ) : ultimoUpload ? (
-          <div className="text-gray-400">
-            📄 Archivo subido: {ultimoUpload.nombre_archivo_original}
-          </div>
+          <div className="text-blue-400">🔄 Procesando archivo…</div>
+        ) : estado === "error" ? (
+          <div className="text-red-400">❌ Error en el procesamiento</div>
         ) : (
           <div>Aún no se ha subido el archivo.</div>
         )}

@@ -1,3 +1,4 @@
+import logging
 from rest_framework import serializers
 
 from .models import (
@@ -13,6 +14,7 @@ from .models import (
     CuentaContable,
     Incidencia,
     LibroMayorUpload,
+    LibroMayorArchivo,  # ✅ Nuevo modelo
     MovimientoContable,
     NombreIngles,
     NombreInglesArchivo,
@@ -103,24 +105,57 @@ class CierreContabilidadSerializer(serializers.ModelSerializer):
         read_only_fields = ["fecha_creacion", "fecha_cierre", "usuario"]
 
     def validate(self, data):
+        logger = logging.getLogger('contabilidad')
         cliente = data.get("cliente")
         periodo = data.get("periodo")
 
         if cliente and periodo:
+            logger.debug("="*80)
+            logger.debug(f"VALIDATE CIERRE - Input data:")
+            logger.debug(f"Cliente ID: {getattr(cliente, 'id', cliente)}")
+            logger.debug(f"Cliente nombre: {getattr(cliente, 'nombre', 'N/A')}")
+            logger.debug(f"Periodo: {periodo}")
+            
+            # Consultar todos los cierres existentes para este cliente
+            all_cierres = CierreContabilidad.objects.filter(
+                cliente=cliente
+            ).order_by('-fecha_creacion')
+            
+            logger.debug(f"Cierres existentes para el cliente {getattr(cliente, 'id', cliente)}:")
+            for cierre in all_cierres:
+                logger.debug(f"ID: {cierre.id} | Periodo: {cierre.periodo} | Estado: {cierre.estado}")
+            
             # En caso de actualización, excluir el registro actual
             queryset = CierreContabilidad.objects.filter(
-                cliente=cliente, periodo=periodo
-            )
+                cliente=cliente, 
+                periodo=periodo
+            ).order_by('-fecha_creacion')
+            
             if self.instance:
+                logger.debug(f"Excluyendo instancia actual: {self.instance.id}")
                 queryset = queryset.exclude(pk=self.instance.pk)
-
+            
             if queryset.exists():
                 cierre_existente = queryset.first()
-                raise serializers.ValidationError(
-                    {
-                        "periodo": f'Ya existe un cierre contable para el cliente "{cliente.nombre}" en el periodo "{periodo}". Estado actual: {cierre_existente.get_estado_display()}.'
-                    }
-                )
+                logger.debug(f"Cierre existente encontrado:")
+                logger.debug(f"ID: {cierre_existente.id}")
+                logger.debug(f"Periodo: {cierre_existente.periodo}")
+                logger.debug(f"Estado: {cierre_existente.estado}")
+                
+                # Solo consideramos como duplicado si el cierre existente está activo
+                if cierre_existente.estado not in ['cancelado', 'eliminado']:
+                    logger.debug(f"Validación fallida - Cierre activo existente")
+                    raise serializers.ValidationError(
+                        {
+                            "periodo": f'Ya existe un cierre contable activo para el cliente "{cliente.nombre}" en el periodo "{periodo}". Estado actual: {cierre_existente.get_estado_display()}.'
+                        }
+                    )
+                else:
+                    logger.debug(f"Cierre existente está {cierre_existente.estado}, permitiendo crear nuevo")
+            else:
+                logger.debug(f"No se encontró cierre existente para el periodo {periodo}")
+            
+            logger.debug("="*80)
 
         return data
 
@@ -133,18 +168,57 @@ class ProgresoClasificacionSerializer(serializers.Serializer):
 
 
 class LibroMayorUploadSerializer(serializers.ModelSerializer):
+    archivo_nombre = serializers.SerializerMethodField()
+    
     class Meta:
         model = LibroMayorUpload
         fields = [
             "id",
             "cierre",
             "archivo",
+            "archivo_nombre",
             "fecha_subida",
             "procesado",
             "errores",
             "estado",
+            "upload_log",
         ]
-        read_only_fields = ["fecha_subida", "procesado", "errores", "estado"]
+        read_only_fields = ["fecha_subida", "procesado", "errores", "estado", "upload_log", "archivo_nombre"]
+    
+    def get_archivo_nombre(self, obj):
+        """Extrae el nombre del archivo del path completo"""
+        if obj.archivo:
+            import os
+            return os.path.basename(obj.archivo.name)
+        return None
+
+
+class LibroMayorArchivoSerializer(serializers.ModelSerializer):
+    """Serializer para el nuevo modelo LibroMayorArchivo que persiste entre cierres"""
+    archivo_nombre = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = LibroMayorArchivo
+        fields = [
+            "id",
+            "cliente",
+            "archivo", 
+            "archivo_nombre",
+            "fecha_subida",
+            "periodo",
+            "procesado",
+            "errores",
+            "estado",
+            "upload_log",
+        ]
+        read_only_fields = ["fecha_subida", "procesado", "errores", "estado", "upload_log", "archivo_nombre"]
+    
+    def get_archivo_nombre(self, obj):
+        """Extrae el nombre del archivo del path completo"""
+        if obj.archivo:
+            import os
+            return os.path.basename(obj.archivo.name)
+        return None
 
 
 class AperturaCuentaSerializer(serializers.ModelSerializer):

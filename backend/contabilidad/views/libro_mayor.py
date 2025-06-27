@@ -1,0 +1,549 @@
+from rest_framework import viewsets
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from ..models import (
+    LibroMayorUpload,
+    LibroMayorArchivo,  # ✅ Nuevo modelo
+    MovimientoContable,
+    TipoDocumento,
+    NombreIngles,
+    ClasificacionSet,
+    ClasificacionOption,
+    AccountClassification,
+    ClasificacionCuentaArchivo,
+    Incidencia,
+    CierreContabilidad,
+    UploadLog,
+)
+from ..models_incidencias import IncidenciaResumen
+from ..serializers import LibroMayorUploadSerializer, LibroMayorArchivoSerializer
+from ..tasks import procesar_libro_mayor
+from ..utils.clientes import obtener_periodo_cierre_activo, get_client_ip
+from ..utils.mixins import UploadLogMixin, ActivityLoggerMixin
+from ..utils.uploads import guardar_temporal
+
+
+class LibroMayorUploadViewSet(UploadLogMixin, ActivityLoggerMixin, viewsets.ModelViewSet):
+    queryset = LibroMayorUpload.objects.all()
+    serializer_class = LibroMayorUploadSerializer
+    permission_classes = [IsAuthenticated]
+    tipo_upload = "libro_mayor"
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        cliente = self.request.query_params.get("cliente")
+        cierre = self.request.query_params.get("cierre")
+        
+        if cliente:
+            qs = qs.filter(cierre__cliente_id=cliente)
+        elif cierre:
+            qs = qs.filter(cierre_id=cierre)
+            
+        return qs
+
+    @action(detail=True, methods=["post"])
+    def reprocesar(self, request, pk=None):
+        upload = self.get_object()
+        # Aquí solo registramos la actividad; la lógica real quedó en el archivo original
+        self.log_activity(
+            cliente_id=upload.cierre.cliente.id,
+            periodo=upload.cierre.periodo,
+            tarjeta="libro_mayor",
+            accion="process_start",
+            descripcion=f"Reprocesamiento iniciado para archivo: {upload.archivo.name}",
+            usuario=request.user,
+            detalles={"upload_id": upload.id},
+            resultado="exito",
+            ip_address=get_client_ip(request),
+        )
+        return Response({"mensaje": "Reprocesamiento iniciado"})
+
+
+class LibroMayorArchivoViewSet(UploadLogMixin, ActivityLoggerMixin, viewsets.ModelViewSet):
+    """ViewSet para LibroMayorArchivo - persiste entre cierres"""
+    
+    queryset = LibroMayorArchivo.objects.all()
+    serializer_class = LibroMayorArchivoSerializer
+    permission_classes = [IsAuthenticated]
+    tipo_upload = "libro_mayor"
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        cliente = self.request.query_params.get("cliente")
+        cierre = self.request.query_params.get("cierre")
+        
+        if cliente:
+            qs = qs.filter(cliente_id=cliente)
+        elif cierre:
+            # Filtrar por cierre a través del upload_log
+            qs = qs.filter(upload_log__cierre_id=cierre)
+            
+        return qs
+
+    @action(detail=True, methods=["get"])
+    def estado(self, request, pk=None):
+        """Obtiene el estado actual del archivo de libro mayor"""
+        libro_archivo = self.get_object()
+        
+        return Response({
+            "id": libro_archivo.id,
+            "cliente_id": libro_archivo.cliente.id,
+            "cliente_nombre": libro_archivo.cliente.nombre,
+            "periodo": libro_archivo.periodo,
+            "archivo_nombre": libro_archivo.archivo.name if libro_archivo.archivo else None,
+            "fecha_subida": libro_archivo.fecha_subida,
+            "estado": libro_archivo.estado,
+            "procesado": libro_archivo.procesado,
+            "errores": libro_archivo.errores,
+            "upload_log_id": libro_archivo.upload_log.id if libro_archivo.upload_log else None,
+        })
+
+    @action(detail=True, methods=["post"])
+    def reprocesar(self, request, pk=None):
+        """Reprocesa el archivo de libro mayor"""
+        libro_archivo = self.get_object()
+        
+        # Verificar que hay un archivo subido
+        if not libro_archivo.archivo:
+            return Response({"error": "No hay archivo para reprocesar"}, status=400)
+        
+        # Registrar actividad
+        self.log_activity(
+            cliente_id=libro_archivo.cliente.id,
+            periodo=libro_archivo.periodo,
+            tarjeta="libro_mayor",
+            accion="process_start",
+            descripcion=f"Reprocesamiento iniciado para archivo: {libro_archivo.archivo.name}",
+            usuario=request.user,
+            detalles={"libro_archivo_id": libro_archivo.id},
+            resultado="exito",
+            ip_address=get_client_ip(request),
+        )
+        
+        # Aquí se podría implementar la lógica de reprocesamiento si fuera necesario
+        # Por ahora solo actualizamos el estado
+        libro_archivo.estado = "procesando"
+        libro_archivo.save()
+        
+        return Response({"mensaje": "Reprocesamiento iniciado"})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def cargar_libro_mayor(request):
+    cierre_id = request.data.get("cierre_id")
+    archivo = request.FILES.get("archivo")
+    if not cierre_id or not archivo:
+        return Response({"error": "cierre_id y archivo son requeridos"}, status=400)
+    
+    cierre = CierreContabilidad.objects.get(id=cierre_id)
+    
+    # ✅ NUEVO: Validar nombre de archivo y extraer período
+    from ..models import UploadLog
+    import re
+    
+    es_valido, msg_valid = UploadLog.validar_archivo_cliente_estatico(
+        archivo.name, "libro_mayor", cierre.cliente
+    )
+    
+    if not es_valido:
+        return Response({"error": msg_valid}, status=400)
+    
+    # Extraer período del nombre del archivo (ej: 12345678_LibroMayor_042025.xlsx -> "042025")
+    rut_limpio = cierre.cliente.rut.replace(".", "").replace("-", "") if cierre.cliente.rut else str(cierre.cliente.id)
+    nombre_sin_ext = re.sub(r"\.(xlsx|xls)$", "", archivo.name, flags=re.IGNORECASE)
+    patron_periodo = rf"^{rut_limpio}_(LibroMayor|Mayor)_(\d{{6}})$"
+    match = re.match(patron_periodo, nombre_sin_ext)
+    
+    if not match:
+        return Response({
+            "error": "No se pudo extraer el período del nombre del archivo",
+            "formato_requerido": f"{rut_limpio}_LibroMayor_MMAAAA.xlsx"
+        }, status=400)
+    
+    periodo = match.group(2)
+    
+    # ✅ NUEVO: Crear o actualizar LibroMayorArchivo (persiste entre cierres)
+    try:
+        libro_archivo, created = LibroMayorArchivo.objects.get_or_create(
+            cliente=cierre.cliente,
+            defaults={
+                "archivo": archivo,
+                "periodo": periodo,
+                "estado": "subido",
+                "procesado": False,
+            }
+        )
+        
+        # Si ya existía, actualizar con el nuevo archivo
+        if not created:
+            # Eliminar archivo anterior si existe
+            if libro_archivo.archivo:
+                try:
+                    libro_archivo.archivo.delete()
+                except Exception:
+                    pass
+            
+            libro_archivo.archivo = archivo
+            libro_archivo.periodo = periodo
+            libro_archivo.estado = "subido"
+            libro_archivo.procesado = False
+            libro_archivo.errores = ""
+            libro_archivo.save()
+        
+    except Exception as e:
+        return Response({"error": f"Error al guardar archivo: {str(e)}"}, status=400)
+    
+    # ✅ Crear UploadLog para tracking (como antes)
+    mixin = UploadLogMixin()
+    mixin.tipo_upload = "libro_mayor"
+    upload_log = mixin.crear_upload_log(cierre.cliente, archivo)
+    
+    # Asignar el cierre y usuario al upload log
+    upload_log.cierre = cierre
+    upload_log.usuario = request.user
+    upload_log.save()
+    
+    # ✅ Vincular LibroMayorArchivo con UploadLog
+    libro_archivo.upload_log = upload_log
+    libro_archivo.save()
+    
+    # Guardar archivo temporal para procesamiento
+    ruta = guardar_temporal(f"libro_mayor_cliente_{cierre.cliente.id}_{upload_log.id}.xlsx", archivo)
+    upload_log.ruta_archivo = ruta
+    upload_log.save()
+    
+    # Lanzar procesamiento
+    procesar_libro_mayor.delay(upload_log.id)
+    
+    return Response({
+        "upload_log_id": upload_log.id,
+        "libro_archivo_id": libro_archivo.id,
+        "periodo": periodo,
+        "mensaje": "Archivo subido correctamente"
+    })
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def reprocesar_movimientos_incompletos(request):
+    cierre_id = request.data.get("cierre_id")
+    if not cierre_id:
+        return Response({"error": "cierre_id requerido"}, status=400)
+    cierre = CierreContabilidad.objects.get(id=cierre_id)
+    movimientos = MovimientoContable.objects.filter(cierre=cierre, flag_incompleto=True).select_related("cuenta")
+    movimientos_corregidos = []
+    for mov in movimientos:
+        if mov.tipo_documento_id is None and mov.tipo_doc_codigo:
+            td = TipoDocumento.objects.filter(cliente=cierre.cliente, codigo=mov.tipo_doc_codigo).first()
+            if td:
+                mov.tipo_documento = td
+        if not mov.cuenta.nombre_en:
+            nombre = NombreIngles.objects.filter(cliente=cierre.cliente, cuenta_codigo=mov.cuenta.codigo).first()
+            if nombre:
+                mov.cuenta.nombre_en = nombre.nombre_ingles
+                mov.cuenta.save()
+        clas_arch = (
+            ClasificacionCuentaArchivo.objects.filter(cliente=cierre.cliente, numero_cuenta=mov.cuenta.codigo)
+            .order_by("-id")
+            .first()
+        )
+        if clas_arch:
+            for set_nombre, opcion_valor in clas_arch.clasificaciones.items():
+                set_obj = ClasificacionSet.objects.filter(cliente=cierre.cliente, nombre=set_nombre).first()
+                if not set_obj:
+                    continue
+                opcion_obj = ClasificacionOption.objects.filter(set_clas=set_obj, valor=opcion_valor).first()
+                if not opcion_obj:
+                    continue
+                AccountClassification.objects.update_or_create(
+                    cuenta=mov.cuenta,
+                    set_clas=set_obj,
+                    defaults={"opcion": opcion_obj, "asignado_por": request.user},
+                )
+        mov.flag_incompleto = False
+        mov.save(update_fields=["tipo_documento", "flag_incompleto"])
+        Incidencia.objects.filter(
+            cierre=cierre,
+            descripcion__icontains=f"cuenta {mov.cuenta.codigo}"
+        ).update(resuelta=True)
+        movimientos_corregidos.append(mov.id)
+    return Response({"reprocesados": len(movimientos_corregidos), "aun_incompletos": movimientos.count() - len(movimientos_corregidos), "total_movimientos": movimientos.count()})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def movimientos_incompletos(request, cierre_id):
+    cierre = CierreContabilidad.objects.get(id=cierre_id)
+    movimientos = (
+        MovimientoContable.objects.filter(cierre=cierre, flag_incompleto=True).select_related("cuenta")
+    )
+    data = []
+    for mov in movimientos:
+        incidencias = list(
+            Incidencia.objects.filter(cierre=cierre, descripcion__icontains=f"cuenta {mov.cuenta.codigo}").values_list("descripcion", flat=True)
+        )
+        data.append({
+            "id": mov.id,
+            "cuenta_codigo": mov.cuenta.codigo,
+            "cuenta_nombre": mov.cuenta.nombre,
+            "descripcion": mov.descripcion,
+            "incidencias": incidencias,
+        })
+    return Response(data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def incidencias_consolidadas(request, cierre_id):
+    """Obtener incidencias consolidadas para un cierre específico"""
+    cierre = CierreContabilidad.objects.get(id=cierre_id)
+    
+    # Obtener el último upload_log para este cierre
+    upload_log = UploadLog.objects.filter(
+        cierre=cierre,
+        tipo_upload="libro_mayor"
+    ).order_by('-fecha_subida').first()
+    
+    if not upload_log:
+        return Response([])
+    
+    incidencias = IncidenciaResumen.objects.filter(
+        upload_log=upload_log,
+        estado='activa'
+    ).values(
+        'tipo_incidencia',
+        'codigo_problema',
+        'cantidad_afectada',
+        'detalle_muestra',
+        'severidad',
+        'mensaje_usuario',
+        'accion_sugerida',
+        'estadisticas_adicionales'
+    )
+    
+    return Response(list(incidencias))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def marcar_cuenta_no_aplica(request):
+    """Marcar una cuenta como 'No aplica' para un tipo de validación específico"""
+    from ..models import ExcepcionValidacion
+    
+    cierre_id = request.data.get("cierre_id")
+    codigo_cuenta = request.data.get("codigo_cuenta")
+    tipo_excepcion = request.data.get("tipo_excepcion")
+    motivo = request.data.get("motivo", "")
+    
+    if not all([cierre_id, codigo_cuenta, tipo_excepcion]):
+        return Response({
+            "error": "cierre_id, codigo_cuenta y tipo_excepcion son requeridos"
+        }, status=400)
+    
+    try:
+        cierre = CierreContabilidad.objects.get(id=cierre_id)
+        
+        # Crear o actualizar la excepción
+        excepcion, created = ExcepcionValidacion.objects.get_or_create(
+            cliente=cierre.cliente,
+            tipo_excepcion=tipo_excepcion,
+            codigo_cuenta=codigo_cuenta,
+            defaults={
+                'motivo': motivo,
+                'usuario_creador': request.user,
+                'activa': True
+            }
+        )
+        
+        if not created:
+            excepcion.motivo = motivo
+            excepcion.activa = True
+            excepcion.save()
+        
+        # Actualizar las incidencias existentes para esta cuenta
+        if tipo_excepcion in ['tipos_doc_no_reconocidos', 'movimientos_tipodoc_nulo']:
+            # Marcar movimientos como no incompletos si solo faltaba tipo de documento
+            MovimientoContable.objects.filter(
+                cierre=cierre,
+                cuenta__codigo=codigo_cuenta,
+                flag_incompleto=True,
+                tipo_documento__isnull=True
+            ).update(flag_incompleto=False)
+        
+        return Response({
+            "mensaje": f"Cuenta {codigo_cuenta} marcada como 'No aplica' para {tipo_excepcion}",
+            "created": created
+        })
+        
+    except CierreContabilidad.DoesNotExist:
+        return Response({"error": "Cierre no encontrado"}, status=404)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def obtener_cuentas_detalle_incidencia(request, cierre_id, tipo_incidencia):
+    """Obtener el detalle de cuentas afectadas por un tipo de incidencia específico"""
+    from ..models import ExcepcionValidacion
+    
+    try:
+        cierre = CierreContabilidad.objects.get(id=cierre_id)
+        
+        # Obtener el último upload_log para este cierre
+        upload_log = UploadLog.objects.filter(
+            cierre=cierre,
+            tipo_upload="libro_mayor"
+        ).order_by('-fecha_subida').first()
+        
+        if not upload_log:
+            return Response([])
+        
+        # Obtener la incidencia específica
+        incidencia = IncidenciaResumen.objects.filter(
+            upload_log=upload_log,
+            tipo_incidencia=tipo_incidencia,
+            estado='activa'
+        ).first()
+        
+        if not incidencia:
+            return Response([])
+        
+        # Obtener excepciones existentes para este cliente
+        excepciones_existentes = set(
+            ExcepcionValidacion.objects.filter(
+                cliente=cierre.cliente,
+                tipo_excepcion=tipo_incidencia,
+                activa=True
+            ).values_list('codigo_cuenta', flat=True)
+        )
+        
+        # Procesar el detalle de la incidencia - manejar diferentes estructuras
+        cuentas_detalle = []
+        
+        # Debug: Ver qué estructura tienen los datos
+        print(f"DEBUG - tipo_incidencia: {tipo_incidencia}")
+        print(f"DEBUG - detalle_muestra: {incidencia.detalle_muestra}")
+        print(f"DEBUG - elementos_afectados: {incidencia.elementos_afectados}")
+        
+        # Primero intentar con elementos_afectados
+        if hasattr(incidencia, 'elementos_afectados') and incidencia.elementos_afectados:
+            for codigo in incidencia.elementos_afectados:
+                cuentas_detalle.append({
+                    'codigo': codigo,
+                    'nombre': f'Cuenta {codigo}',
+                    'descripcion': '',
+                    'monto': 0,
+                    'tiene_excepcion': codigo in excepciones_existentes
+                })
+        
+        # Si no hay elementos_afectados, usar detalle_muestra
+        elif incidencia.detalle_muestra:
+            for detalle in incidencia.detalle_muestra:
+                if isinstance(detalle, dict):
+                    codigo = detalle.get('codigo') or detalle.get('cuenta')
+                    if codigo:
+                        cuentas_detalle.append({
+                            'codigo': codigo,
+                            'nombre': detalle.get('nombre', f'Cuenta {codigo}'),
+                            'descripcion': detalle.get('descripcion', ''),
+                            'monto': detalle.get('monto', 0),
+                            'tiene_excepcion': codigo in excepciones_existentes
+                        })
+                elif isinstance(detalle, str):
+                    # Si es solo un string, asumimos que es el código de cuenta
+                    cuentas_detalle.append({
+                        'codigo': detalle,
+                        'nombre': f'Cuenta {detalle}',
+                        'descripcion': '',
+                        'monto': 0,
+                        'tiene_excepcion': detalle in excepciones_existentes
+                    })
+        
+        # Si aún no tenemos datos, intentar extraer de movimientos incompletos
+        if not cuentas_detalle and tipo_incidencia in ['movimientos_tipodoc_nulo', 'tipos_doc_no_reconocidos']:
+            movimientos = MovimientoContable.objects.filter(
+                cierre=cierre,
+                flag_incompleto=True
+            ).select_related('cuenta')
+            
+            cuentas_vistas = set()
+            for mov in movimientos:
+                if mov.cuenta.codigo not in cuentas_vistas:
+                    cuentas_vistas.add(mov.cuenta.codigo)
+                    cuentas_detalle.append({
+                        'codigo': mov.cuenta.codigo,
+                        'nombre': mov.cuenta.nombre,
+                        'descripcion': f'Movimientos: {MovimientoContable.objects.filter(cierre=cierre, cuenta=mov.cuenta).count()}',
+                        'monto': 0,
+                        'tiene_excepcion': mov.cuenta.codigo in excepciones_existentes
+                    })
+        
+        return Response({
+            'cuentas': cuentas_detalle,
+            'total_elementos': incidencia.cantidad_afectada,
+            'tipo_incidencia': tipo_incidencia,
+            'debug_info': {
+                'detalle_muestra_count': len(incidencia.detalle_muestra) if incidencia.detalle_muestra else 0,
+                'elementos_afectados_count': len(incidencia.elementos_afectados) if hasattr(incidencia, 'elementos_afectados') and incidencia.elementos_afectados else 0,
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        return Response({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }, status=500)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def reprocesar_con_excepciones(request):
+    """Reprocesar libro mayor considerando las excepciones marcadas"""
+    from ..utils.procesamiento_incidencias import reprocesar_con_incidencias_consolidadas
+    
+    cierre_id = request.data.get("cierre_id")
+    if not cierre_id:
+        return Response({"error": "cierre_id requerido"}, status=400)
+    
+    try:
+        cierre = CierreContabilidad.objects.get(id=cierre_id)
+        
+        # Obtener el último upload_log para este cierre
+        upload_log = UploadLog.objects.filter(
+            cierre=cierre,
+            tipo_upload="libro_mayor"
+        ).order_by('-fecha_subida').first()
+        
+        if not upload_log:
+            return Response({"error": "No se encontró upload_log para este cierre"}, status=404)
+        
+        # Ejecutar reprocesamiento
+        historial = reprocesar_con_incidencias_consolidadas(
+            upload_log=upload_log,
+            usuario=request.user,
+            trigger='user_manual_excepciones',
+            notas='Reprocesamiento considerando excepciones marcadas'
+        )
+        
+        return Response({
+            "mensaje": "Reprocesamiento completado con excepciones",
+            "historial_id": historial.id,
+            "incidencias_resueltas": historial.incidencias_resueltas_count,
+            "incidencias_nuevas": historial.incidencias_nuevas_count,
+            "movimientos_corregidos": historial.movimientos_corregidos,
+            "iteracion": historial.iteracion
+        })
+        
+    except CierreContabilidad.DoesNotExist:
+        return Response({"error": "Cierre no encontrado"}, status=404)
+    except Exception as e:
+        import traceback
+        return Response({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }, status=500)

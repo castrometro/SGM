@@ -70,7 +70,6 @@ from contabilidad.tasks import (
     parsear_nombres_ingles,
     parsear_tipo_documento,
     procesar_clasificacion_con_upload_log,
-    procesar_libro_mayor_con_upload_log,
     procesar_libro_mayor,
     procesar_nombres_ingles,
     procesar_nombres_ingles_upload,
@@ -1455,7 +1454,7 @@ def cargar_libro_mayor(request):
         ip_address=request.META.get("REMOTE_ADDR"),
     )
 
-    procesar_libro_mayor_con_upload_log.delay(upload_log.id)
+    procesar_libro_mayor.delay(upload_log.id)
 
     return Response({
         "mensaje": "Archivo recibido y tarea enviada",

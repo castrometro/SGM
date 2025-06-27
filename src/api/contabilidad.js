@@ -113,7 +113,7 @@ export const subirLibroMayor = async (clienteId, archivo, cierreId = null) => {
 };
 
 export const obtenerLibrosMayor = async (cierreId) => {
-  const res = await api.get("/contabilidad/libromayor/", {
+  const res = await api.get("/contabilidad/libromayor-archivo/", {
     params: { cierre: cierreId },
   });
   return res.data;
@@ -128,6 +128,13 @@ export const obtenerMovimientosIncompletos = async (cierreId) => {
 
 export const eliminarLibroMayor = async (libroId) => {
   const res = await api.delete(`/contabilidad/libromayor/${libroId}/`);
+  return res.data;
+};
+
+export const reprocesarConExcepciones = async (cierreId) => {
+  const res = await api.post('/contabilidad/libro-mayor/reprocesar-con-excepciones/', {
+    cierre_id: cierreId
+  });
   return res.data;
 };
 
@@ -375,7 +382,8 @@ export const obtenerNombresInglesCliente = async (clienteId) => {
   const res = await api.get(
     `/contabilidad/nombre-ingles/${clienteId}/list/`,
   );
-  return res.data;
+  // El backend devuelve { cliente, total, nombres }, necesitamos solo el array nombres
+  return res.data.nombres || [];
 };
 
 export const registrarVistaNombresIngles = async (clienteId) => {
@@ -408,6 +416,13 @@ export const eliminarTodosNombresIngles = async (clienteId) => {
 };
 
 // ==================== BULK CLASIFICACIONES ====================
+export const obtenerEstadoClasificaciones = async (clienteId) => {
+  const res = await api.get(
+    `/contabilidad/clasificacion/${clienteId}/estado/`,
+  );
+  return res.data;
+};
+
 export const subirClasificacionBulk = async (formData) => {
   const res = await api.post(
     "/contabilidad/clasificacion-bulk/subir-archivo/",
@@ -654,6 +669,26 @@ export const obtenerHistorialUploads = async (
 
   const res = await api.get(`/contabilidad/clientes/${clienteId}/uploads/`, {
     params,
+  });
+  return res.data;
+};
+
+export const obtenerIncidenciasConsolidadas = async (cierreId) => {
+  const res = await api.get(`/contabilidad/libro-mayor/${cierreId}/incidencias-consolidadas/`);
+  return res.data;
+};
+
+export const obtenerCuentasDetalleIncidencia = async (cierreId, tipoIncidencia) => {
+  const res = await api.get(`/contabilidad/libro-mayor/${cierreId}/incidencias/${tipoIncidencia}/detalle/`);
+  return res.data;
+};
+
+export const marcarCuentaNoAplica = async (cierreId, codigoCuenta, tipoExcepcion, motivo = '') => {
+  const res = await api.post('/contabilidad/libro-mayor/marcar-no-aplica/', {
+    cierre_id: cierreId,
+    codigo_cuenta: codigoCuenta,
+    tipo_excepcion: tipoExcepcion,
+    motivo: motivo
   });
   return res.data;
 };

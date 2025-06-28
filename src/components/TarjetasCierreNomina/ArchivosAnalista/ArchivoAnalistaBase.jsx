@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Download, Loader2 } from "lucide-react";
 import EstadoBadge from "../../EstadoBadge";
+import Notificacion from "../../Notificacion";
 
 const ArchivoAnalistaBase = ({
   tipo,
@@ -20,6 +21,20 @@ const ArchivoAnalistaBase = ({
   const fileInputRef = useRef();
   const isProcesando = estado === "en_proceso" || estado === "procesando";
   const isDisabled = disabled || subiendo || isProcesando;
+
+  const [notificacion, setNotificacion] = useState({
+    visible: false,
+    tipo: "",
+    mensaje: ""
+  });
+
+  const mostrarNotificacion = (tipo, mensaje) => {
+    setNotificacion({ visible: true, tipo, mensaje });
+  };
+
+  const cerrarNotificacion = () => {
+    setNotificacion({ visible: false, tipo: "", mensaje: "" });
+  };
   
   const puedeSubirArchivo = !isDisabled && 
     (estado === "no_subido" || estado === "pendiente" || estado === "con_error");
@@ -30,15 +45,20 @@ const ArchivoAnalistaBase = ({
   const handleSeleccionArchivo = async (e) => {
     const archivoSeleccionado = e.target.files[0];
     if (!archivoSeleccionado || !onSubirArchivo) return;
-    
-    await onSubirArchivo(archivoSeleccionado);
-    
+
+    try {
+      await onSubirArchivo(archivoSeleccionado);
+      mostrarNotificacion("success", "✅ Archivo subido");
+    } catch (err) {
+      mostrarNotificacion("error", "Error al subir el archivo");
+    }
+
     // Limpiar el input para permitir seleccionar el mismo archivo nuevamente
     e.target.value = '';
   };
 
   return (
-    <div className={`bg-gray-700 p-4 rounded-lg ${isDisabled ? "opacity-60" : ""}`}>
+    <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${isDisabled ? "opacity-60" : ""}`}>
       <div className="flex items-center gap-2 mb-3">
         <Icono size={18} className="text-blue-400" />
         <h4 className="font-semibold text-white">{titulo}</h4>
@@ -94,7 +114,14 @@ const ArchivoAnalistaBase = ({
             {estado === "con_error" && archivo?.id && onReprocesar && (
               <button
                 type="button"
-                onClick={() => onReprocesar()}
+                onClick={async () => {
+                  try {
+                    await onReprocesar();
+                    mostrarNotificacion("info", "Reprocesando archivo");
+                  } catch (err) {
+                    mostrarNotificacion("error", "Error al reprocesar");
+                  }
+                }}
                 className="bg-yellow-600 hover:bg-yellow-500 px-3 py-1 rounded text-sm font-medium transition"
               >
                 Reprocesar
@@ -137,6 +164,13 @@ const ArchivoAnalistaBase = ({
           ℹ️ Archivo procesado correctamente
         </div>
       )}
+
+      <Notificacion
+        tipo={notificacion.tipo}
+        mensaje={notificacion.mensaje}
+        visible={notificacion.visible}
+        onClose={cerrarNotificacion}
+      />
     </div>
   );
 };

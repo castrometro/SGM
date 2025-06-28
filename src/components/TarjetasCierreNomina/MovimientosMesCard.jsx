@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { descargarPlantillaMovimientosMes } from "../../api/nomina";
 import EstadoBadge from "../EstadoBadge";
+import Notificacion from "../Notificacion";
 
 const MovimientosMesCard = ({
   estado,
@@ -14,6 +15,20 @@ const MovimientosMesCard = ({
   const fileInputRef = useRef();
   const pollingRef = useRef(null);
   const [error, setError] = useState("");
+
+  const [notificacion, setNotificacion] = useState({
+    visible: false,
+    tipo: "",
+    mensaje: ""
+  });
+
+  const mostrarNotificacion = (tipo, mensaje) => {
+    setNotificacion({ visible: true, tipo, mensaje });
+  };
+
+  const cerrarNotificacion = () => {
+    setNotificacion({ visible: false, tipo: "", mensaje: "" });
+  };
 
   // Limpiar polling al desmontar
   useEffect(() => {
@@ -56,8 +71,10 @@ const MovimientosMesCard = ({
     setError("");
     try {
       await onSubirArchivo(archivo);
+      mostrarNotificacion("success", "✅ Archivo subido");
     } catch (err) {
       setError("Error al subir el archivo.");
+      mostrarNotificacion("error", "Error al subir el archivo.");
     }
   };
 
@@ -162,6 +179,13 @@ const MovimientosMesCard = ({
           ? "❌ Error al procesar el archivo."
           : "Aún no se ha subido el archivo."}
       </span>
+
+      <Notificacion
+        tipo={notificacion.tipo}
+        mensaje={notificacion.mensaje}
+        visible={notificacion.visible}
+        onClose={cerrarNotificacion}
+      />
     </div>
   );
 };

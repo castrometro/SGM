@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Download, FileBarChart2, CheckCircle2, Loader2 } from "lucide-react";
 import { descargarPlantillaLibroRemuneraciones } from "../../api/nomina";
 import EstadoBadge from "../EstadoBadge";
+import Notificacion from "../Notificacion";
 
 const LibroRemuneracionesCard = ({
   estado,
@@ -20,6 +21,21 @@ const LibroRemuneracionesCard = ({
 }) => {
   const fileInputRef = useRef();
   const pollingRef = useRef(null);
+
+  // Notificación local
+  const [notificacion, setNotificacion] = useState({
+    visible: false,
+    tipo: "",
+    mensaje: ""
+  });
+
+  const mostrarNotificacion = (tipo, mensaje) => {
+    setNotificacion({ visible: true, tipo, mensaje });
+  };
+
+  const cerrarNotificacion = () => {
+    setNotificacion({ visible: false, tipo: "", mensaje: "" });
+  };
 
   // Estado local para errores y procesamiento
   const [error, setError] = useState("");
@@ -69,8 +85,10 @@ const LibroRemuneracionesCard = ({
     setError("");
     try {
       await onSubirArchivo(archivo);
+      mostrarNotificacion("success", "✅ Archivo subido");
     } catch (err) {
       setError("Error al subir el archivo.");
+      mostrarNotificacion("error", "Error al subir el archivo.");
     }
   };
 
@@ -80,8 +98,10 @@ const LibroRemuneracionesCard = ({
     setError("");
     try {
       await onEliminarArchivo();
+      mostrarNotificacion("success", "Archivo eliminado");
     } catch (err) {
       setError("Error eliminando el archivo.");
+      mostrarNotificacion("error", "Error eliminando el archivo.");
     } finally {
       setEliminando(false);
     }
@@ -90,20 +110,22 @@ const LibroRemuneracionesCard = ({
   // Handler de procesar simplificado
   const handleProcesar = async () => {
     if (!onProcesar) return;
-    
+
     setProcesandoLocal(true);
     setError("");
-    
+
     try {
       console.log('🔄 Iniciando procesamiento...');
       await onProcesar();
       console.log('✅ Procesamiento iniciado exitosamente');
       // El polling se iniciará automáticamente cuando el estado cambie a "procesando"
-      
+      mostrarNotificacion("info", "Procesando archivo...");
+
     } catch (err) {
       setProcesandoLocal(false);
       setError("Error al procesar el archivo.");
       console.error('❌ Error al procesar:', err);
+      mostrarNotificacion("error", "Error al procesar el archivo.");
     }
   };
 
@@ -263,6 +285,13 @@ const LibroRemuneracionesCard = ({
           ? "✔ Archivo cargado correctamente y procesado."
           : "Aún no se ha subido el archivo."}
       </span>
+
+      <Notificacion
+        tipo={notificacion.tipo}
+        mensaje={notificacion.mensaje}
+        visible={notificacion.visible}
+        onClose={cerrarNotificacion}
+      />
     </div>
   );
 };

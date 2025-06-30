@@ -19,7 +19,10 @@ django.setup()
 # Imports después de setup de Django
 from contabilidad.models import CuentaContable, TipoDocumento, MovimientoContable
 from contabilidad.models_incidencias import IncidenciaResumen, HistorialReprocesamiento, LogResolucionIncidencia
-from contabilidad.utils.parser_libro_mayor_consolidado import analizar_incidencias_consolidadas, crear_incidencias_consolidadas
+from contabilidad.utils.parsers.parser_libro_mayor_consolidado import (
+    analizar_incidencias_consolidadas,
+    crear_incidencias_consolidadas,
+)
 from api.models import Cliente
 from contabilidad.models import CierreContabilidad, UploadLog
 from django.contrib.auth import get_user_model

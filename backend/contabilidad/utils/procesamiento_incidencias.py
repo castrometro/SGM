@@ -57,7 +57,7 @@ def reprocesar_con_incidencias_consolidadas(upload_log, usuario, trigger='user_m
     incidencias_previas.update(estado='obsoleta')
     
     # 4. Re-analizar situación actual
-    from contabilidad.utils.parser_libro_mayor_consolidado import (
+    from contabilidad.utils.parsers.parser_libro_mayor_consolidado import (
         analizar_incidencias_consolidadas,
         crear_incidencias_consolidadas,
         marcar_movimientos_incompletos

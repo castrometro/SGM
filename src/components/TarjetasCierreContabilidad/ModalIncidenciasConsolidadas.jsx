@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { X, RefreshCw, ChevronRight, ChevronDown, CheckCircle } from 'lucide-react';
-import { reprocesarConExcepciones, obtenerCuentasDetalleIncidencia, marcarCuentaNoAplica } from '../../api/contabilidad';
+import { reprocesarConExcepciones, marcarCuentaNoAplica } from '../../api/contabilidad';
 
 const getSeverityColor = (severidad) => {
   const colors = {
@@ -15,7 +15,6 @@ const getSeverityColor = (severidad) => {
 const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias, cierreId, onReprocesar }) => {
   const [expandida, setExpandida] = useState(null);
   const [cuentasDetalle, setCuentasDetalle] = useState({});
-  const [cargandoDetalle, setCargandoDetalle] = useState(false);
   const [reprocesando, setReprocesando] = useState(false);
 
   if (!abierto) return null;
@@ -45,18 +44,25 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias, cierreId,
 
     setExpandida(index);
     
-    if (!cuentasDetalle[tipoIncidencia] && cierreId) {
-      setCargandoDetalle(true);
-      try {
-        const detalle = await obtenerCuentasDetalleIncidencia(cierreId, tipoIncidencia);
+    // Usar los datos que ya tenemos en elementos_afectados en lugar de hacer llamada HTTP
+    if (!cuentasDetalle[tipoIncidencia]) {
+      const incidencia = incidencias[index];
+      if (incidencia && incidencia.elementos_afectados) {
+        // Transform elementos_afectados to match the expected structure
+        const cuentasFromSnapshot = incidencia.elementos_afectados.map(elemento => ({
+          codigo: elemento.codigo,
+          nombre: elemento.descripcion || `Cuenta ${elemento.codigo}`,
+          descripcion: elemento.descripcion,
+          tiene_excepcion: false // Default value
+        }));
+        
         setCuentasDetalle(prev => ({
           ...prev,
-          [tipoIncidencia]: detalle
+          [tipoIncidencia]: {
+            cuentas: cuentasFromSnapshot,
+            total: incidencia.cantidad_afectada || cuentasFromSnapshot.length
+          }
         }));
-      } catch (error) {
-        console.error('Error cargando detalle:', error);
-      } finally {
-        setCargandoDetalle(false);
       }
     }
   };
@@ -183,11 +189,7 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias, cierreId,
                   {/* Panel expandido con detalle de cuentas */}
                   {expandida === index && (
                     <div className="border-t border-gray-700 p-4 bg-gray-700/50">
-                      {cargandoDetalle ? (
-                        <div className="text-center text-gray-400 py-4">
-                          Cargando detalles...
-                        </div>
-                      ) : cuentasDetalle[incidencia.tipo_incidencia] ? (
+                      {cuentasDetalle[incidencia.tipo_incidencia] ? (
                         <div>
                           <h4 className="text-white font-medium mb-3">
                             Cuentas afectadas ({cuentasDetalle[incidencia.tipo_incidencia].cuentas?.length || 0})
@@ -235,7 +237,10 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias, cierreId,
                         </div>
                       ) : (
                         <div className="text-gray-400 text-center py-4">
-                          No se pudo cargar el detalle de las cuentas
+                          {incidencia.elementos_afectados && incidencia.elementos_afectados.length > 0 
+                            ? "Expandiendo detalles..." 
+                            : "No hay elementos afectados para mostrar"
+                          }
                         </div>
                       )}
                     </div>

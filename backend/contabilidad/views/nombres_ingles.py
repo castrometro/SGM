@@ -16,7 +16,6 @@ from django.core.files.storage import default_storage
 from ..models import NombreIngles, CuentaContable, MovimientoContable, NombresEnInglesUpload, UploadLog, CierreContabilidad
 from ..serializers import NombreInglesSerializer, NombresEnInglesUploadSerializer
 from ..utils.activity_logger import registrar_actividad_tarjeta
-from ..tasks import procesar_nombres_ingles_upload, procesar_nombres_ingles, procesar_nombres_ingles_con_upload_log
 from api.models import Cliente
 
 
@@ -37,11 +36,21 @@ class NombreInglesViewSet(viewsets.ModelViewSet):
 @parser_classes([MultiPartParser])
 @permission_classes([IsAuthenticated])
 def cargar_nombres_ingles(request):
+    """
+    Vista refactorizada para cargar nombres en inglés usando Celery Chains.
+    
+    Flujo simplificado:
+    1. Validar entrada básica
+    2. Crear UploadLog
+    3. Guardar archivo temporal
+    4. Disparar chain de procesamiento
+    5. Retornar respuesta inmediata
+    """
     import logging
     from django.core.files.storage import default_storage
     from api.models import Cliente
     from ..models import UploadLog, CierreContabilidad, NombreIngles
-    from ..tasks import procesar_nombres_ingles_con_upload_log
+    from ..tasks_nombres_ingles import crear_chain_nombres_ingles
     from ..utils.activity_logger import registrar_actividad_tarjeta
     from datetime import date
     
@@ -142,6 +151,7 @@ def cargar_nombres_ingles(request):
     upload_log.ruta_archivo = ruta_guardada
     upload_log.save(update_fields=["ruta_archivo"])
 
+    # Registrar actividad de upload exitoso
     registrar_actividad_tarjeta(
         cliente_id=cliente_id,
         periodo=cierre_relacionado.periodo if cierre_relacionado else date.today().strftime("%Y-%m"),
@@ -155,18 +165,37 @@ def cargar_nombres_ingles(request):
             "upload_log_id": upload_log.id,
             "ruta_archivo": ruta_guardada,
             "cierre_id": cierre_relacionado.id if cierre_relacionado else None,
+            "procesamiento": "chain_celery"
         },
         resultado="exito",
         ip_address=request.META.get("REMOTE_ADDR"),
     )
 
-    procesar_nombres_ingles_con_upload_log.delay(upload_log.id)
-
-    return Response({
-        "mensaje": "Archivo recibido y tarea enviada",
-        "upload_log_id": upload_log.id,
-        "estado": upload_log.estado,
-    })
+    # Disparar chain de procesamiento
+    try:
+        chain_nombres_ingles = crear_chain_nombres_ingles(upload_log.id)
+        chain_nombres_ingles.apply_async()
+        logger.info(f"Chain de nombres en inglés iniciado para upload_log_id: {upload_log.id}")
+        
+        return Response({
+            "mensaje": "Archivo recibido y procesamiento iniciado",
+            "upload_log_id": upload_log.id,
+            "estado": upload_log.estado,
+            "tipo_procesamiento": "chain_celery"
+        })
+        
+    except Exception as e:
+        # Si falla el chain, marcar como error
+        upload_log.estado = "error"
+        upload_log.errores = f"Error iniciando procesamiento: {str(e)}"
+        upload_log.save()
+        
+        logger.error(f"Error iniciando chain de nombres en inglés: {str(e)}")
+        return Response({
+            "error": "Error iniciando procesamiento",
+            "detalle": str(e),
+            "upload_log_id": upload_log.id
+        }, status=500)
 
 
 class NombresEnInglesView(APIView):
@@ -238,9 +267,12 @@ class NombresEnInglesView(APIView):
 
     def post(self, request):
         """
-        Recibe Excel y dispara el procesamiento en Celery.
+        Recibe Excel y dispara el procesamiento usando Celery Chains.
         """
         from django.core.files.storage import default_storage
+        from ..tasks_nombres_ingles import crear_chain_nombres_ingles
+        from ..models import UploadLog, CierreContabilidad
+        from datetime import date
         
         cliente_id = request.data.get("cliente_id")
         archivo = request.FILES.get("archivo")
@@ -249,16 +281,57 @@ class NombresEnInglesView(APIView):
                 {"error": "cliente_id y archivo son requeridos"}, status=400
             )
 
-        # Guarda el archivo en media/temp/
-        nombre_archivo = f"temp/nombres_ingles_cliente_{cliente_id}.xlsx"
-        ruta_guardada = default_storage.save(nombre_archivo, archivo)
+        try:
+            cliente = Cliente.objects.get(id=cliente_id)
+        except Cliente.DoesNotExist:
+            return Response({"error": "Cliente no encontrado"}, status=404)
 
-        # Dispara task Celery
-        procesar_nombres_ingles.delay(cliente_id, ruta_guardada)
+        # Buscar cierre relacionado
+        cierre_relacionado = CierreContabilidad.objects.filter(
+            cliente=cliente,
+            estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+        ).order_by('-fecha_creacion').first()
 
-        return Response(
-            {"mensaje": "Archivo recibido y tarea enviada a Celery", "ok": True}
+        # Crear UploadLog para el nuevo flujo
+        upload_log = UploadLog.objects.create(
+            tipo_upload="nombres_ingles",
+            cliente=cliente,
+            cierre=cierre_relacionado,
+            usuario=request.user,
+            nombre_archivo_original=archivo.name,
+            tamaño_archivo=archivo.size,
+            estado="subido",
+            ip_usuario=request.META.get("REMOTE_ADDR"),
         )
+
+        # Guardar archivo temporal
+        nombre_archivo = f"temp/nombres_ingles_cliente_{cliente_id}_{upload_log.id}.xlsx"
+        ruta_guardada = default_storage.save(nombre_archivo, archivo)
+        upload_log.ruta_archivo = ruta_guardada
+        upload_log.save(update_fields=["ruta_archivo"])
+
+        # Disparar chain de procesamiento
+        try:
+            chain_nombres_ingles = crear_chain_nombres_ingles(upload_log.id)
+            chain_nombres_ingles.apply_async()
+            
+            return Response({
+                "mensaje": "Archivo recibido y procesamiento iniciado con Celery Chains",
+                "ok": True,
+                "upload_log_id": upload_log.id,
+                "tipo_procesamiento": "chain_celery"
+            })
+            
+        except Exception as e:
+            upload_log.estado = "error"
+            upload_log.errores = f"Error iniciando procesamiento: {str(e)}"
+            upload_log.save()
+            
+            return Response({
+                "error": "Error iniciando procesamiento",
+                "detalle": str(e),
+                "upload_log_id": upload_log.id
+            }, status=500)
 
     def delete(self, request):
         """
@@ -285,12 +358,37 @@ class NombresEnInglesUploadViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
+        """
+        Crea una nueva instancia y dispara el procesamiento usando Celery Chains.
+        """
+        from ..tasks_nombres_ingles import crear_chain_nombres_ingles
+        from ..models import UploadLog, CierreContabilidad
+        from datetime import date
+        
         instance = serializer.save()
+
+        # Crear UploadLog para el nuevo flujo
+        cierre_relacionado = CierreContabilidad.objects.filter(
+            cliente=instance.cliente,
+            estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+        ).order_by('-fecha_creacion').first()
+
+        upload_log = UploadLog.objects.create(
+            tipo_upload="nombres_ingles",
+            cliente=instance.cliente,
+            cierre=cierre_relacionado,
+            usuario=self.request.user,
+            nombre_archivo_original=instance.archivo.name,
+            tamaño_archivo=instance.archivo.size,
+            estado="subido",
+            ip_usuario=self.request.META.get("REMOTE_ADDR"),
+            ruta_archivo=instance.archivo.name,  # Usar el archivo guardado
+        )
 
         # Registrar actividad
         registrar_actividad_tarjeta(
             cliente_id=instance.cliente.id,
-            periodo=date.today().strftime("%Y-%m"),
+            periodo=cierre_relacionado.periodo if cierre_relacionado else date.today().strftime("%Y-%m"),
             tarjeta="nombres_ingles",
             accion="upload_excel",
             descripcion=f"Subido archivo de nombres en inglés: {instance.archivo.name}",
@@ -299,19 +397,27 @@ class NombresEnInglesUploadViewSet(viewsets.ModelViewSet):
                 "nombre_archivo": instance.archivo.name,
                 "tamaño_bytes": instance.archivo.size if instance.archivo else None,
                 "upload_id": instance.id,
+                "upload_log_id": upload_log.id,
                 "tipo_archivo": "nombres_ingles",
+                "procesamiento": "chain_celery"
             },
             resultado="exito",
             ip_address=self.request.META.get("REMOTE_ADDR"),
         )
 
-        # Disparar tarea de procesamiento en background
+        # Disparar tarea de procesamiento en background usando chains
         try:
-            procesar_nombres_ingles_upload.delay(instance.id)
+            chain_nombres_ingles = crear_chain_nombres_ingles(upload_log.id)
+            chain_nombres_ingles.apply_async()
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
-            logger.error(f"Error al disparar tarea de procesamiento: {str(e)}")
+            logger.error(f"Error al disparar chain de procesamiento: {str(e)}")
+            
+            # Marcar el upload_log como error
+            upload_log.estado = "error"
+            upload_log.errores = f"Error iniciando procesamiento: {str(e)}"
+            upload_log.save()
 
     def perform_update(self, serializer):
         instance = serializer.save()
@@ -383,13 +489,38 @@ class NombresEnInglesUploadViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def reprocesar(self, request, pk=None):
+        """
+        Reprocesa un archivo usando el nuevo sistema de Celery Chains.
+        """
+        from ..tasks_nombres_ingles import crear_chain_nombres_ingles
+        from ..models import UploadLog, CierreContabilidad
+        from datetime import date
+        
         try:
             upload = self.get_object()
+
+            # Crear un nuevo UploadLog para el reprocesamiento
+            cierre_relacionado = CierreContabilidad.objects.filter(
+                cliente=upload.cliente,
+                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+            ).order_by('-fecha_creacion').first()
+
+            upload_log = UploadLog.objects.create(
+                tipo_upload="nombres_ingles",
+                cliente=upload.cliente,
+                cierre=cierre_relacionado,
+                usuario=request.user,
+                nombre_archivo_original=upload.archivo.name,
+                tamaño_archivo=upload.archivo.size,
+                estado="subido",
+                ip_usuario=request.META.get("REMOTE_ADDR"),
+                ruta_archivo=upload.archivo.name,  # Usar el archivo ya existente
+            )
 
             # Registrar reprocesamiento
             registrar_actividad_tarjeta(
                 cliente_id=upload.cliente.id,
-                periodo=date.today().strftime("%Y-%m"),
+                periodo=cierre_relacionado.periodo if cierre_relacionado else date.today().strftime("%Y-%m"),
                 tarjeta="nombres_ingles",
                 accion="process_start",
                 descripcion=f"Reprocesamiento iniciado para nombres en inglés: {upload.archivo.name}",
@@ -397,17 +528,24 @@ class NombresEnInglesUploadViewSet(viewsets.ModelViewSet):
                 detalles={
                     "nombre_archivo": upload.archivo.name,
                     "upload_id": upload.id,
+                    "upload_log_id": upload_log.id,
                     "tipo_operacion": "reprocesamiento",
                     "tipo_archivo": "nombres_ingles",
+                    "procesamiento": "chain_celery"
                 },
                 resultado="exito",
                 ip_address=request.META.get("REMOTE_ADDR"),
             )
 
-            # Disparar tarea de reprocesamiento
-            procesar_nombres_ingles_upload.delay(upload.id)
+            # Disparar chain de procesamiento
+            chain_nombres_ingles = crear_chain_nombres_ingles(upload_log.id)
+            chain_nombres_ingles.apply_async()
 
-            return Response({"message": "Archivo reprocesado exitosamente"})
+            return Response({
+                "message": "Archivo reprocesado exitosamente con Celery Chains",
+                "upload_log_id": upload_log.id,
+                "tipo_procesamiento": "chain_celery"
+            })
 
         except Exception as e:
             # Registrar error en reprocesamiento

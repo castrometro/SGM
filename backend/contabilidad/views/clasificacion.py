@@ -4,7 +4,12 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from datetime import date
+import glob
+import logging
+import os
+from django.core.files.storage import default_storage
 
+from api.models import Cliente
 from ..models import (
     ClasificacionCuentaArchivo,
     CuentaContable,
@@ -12,6 +17,7 @@ from ..models import (
     ClasificacionSet,
     AccountClassification,
     ClasificacionOption,
+    UploadLog,
 )
 from ..serializers import (
     ClasificacionCuentaArchivoSerializer,
@@ -19,27 +25,41 @@ from ..serializers import (
     ClasificacionOptionSerializer,
     AccountClassificationSerializer,
 )
+from ..tasks_cuentas_bulk import iniciar_procesamiento_clasificacion_chain
+from ..utils.activity_logger import registrar_actividad_tarjeta
 
 
 class ClasificacionCuentaArchivoViewSet(viewsets.ModelViewSet):
-    queryset = ClasificacionCuentaArchivo.objects.all()
     serializer_class = ClasificacionCuentaArchivoSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """
+        Filtra las clasificaciones RAW por cliente.
+        El modal debe mostrar todas las clasificaciones del cliente, no solo de un upload específico.
+        """
+        queryset = ClasificacionCuentaArchivo.objects.all()
+        
+        # Filtrar por cliente si se proporciona
+        cliente_id = self.request.query_params.get('cliente', None)
+        if cliente_id:
+            queryset = queryset.filter(cliente_id=cliente_id)
+        
+        # Mantener compatibilidad con filtro por upload_log si es necesario
+        upload_log_id = self.request.query_params.get('upload_log', None)
+        if upload_log_id:
+            queryset = queryset.filter(upload_log_id=upload_log_id)
+            
+        return queryset.select_related('cliente', 'upload_log').order_by('-fecha_creacion')
 
 
 @api_view(["POST"])
 @parser_classes([MultiPartParser])
 @permission_classes([IsAuthenticated])
 def cargar_clasificacion_bulk(request):
-    import glob
-    import logging
-    import os
-    from django.core.files.storage import default_storage
-    from api.models import Cliente
-    from ..models import UploadLog, CierreContabilidad
-    from ..tasks import procesar_clasificacion_con_upload_log
-    from ..utils.activity_logger import registrar_actividad_tarjeta
-    
+    """
+    Vista refactorizada para usar Celery Chains - Solo crea UploadLog y dispara chain
+    """
     logger = logging.getLogger(__name__)
     
     def get_client_ip(request):
@@ -63,15 +83,6 @@ def cargar_clasificacion_bulk(request):
         return Response({"error": "Cliente no encontrado"}, status=404)
 
     try:
-        es_valido, mensaje = UploadLog.validar_nombre_archivo(
-            archivo.name, "Clasificacion", cliente.rut
-        )
-        if not es_valido:
-            if isinstance(mensaje, dict):
-                return Response(mensaje, status=400)
-            else:
-                return Response({"error": mensaje}, status=400)
-
         # BUSCAR EL CIERRE ASOCIADO
         cierre_relacionado = None
         
@@ -98,6 +109,7 @@ def cargar_clasificacion_bulk(request):
 
         logger.info(f"📋 UploadLog de clasificación se creará con cierre: {cierre_relacionado.id if cierre_relacionado else 'None'}")
 
+        # Crear UploadLog
         upload_log = UploadLog.objects.create(
             tipo_upload="clasificacion",
             cliente=cliente,
@@ -123,12 +135,14 @@ def cargar_clasificacion_bulk(request):
             except OSError:
                 pass
 
+        # Guardar archivo temporal
         nombre_archivo = f"temp/clasificacion_cliente_{cliente_id}_{upload_log.id}.xlsx"
         ruta_guardada = default_storage.save(nombre_archivo, archivo)
 
         upload_log.ruta_archivo = ruta_guardada
         upload_log.save()
 
+        # Registrar actividad de subida
         periodo_actividad = cierre_relacionado.periodo if cierre_relacionado else date.today().strftime("%Y-%m")
 
         registrar_actividad_tarjeta(
@@ -149,11 +163,13 @@ def cargar_clasificacion_bulk(request):
             ip_address=request.META.get("REMOTE_ADDR"),
         )
 
-        procesar_clasificacion_con_upload_log.delay(upload_log.id)
+        # Disparar chain de procesamiento (delegando toda la lógica a las tasks)
+        logger.info(f"🚀 Iniciando chain de clasificación para upload_log {upload_log.id}")
+        iniciar_procesamiento_clasificacion_chain.delay(upload_log.id)
 
         return Response(
             {
-                "mensaje": "Archivo recibido y tarea enviada",
+                "mensaje": "Archivo recibido y procesamiento iniciado",
                 "upload_log_id": upload_log.id,
                 "estado": upload_log.estado,
             }

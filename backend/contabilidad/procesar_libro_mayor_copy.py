@@ -1,60 +1,3 @@
-# backend/contabilidad/tasks.py
-
-
-import datetime
-import hashlib
-import logging
-import os
-import re
-import time
-from datetime import date
-
-import pandas as pd
-from celery import shared_task
-from django.core.files.base import ContentFile
-from contabilidad.models import (
-    AccountClassification,
-    ClasificacionCuentaArchivo,
-    ClasificacionOption,
-    ClasificacionSet,
-    CuentaContable,
-    CentroCosto,
-    Auxiliar,
-    LibroMayorArchivo, 
-    MovimientoContable,
-    AperturaCuenta,
-    Incidencia,
-    NombreIngles,
-    NombreInglesArchivo,
-    NombresEnInglesUpload,
-    TipoDocumento,
-    UploadLog,
-    ExcepcionValidacion, 
-)
-# ✨ NUEVO: Importar modelo de incidencias consolidadas
-from contabilidad.models_incidencias import IncidenciaResumen
-from contabilidad.utils.parser_libro_mayor import parsear_libro_mayor
-from contabilidad.utils.parser_nombre_ingles import procesar_archivo_nombres_ingles
-from contabilidad.utils.parser_tipo_documento import parsear_tipo_documento_excel
-from contabilidad.utils.activity_logger import registrar_actividad_tarjeta
-from django.core.files.storage import default_storage
-from django.utils import timezone
-
-logger = logging.getLogger(__name__)
-
-
-@shared_task
-def tarea_de_prueba(nombre):
-    logger.info("👋 ¡Hola %s desde Celery!", nombre)
-    time.sleep(999)
-    logger.info("✅ Tarea completada.")
-    return f"Completado por {nombre}"  # esto sale en succeeded
-
-
-#=======PROCESSORS========
-
-
-
 @shared_task
 def procesar_libro_mayor(upload_log_id):
     """Procesa archivo de Libro Mayor usando UploadLog"""
@@ -615,22 +558,6 @@ def procesar_libro_mayor(upload_log_id):
             ip_address=None,
         )
 
-        # ✨ NUEVO: Mapear clasificaciones RAW después de crear las cuentas
-        try:
-            logger.info(f"Iniciando mapeo de clasificaciones RAW para cliente {upload_log.cliente.id}")
-            from .tasks_cuentas_bulk import mapear_clasificaciones_con_cuentas
-            
-            resultado_mapeo = mapear_clasificaciones_con_cuentas.delay(
-                upload_log.cliente.id, 
-                upload_log.cierre.id if upload_log.cierre else None
-            )
-            
-            logger.info(f"Mapeo de clasificaciones iniciado con task ID: {resultado_mapeo.id}")
-            
-        except Exception as e:
-            logger.warning(f"Error iniciando mapeo de clasificaciones: {str(e)}")
-            # No fallar el procesamiento del libro mayor por esto
-
         return f"Completado: {movimientos_creados} movimientos"
 
     except Exception as e:
@@ -657,22 +584,3 @@ def procesar_libro_mayor(upload_log_id):
         )
 
         return f"Error: {str(e)}"
-
-
-
-
-#=======CLEANING TASKS=======
-from celery import shared_task
-@shared_task
-def limpiar_archivos_temporales_antiguos_task():
-    """
-    Tarea Celery para limpiar archivos temporales antiguos (>24h)
-    """
-    from contabilidad.views import limpiar_archivos_temporales_antiguos
-
-    archivos_eliminados = limpiar_archivos_temporales_antiguos()
-    logger.info(
-        f"🧹 Limpieza automática: {archivos_eliminados} archivos temporales eliminados"
-    )
-    return f"Eliminados {archivos_eliminados} archivos temporales"
-

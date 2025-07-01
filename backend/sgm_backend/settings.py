@@ -22,6 +22,10 @@ CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
+CELERY_BROKER_URL    = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
+
 
 
 # Ajustes para guardar archivos multimedia
@@ -136,12 +140,18 @@ except ModuleNotFoundError:
 CACHES = {
     "default": {
         "BACKEND": _cache_backend,
-        "LOCATION": os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0"),
+        "LOCATION": REDIS_URL,
         "OPTIONS": _cache_opts,
+        "KEY_PREFIX": "sgm_backend",
     }
 }
 
+_cache_opts = {
+    "CLIENT_CLASS": "django_redis.client.DefaultClient",
+    "SERIALIZER": "django_redis.serializers.json.JSONSerializer",
+}
 
+CACHES["default"]["KEY_PREFIX"] = "sgm_backend"
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -222,7 +232,12 @@ LOGGING = {
             'handlers': ['console'],
             'level': 'DEBUG',
         },
-        'contabilidad': {  # Logger for your app
+        'contabilidad': {  # Logger for tu app
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+        'django_redis': {     # Logger para cache con redis
             'handlers': ['console'],
             'level': 'DEBUG',
             'propagate': True,

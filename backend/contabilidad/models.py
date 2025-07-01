@@ -193,7 +193,7 @@ def libro_upload_path(instance, filename):
 
 
 class LibroMayorArchivo(models.Model):
-    """Almacena el archivo Excel de libro mayor (persiste entre cierres)"""
+    """Almacena el archivo Excel de libro mayor (uno por cierre para mantener historicidad)"""
     
     ESTADO_CHOICES = [
         ("subido", "Archivo subido"),
@@ -203,11 +203,17 @@ class LibroMayorArchivo(models.Model):
     ]
     
     id = models.BigAutoField(primary_key=True)
-    cliente = models.OneToOneField(Cliente, on_delete=models.CASCADE)  # ✅ OneToOne como las otras
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)  # ✅ Cambiado a ForeignKey
+    cierre = models.OneToOneField(  # ✅ Un archivo por cierre
+        CierreContabilidad, 
+        on_delete=models.CASCADE,
+        related_name="libro_mayor_archivo",
+        help_text="Cierre contable al que pertenece este libro mayor"
+    )
     archivo = models.FileField(upload_to=libro_upload_path)
     fecha_subida = models.DateTimeField(auto_now_add=True)
     
-    # ✅ Solo enlace a UploadLog (persiste)
+    # ✅ Solo enlace a UploadLog (para tracking)
     upload_log = models.ForeignKey(
         "UploadLog",
         on_delete=models.SET_NULL,
@@ -216,7 +222,7 @@ class LibroMayorArchivo(models.Model):
         help_text="Referencia al log del upload que generó este archivo",
     )
     
-    # ✅ Nuevo: período extraído del nombre del archivo
+    # ✅ Período extraído del nombre del archivo
     periodo = models.CharField(
         max_length=6, 
         help_text="Período MMAAAA extraído del nombre del archivo (ej: 042025)"
@@ -228,44 +234,13 @@ class LibroMayorArchivo(models.Model):
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="subido")
 
     def __str__(self):
-        return f"Libro Mayor {self.periodo} - {self.cliente.nombre}"
+        cierre_info = self.cierre.periodo if self.cierre else "Sin cierre"
+        return f"Libro Mayor {self.periodo} - {self.cliente.nombre} - {cierre_info}"
 
     class Meta:
         verbose_name = "Archivo de Libro Mayor"
         verbose_name_plural = "Archivos de Libro Mayor"
-
-
-# Mantener LibroMayorUpload por compatibilidad durante la transición
-class LibroMayorUpload(models.Model):
-    ESTADO_CHOICES = [
-        ("subido", "Archivo subido"),
-        ("procesando", "Procesando"),
-        ("completado", "Procesado correctamente"),
-        ("error", "Con errores"),
-    ]
-    id = models.BigAutoField(primary_key=True)
-    cierre = models.ForeignKey(
-        CierreContabilidad, on_delete=models.CASCADE, related_name="libros"
-    )
-    archivo = models.FileField(upload_to="libros/legacy/")  # Cambiar path para evitar conflictos
-    upload_log = models.ForeignKey(
-        "UploadLog",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        help_text="Referencia al log del upload que generó este archivo",
-    )
-    fecha_subida = models.DateTimeField(auto_now_add=True)
-    procesado = models.BooleanField(default=False)
-    errores = models.TextField(blank=True)
-    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="subido")
-
-    def __str__(self):
-        return f"{self.cierre} | {self.archivo.name.split('/')[-1]}"
-
-    class Meta:
-        verbose_name = "Libro Mayor Upload (Legacy)"
-        verbose_name_plural = "Libro Mayor Uploads (Legacy)"
+        # ✅ OneToOneField con cierre ya garantiza unicidad automáticamente
 
 
 class AperturaCuenta(models.Model):
@@ -373,34 +348,6 @@ class AccountClassification(models.Model):
 
     def __str__(self):
         return f"{self.cuenta.codigo} - {self.set_clas.nombre} - {self.opcion.valor}"
-
-
-# ======================================
-#           Incidencias
-# ======================================
-class Incidencia(models.Model):
-    cierre = models.ForeignKey(CierreContabilidad, on_delete=models.CASCADE)
-    tipo = models.CharField(
-        max_length=50, choices=[("formato", "Formato"), ("negocio", "Negocio")]
-    )
-    descripcion = models.TextField()
-    respuesta = models.TextField(blank=True)
-    resuelta = models.BooleanField(default=False)
-    creada_por = models.ForeignKey(
-        Usuario,
-        on_delete=models.SET_NULL,
-        null=True,
-        related_name="incidencias_creadas",
-    )
-    respondida_por = models.ForeignKey(
-        Usuario,
-        on_delete=models.SET_NULL,
-        null=True,
-        related_name="incidencias_resueltas",
-    )
-    fecha_creacion = models.DateTimeField(auto_now_add=True)
-    fecha_respuesta = models.DateTimeField(null=True, blank=True)
-
 
 class AnalisisCuentaCierre(models.Model):
     cierre = models.ForeignKey(
@@ -540,26 +487,13 @@ class ClasificacionCuentaArchivo(models.Model):
 
     # Metadatos
     fila_excel = models.IntegerField(null=True, blank=True)  # Para tracking de errores
-    procesado = models.BooleanField(default=False)  # Si ya se mapeó a cuentas reales
-    errores_mapeo = models.TextField(blank=True)  # Errores al hacer el mapeo real
-
-    # Referencia a la cuenta real (cuando se procese)
-    cuenta_mapeada = models.ForeignKey(
-        "CuentaContable",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="clasificaciones_archivo",
-    )
-
     fecha_creacion = models.DateTimeField(auto_now_add=True)
-    fecha_procesado = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         unique_together = ("upload_log", "numero_cuenta")
         indexes = [
-            models.Index(fields=["cliente", "procesado"]),
-            models.Index(fields=["upload_log", "procesado"]),
+            models.Index(fields=["cliente"]),
+            models.Index(fields=["upload_log"]),
         ]
 
     def __str__(self):
@@ -621,6 +555,16 @@ class UploadLog(models.Model):
     # Metadatos adicionales
     tiempo_procesamiento = models.DurationField(null=True, blank=True)
     ip_usuario = models.GenericIPAddressField(null=True, blank=True)
+    
+    # Sistema de iteraciones para reprocesamiento
+    iteracion = models.PositiveIntegerField(
+        default=1,
+        help_text="Número de iteración de procesamiento para este cierre (1=inicial, 2+=reproceso)"
+    )
+    es_iteracion_principal = models.BooleanField(
+        default=True,
+        help_text="Marca si es la iteración principal visible al usuario"
+    )
 
     class Meta:
         verbose_name = "Log de Upload"
@@ -630,6 +574,8 @@ class UploadLog(models.Model):
             models.Index(fields=["cliente", "tipo_upload"]),
             models.Index(fields=["estado", "fecha_subida"]),
             models.Index(fields=["tipo_upload", "estado"]),
+            models.Index(fields=["cierre", "tipo_upload", "iteracion"]),
+            models.Index(fields=["cierre", "tipo_upload", "es_iteracion_principal"]),
         ]
 
     def __str__(self):
@@ -838,3 +784,7 @@ class ExcepcionValidacion(models.Model):
     
     def __str__(self):
         return f"{self.cliente.nombre} - {self.codigo_cuenta} - {self.get_tipo_excepcion_display()}"
+
+
+
+from .models_incidencias import Incidencia, IncidenciaResumen

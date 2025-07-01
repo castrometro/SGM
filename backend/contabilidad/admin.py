@@ -18,7 +18,6 @@ from .models import (
     ClasificacionSet,
     CuentaContable,
     Incidencia,
-    LibroMayorUpload,
     LibroMayorArchivo,  # Nuevo modelo para manejar archivos de libro mayor
     MovimientoContable,
     NombreIngles,
@@ -33,8 +32,6 @@ from .models import (
 # ✨ NUEVO: Importar modelos de incidencias consolidadas
 from .models_incidencias import (
     IncidenciaResumen,
-    HistorialReprocesamiento,
-    LogResolucionIncidencia,
 )
 # ✨ NUEVO: Importar modelo de excepciones
 from .models import ExcepcionValidacion
@@ -160,50 +157,6 @@ class CierreContabilidadAdmin(admin.ModelAdmin):
     search_fields = ("periodo",)
 
 
-@admin.register(LibroMayorUpload)
-class LibroMayorUploadAdmin(admin.ModelAdmin):
-    list_display = (
-        "cierre_info",
-        "archivo_nombre",
-        "fecha_subida",
-        "estado",
-        "procesado",
-        "tamaño_archivo",
-    )
-    list_filter = ("procesado", "estado", "fecha_subida")
-    search_fields = ("cierre__cliente__nombre", "cierre__periodo")
-    readonly_fields = ("fecha_subida",)
-
-    def cierre_info(self, obj):
-        """Información del cierre asociado"""
-        return f"{obj.cierre.cliente.nombre} - {obj.cierre.periodo}"
-
-    cierre_info.short_description = "Cliente - Período"
-
-    def archivo_nombre(self, obj):
-        """Muestra solo el nombre del archivo"""
-        import os
-
-        return os.path.basename(obj.archivo.name) if obj.archivo else "-"
-
-    archivo_nombre.short_description = "Archivo"
-
-    def tamaño_archivo(self, obj):
-        """Muestra el tamaño del archivo"""
-        if obj.archivo:
-            try:
-                size = obj.archivo.size
-                for unit in ["B", "KB", "MB", "GB"]:
-                    if size < 1024.0:
-                        return f"{size:.1f} {unit}"
-                    size /= 1024.0
-                return f"{size:.1f} TB"
-            except:
-                return "N/A"
-        return "-"
-
-    tamaño_archivo.short_description = "Tamaño"
-
 
 @admin.register(LibroMayorArchivo)
 class LibroMayorArchivoAdmin(admin.ModelAdmin):
@@ -322,10 +275,10 @@ class AccountClassificationAdmin(admin.ModelAdmin):
 
 @admin.register(Incidencia)
 class IncidenciaAdmin(admin.ModelAdmin):
-    list_display = ("cierre", "tipo", "resuelta", "fecha_creacion")
-    list_filter = ("resuelta", "tipo", IncidenciaDetalleFilter)
-    search_fields = ("descripcion", "respuesta")
-
+    list_display  = ("tipo", "cuenta_codigo", "tipo_doc_codigo", "descripcion", "fecha_creacion", "creada_por")
+    list_filter   = ("tipo",)
+    search_fields = ("cuenta_codigo", "tipo_doc_codigo", "descripcion")
+    readonly_fields = ("fecha_creacion",)
 
 @admin.register(CentroCosto)
 class CentroCostoAdmin(admin.ModelAdmin):
@@ -344,13 +297,12 @@ class ClasificacionCuentaArchivoAdmin(admin.ModelAdmin):
         "cliente",
         "upload_log",
         "numero_cuenta",
-        "procesado",
         "fila_excel",
         "fecha_creacion",
     )
-    list_filter = ("procesado", "cliente", "upload_log__estado", "fecha_creacion")
+    list_filter = ("cliente", "upload_log__estado", "fecha_creacion")
     search_fields = ("numero_cuenta", "cliente__nombre")
-    readonly_fields = ("fecha_creacion", "fecha_procesado")
+    readonly_fields = ("fecha_creacion",)
 
     def has_add_permission(self, request):
         """No permitir agregar manualmente"""
@@ -360,7 +312,7 @@ class ClasificacionCuentaArchivoAdmin(admin.ModelAdmin):
         return (
             super()
             .get_queryset(request)
-            .select_related("cliente", "upload_log", "cuenta_mapeada")
+            .select_related("cliente", "upload_log")
         )
 
 
@@ -931,143 +883,8 @@ class IncidenciaResumenAdmin(admin.ModelAdmin):
     marcar_como_resueltas.short_description = 'Marcar como resueltas'
 
 
-@admin.register(HistorialReprocesamiento) 
-class HistorialReprocesarAdmin(admin.ModelAdmin):
-    """Administración del historial de reprocesamientos"""
-    
-    list_display = [
-        'id',
-        'upload_log_info',
-        'iteracion',
-        'mejora_display',
-        'trigger_reprocesamiento',
-        'usuario',
-        'fecha_inicio',
-    ]
-    
-    list_filter = [
-        'trigger_reprocesamiento',
-        'fecha_inicio',
-        'upload_log__cliente',
-    ]
-    
-    search_fields = [
-        'upload_log__nombre_archivo_original',
-        'notas',
-    ]
-    
-    readonly_fields = [
-        'fecha_inicio',
-        'tiempo_procesamiento',
-        'incidencias_previas',
-        'incidencias_nuevas',
-        'incidencias_resueltas',
-        'calcular_efectividad',
-        'obtener_mejoras',
-    ]
-    
-    fieldsets = (
-        ('Información Principal', {
-            'fields': (
-                'upload_log',
-                'usuario',
-                'iteracion',
-                'trigger_reprocesamiento'
-            )
-        }),
-        ('Métricas', {
-            'fields': (
-                'incidencias_previas_count',
-                'incidencias_nuevas_count', 
-                'incidencias_resueltas_count',
-                'movimientos_corregidos',
-                'movimientos_total'
-            )
-        }),
-        ('Detalles', {
-            'fields': (
-                'incidencias_previas',
-                'incidencias_nuevas',
-                'incidencias_resueltas',
-                'tiempo_procesamiento',
-                'notas'
-            ),
-            'classes': ('collapse',)
-        })
-    )
-    
-    def upload_log_info(self, obj):
-        """Info del upload log"""
-        return f"{obj.upload_log.cliente.nombre} - {obj.upload_log.nombre_archivo_original}"
-    upload_log_info.short_description = 'Upload Log'
-    
-    def mejora_display(self, obj):
-        """Muestra porcentaje de mejora"""
-        efectividad = obj.calcular_efectividad()
-        if efectividad == 100:
-            return "✅ 100%"
-        elif efectividad >= 80:
-            return f"🟢 {efectividad:.1f}%"
-        elif efectividad >= 50:
-            return f"🟡 {efectividad:.1f}%" 
-        else:
-            return f"🔴 {efectividad:.1f}%"
-    mejora_display.short_description = 'Efectividad'
 
 
-@admin.register(LogResolucionIncidencia)
-class LogResolucionIncidenciaAdmin(admin.ModelAdmin):
-    """Administración de logs de resolución"""
-    
-    list_display = [
-        'id',
-        'incidencia_info',
-        'accion_realizada',
-        'cantidad_resuelta',
-        'usuario',
-        'fecha_accion',
-    ]
-    
-    list_filter = [
-        'accion_realizada',
-        'fecha_accion',
-    ]
-    
-    search_fields = [
-        'observaciones',
-        'incidencia_resumen__codigo_problema',
-    ]
-    
-    readonly_fields = [
-        'fecha_accion',
-        'elementos_resueltos',
-        'datos_adicionales',
-    ]
-    
-    fieldsets = (
-        ('Información Principal', {
-            'fields': (
-                'incidencia_resumen',
-                'usuario',
-                'accion_realizada',
-                'cantidad_resuelta'
-            )
-        }),
-        ('Detalles', {
-            'fields': (
-                'elementos_resueltos',
-                'upload_log_relacionado',
-                'observaciones',
-                'datos_adicionales'
-            ),
-            'classes': ('collapse',)
-        })
-    )
-    
-    def incidencia_info(self, obj):
-        """Info de la incidencia"""
-        return f"{obj.incidencia_resumen.get_tipo_incidencia_display()} - {obj.incidencia_resumen.codigo_problema or 'General'}"
-    incidencia_info.short_description = 'Incidencia'
 
 
 @admin.register(ExcepcionValidacion)

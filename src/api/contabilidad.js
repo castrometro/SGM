@@ -138,6 +138,19 @@ export const reprocesarConExcepciones = async (cierreId) => {
   return res.data;
 };
 
+export const obtenerHistorialReprocesamiento = async (cierreId) => {
+  const res = await api.get(`/contabilidad/libro-mayor/${cierreId}/historial-reprocesamiento/`);
+  return res.data;
+};
+
+export const cambiarIteracionPrincipal = async (cierreId, iteracion) => {
+  const res = await api.post('/contabilidad/libro-mayor/cambiar-iteracion-principal/', {
+    cierre_id: cierreId,
+    iteracion: iteracion
+  });
+  return res.data;
+};
+
 // ==================== CUENTAS ====================
 export const obtenerCuentasCliente = async (clienteId) => {
   const res = await api.get(`/contabilidad/cuentas/`, {
@@ -675,6 +688,16 @@ export const obtenerHistorialUploads = async (
 
 export const obtenerIncidenciasConsolidadas = async (cierreId) => {
   const res = await api.get(`/contabilidad/libro-mayor/${cierreId}/incidencias-consolidadas/`);
+  return res.data;
+};
+
+export const obtenerIncidenciasConsolidadasOptimizado = async (cierreId) => {
+  const res = await api.get(`/contabilidad/libro-mayor/${cierreId}/incidencias-optimizado/`);
+  return res.data;
+};
+
+export const obtenerHistorialIncidencias = async (cierreId) => {
+  const res = await api.get(`/contabilidad/libro-mayor/${cierreId}/historial-incidencias/`);
   return res.data;
 };
 

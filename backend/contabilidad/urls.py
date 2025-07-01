@@ -4,8 +4,27 @@ from django.views.static import serve
 from rest_framework.routers import DefaultRouter
 
 from .views import libro_mayor
+from .views.incidencias import (
+    obtener_incidencias_consolidadas,
+    obtener_incidencias_consolidadas_optimizado,
+    obtener_historial_incidencias,
+    dashboard_incidencias,
+    marcar_incidencia_resuelta,
+    historial_reprocesamiento,
+    resumen_tipos_incidencia,
+    estadisticas_globales_incidencias,
+)
+from .views.excepciones import (
+    marcar_cuenta_no_aplica,
+    listar_excepciones_cuenta,
+    eliminar_excepcion,
+)
+from .views.reprocesamiento import (
+    reprocesar_libro_mayor_con_excepciones,
+    obtener_historial_reprocesamiento,
+    cambiar_iteracion_principal,
+)
 from .views import (
-    LibroMayorUploadViewSet,
     LibroMayorArchivoViewSet,  # ✅ Nuevo ViewSet
     TipoDocumentoViewSet,
     NombreInglesViewSet,
@@ -28,13 +47,10 @@ from .views import (
     AnalisisCuentaCierreViewSet,
     # Function views
     cargar_libro_mayor,
-    reprocesar_movimientos_incompletos,
-    movimientos_incompletos,
     cargar_tipo_documento,
     cargar_nombres_ingles,
     cargar_clasificacion_bulk,
     # Incidencias consolidadas
-    obtener_incidencias_consolidadas,
     dashboard_incidencias,
     marcar_incidencia_resuelta,
     historial_reprocesamiento,
@@ -69,7 +85,6 @@ router.register(r"cuentas", CuentaContableViewSet)
 router.register(r"tipos-documento", TipoDocumentoViewSet)
 router.register(r"nombres-ingles", NombreInglesViewSet)
 router.register(r"cierres", CierreContabilidadViewSet, basename="cierres")
-router.register(r"libromayor", LibroMayorUploadViewSet, basename="libromayor")
 router.register(r"libromayor-archivo", LibroMayorArchivoViewSet, basename="libromayor-archivo")  # ✅ Nuevo endpoint
 router.register(r"aperturas", AperturaCuentaViewSet)
 router.register(r"movimientos", MovimientoContableViewSet)
@@ -102,21 +117,41 @@ urlpatterns = [
     
     # Uploads y procesamiento
     path("libro-mayor/subir-archivo/", cargar_libro_mayor),
-    path("libro-mayor/reprocesar-incompletos/", reprocesar_movimientos_incompletos),
-    path("libro-mayor/incompletos/<int:cierre_id>/", movimientos_incompletos),
+    #path("libro-mayor/reprocesar-incompletos/", reprocesar_movimientos_incompletos),
+    #path("libro-mayor/incompletos/<int:cierre_id>/", movimientos_incompletos),
     path("tipo-documento/subir-archivo/", cargar_tipo_documento),
     path("clasificacion-bulk/subir-archivo/", cargar_clasificacion_bulk),
     path("nombre-ingles/subir-archivo/", cargar_nombres_ingles),
     
     # URLs para Incidencias Consolidadas
-    path("incidencias/<int:cierre_id>/", obtener_incidencias_consolidadas, name="incidencias_consolidadas"),
     path("dashboard/<int:cliente_id>/incidencias/", dashboard_incidencias, name="dashboard_incidencias"),
     path("incidencias/<int:incidencia_id>/resolver/", marcar_incidencia_resuelta, name="resolver_incidencia"),
     path("upload-log/<int:upload_log_id>/historial/", historial_reprocesamiento, name="historial_reprocesamiento"),
     path("incidencias/tipos/", resumen_tipos_incidencia, name="tipos_incidencia"),
     path("incidencias/estadisticas/", estadisticas_globales_incidencias, name="estadisticas_globales"),
     
-    # Cliente endpoints
+    # URLs para Incidencias del Libro Mayor (para el modal del frontend)
+    path("libro-mayor/<int:cierre_id>/incidencias-consolidadas/", 
+         obtener_incidencias_consolidadas, 
+         name="incidencias_consolidadas_libro_mayor"),
+    path("libro-mayor/<int:cierre_id>/incidencias-optimizado/", 
+         obtener_incidencias_consolidadas_optimizado, 
+         name="incidencias_consolidadas_optimizado"),
+    path("libro-mayor/<int:cierre_id>/historial-incidencias/", 
+         obtener_historial_incidencias, 
+         name="historial_incidencias"),
+    
+    # Excepciones de validación
+    path("libro-mayor/marcar-no-aplica/", marcar_cuenta_no_aplica, name="marcar_cuenta_no_aplica"),
+    path("libro-mayor/excepciones/<str:codigo_cuenta>/", listar_excepciones_cuenta, name="listar_excepciones_cuenta"),
+    path("libro-mayor/excepciones/<int:excepcion_id>/eliminar/", eliminar_excepcion, name="eliminar_excepcion"),
+    
+    # Reprocesamiento
+    path("libro-mayor/reprocesar-con-excepciones/", reprocesar_libro_mayor_con_excepciones, name="reprocesar_libro_mayor"),
+    path("libro-mayor/<int:cierre_id>/historial-reprocesamiento/", obtener_historial_reprocesamiento, name="historial_reprocesamiento"),
+    path("libro-mayor/cambiar-iteracion-principal/", cambiar_iteracion_principal, name="cambiar_iteracion_principal"),
+    
+    # Clientes y estados
     path("clientes/<int:cliente_id>/resumen/", resumen_cliente, name="resumen_cliente"),
     path("clientes/<int:cliente_id>/detalle/", detalle_cliente, name="detalle_cliente"),
     path("clientes/<int:cliente_id>/uploads/", historial_uploads_cliente, name="historial_uploads"),
@@ -155,16 +190,4 @@ urlpatterns = [
         "document_root": settings.BASE_DIR / "static/plantillas",
         "path": "plantilla_clasificacion.xlsx",
     }, name="descargar_plantilla_clasificacion_bulk"),
-    path('libro-mayor/<int:cierre_id>/incidencias-consolidadas/', 
-         libro_mayor.incidencias_consolidadas, 
-         name='libro_mayor_incidencias_consolidadas'),
-    path('libro-mayor/<int:cierre_id>/incidencias/<str:tipo_incidencia>/detalle/',
-         libro_mayor.obtener_cuentas_detalle_incidencia, 
-         name="detalle_incidencia"),
-    path("libro-mayor/marcar-no-aplica/", 
-         libro_mayor.marcar_cuenta_no_aplica, 
-         name="marcar_no_aplica"),
-    path("libro-mayor/reprocesar-con-excepciones/", 
-         libro_mayor.reprocesar_con_excepciones, 
-         name="reprocesar_con_excepciones"),
 ]

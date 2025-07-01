@@ -13,7 +13,6 @@ from .models import (
     ClasificacionSet,
     CuentaContable,
     Incidencia,
-    LibroMayorUpload,
     LibroMayorArchivo,  # ✅ Nuevo modelo
     MovimientoContable,
     NombreIngles,
@@ -167,31 +166,6 @@ class ProgresoClasificacionSerializer(serializers.Serializer):
     parsing_completado = serializers.BooleanField()
 
 
-class LibroMayorUploadSerializer(serializers.ModelSerializer):
-    archivo_nombre = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = LibroMayorUpload
-        fields = [
-            "id",
-            "cierre",
-            "archivo",
-            "archivo_nombre",
-            "fecha_subida",
-            "procesado",
-            "errores",
-            "estado",
-            "upload_log",
-        ]
-        read_only_fields = ["fecha_subida", "procesado", "errores", "estado", "upload_log", "archivo_nombre"]
-    
-    def get_archivo_nombre(self, obj):
-        """Extrae el nombre del archivo del path completo"""
-        if obj.archivo:
-            import os
-            return os.path.basename(obj.archivo.name)
-        return None
-
 
 class LibroMayorArchivoSerializer(serializers.ModelSerializer):
     """Serializer para el nuevo modelo LibroMayorArchivo que persiste entre cierres"""
@@ -318,11 +292,7 @@ class ClasificacionCuentaArchivoSerializer(serializers.ModelSerializer):
             "numero_cuenta",
             "clasificaciones",
             "fila_excel",
-            "procesado",
-            "errores_mapeo",
-            "cuenta_mapeada",
             "fecha_creacion",
-            "fecha_procesado",
         ]
         read_only_fields = ["fecha_creacion", "fecha_procesado"]
 

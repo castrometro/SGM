@@ -5,11 +5,15 @@ import {
   obtenerEstadoUploadLog,
   obtenerMovimientosIncompletos,
   obtenerIncidenciasConsolidadas,
+  obtenerIncidenciasConsolidadasOptimizado,
+  obtenerHistorialIncidencias,
+  reprocesarConExcepciones,
 } from "../../api/contabilidad";
 import EstadoBadge from "../EstadoBadge";
 import Notificacion from "../Notificacion";
 import ModalMovimientosIncompletos from "./ModalMovimientosIncompletos";
 import ModalIncidenciasConsolidadas from "./ModalIncidenciasConsolidadas";
+import ModalHistorialReprocesamiento from "./ModalHistorialReprocesamiento";
 
 const LibroMayorCard = ({
   cierreId,
@@ -35,6 +39,9 @@ const LibroMayorCard = ({
   const [modalIncompletoAbierto, setModalIncompletoAbierto] = useState(false);
   const [movimientosIncompletos, setMovimientosIncompletos] = useState([]);
   const [incidenciasConsolidadas, setIncidenciasConsolidadas] = useState([]);
+  const [sinIncidencias, setSinIncidencias] = useState(false);
+  const [mensajeSinIncidencias, setMensajeSinIncidencias] = useState("");
+  const [modalHistorialAbierto, setModalHistorialAbierto] = useState(false);
   const fileInputRef = useRef();
 
   const mostrarNotificacion = (tipo, mensaje) => {
@@ -45,42 +52,53 @@ const LibroMayorCard = ({
     setNotificacion({ visible: false, tipo: "", mensaje: "" });
   };
 
+  // Función para cargar estado (se extrae para reutilizar)
+  const cargarEstado = async () => {
+    if (!cierreId) return;
+    try {
+      const data = await obtenerLibrosMayor(cierreId);
+      const ultimo = data && data.length > 0 ? data[data.length - 1] : null;
+      
+      if (ultimo) {
+        setEstado(ultimo.estado);
+        setArchivoNombre(ultimo.archivo_nombre || ultimo.archivo || ultimo.nombre || "");
+        
+        if (ultimo.upload_log) {
+          setUploadLogId(ultimo.upload_log);
+          const logData = await obtenerEstadoUploadLog(ultimo.upload_log);
+          setUploadEstado(logData);
+          
+          const movimientos = logData.resumen?.procesamiento?.movimientos || 0;
+          const incidencias = logData.resumen?.incidencias?.creadas || 0;
+          
+          setMovimientosProcesados(movimientos);
+          setIncidenciasDetectadas(incidencias);
+          
+          // Verificar snapshot de incidencias para determinar si hay incidencias
+          const snapshot = logData.resumen?.incidencias_snapshot;
+          if (snapshot) {
+            setSinIncidencias(snapshot.sin_incidencias || false);
+            setMensajeSinIncidencias(snapshot.mensaje_sin_incidencias || "");
+          }
+        }
+
+        if (ultimo.estado === "procesando") {
+          setSubiendo(true);
+        } else if (ultimo.estado === "completado") {
+          onCompletado && onCompletado(true);
+        }
+      } else {
+        setEstado("pendiente");
+      }
+    } catch (e) {
+      console.error("Error cargando libro mayor:", e);
+    }
+  };
+
   // Cargar último libro mayor al montar
   useEffect(() => {
-    const cargarEstado = async () => {
-      if (!cierreId) return;
-      try {
-        const data = await obtenerLibrosMayor(cierreId);
-        const ultimo = data && data.length > 0 ? data[data.length - 1] : null;
-        if (ultimo) {
-          setEstado(ultimo.estado);
-          setArchivoNombre(ultimo.archivo_nombre || ultimo.archivo || ultimo.nombre || "");
-          if (ultimo.upload_log) {
-            setUploadLogId(ultimo.upload_log);
-            const logData = await obtenerEstadoUploadLog(ultimo.upload_log);
-            setUploadEstado(logData);
-            setMovimientosProcesados(
-              logData.resumen?.movimientos_creados || 0,
-            );
-            setIncidenciasDetectadas(
-              logData.resumen?.incidencias_creadas || 0,
-            );
-          }
-
-          if (ultimo.estado === "procesando") {
-            setSubiendo(true);
-          } else if (ultimo.estado === "completado") {
-            onCompletado && onCompletado(true);
-          }
-        } else {
-          setEstado("pendiente");
-        }
-      } catch (e) {
-        console.error("Error cargando libro mayor:", e);
-      }
-    };
     cargarEstado();
-  }, [cierreId, onCompletado]);
+  }, [cierreId]);
 
   // Monitoreo en tiempo real
   useEffect(() => {
@@ -97,15 +115,24 @@ const LibroMayorCard = ({
           setEstado("completado");
           setSubiendo(false);
           setUploadProgreso("¡Procesamiento completado!");
-          setMovimientosProcesados(logData.resumen?.movimientos_creados || 0);
-          setIncidenciasDetectadas(logData.resumen?.incidencias_creadas || 0);
+          setMovimientosProcesados(logData.resumen?.procesamiento?.movimientos || 0);
+          setIncidenciasDetectadas(logData.resumen?.incidencias?.creadas || 0);
+          
+          // Verificar snapshot de incidencias para determinar si hay incidencias
+          const snapshot = logData.resumen?.incidencias_snapshot;
+          if (snapshot) {
+            setSinIncidencias(snapshot.sin_incidencias || false);
+            setMensajeSinIncidencias(snapshot.mensaje_sin_incidencias || "");
+          }
           
           // Mensaje específico con estadísticas como en otras tarjetas
-          const movimientos = logData.resumen?.movimientos_creados || 0;
-          const incidencias = logData.resumen?.incidencias_creadas || 0;
+          const movimientos = logData.resumen?.procesamiento?.movimientos || 0;
+          const incidencias = logData.resumen?.incidencias?.creadas || 0;
           let mensaje = `✅ Archivo procesado correctamente (${movimientos} movimientos contables)`;
           if (incidencias > 0) {
             mensaje += ` • ${incidencias} incidencias detectadas`;
+          } else {
+            mensaje += ` • Sin incidencias detectadas`;
           }
           
           mostrarNotificacion("success", mensaje);
@@ -207,14 +234,140 @@ const LibroMayorCard = ({
 
   const handleVerIncidencias = async () => {
     try {
-      const data = await obtenerIncidenciasConsolidadas(cierreId);
-      setIncidenciasConsolidadas(data);
+      // Intentar usar endpoint optimizado primero
+      const data = await obtenerIncidenciasConsolidadasOptimizado(cierreId);
+      
+      // El backend devuelve un objeto con {incidencias: [...], estadisticas: {...}}
+      // pero el modal espera el array de incidencias directamente
+      const incidenciasArray = Array.isArray(data) ? data : (data.incidencias || []);
+      
+      setIncidenciasConsolidadas(incidenciasArray);
       setModalIncompletoAbierto(true);
+      
+      // Log performance info si está disponible
+      if (data._performance) {
+        console.log(`📊 Incidencias cargadas desde ${data._source} en ${data._performance.calculation_time}`);
+      }
+      
     } catch (err) {
-      console.error("Error cargando incidencias consolidadas:", err);
-      setIncidenciasConsolidadas([]);
-      mostrarNotificacion("error", "Error al cargar las incidencias");
+      console.error("Error cargando incidencias optimizadas, intentando fallback:", err);
+      
+      // Fallback al método original
+      try {
+        const data = await obtenerIncidenciasConsolidadas(cierreId);
+        const incidenciasArray = Array.isArray(data) ? data : (data.incidencias || []);
+        setIncidenciasConsolidadas(incidenciasArray);
+        setModalIncompletoAbierto(true);
+      } catch (fallbackErr) {
+        console.error("Error en fallback también:", fallbackErr);
+        setIncidenciasConsolidadas([]);
+        mostrarNotificacion("error", "Error al cargar las incidencias");
+      }
     }
+  };
+
+  const handleReprocesar = async () => {
+    if (!cierreId) return;
+    
+    const confirmar = window.confirm(
+      "¿Está seguro de que desea reprocesar el Libro Mayor?\n\n" +
+      "Esto creará una nueva iteración aplicando las excepciones marcadas como 'No aplica'. " +
+      "El procesamiento puede tomar varios minutos."
+    );
+    
+    if (!confirmar) return;
+    
+    try {
+      setSubiendo(true);
+      setEstado("procesando");
+      mostrarNotificacion("info", "🔄 Iniciando reprocesamiento...");
+      
+      const resultado = await reprocesarConExcepciones(cierreId);
+      
+      setUploadLogId(resultado.upload_log_id);
+      mostrarNotificacion("success", 
+        `✅ Reprocesamiento iniciado. Nueva iteración: ${resultado.nueva_iteracion}`
+      );
+      
+      // Iniciar polling más frecuente para reprocesamiento
+      iniciarPollingReprocesamiento(resultado.upload_log_id);
+      
+    } catch (error) {
+      console.error('Error reprocesando:', error);
+      setSubiendo(false);
+      setEstado("error");
+      const mensaje = error.response?.data?.error || error.message || "Error desconocido";
+      mostrarNotificacion("error", `❌ Error en reprocesamiento: ${mensaje}`);
+    }
+  };
+
+  const iniciarPollingReprocesamiento = (uploadLogId) => {
+    let intentos = 0;
+    const maxIntentos = 30; // 30 intentos = 1 minuto máximo
+    
+    const verificarEstado = async () => {
+      try {
+        const estadoUpload = await obtenerEstadoUploadLog(uploadLogId);
+        
+        if (estadoUpload.estado === 'completado') {
+          // Reprocesamiento completado
+          setSubiendo(false);
+          
+          // Verificar snapshot de incidencias para determinar mensaje
+          const snapshot = estadoUpload.resumen?.incidencias_snapshot;
+          let mensaje = "✅ Reprocesamiento completado";
+          
+          if (snapshot?.sin_incidencias) {
+            mensaje += " - Sin incidencias detectadas";
+          } else {
+            const incidencias = estadoUpload.resumen?.incidencias?.creadas || 0;
+            if (incidencias > 0) {
+              mensaje += ` - ${incidencias} incidencias detectadas`;
+            }
+          }
+          
+          mostrarNotificacion("success", mensaje);
+          await cargarEstado(); // Recargar todo el estado
+          return; // Detener polling
+        } else if (estadoUpload.estado === 'error') {
+          // Error en reprocesamiento
+          setSubiendo(false);
+          setEstado("error");
+          mostrarNotificacion("error", "❌ Error en el reprocesamiento");
+          return; // Detener polling
+        }
+        
+        // Actualizar progreso si está disponible
+        if (estadoUpload.resumen?.procesamiento) {
+          const proc = estadoUpload.resumen.procesamiento;
+          setUploadProgreso(`Procesando: ${proc.movimientos || 0} movimientos, ${proc.aperturas || 0} aperturas`);
+        }
+        
+        // Continuar polling si no ha terminado
+        intentos++;
+        if (intentos < maxIntentos) {
+          setTimeout(verificarEstado, 2000); // Verificar cada 2 segundos
+        } else {
+          // Timeout - recargar una vez más y detener
+          setSubiendo(false);
+          mostrarNotificacion("info", "⏱️ Reprocesamiento en curso, actualice la página para ver el progreso");
+          cargarEstado();
+        }
+        
+      } catch (error) {
+        console.error("Error verificando estado del reprocesamiento:", error);
+        intentos++;
+        if (intentos < maxIntentos) {
+          setTimeout(verificarEstado, 3000); // Retry en 3 segundos si hay error
+        } else {
+          setSubiendo(false);
+          cargarEstado();
+        }
+      }
+    };
+    
+    // Iniciar verificación después de 3 segundos
+    setTimeout(verificarEstado, 3000);
   };
 
   return (
@@ -315,24 +468,63 @@ const LibroMayorCard = ({
                     ⚠ {incidenciasDetectadas} incidencias detectadas
                   </div>
                 )}
-                {uploadEstado.resumen.cuentas_nuevas > 0 && (
+                {uploadEstado.resumen?.procesamiento?.cuentas_nuevas > 0 && (
                   <div className="text-blue-300">
-                    🆕 {uploadEstado.resumen.cuentas_nuevas} cuentas nuevas creadas
+                    🆕 {uploadEstado.resumen.procesamiento.cuentas_nuevas} cuentas nuevas creadas
                   </div>
                 )}
               </div>
             )}
             
-            {/* Botón para ver incidencias si existen */}
-            {incidenciasDetectadas > 0 && (
+            {/* Botones de acción */}
+            <div className="flex items-center gap-2 mt-2">
+              {incidenciasDetectadas > 0 && (
+                <button
+                  type="button"
+                  onClick={handleVerIncidencias}
+                  className="text-blue-400 hover:text-blue-200 text-xs underline"
+                >
+                  Ver incidencias ({incidenciasDetectadas})
+                </button>
+              )}
+              
+              {sinIncidencias && incidenciasDetectadas === 0 && (
+                <div className="text-green-400 text-xs flex items-center gap-1">
+                  ✅ {mensajeSinIncidencias || "Sin incidencias detectadas"}
+                </div>
+              )}
+              
+              {/* Botón reprocesar - disponible cuando hay un procesamiento completado */}
+              {sinIncidencias ? (
+                <button
+                  type="button"
+                  disabled
+                  className="bg-green-600 text-white text-xs px-2 py-1 rounded cursor-not-allowed opacity-75 flex items-center gap-1"
+                  title="No hay incidencias que procesar"
+                >
+                  ✅ Sin Incidencias!
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleReprocesar}
+                  className="bg-orange-600 hover:bg-orange-700 text-white text-xs px-2 py-1 rounded transition-colors flex items-center gap-1"
+                  title="Crear nueva iteración aplicando excepciones marcadas"
+                >
+                  🔄 Reprocesar
+                </button>
+              )}
+              
+              {/* Botón historial */}
               <button
                 type="button"
-                onClick={handleVerIncidencias}
-                className="text-blue-400 hover:text-blue-200 text-xs underline mt-1"
+                onClick={() => setModalHistorialAbierto(true)}
+                className="bg-gray-600 hover:bg-gray-700 text-white text-xs px-2 py-1 rounded transition-colors flex items-center gap-1"
+                title="Ver historial de reprocesamiento"
               >
-                Ver movimientos con incidencias
+                📋 Historial
               </button>
-            )}
+            </div>
           </div>
         ) : estado === 'procesando' ? (
           <div className="text-blue-400">🔄 Procesando archivo...</div>
@@ -358,6 +550,11 @@ const LibroMayorCard = ({
           // Recargar el estado del libro mayor después del reprocesamiento
           cargarEstado();
         }}
+      />
+      <ModalHistorialReprocesamiento
+        abierto={modalHistorialAbierto}
+        onClose={() => setModalHistorialAbierto(false)}
+        cierreId={cierreId}
       />
     </div>
   );

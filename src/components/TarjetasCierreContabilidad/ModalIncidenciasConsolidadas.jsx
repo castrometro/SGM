@@ -79,7 +79,6 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
       if (incidencia && incidencia.elementos_afectados) {
         // Transform elementos_afectados to match the expected structure
         const cuentasFromSnapshot = incidencia.elementos_afectados.map(elemento => {
-          console.log('DEBUG - Elemento recibido:', elemento); // Debug temporal
           return {
             codigo: elemento.codigo,
             nombre: elemento.descripcion || `Cuenta ${elemento.codigo}`,

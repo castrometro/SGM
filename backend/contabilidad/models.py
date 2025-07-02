@@ -319,6 +319,18 @@ class ClasificacionOption(models.Model):
     )
     valor = models.CharField(max_length=100)
     descripcion = models.TextField(blank=True)
+    
+    # Campos para soporte bilingüe (solo para sets por defecto del sistema)
+    valor_en = models.CharField(
+        max_length=100, 
+        blank=True, 
+        null=True,
+        help_text="Valor en inglés para sets por defecto del sistema"
+    )
+    descripcion_en = models.TextField(
+        blank=True,
+        help_text="Descripción en inglés para sets por defecto del sistema"
+    )
 
     @property
     def nivel(self):
@@ -328,6 +340,43 @@ class ClasificacionOption(models.Model):
             n += 1
             p = p.parent
         return n
+
+    def get_valor(self, idioma='es'):
+        """
+        Obtiene el valor en el idioma especificado.
+        
+        Args:
+            idioma (str): 'es' para español, 'en' para inglés
+            
+        Returns:
+            str: Valor en el idioma solicitado
+        """
+        if idioma == 'en' and self.valor_en:
+            return self.valor_en
+        return self.valor
+
+    def get_descripcion(self, idioma='es'):
+        """
+        Obtiene la descripción en el idioma especificado.
+        
+        Args:
+            idioma (str): 'es' para español, 'en' para inglés
+            
+        Returns:
+            str: Descripción en el idioma solicitado
+        """
+        if idioma == 'en' and self.descripcion_en:
+            return self.descripcion_en
+        return self.descripcion
+
+    def tiene_traduccion_completa(self):
+        """
+        Verifica si la opción tiene traducción completa al inglés.
+        
+        Returns:
+            bool: True si tiene tanto valor_en como descripcion_en
+        """
+        return bool(self.valor_en and self.descripcion_en)
 
     def __str__(self):
         return f"{self.valor} - {self.descripcion}"

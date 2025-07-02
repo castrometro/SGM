@@ -208,15 +208,68 @@ class MovimientoContableSerializer(serializers.ModelSerializer):
 
 
 class ClasificacionSetSerializer(serializers.ModelSerializer):
+    tiene_opciones_bilingues = serializers.SerializerMethodField()
+    total_opciones = serializers.SerializerMethodField()
+    
     class Meta:
         model = ClasificacionSet
         fields = "__all__"
+        
+    def get_tiene_opciones_bilingues(self, obj):
+        """Verificar si el set tiene opciones con contenido en ambos idiomas"""
+        for opcion in obj.opciones.all():
+            tiene_es = bool(opcion.valor and opcion.valor.strip())
+            tiene_en = bool(opcion.valor_en and opcion.valor_en.strip())
+            if tiene_es and tiene_en:
+                return True
+        return False
+        
+    def get_total_opciones(self, obj):
+        """Obtener el total de opciones del set"""
+        return obj.opciones.count()
 
 
 class ClasificacionOptionSerializer(serializers.ModelSerializer):
+    # Campos bilingües adicionales
+    valor_es = serializers.SerializerMethodField()
+    valor_en = serializers.SerializerMethodField()
+    descripcion_es = serializers.SerializerMethodField()
+    descripcion_en = serializers.SerializerMethodField()
+    tiene_es = serializers.SerializerMethodField()
+    tiene_en = serializers.SerializerMethodField()
+    es_bilingue = serializers.SerializerMethodField()
+    
     class Meta:
         model = ClasificacionOption
         fields = "__all__"
+        
+    def get_valor_es(self, obj):
+        """Obtener valor en español"""
+        return obj.valor
+        
+    def get_valor_en(self, obj):
+        """Obtener valor en inglés"""
+        return obj.valor_en
+        
+    def get_descripcion_es(self, obj):
+        """Obtener descripción en español"""
+        return obj.descripcion
+        
+    def get_descripcion_en(self, obj):
+        """Obtener descripción en inglés"""
+        return obj.descripcion_en
+        
+    def get_tiene_es(self, obj):
+        """Verificar si tiene contenido en español"""
+        return bool(obj.valor and obj.valor.strip())
+        
+    def get_tiene_en(self, obj):
+        """Verificar si tiene contenido en inglés"""
+        return bool(obj.valor_en and obj.valor_en.strip())
+        
+    def get_es_bilingue(self, obj):
+        """Verificar si la opción tiene contenido en ambos idiomas"""
+        return self.get_tiene_es(obj) and self.get_tiene_en(obj)
 
 
 class AccountClassificationSerializer(serializers.ModelSerializer):

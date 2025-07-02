@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Check, AlertTriangle, Clock, FileText, Plus, Edit2, Trash2, Save, XCircle, Settings, Database, FolderPlus } from 'lucide-react';
+import { X, Check, AlertTriangle, Clock, FileText, Plus, Edit2, Trash2, Save, XCircle, Settings, Database, FolderPlus, Globe } from 'lucide-react';
 import { 
   obtenerClasificacionesArchivo,
   registrarVistaClasificaciones,
@@ -16,7 +16,15 @@ import {
   eliminarOpcion
 } from '../api/contabilidad';
 
-const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, onDataChanged }) => {
+const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, cliente, onDataChanged }) => {
+  console.log('🏗️ Modal props recibidos:', { 
+    isOpen, 
+    uploadId, 
+    clienteId, 
+    clienteExiste: !!cliente,
+    clienteBilingue: cliente?.bilingue,
+    onDataChanged: !!onDataChanged 
+  });
   const [registros, setRegistros] = useState([]);
   const [loading, setLoading] = useState(false);
   const [estadisticas, setEstadisticas] = useState({});
@@ -53,18 +61,34 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
   const [nuevoSet, setNuevoSet] = useState('');
   const [setEditando, setSetEditando] = useState('');
   
-  // Estados para opciones
-  const [opcionesPorSet, setOpcionesPorSet] = useState({});
+  // Estados para opciones (solo bilingües)
   const [editandoOpcion, setEditandoOpcion] = useState(null);
   const [creandoOpcionPara, setCreandoOpcionPara] = useState(null);
   const [nuevaOpcion, setNuevaOpcion] = useState('');
   const [opcionEditando, setOpcionEditando] = useState('');
 
+  // Estados para manejo bilingüe
+  const [idiomaMostrado, setIdiomaMostrado] = useState('es'); // Solo para cambiar la visualización
+  const [idiomaPorSet, setIdiomaPorSet] = useState({}); // { setId: 'es' | 'en' }
+  const [opcionesBilinguesPorSet, setOpcionesBilinguesPorSet] = useState({});
+
   useEffect(() => {
+    console.log('🎯 useEffect ejecutado:', { 
+      isOpen, 
+      uploadId, 
+      clienteId, 
+      cliente: !!cliente,
+      clienteBilingue: cliente?.bilingue,
+      clienteCompleto: cliente ? { id: cliente.id, nombre: cliente.nombre, bilingue: cliente.bilingue } : null
+    });
+    
     if (isOpen && uploadId && clienteId) {
+      console.log('✅ Condiciones cumplidas - iniciando carga');
+      
       // Registrar que se abrió el modal manualmente
       registrarVistaClasificaciones(clienteId, uploadId)
         .then(() => {
+          console.log('📋 Vista registrada - cargando datos');
           // Después de registrar, cargar los datos
           cargarRegistros();
           // Cargar sets también
@@ -73,9 +97,12 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
         .catch((err) => {
           console.error("Error al registrar vista del modal:", err);
           // Aunque falle el registro, cargar los datos igual
+          console.log('📋 Error en registro - cargando datos de todos modos');
           cargarRegistros();
           cargarSets();
         });
+    } else {
+      console.log('❌ Condiciones no cumplidas para carga');
     }
   }, [isOpen, uploadId, clienteId]);
 
@@ -95,30 +122,100 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
   const cargarSets = async () => {
     setLoadingSets(true);
     try {
-      const setsData = await obtenerSetsCliente(clienteId);
-      setSets(setsData);
+      console.log('🔄 Iniciando carga de sets con endpoints originales...');
+      console.log('👤 Cliente info:', { 
+        clienteExiste: !!cliente,
+        bilingue: cliente?.bilingue,
+        id: cliente?.id || clienteId,
+        nombre: cliente?.nombre
+      });
       
-      // Limpiar opciones anteriores para evitar mezcla
-      setOpcionesPorSet({});
+      if (!clienteId) {
+        console.warn('⚠️ No hay clienteId disponible');
+        setSets([]);
+        setOpcionesBilinguesPorSet({});
+        return;
+      }
       
-      // Cargar opciones para cada set de forma secuencial para evitar conflictos
-      const nuevasOpciones = {};
-      for (const set of setsData) {
+      // Usar endpoints originales - primero cargar sets
+      const sets = await obtenerSetsCliente(clienteId);
+      console.log('📦 Sets cargados:', sets);
+      
+      setSets(sets);
+      
+      // Cargar opciones para cada set
+      const nuevasOpcionesBilingues = {};
+      const nuevoIdiomaPorSet = {};
+      
+      for (const set of sets) {
         try {
           const opciones = await obtenerOpcionesSet(set.id);
-          nuevasOpciones[set.id] = opciones;
-        } catch (error) {
-          console.error(`Error cargando opciones para set ${set.id}:`, error);
-          nuevasOpciones[set.id] = [];
+          console.log(`📋 Opciones para set ${set.id} (${set.nombre}):`, opciones);
+          
+          // Organizar opciones por idioma usando los nuevos campos del serializer
+          const opcionesEs = [];
+          const opcionesEn = [];
+          
+          opciones.forEach(opcion => {
+            // Agregar a ES si tiene contenido en español
+            if (opcion.tiene_es && opcion.valor_es) {
+              opcionesEs.push({
+                id: opcion.id,
+                valor: opcion.valor_es,
+                descripcion: opcion.descripcion_es || '',
+                set_clas_id: set.id
+              });
+            }
+            
+            // Agregar a EN si tiene contenido en inglés
+            if (opcion.tiene_en && opcion.valor_en) {
+              opcionesEn.push({
+                id: opcion.id,
+                valor: opcion.valor_en,
+                descripcion: opcion.descripcion_en || '',
+                set_clas_id: set.id
+              });
+            }
+          });
+          
+          nuevasOpcionesBilingues[set.id] = {
+            es: opcionesEs,
+            en: opcionesEn
+          };
+          
+          // Establecer idioma por set (siempre español por defecto)
+          nuevoIdiomaPorSet[set.id] = 'es';
+          
+          console.log(`� Set ${set.id} (${set.nombre}):`, {
+            opciones_es: opcionesEs.length,
+            opciones_en: opcionesEn.length,
+            es_bilingue: set.tiene_opciones_bilingues
+          });
+        } catch (opcionError) {
+          console.error(`❌ Error cargando opciones para set ${set.id}:`, opcionError);
+          nuevasOpcionesBilingues[set.id] = { es: [], en: [] };
+          nuevoIdiomaPorSet[set.id] = 'es';
         }
       }
       
-      // Actualizar todas las opciones de una vez
-      setOpcionesPorSet(nuevasOpciones);
+      setOpcionesBilinguesPorSet(nuevasOpcionesBilingues);
+      setIdiomaPorSet(nuevoIdiomaPorSet);
+      
+      // Establecer idioma del cliente (usar lógica simple basada en la propiedad bilingue)
+      const idiomaPreferido = 'es'; // Valor por defecto siempre español
+      setIdiomaMostrado(idiomaPreferido);
+      
+      console.log('✅ Carga completada exitosamente');
+      console.log('📊 Resumen:', {
+        total_sets: sets.length,
+        cliente_bilingue: cliente?.bilingue,
+        idioma_preferido: idiomaPreferido
+      });
       
     } catch (error) {
-      console.error("Error cargando sets:", error);
+      console.error("❌ Error cargando sets con endpoints originales:", error);
       setSets([]);
+      setOpcionesBilinguesPorSet({});
     } finally {
       setLoadingSets(false);
     }
@@ -127,6 +224,44 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
   const calcularEstadisticas = (data) => {
     const total = data.length;
     setEstadisticas({ total });
+  };
+
+  // Función para cambiar idioma globalmente (solo para clientes bilingües)
+  const cambiarIdiomaGlobal = (nuevoIdioma) => {
+    if (!cliente?.bilingue) return; // Solo permitir si el cliente es bilingüe
+    
+    console.log(`🌐 Cambiando idioma GLOBAL a ${nuevoIdioma}`);
+    setIdiomaMostrado(nuevoIdioma);
+    
+    // Actualizar TODOS los sets al mismo idioma
+    const nuevoIdiomaPorSet = {};
+    sets.forEach(set => {
+      nuevoIdiomaPorSet[set.id] = nuevoIdioma;
+    });
+    setIdiomaPorSet(nuevoIdiomaPorSet);
+    
+    // Log de confirmación
+    console.log(`✅ Todos los sets (${sets.length}) cambiados a ${nuevoIdioma.toUpperCase()}`);
+  };
+
+  // Función para cambiar idioma de un set específico (solo frontend)
+  const cambiarIdiomaSet = (setId, nuevoIdioma) => {
+    if (!cliente?.bilingue) return; // Solo permitir si el cliente es bilingüe
+    
+    console.log(`🌐 Cambiando idioma del set ${setId} a ${nuevoIdioma}`);
+    
+    setIdiomaPorSet(prev => ({
+      ...prev,
+      [setId]: nuevoIdioma
+    }));
+    
+    // Log para debug - mostrar qué opciones están disponibles
+    const opcionesBilingues = opcionesBilinguesPorSet[setId];
+    if (opcionesBilingues) {
+      console.log(`  📋 Opciones ES: ${opcionesBilingues.es?.length || 0}`);
+      console.log(`  📋 Opciones EN: ${opcionesBilingues.en?.length || 0}`);
+      console.log(`  📋 Mostrando: ${opcionesBilingues[nuevoIdioma]?.length || 0} opciones`);
+    }
   };
 
   // ==================== FUNCIONES DE FILTRADO ====================
@@ -193,8 +328,24 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
   };
 
   const obtenerOpcionesParaSet = (setId) => {
-    if (!setId || !opcionesPorSet || !opcionesPorSet[setId]) return [];
-    return opcionesPorSet[setId] || [];
+    if (!setId) return [];
+    
+    console.log(`🔍 Obteniendo opciones para set ${setId}`);
+   
+    const idioma = cliente?.bilingue ? (idiomaPorSet[setId] || 'es') : 'es';
+    console.log(`  🌐 Idioma objetivo: ${idioma}, Cliente bilingüe: ${!!cliente?.bilingue}`);
+    
+    const opcionesBilingues = opcionesBilinguesPorSet[setId];
+    
+    if (!opcionesBilingues) {
+      console.log(`  ⚠️ No hay opciones cargadas para set ${setId}`);
+      return [];
+    }
+    
+    const opciones = opcionesBilingues[idioma] || [];
+    console.log(`  ✅ Devolviendo ${opciones.length} opciones en ${idioma.toUpperCase()}`);
+    
+    return opciones;
   };
 
   const agregarClasificacionARegistro = () => {
@@ -516,10 +667,54 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
       >
         {/* Header del modal */}
         <div className="flex justify-between items-center p-6 border-b border-gray-700 bg-gray-900">
-          <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-            <Database size={20} />
-            Gestión de Clasificaciones
-          </h2>
+          <div className="flex items-center gap-4">
+            <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+              <Database size={20} />
+              Gestión de Clasificaciones
+            </h2>
+            
+            {/* Switch global de idioma - Solo para clientes con sets bilingües */}
+            {(() => {
+              // Verificar si hay al menos un set con opciones bilingües
+              const haySetsBilingues = cliente?.bilingue && sets.some(set => {
+                const opcionesEs = opcionesBilinguesPorSet[set.id]?.es || [];
+                const opcionesEn = opcionesBilinguesPorSet[set.id]?.en || [];
+                return opcionesEs.length > 0 && opcionesEn.length > 0;
+              });
+              
+              if (!haySetsBilingues) return null;
+              
+              return (
+                <div className="flex items-center gap-2 bg-gray-800 rounded-lg p-2 border border-gray-600">
+                  <Globe size={14} className="text-gray-400" />
+                  <span className="text-xs text-gray-400">Todos los sets:</span>
+                  <button
+                    onClick={() => cambiarIdiomaGlobal('es')}
+                    className={`px-3 py-1 rounded text-sm font-medium transition ${
+                      idiomaMostrado === 'es'
+                        ? 'bg-blue-600 text-white shadow-md'
+                        : 'text-gray-300 hover:text-white hover:bg-gray-700'
+                    }`}
+                    title="Cambiar todos los sets a Español"
+                  >
+                    🇪🇸 ES
+                  </button>
+                  <button
+                    onClick={() => cambiarIdiomaGlobal('en')}
+                    className={`px-3 py-1 rounded text-sm font-medium transition ${
+                      idiomaMostrado === 'en'
+                        ? 'bg-blue-600 text-white shadow-md'
+                        : 'text-gray-300 hover:text-white hover:bg-gray-700'
+                    }`}
+                    title="Cambiar todos los sets a Inglés"
+                  >
+                    🇺🇸 EN
+                  </button>
+                </div>
+              );
+            })()}
+          </div>
+          
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-white transition-colors"
@@ -1045,6 +1240,21 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                   Gestión de Sets de Clasificación
                 </h3>
                 
+                {/* Ayuda para entender los switches */}
+                {cliente?.bilingue && (
+                  <div className="mb-4 p-3 bg-blue-900/20 border border-blue-700/50 rounded-lg">
+                    <div className="flex items-center gap-2 text-blue-300 text-sm">
+                      <Globe size={14} />
+                      <span className="font-medium">Controles de idioma:</span>
+                    </div>
+                    <ul className="mt-2 text-xs text-blue-200 space-y-1">
+                      <li>• <strong>Header del modal</strong>: Cambia TODOS los sets al mismo idioma</li>
+                      <li>• <strong>Switch por set</strong>: Cambia solo ese set específico</li>
+                      <li>• Los números muestran cuántas opciones hay en cada idioma</li>
+                    </ul>
+                  </div>
+                )}
+                
                 <div className="flex gap-2 items-center">
                   {creandoSet ? (
                     <>
@@ -1102,21 +1312,118 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                       <div key={set.id} className="bg-gray-800 rounded-lg p-4 border border-gray-700">
                         {/* Header del set */}
                         <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-2">
-                            {editandoSet === set.id ? (
-                              <input
-                                type="text"
-                                value={setEditando}
-                                onChange={(e) => setSetEditando(e.target.value)}
-                                className="bg-gray-700 text-white px-2 py-1 rounded border border-gray-600 font-medium"
-                                onKeyPress={(e) => e.key === 'Enter' && handleEditarSet()}
-                              />
-                            ) : (
-                              <h4 className="text-white font-medium">{set.nombre}</h4>
-                            )}
-                            <span className="text-gray-400 text-sm">
-                              ({opcionesPorSet[set.id]?.length || 0} opciones)
-                            </span>
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2">
+                              {editandoSet === set.id ? (
+                                <input
+                                  type="text"
+                                  value={setEditando}
+                                  onChange={(e) => setSetEditando(e.target.value)}
+                                  className="bg-gray-700 text-white px-2 py-1 rounded border border-gray-600 font-medium"
+                                  onKeyPress={(e) => e.key === 'Enter' && handleEditarSet()}
+                                />
+                              ) : (
+                                <h4 className="text-white font-medium">{set.nombre}</h4>
+                              )}
+                              <span className="text-gray-400 text-sm">
+                                ({obtenerOpcionesParaSet(set.id).length || 0} opciones)
+                              </span>
+                              
+                              {/* Indicador de estado bilingüe */}
+                              {(() => {
+                                const opcionesEs = opcionesBilinguesPorSet[set.id]?.es || [];
+                                const opcionesEn = opcionesBilinguesPorSet[set.id]?.en || [];
+                                const tieneEspanol = opcionesEs.length > 0;
+                                const tieneIngles = opcionesEn.length > 0;
+                                
+                                if (tieneEspanol && tieneIngles) {
+                                  return (
+                                    <span 
+                                      className="px-2 py-0.5 bg-green-700 text-green-200 text-xs rounded-full flex items-center gap-1"
+                                      title={`Bilingüe completo: ${opcionesEs.length} ES, ${opcionesEn.length} EN`}
+                                    >
+                                      <Globe size={10} />
+                                      Bilingüe ({opcionesEs.length}/{opcionesEn.length})
+                                    </span>
+                                  );
+                                } else if (tieneEspanol) {
+                                  return (
+                                    <span 
+                                      className="px-2 py-0.5 bg-blue-700 text-blue-200 text-xs rounded-full"
+                                      title={`Solo español: ${opcionesEs.length} opciones`}
+                                    >
+                                      Solo ES ({opcionesEs.length})
+                                    </span>
+                                  );
+                                } else if (tieneIngles) {
+                                  return (
+                                    <span 
+                                      className="px-2 py-0.5 bg-purple-700 text-purple-200 text-xs rounded-full"
+                                      title={`Solo inglés: ${opcionesEn.length} opciones`}
+                                    >
+                                      Solo EN ({opcionesEn.length})
+                                    </span>
+                                  );
+                                } else {
+                                  return (
+                                    <span 
+                                      className="px-2 py-0.5 bg-gray-700 text-gray-300 text-xs rounded-full"
+                                      title="Sin opciones bilingües"
+                                    >
+                                      Sin opciones
+                                    </span>
+                                  );
+                                }
+                              })()}
+                            </div>
+                            
+                            {/* Selector de idioma individual - Solo para sets con opciones bilingües */}
+                            {(() => {
+                              const opcionesEs = opcionesBilinguesPorSet[set.id]?.es || [];
+                              const opcionesEn = opcionesBilinguesPorSet[set.id]?.en || [];
+                              const tieneOpcionesBilingues = opcionesEs.length > 0 && opcionesEn.length > 0;
+                              
+                              // Solo mostrar si el cliente es bilingüe Y el set tiene opciones en ambos idiomas
+                              if (!cliente?.bilingue || !tieneOpcionesBilingues) {
+                                return null;
+                              }
+                              
+                              const idiomaActual = idiomaPorSet[set.id] || 'es';
+                              
+                              return (
+                                <div className="flex items-center gap-1 bg-gray-700 rounded-lg p-1 border border-gray-600">
+                                  <span className="text-xs text-gray-400 px-1">Este set:</span>
+                                  <button
+                                    onClick={() => cambiarIdiomaSet(set.id, 'es')}
+                                    className={`px-2 py-1 rounded text-xs font-medium transition relative ${
+                                      idiomaActual === 'es'
+                                        ? 'bg-blue-600 text-white shadow-sm'
+                                        : 'text-gray-300 hover:text-white hover:bg-gray-600'
+                                    }`}
+                                    title={`Español: ${opcionesEs.length} opciones disponibles`}
+                                  >
+                                    ES
+                                    <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center leading-none">
+                                      {opcionesEs.length}
+                                    </span>
+                                  </button>
+                                  <button
+                                    onClick={() => cambiarIdiomaSet(set.id, 'en')}
+                                    className={`px-2 py-1 rounded text-xs font-medium transition relative ${
+                                      idiomaActual === 'en'
+                                        ? 'bg-blue-600 text-white shadow-sm'
+                                        : 'text-gray-300 hover:text-white hover:bg-gray-600'
+                                    }`}
+                                    title={`Inglés: ${opcionesEn.length} opciones disponibles`}
+                                  >
+                                    EN
+                                    <span className="absolute -top-1 -right-1 bg-green-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center leading-none">
+                                      {opcionesEn.length}
+                                    </span>
+                                  </button>
+                                </div>
+                              );
+                            })()}
                           </div>
                           
                           <div className="flex gap-1">
@@ -1167,65 +1474,82 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                         {/* Opciones del set */}
                         <div className="space-y-2">
                           <div className="flex flex-wrap gap-2">
-                            {opcionesPorSet[set.id]?.map((opcion) => (
-                              <div key={opcion.id} className="flex items-center gap-1 bg-blue-900/30 px-2 py-1 rounded">
-                                {editandoOpcion === opcion.id ? (
-                                  <input
-                                    type="text"
-                                    value={opcionEditando}
-                                    onChange={(e) => setOpcionEditando(e.target.value)}
-                                    className="bg-gray-700 text-white px-1 py-0.5 rounded border border-gray-600 text-sm w-20"
-                                    onKeyPress={(e) => e.key === 'Enter' && handleEditarOpcion(opcion.id)}
-                                  />
-                                ) : (
-                                  <span className="text-white text-sm">{opcion.valor}</span>
-                                )}
-                                
-                                <div className="flex gap-0.5 ml-1">
+                            {obtenerOpcionesParaSet(set.id)?.map((opcion) => {
+                              // Determinar el texto a mostrar según el idioma seleccionado
+                              const idiomaActual = idiomaPorSet[set.id] || idiomaCliente;
+                              const textoOpcion = idiomaActual === 'en' && opcion.valor_completo 
+                                ? opcion.valor_completo 
+                                : (opcion.valor || opcion.valor_es || 'Sin texto');
+                              
+                              return (
+                                <div key={opcion.id} className="flex items-center gap-1 bg-blue-900/30 px-2 py-1 rounded">
                                   {editandoOpcion === opcion.id ? (
-                                    <>
-                                      <button
-                                        onClick={() => handleEditarOpcion(opcion.id)}
-                                        className="text-green-400 hover:text-green-300"
-                                        title="Guardar"
-                                      >
-                                        <Save size={12} />
-                                      </button>
-                                      <button
-                                        onClick={() => {
-                                          setEditandoOpcion(null);
-                                          setOpcionEditando('');
-                                        }}
-                                        className="text-gray-400 hover:text-gray-300"
-                                        title="Cancelar"
-                                      >
-                                        <XCircle size={12} />
-                                      </button>
-                                    </>
+                                    <input
+                                      type="text"
+                                      value={opcionEditando}
+                                      onChange={(e) => setOpcionEditando(e.target.value)}
+                                      className="bg-gray-700 text-white px-1 py-0.5 rounded border border-gray-600 text-sm w-20"
+                                      onKeyPress={(e) => e.key === 'Enter' && handleEditarOpcion(opcion.id)}
+                                    />
                                   ) : (
-                                    <>
-                                      <button
-                                        onClick={() => {
-                                          setEditandoOpcion(opcion.id);
-                                          setOpcionEditando(opcion.valor);
-                                        }}
-                                        className="text-blue-400 hover:text-blue-300"
-                                        title="Editar"
-                                      >
-                                        <Edit2 size={12} />
-                                      </button>
-                                      <button
-                                        onClick={() => handleEliminarOpcion(opcion.id)}
-                                        className="text-red-400 hover:text-red-300"
-                                        title="Eliminar"
-                                      >
-                                        <Trash2 size={12} />
-                                      </button>
-                                    </>
+                                    <span className="text-white text-sm" title={opcion.descripcion || opcion.descripcion_completa}>
+                                      {textoOpcion}
+                                    </span>
                                   )}
+                                  
+                                  {/* Indicador de idioma */}
+                                  <span className={`text-xs px-1 rounded ${
+                                    idiomaActual === 'en' ? 'bg-green-700 text-green-200' : 'bg-blue-700 text-blue-200'
+                                  }`}>
+                                    {idiomaActual.toUpperCase()}
+                                  </span>
+                                  
+                                  <div className="flex gap-0.5 ml-1">
+                                    {editandoOpcion === opcion.id ? (
+                                      <>
+                                        <button
+                                          onClick={() => handleEditarOpcion(opcion.id)}
+                                          className="text-green-400 hover:text-green-300"
+                                          title="Guardar"
+                                        >
+                                          <Save size={12} />
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            setEditandoOpcion(null);
+                                            setOpcionEditando('');
+                                          }}
+                                          className="text-gray-400 hover:text-gray-300"
+                                          title="Cancelar"
+                                        >
+                                          <XCircle size={12} />
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <button
+                                          onClick={() => {
+                                            setEditandoOpcion(opcion.id);
+                                            setOpcionEditando(opcion.valor || textoOpcion);
+                                          }}
+                                          className="text-blue-400 hover:text-blue-300"
+                                          title="Editar"
+                                        >
+                                          <Edit2 size={12} />
+                                        </button>
+                                        <button
+                                          onClick={() => handleEliminarOpcion(opcion.id)}
+                                          className="text-red-400 hover:text-red-300"
+                                          title="Eliminar"
+                                        >
+                                          <Trash2 size={12} />
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
 
                           {/* Agregar nueva opción */}
@@ -1282,11 +1606,21 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
         {/* Footer */}
         <div className="bg-gray-800 px-6 py-4 border-t border-gray-700">
           <div className="flex justify-between items-center">
-            <div className="text-sm text-gray-400">
-              {pestanaActiva === 'registros' ? (
-                `Mostrando ${registros.length} registros de clasificación`
-              ) : (
-                `Gestionando ${sets.length} sets con ${Object.values(opcionesPorSet).flat().length} opciones`
+            <div className="flex items-center gap-4 text-sm text-gray-400">
+              <span>
+                {pestanaActiva === 'registros' ? (
+                  `Mostrando ${registros.length} registros de clasificación`
+                ) : (
+                  `Gestionando ${sets.length} sets con ${Object.values(opcionesBilinguesPorSet).flatMap(opciones => [...(opciones.es || []), ...(opciones.en || [])]).length} opciones`
+                )}
+              </span>
+              
+              {/* Indicador de estado bilingüe */}
+              {cliente?.bilingue && (
+                <div className="flex items-center gap-1 px-2 py-1 bg-green-900/30 border border-green-700/50 rounded text-green-300">
+                  <Globe size={12} />
+                  <span className="text-xs">Cliente bilingüe</span>
+                </div>
               )}
             </div>
             <button

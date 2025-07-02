@@ -29,6 +29,14 @@ const ClasificacionBulkCard = ({
   disabled,
   numeroPaso,
 }) => {
+  console.log('🏗️ ClasificacionBulkCard props recibidos:', { 
+    clienteId, 
+    clienteExiste: !!cliente,
+    clienteBilingue: cliente?.bilingue,
+    clienteCompleto: cliente ? { id: cliente.id, nombre: cliente.nombre, bilingue: cliente.bilingue } : null,
+    disabled,
+    numeroPaso 
+  });
   const [archivoNombre, setArchivoNombre] = useState("");
   const [estado, setEstado] = useState("pendiente");
   const [subiendo, setSubiendo] = useState(false);
@@ -437,6 +445,7 @@ const ClasificacionBulkCard = ({
         onClose={() => setModalRegistrosRaw(false)}
         uploadId={ultimoUpload?.id}
         clienteId={clienteId}
+        cliente={cliente}
         onDataChanged={() => {
           cargar(); // Recargar datos después de cambios CRUD
         }}

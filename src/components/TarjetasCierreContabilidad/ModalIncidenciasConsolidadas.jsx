@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { X, RefreshCw, ChevronRight, ChevronDown, CheckCircle } from 'lucide-react';
-import { reprocesarConExcepciones, marcarCuentaNoAplica } from '../../api/contabilidad';
+import { reprocesarConExcepciones, marcarCuentaNoAplica, obtenerIncidenciasConsolidadasOptimizado } from '../../api/contabilidad';
 
 const getSeverityColor = (severidad) => {
   const colors = {
@@ -12,25 +12,54 @@ const getSeverityColor = (severidad) => {
   return colors[severidad] || 'text-gray-400';
 };
 
-const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias, cierreId, onReprocesar }) => {
+const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenciasProp, cierreId, onReprocesar }) => {
   const [expandida, setExpandida] = useState(null);
   const [cuentasDetalle, setCuentasDetalle] = useState({});
   const [reprocesando, setReprocesando] = useState(false);
+  const [incidenciasActuales, setIncidenciasActuales] = useState(incidenciasProp || []);
+  const [recargando, setRecargando] = useState(false);
+
+  // Efecto para actualizar incidencias cuando cambian las props
+  useEffect(() => {
+    setIncidenciasActuales(incidenciasProp || []);
+  }, [incidenciasProp]);
+
+  // Función para recargar incidencias desde el servidor
+  const recargarIncidencias = async () => {
+    if (!cierreId) return;
+    
+    setRecargando(true);
+    try {
+      const data = await obtenerIncidenciasConsolidadasOptimizado(cierreId);
+      const incidenciasArray = Array.isArray(data) ? data : (data.incidencias || []);
+      setIncidenciasActuales(incidenciasArray);
+      
+      // Limpiar detalles expandidos para forzar recarga
+      setCuentasDetalle({});
+      setExpandida(null);
+      
+    } catch (error) {
+      console.error('Error recargando incidencias:', error);
+    } finally {
+      setRecargando(false);
+    }
+  };
 
   if (!abierto) return null;
 
-  const handleReprocesar = async () => {
+  const handleActualizar = async () => {
     if (!cierreId) return;
     
     setReprocesando(true);
     try {
-      await reprocesarConExcepciones(cierreId);
-      alert('Reprocesamiento completado. Las incidencias se actualizarán.');
+      // Solo recargar las incidencias sin reprocesar
+      await recargarIncidencias();
+      alert('Incidencias actualizadas.');
+      
       if (onReprocesar) onReprocesar();
-      onClose();
     } catch (error) {
-      console.error('Error en reprocesamiento:', error);
-      alert('Error al reprocesar: ' + (error.response?.data?.error || error.message));
+      console.error('Error al actualizar incidencias:', error);
+      alert('Error al actualizar: ' + (error.response?.data?.error || error.message));
     } finally {
       setReprocesando(false);
     }
@@ -46,15 +75,20 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias, cierreId,
     
     // Usar los datos que ya tenemos en elementos_afectados en lugar de hacer llamada HTTP
     if (!cuentasDetalle[tipoIncidencia]) {
-      const incidencia = incidencias[index];
+      const incidencia = incidenciasActuales[index];
       if (incidencia && incidencia.elementos_afectados) {
         // Transform elementos_afectados to match the expected structure
-        const cuentasFromSnapshot = incidencia.elementos_afectados.map(elemento => ({
-          codigo: elemento.codigo,
-          nombre: elemento.descripcion || `Cuenta ${elemento.codigo}`,
-          descripcion: elemento.descripcion,
-          tiene_excepcion: false // Default value
-        }));
+        const cuentasFromSnapshot = incidencia.elementos_afectados.map(elemento => {
+          console.log('DEBUG - Elemento recibido:', elemento); // Debug temporal
+          return {
+            codigo: elemento.codigo,
+            nombre: elemento.descripcion || `Cuenta ${elemento.codigo}`,
+            descripcion: elemento.descripcion,
+            set_nombre: elemento.set_nombre || null, // Nombre del set específico faltante
+            set_id: elemento.set_id || null, // ID del set específico faltante
+            tiene_excepcion: false // Default value
+          };
+        });
         
         setCuentasDetalle(prev => ({
           ...prev,
@@ -67,9 +101,30 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias, cierreId,
     }
   };
 
-  const handleMarcarNoAplica = async (codigoCuenta, tipoIncidencia, motivo = '') => {
+  // Función para determinar si se puede marcar "No aplica" según el tipo de incidencia
+  const puedeMarcarNoAplica = (tipoIncidencia) => {
+    // Solo permitir "No aplica" para:
+    // - DOC_NULL: movimientos sin tipo de documento
+    // - CUENTA_NO_CLAS o CUENTA_NO_CLASIFICADA: cuentas sin clasificación (para sets específicos)
+    return tipoIncidencia === 'DOC_NULL' || 
+           tipoIncidencia === 'CUENTA_NO_CLAS' || 
+           tipoIncidencia === 'CUENTA_NO_CLASIFICADA';
+  };
+
+  const handleMarcarNoAplica = async (codigoCuenta, tipoIncidencia, setId = null, motivo = '') => {
     try {
-      await marcarCuentaNoAplica(cierreId, codigoCuenta, tipoIncidencia, motivo);
+      // Para clasificaciones, incluir el set_id específico
+      const payload = {
+        codigo_cuenta: codigoCuenta,
+        tipo_incidencia: tipoIncidencia,
+        motivo: motivo
+      };
+      
+      if ((tipoIncidencia === 'CUENTA_NO_CLAS' || tipoIncidencia === 'CUENTA_NO_CLASIFICADA') && setId) {
+        payload.set_clasificacion_id = setId;
+      }
+      
+      await marcarCuentaNoAplica(cierreId, codigoCuenta, tipoIncidencia, motivo, setId);
       
       // Actualizar el estado local
       setCuentasDetalle(prev => ({
@@ -97,12 +152,13 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias, cierreId,
           <h3 className="text-lg font-semibold text-white">Incidencias Detectadas</h3>
           <div className="flex items-center gap-3">
             <button
-              onClick={handleReprocesar}
+              onClick={handleActualizar}
               disabled={reprocesando}
               className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white px-3 py-1 rounded text-sm flex items-center gap-2 transition-colors"
+              title="Actualizar incidencias desde el servidor"
             >
               <RefreshCw size={16} className={reprocesando ? 'animate-spin' : ''} />
-              {reprocesando ? 'Reprocesando...' : 'Reprocesar'}
+              {reprocesando ? 'Actualizando...' : 'Actualizar'}
             </button>
             <button
               onClick={onClose}
@@ -115,13 +171,13 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias, cierreId,
 
         {/* Content */}
         <div className="p-4 overflow-y-auto flex-1">
-          {!incidencias || incidencias.length === 0 ? (
+          {!incidenciasActuales || incidenciasActuales.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-gray-400 text-lg">No se encontraron incidencias.</p>
             </div>
           ) : (
             <div className="space-y-4">
-              {incidencias.map((incidencia, index) => (
+              {incidenciasActuales.map((incidencia, index) => (
                 <div
                   key={index}
                   className="bg-gray-800 rounded-lg border border-gray-700"
@@ -193,6 +249,16 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias, cierreId,
                         <div>
                           <h4 className="text-white font-medium mb-3">
                             Cuentas afectadas ({cuentasDetalle[incidencia.tipo_incidencia].cuentas?.length || 0})
+                            {incidencia.tipo_incidencia === 'CUENTA_NO_CLAS' && (
+                              <span className="text-sm text-gray-400 font-normal ml-2">
+                                - Falta clasificación en sets específicos
+                              </span>
+                            )}
+                            {incidencia.tipo_incidencia === 'CUENTA_NO_CLASIFICADA' && (
+                              <span className="text-sm text-gray-400 font-normal ml-2">
+                                - Falta clasificación en sets específicos
+                              </span>
+                            )}
                           </h4>
                           <div className="space-y-2 max-h-60 overflow-y-auto">
                             {cuentasDetalle[incidencia.tipo_incidencia].cuentas?.map((cuenta, idx) => (
@@ -208,7 +274,12 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias, cierreId,
                                     <div className="text-gray-400 text-sm mt-1">
                                       {cuenta.descripcion}
                                     </div>
-                                  )}
+                                  )}                          {/* Mostrar información específica del set para clasificaciones */}
+                          {(incidencia.tipo_incidencia === 'CUENTA_NO_CLAS' || incidencia.tipo_incidencia === 'CUENTA_NO_CLASIFICADA') && cuenta.set_nombre && (
+                            <div className="text-yellow-400 text-sm mt-1 bg-yellow-900/20 px-2 py-1 rounded">
+                              <span className="font-medium">Set faltante:</span> {cuenta.set_nombre}
+                            </div>
+                          )}
                                   {cuenta.monto > 0 && (
                                     <div className="text-green-400 text-sm">
                                       Monto: ${cuenta.monto.toLocaleString()}
@@ -222,13 +293,38 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias, cierreId,
                                       <CheckCircle size={16} />
                                       <span className="text-sm">No aplica</span>
                                     </div>
-                                  ) : (
+                                  ) : puedeMarcarNoAplica(incidencia.tipo_incidencia) ? (
                                     <button
-                                      onClick={() => handleMarcarNoAplica(cuenta.codigo, incidencia.tipo_incidencia)}
+                                      onClick={() => handleMarcarNoAplica(
+                                        cuenta.codigo, 
+                                        incidencia.tipo_incidencia,
+                                        cuenta.set_id // Pasar el set_id específico para clasificaciones
+                                      )}
                                       className="px-3 py-1 bg-orange-600 hover:bg-orange-700 text-white text-sm rounded transition-colors"
+                                      title={
+                                        incidencia.tipo_incidencia === 'DOC_NULL' 
+                                          ? 'Marcar que esta cuenta no requiere tipo de documento'
+                                          : (incidencia.tipo_incidencia === 'CUENTA_NO_CLAS' || incidencia.tipo_incidencia === 'CUENTA_NO_CLASIFICADA')
+                                          ? `Marcar que esta cuenta no aplica para el set: ${cuenta.set_nombre || 'clasificación'}`
+                                          : 'Marcar como no aplica'
+                                      }
                                     >
-                                      Marcar "No aplica"
+                                      {incidencia.tipo_incidencia === 'DOC_NULL' 
+                                        ? 'No requiere tipo doc'
+                                        : (incidencia.tipo_incidencia === 'CUENTA_NO_CLAS' || incidencia.tipo_incidencia === 'CUENTA_NO_CLASIFICADA')
+                                        ? `No aplica en "${cuenta.set_nombre || 'Set'}"`
+                                        : 'Marcar "No aplica"'
+                                      }
                                     </button>
+                                  ) : (
+                                    <div className="text-gray-400 text-xs">
+                                      {incidencia.tipo_incidencia === 'CUENTA_INGLES' 
+                                        ? 'Requiere nombre en inglés'
+                                        : incidencia.tipo_incidencia === 'DOC_NO_REC'
+                                        ? 'Requiere configurar tipo documento'
+                                        : 'Acción requerida'
+                                      }
+                                    </div>
                                   )}
                                 </div>
                               </div>

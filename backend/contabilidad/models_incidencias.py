@@ -21,6 +21,9 @@ class Incidencia(models.Model):
     tipo                   = models.CharField(max_length=16, choices=TIPO_CHOICES)
     cuenta_codigo          = models.CharField("Código Cuenta", max_length=50, null=True, blank=True)
     tipo_doc_codigo        = models.CharField("Código Doc.",    max_length=20, null=True, blank=True)
+    # Campos específicos para incidencias de clasificación
+    set_clasificacion_id   = models.IntegerField("ID Set Clasificación", null=True, blank=True)
+    set_clasificacion_nombre = models.CharField("Nombre Set Clasificación", max_length=100, null=True, blank=True)
     descripcion            = models.TextField(blank=True)
     fecha_creacion         = models.DateTimeField(auto_now_add=True)
     creada_por             = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)

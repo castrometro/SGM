@@ -641,20 +641,28 @@ export const obtenerOpcionesSet = async (setId) => {
   return res.data;
 };
 
-export const crearOpcion = async (setId, valor) => {
+export const crearOpcion = async (setId, datos) => {
+  // datos puede ser: { valor: "...", valor_en: "...", descripcion: "...", descripcion_en: "..." }
   const res = await api.post("/contabilidad/clasificaciones-opcion/", {
     set_clas: setId,
-    valor: valor,
+    ...datos,
   });
   return res.data;
 };
 
-export const actualizarOpcion = async (opcionId, valor) => {
-  const res = await api.put(
+export const actualizarOpcion = async (opcionId, datos, setClasId = null) => {
+  // datos puede ser: { valor: "...", valor_en: "...", descripcion: "...", descripcion_en: "..." }
+  const dataToSend = { ...datos };
+  
+  // Si se proporciona setClasId, incluirlo (requerido para PATCH en algunos casos)
+  if (setClasId) {
+    dataToSend.set_clas = setClasId;
+  }
+  
+  // Usar PATCH en lugar de PUT para enviar solo los campos que cambian
+  const res = await api.patch(
     `/contabilidad/clasificaciones-opcion/${opcionId}/`,
-    {
-      valor: valor,
-    },
+    dataToSend,
   );
   return res.data;
 };
@@ -706,12 +714,19 @@ export const obtenerCuentasDetalleIncidencia = async (cierreId, tipoIncidencia) 
   return res.data;
 };
 
-export const marcarCuentaNoAplica = async (cierreId, codigoCuenta, tipoExcepcion, motivo = '') => {
-  const res = await api.post('/contabilidad/libro-mayor/marcar-no-aplica/', {
+export const marcarCuentaNoAplica = async (cierreId, codigoCuenta, tipoExcepcion, motivo = '', setId = null) => {
+  const payload = {
     cierre_id: cierreId,
     codigo_cuenta: codigoCuenta,
     tipo_excepcion: tipoExcepcion,
     motivo: motivo
-  });
+  };
+  
+  // Agregar set_id para clasificaciones específicas
+  if (setId) {
+    payload.set_clasificacion_id = setId;
+  }
+  
+  const res = await api.post('/contabilidad/libro-mayor/marcar-no-aplica/', payload);
   return res.data;
 };

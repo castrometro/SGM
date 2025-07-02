@@ -29,6 +29,7 @@ from .models import (
     AccountClassification,
     Incidencia,
     ExcepcionValidacion,
+    ExcepcionClasificacionSet,
 )
 
 logger = get_task_logger(__name__)
@@ -193,7 +194,9 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
     cliente_id = cliente.id
     cierre = upload.cierre
 
-    # 1. CARGA INICIAL - Una sola vez al inicio
+    # 1. CARGA INICIAL COMPLETA - Una sola vez al inicio
+    
+    # Mapas de datos principales
     nombres_ingles_map = {
         ni.cuenta_codigo: ni.nombre_ingles
         for ni in NombreIngles.objects.filter(cliente=cliente)
@@ -202,24 +205,95 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
         c.numero_cuenta: c
         for c in ClasificacionCuentaArchivo.objects.filter(cliente=cliente)
     }
+    
+    # Sets de clasificación con sus opciones precargadas
+    sets_clasificacion = list(ClasificacionSet.objects.filter(cliente=cliente).prefetch_related('opciones'))
+    sets_clasificacion_dict = {s.id: s for s in sets_clasificacion}
+    
+    # Excepciones por set de clasificación
+    excepciones_por_set = {}
+    for exc in ExcepcionClasificacionSet.objects.filter(cliente=cliente, activa=True).select_related('set_clasificacion'):
+        set_id = exc.set_clasificacion.id
+        if set_id not in excepciones_por_set:
+            excepciones_por_set[set_id] = set()
+        excepciones_por_set[set_id].add(exc.codigo_cuenta)
+    
+    # Tipos de documento precargados (con caché optimizado)
+    tipos_documento_map = {
+        td.codigo: td
+        for td in TipoDocumento.objects.filter(cliente=cliente)
+    }
+    
+    # Excepciones de validación por tipo
+    excepciones_nombres_ingles = set(
+        ExcepcionValidacion.objects.filter(
+            cliente=cliente,
+            tipo_excepcion='cuentas_sin_nombre_ingles',
+            activa=True
+        ).values_list('codigo_cuenta', flat=True)
+    )
+    
+    excepciones_tipo_doc_null = set(
+        ExcepcionValidacion.objects.filter(
+            cliente=cliente,
+            tipo_excepcion='movimientos_tipodoc_nulo',
+            activa=True
+        ).values_list('codigo_cuenta', flat=True)
+    )
+    
+    excepciones_tipo_doc_no_reconocido = set(
+        ExcepcionValidacion.objects.filter(
+            cliente=cliente,
+            tipo_excepcion='tipos_doc_no_reconocidos',
+            activa=True
+        ).values_list('codigo_cuenta', flat=True)
+    )
+    
+    # Arrays de trabajo
     processed_accounts = {}
     aperturas = []
     movimientos = []
-    stats = {"cuentas_nuevas": 0, "aperturas": 0, "movimientos": 0}
+    incidencias_pendientes = []  # Array para recopilar incidencias
     
-    logger.info(f"Cargados {len(nombres_ingles_map)} nombres en inglés para cliente {cliente_id}")
-    logger.info(f"Cargados {len(clasif_raw_map)} registros de clasificación RAW para cliente {cliente_id}")
+    # Sets para agrupar incidencias por cuenta (evitar duplicados por cuenta)
+    cuentas_sin_clasificacion_por_set = {}  # {set_id: {cuenta_codigo: set_nombre}}
+    cuentas_sin_nombre_ingles = set()
+    cuentas_con_tipo_doc_null = set()
+    cuentas_con_tipo_doc_no_reconocido = {}  # dict para guardar también el código no reconocido
+    
+    stats = {"cuentas_nuevas": 0, "aperturas": 0, "movimientos": 0, "incidencias_detectadas": 0}
+    
+    logger.info(f"CARGA INICIAL COMPLETADA:")
+    logger.info(f"  - {len(nombres_ingles_map)} nombres en inglés")
+    logger.info(f"  - {len(clasif_raw_map)} registros de clasificación RAW")
+    logger.info(f"  - {len(sets_clasificacion)} sets de clasificación")
+    logger.info(f"  - {len(excepciones_por_set)} sets con excepciones")
+    logger.info(f"  - {len(tipos_documento_map)} tipos de documento")
+    logger.info(f"  - {len(excepciones_nombres_ingles)} excepciones nombres inglés")
+    logger.info(f"  - {len(excepciones_tipo_doc_null)} excepciones tipo doc null")
+    logger.info(f"  - {len(excepciones_tipo_doc_no_reconocido)} excepciones tipo doc no reconocido")
 
-    # -- helper para tipos de documento (con caché) --
-    def get_tipo_doc(code):
-        code = code.strip()
-        key = f"tipodoc:{cliente_id}:{code}"
-        td_id = cache.get(key)
-        if td_id is None:
-            td = TipoDocumento.objects.filter(cliente=cliente, codigo=code).first()
-            td_id = td.id if td else None
-            cache.set(key, td_id, timeout=3600)
-        return TipoDocumento.objects.filter(pk=td_id).first() if td_id else None
+    # -- helper optimizado para tipos de documento --
+    def get_tipo_doc(codigo_td, cuenta_codigo):
+        """
+        Obtiene tipo de documento optimizado con validación de excepciones en línea
+        Retorna: (tipo_documento_obj, generar_incidencia_null, generar_incidencia_no_reconocido)
+        """
+        if not codigo_td:
+            # Sin código de tipo documento
+            generar_incidencia = cuenta_codigo not in excepciones_tipo_doc_null
+            return None, generar_incidencia, False
+        
+        # Buscar tipo documento en el mapa precargado
+        tipo_doc = tipos_documento_map.get(codigo_td.strip())
+        
+        if tipo_doc:
+            # Tipo documento encontrado
+            return tipo_doc, False, False
+        else:
+            # Tipo documento no reconocido
+            generar_incidencia = cuenta_codigo not in excepciones_tipo_doc_no_reconocido
+            return None, False, generar_incidencia
 
     # 2. FUNCIONES AUXILIARES
     def procesar_saldo_anterior(row, cierre, code, aperturas, stats):
@@ -239,15 +313,27 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
             logger.error(f"Error procesando saldo anterior para cuenta {code}: {e}")
 
     def procesar_movimiento(row, cierre, cuenta_obj, get_tipo_doc, movimientos, stats, indices_cols):
-        """Procesa un movimiento contable y lo añade a la lista de movimientos"""
+        """Procesa un movimiento contable con validación completa en línea"""
         try:
             # Desempaquetar índices de columnas
             ND, TP, NC, NI, CC, AUX, DG, DS, TD, D, H, F = indices_cols
             
-            # Campos básicos
+            # Extraer código de tipo documento
             codigo_td = (str(row[TD]).strip()[:10] if (TD is not None and row[TD]) else "")
             
-            # Capturar TODOS los datos disponibles del Excel
+            # Validar tipo documento con el helper optimizado
+            tipo_doc_obj, generar_inc_null, generar_inc_no_reconocido = get_tipo_doc(codigo_td, cuenta_obj.codigo)
+            
+            # Generar incidencias de tipo documento si es necesario (AGRUPADAS POR CUENTA)
+            if generar_inc_null:
+                cuentas_con_tipo_doc_null.add(cuenta_obj.codigo)
+                logger.debug(f"Cuenta {cuenta_obj.codigo} marcada para incidencia tipo doc null")
+            
+            if generar_inc_no_reconocido:
+                cuentas_con_tipo_doc_no_reconocido[cuenta_obj.codigo] = codigo_td
+                logger.debug(f"Cuenta {cuenta_obj.codigo} marcada para incidencia tipo doc no reconocido: '{codigo_td}'")
+            
+            # Crear el movimiento contable con TODOS los datos disponibles
             mov = MovimientoContable(
                 cierre=cierre,
                 cuenta=cuenta_obj,
@@ -256,6 +342,7 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                 haber=Decimal(row[H] or 0),
                 descripcion=str(row[DS] or "")[:500] if (DS is not None and row[DS]) else "",
                 tipo_doc_codigo=codigo_td,
+                tipo_documento=tipo_doc_obj,  # Asignar directamente si existe
                 # Campos adicionales si están disponibles
                 numero_documento=str(row[ND])[:50] if (ND is not None and row[ND]) else "",
                 tipo=str(row[TP])[:50] if (TP is not None and row[TP]) else "",
@@ -264,12 +351,6 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                 detalle_gasto=str(row[DG]) if (DG is not None and row[DG]) else "",
             )
             
-            # Asociar tipo_documento si existe
-            if codigo_td:
-                td_obj = get_tipo_doc(codigo_td)
-                if td_obj:
-                    mov.tipo_documento = td_obj
-            
             # TODO: Manejar centro_costo y auxiliar si hay columnas disponibles
             # Estas requieren lookup a otras tablas, se puede implementar después
             if CC is not None and row[CC]:
@@ -277,18 +358,9 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
             if AUX is not None and row[AUX]:
                 logger.debug(f"Auxiliar detectado pero no procesado: {row[AUX]}")
             
-            # Debug para verificar que se están guardando los campos
-            if ND is not None and row[ND]:
-                logger.debug(f"Guardando número documento: {row[ND]}")
-            if NC is not None and row[NC]:
-                logger.debug(f"Guardando número comprobante: {row[NC]}")
-            if NI is not None and row[NI]:
-                logger.debug(f"Guardando número interno: {row[NI]}")
-            if DG is not None and row[DG]:
-                logger.debug(f"Guardando detalle gasto: {row[DG]}")
-            
             movimientos.append(mov)
             stats["movimientos"] += 1
+            
         except Exception as e:
             logger.error(f"Error procesando movimiento: {e}")
             # Crear movimiento con campos mínimos para no perder el registro
@@ -372,6 +444,37 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                                 defaults={"opcion": opt_obj}
                             )
                     
+                    # VALIDACIÓN DE CLASIFICACIONES EN LÍNEA - Solo si hay sets configurados
+                    if sets_clasificacion:
+                        for set_clas in sets_clasificacion:
+                            # Verificar si la cuenta tiene excepción para este set
+                            excepciones_set = excepciones_por_set.get(set_clas.id, set())
+                            if cuenta.codigo in excepciones_set:
+                                continue  # Esta cuenta está excenta de clasificación en este set
+                            
+                            # Verificar si la cuenta está clasificada en este set
+                            tiene_clasificacion = AccountClassification.objects.filter(
+                                cuenta=cuenta,
+                                set_clas=set_clas
+                            ).exists()
+                            
+                            if not tiene_clasificacion:
+                                # Agregar cuenta y set específico al diccionario de incidencias
+                                if set_clas.id not in cuentas_sin_clasificacion_por_set:
+                                    cuentas_sin_clasificacion_por_set[set_clas.id] = {}
+                                cuentas_sin_clasificacion_por_set[set_clas.id][cuenta.codigo] = set_clas.nombre
+                                logger.debug(f"Cuenta {cuenta.codigo} marcada para incidencia de clasificación en set {set_clas.nombre}")
+                    
+                    # VALIDACIÓN DE NOMBRES EN INGLÉS EN LÍNEA - Solo si el cliente es bilingüe
+                    if cliente.bilingue and not cuenta.nombre_en:
+                        # Solo crear incidencia si NO existe un nombre en inglés disponible 
+                        # Y la cuenta no está marcada como excepción
+                        if cuenta.codigo not in nombres_ingles_map and cuenta.codigo not in excepciones_nombres_ingles:
+                            cuentas_sin_nombre_ingles.add(cuenta.codigo)
+                            logger.debug(f"Cuenta {cuenta.codigo} marcada para incidencia de nombre en inglés")
+                            stats["incidencias_detectadas"] += 1
+                            logger.debug(f"Incidencia detectada: Cuenta {cuenta.codigo} sin nombre en inglés")
+                    
                     # Guardar la cuenta en processed_accounts
                     processed_accounts[code] = cuenta
                 
@@ -383,7 +486,7 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
             if current_code and row[F] is not None:
                 # Recuperar cuenta_obj = processed_accounts[current_code]
                 cuenta_obj = processed_accounts[current_code]
-                # Llamar a procesar_movimiento para añadir el movimiento
+                # Llamar a procesar_movimiento con validación completa
                 indices_cols = (ND, TP, NC, NI, CC, AUX, DG, DS, TD, D, H, F)
                 procesar_movimiento(row, cierre, cuenta_obj, get_tipo_doc, movimientos, stats, indices_cols)
                 continue
@@ -397,14 +500,56 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
         if movimientos:
             MovimientoContable.objects.bulk_create(movimientos, batch_size=500)
 
+    # 5. CONVERTIR SETS AGRUPADOS A INCIDENCIAS INDIVIDUALES
+    # Convertir cuentas sin clasificación por set específico
+    for set_id, cuentas_por_set in cuentas_sin_clasificacion_por_set.items():
+        for cuenta_codigo, set_nombre in cuentas_por_set.items():
+            incidencias_pendientes.append({
+                'tipo': 'cuenta_no_clasificada',
+                'cuenta_codigo': cuenta_codigo,
+                'set_clasificacion_id': set_id,
+                'set_clasificacion_nombre': set_nombre,
+                'descripcion': f"Cuenta {cuenta_codigo} sin clasificación en set '{set_nombre}'"
+            })
+    
+    # Convertir cuentas sin nombre en inglés
+    for cuenta_codigo in cuentas_sin_nombre_ingles:
+        incidencias_pendientes.append({
+            'tipo': 'cuenta_sin_ingles',
+            'cuenta_codigo': cuenta_codigo,
+            'descripcion': f"Cuenta {cuenta_codigo} sin nombre en inglés"
+        })
+    
+    # Convertir cuentas con tipo documento null
+    for cuenta_codigo in cuentas_con_tipo_doc_null:
+        incidencias_pendientes.append({
+            'tipo': 'movimiento_tipo_doc_null',
+            'cuenta_codigo': cuenta_codigo,
+            'descripcion': f"Cuenta {cuenta_codigo} tiene movimientos sin código de tipo documento"
+        })
+    
+    # Convertir cuentas con tipo documento no reconocido
+    for cuenta_codigo, tipo_doc_codigo in cuentas_con_tipo_doc_no_reconocido.items():
+        incidencias_pendientes.append({
+            'tipo': 'movimiento_tipo_doc_no_reconocido',
+            'cuenta_codigo': cuenta_codigo,
+            'tipo_doc_codigo': tipo_doc_codigo,
+            'descripcion': f"Cuenta {cuenta_codigo} tiene tipo documento '{tipo_doc_codigo}' no reconocido"
+        })
+    
+    # Actualizar estadísticas
+    stats["incidencias_detectadas"] = len(incidencias_pendientes)
+
     # Guardar stats en upload.resumen
     resumen = upload.resumen or {}
     resumen["procesamiento"] = stats
+    resumen["incidencias_pendientes"] = incidencias_pendientes  # Guardar para el siguiente task
     upload.resumen = resumen
     upload.tiempo_procesamiento = timezone.now() - inicio
     upload.save(update_fields=["resumen", "tiempo_procesamiento"])
 
     logger.info(f"Procesamiento completado: {stats}")
+    logger.info(f"Incidencias detectadas en línea: {len(incidencias_pendientes)}")
     return upload_log_id
 
 # ─── Task 5: Generar incidencias ───────────────────────────────────────────────
@@ -420,7 +565,59 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
     upload_log = UploadLog.objects.get(id=upload_log_id)
     cierre = upload_log.cierre
 
-    # Mapear clasificaciones ANTES de generar incidencias
+    # Limpiar incidencias anteriores
+    Incidencia.objects.filter(cierre=cierre).delete()
+    creadas = existentes = 0
+
+    # 1. CREAR INCIDENCIAS DETECTADAS EN EL PROCESAMIENTO (Task 4)
+    incidencias_pendientes = upload_log.resumen.get("incidencias_pendientes", [])
+    logger.info(f"Creando {len(incidencias_pendientes)} incidencias detectadas durante el procesamiento")
+    
+    incidencias_a_crear = []
+    for inc_data in incidencias_pendientes:
+        if inc_data['tipo'] == 'cuenta_no_clasificada':
+            incidencias_a_crear.append(Incidencia(
+                cierre=cierre,
+                tipo=Incidencia.CUENTA_NO_CLASIFICADA,
+                cuenta_codigo=inc_data['cuenta_codigo'],
+                set_clasificacion_id=inc_data.get('set_clasificacion_id'),
+                set_clasificacion_nombre=inc_data.get('set_clasificacion_nombre'),
+                descripcion=inc_data['descripcion'],
+                creada_por=creador
+            ))
+        elif inc_data['tipo'] == 'cuenta_sin_ingles':
+            incidencias_a_crear.append(Incidencia(
+                cierre=cierre,
+                tipo=Incidencia.CUENTA_SIN_INGLES,
+                cuenta_codigo=inc_data['cuenta_codigo'],
+                descripcion=inc_data['descripcion'],
+                creada_por=creador
+            ))
+        elif inc_data['tipo'] == 'movimiento_tipo_doc_null':
+            incidencias_a_crear.append(Incidencia(
+                cierre=cierre,
+                tipo=Incidencia.DOC_NULL,
+                cuenta_codigo=inc_data['cuenta_codigo'],
+                descripcion=inc_data['descripcion'],
+                creada_por=creador
+            ))
+        elif inc_data['tipo'] == 'movimiento_tipo_doc_no_reconocido':
+            incidencias_a_crear.append(Incidencia(
+                cierre=cierre,
+                tipo=Incidencia.DOC_NO_RECONOCIDO,
+                cuenta_codigo=inc_data['cuenta_codigo'],
+                tipo_doc_codigo=inc_data.get('tipo_doc_codigo'),
+                descripcion=inc_data['descripcion'],
+                creada_por=creador
+            ))
+    
+    # Bulk create de TODAS las incidencias detectadas en procesamiento
+    if incidencias_a_crear:
+        Incidencia.objects.bulk_create(incidencias_a_crear, batch_size=500)
+        creadas += len(incidencias_a_crear)
+        logger.info(f"Creadas {len(incidencias_a_crear)} incidencias desde procesamiento en línea")
+
+    # 2. EJECUTAR MAPEO ADICIONAL DE CLASIFICACIONES (para cuentas no procesadas)
     try:
         from .tasks_cuentas_bulk import mapear_clasificaciones_con_cuentas
         
@@ -430,9 +627,10 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
         ).count()
         logger.info(f"Registros RAW de clasificaciones disponibles: {registros_raw_count} para cliente {upload_log.cliente.id}")
         
-        logger.info(f"Iniciando mapeo de clasificaciones para upload_log {upload_log_id}")
-        resultado_mapeo = mapear_clasificaciones_con_cuentas(upload_log_id)
-        logger.info(f"Mapeo de clasificaciones completado: {resultado_mapeo}")
+        if registros_raw_count > 0:
+            logger.info(f"Ejecutando mapeo adicional de clasificaciones para upload_log {upload_log_id}")
+            resultado_mapeo = mapear_clasificaciones_con_cuentas(upload_log_id)
+            logger.info(f"Mapeo adicional completado: {resultado_mapeo}")
         
         # Verificar si hay clasificaciones disponibles después del mapeo
         total_clasificaciones = AccountClassification.objects.filter(
@@ -443,189 +641,30 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
     except ImportError as e:
         logger.warning(f"No se pudo importar mapear_clasificaciones_con_cuentas: {e}")
     except Exception as e:
-        logger.error(f"Error en mapeo de clasificaciones: {e}")
+        logger.error(f"Error en mapeo adicional de clasificaciones: {e}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
-
-    # Cargar excepciones activas para optimizar consultas
-    excepciones_tipo_doc_null = set(
-        ExcepcionValidacion.objects.filter(
-            cliente=upload_log.cliente,
-            tipo_excepcion='movimientos_tipodoc_nulo',
-            activa=True
-        ).values_list('codigo_cuenta', flat=True)
-    )
-    
-    excepciones_tipo_doc_no_reconocido = set(
-        ExcepcionValidacion.objects.filter(
-            cliente=upload_log.cliente,
-            tipo_excepcion='tipos_doc_no_reconocidos',
-            activa=True
-        ).values_list('codigo_cuenta', flat=True)
-    )
-    
-    excepciones_sin_nombre_ingles = set(
-        ExcepcionValidacion.objects.filter(
-            cliente=upload_log.cliente,
-            tipo_excepcion='cuentas_sin_nombre_ingles',
-            activa=True
-        ).values_list('codigo_cuenta', flat=True)
-    )
-    
-    excepciones_sin_clasificacion = set(
-        ExcepcionValidacion.objects.filter(
-            cliente=upload_log.cliente,
-            tipo_excepcion='cuentas_sin_clasificacion',
-            activa=True
-        ).values_list('codigo_cuenta', flat=True)
-    )
-    
-    logger.info(f"Excepciones cargadas - Tipo doc null: {len(excepciones_tipo_doc_null)}, "
-               f"Tipo doc no reconocido: {len(excepciones_tipo_doc_no_reconocido)}, "
-               f"Sin nombre inglés: {len(excepciones_sin_nombre_ingles)}, "
-               f"Sin clasificación: {len(excepciones_sin_clasificacion)}")
-
-    Incidencia.objects.filter(cierre=cierre).delete()
-    creadas = existentes = 0
-
-    # — Cuentas sin clasificación —
-    # Verificar si hay clasificaciones configuradas para este cliente
-    hay_clasificaciones_raw = ClasificacionCuentaArchivo.objects.filter(
-        cliente=upload_log.cliente
-    ).exists()
-    
-    hay_sets_clasificacion = ClasificacionSet.objects.filter(
-        cliente=upload_log.cliente
-    ).exists()
-    
-    logger.info(f"¿Hay clasificaciones RAW para cliente? {hay_clasificaciones_raw}")
-    logger.info(f"¿Hay sets de clasificación para cliente? {hay_sets_clasificacion}")
-    
-    # Solo generar incidencias de clasificación si hay clasificaciones configuradas Y archivos RAW
-    if hay_clasificaciones_raw and hay_sets_clasificacion:
-        # Obtener IDs de cuentas clasificadas para este cliente
-        cuentas_clasificadas_ids = AccountClassification.objects.filter(
-            cuenta__cliente=upload_log.cliente
-        ).values_list('cuenta_id', flat=True)
-        
-        logger.info(f"Cuentas clasificadas encontradas: {len(cuentas_clasificadas_ids)} para cliente {upload_log.cliente.id}")
-        
-        sin_clas = CuentaContable.objects.filter(
-            movimientocontable__cierre=cierre
-        ).distinct().exclude(
-            id__in=cuentas_clasificadas_ids
-        ).exclude(
-            codigo__in=excepciones_sin_clasificacion  # Excluir cuentas marcadas como "No aplica"
-        )
-        
-        total_cuentas_en_movimientos = CuentaContable.objects.filter(
-            movimientocontable__cierre=cierre
-        ).distinct().count()
-        
-        logger.info(f"Total cuentas en movimientos: {total_cuentas_en_movimientos}")
-        logger.info(f"Cuentas sin clasificación: {sin_clas.count()}")
-        
-        for c in sin_clas:
-            obj, new = Incidencia.objects.get_or_create(
-                cierre=cierre,
-                tipo=Incidencia.CUENTA_NO_CLASIFICADA,
-                cuenta_codigo=c.codigo,
-                defaults={'descripcion': f"Cuenta {c.codigo} sin clasificación", 'creada_por': creador}
-            )
-            if new:
-                creadas += 1
-            else:
-                existentes += 1
-    elif hay_sets_clasificacion and not hay_clasificaciones_raw:
-        logger.info(f"Cliente {upload_log.cliente.id} tiene sets de clasificación pero no hay archivo RAW reciente.")
-        logger.info(f"Para aplicar clasificaciones, suba primero un archivo de clasificaciones correspondiente a las cuentas del libro mayor actual.")
-    else:
-        logger.info(f"No hay clasificaciones configuradas para cliente {upload_log.cliente.id}, omitiendo incidencias de clasificación")
-
-    # — Cuentas sin nombre inglés (bilingüe) —
-    if upload_log.cliente.bilingue:
-        # Cargar nombres en inglés disponibles para este cliente
-        nombres_ingles_disponibles = set(
-            NombreIngles.objects.filter(cliente=upload_log.cliente)
-            .values_list('cuenta_codigo', flat=True)
-        )
-        
-        # Obtener cuentas que aparecen en movimientos pero no tienen nombre_en
-        cuentas_sin_nombre_en = CuentaContable.objects.filter(
-            movimientocontable__cierre=cierre,
-            nombre_en__isnull=True
-        ).distinct()
-        
-        for c in cuentas_sin_nombre_en:
-            # Solo crear incidencia si NO existe un nombre en inglés disponible 
-            # Y la cuenta no está marcada como excepción
-            if c.codigo not in nombres_ingles_disponibles and c.codigo not in excepciones_sin_nombre_ingles:
-                obj, new = Incidencia.objects.get_or_create(
-                    cierre=cierre,
-                    tipo=Incidencia.CUENTA_SIN_INGLES,
-                    cuenta_codigo=c.codigo,
-                    defaults={'descripcion': f"Cuenta {c.codigo} sin nombre en inglés", 'creada_por': creador}
-                )
-                if new:
-                    creadas += 1
-                else:
-                    existentes += 1
-            else:
-                # Si existe nombre en inglés pero no está aplicado, intentar aplicarlo
-                try:
-                    nombre_ing = NombreIngles.objects.filter(
-                        cliente=upload_log.cliente,
-                        cuenta_codigo=c.codigo
-                    ).first()
-                    if nombre_ing:
-                        c.nombre_en = nombre_ing.nombre_ingles
-                        c.save(update_fields=['nombre_en'])
-                        logger.info(f"Aplicado nombre en inglés a cuenta {c.codigo}: {nombre_ing.nombre_ingles}")
-                except Exception as e:
-                    logger.error(f"Error aplicando nombre en inglés a cuenta {c.codigo}: {e}")
-
-    # — Movimientos —
-    movimientos = MovimientoContable.objects.filter(cierre=cierre).select_related('cuenta')
-    for mov in movimientos:
-        # Verificar si la cuenta tiene excepción para tipo de documento nulo
-        if not mov.tipo_doc_codigo:
-            if mov.cuenta.codigo not in excepciones_tipo_doc_null:
-                obj, new = Incidencia.objects.get_or_create(
-                    cierre=cierre,
-                    tipo=Incidencia.DOC_NULL,
-                    cuenta_codigo=mov.cuenta.codigo,
-                    defaults={'descripcion': f"Mov {mov.id} sin código de documento", 'creada_por': creador}
-                )
-                if new:
-                    creadas += 1
-                else:
-                    existentes += 1
-            continue
-
-        # Verificar si la cuenta tiene excepción para tipos de documento no reconocidos
-        if not mov.tipo_documento:
-            if mov.cuenta.codigo not in excepciones_tipo_doc_no_reconocido:
-                obj, new = Incidencia.objects.get_or_create(
-                    cierre=cierre,
-                    tipo=Incidencia.DOC_NO_RECONOCIDO,
-                    tipo_doc_codigo=mov.tipo_doc_codigo,
-                    defaults={'descripcion': f"Mov {mov.id}: tipo '{mov.tipo_doc_codigo}' no reconocido", 'creada_por': creador}
-                )
-                if new:
-                    creadas += 1
-                else:
-                    existentes += 1
 
     # Guardar resumen…
     resumen = upload_log.resumen or {}
     resumen['incidencias'] = {
         'creadas': creadas,
         'existentes': existentes,
-        'total_bd': Incidencia.objects.filter(cierre=cierre).count()
+        'total_bd': Incidencia.objects.filter(cierre=cierre).count(),
+        'desde_procesamiento_en_linea': len(incidencias_pendientes),
+        'clasificaciones': len([i for i in incidencias_pendientes if i['tipo'] == 'cuenta_no_clasificada']),
+        'nombres_ingles': len([i for i in incidencias_pendientes if i['tipo'] == 'cuenta_sin_ingles']),
+        'tipos_documento_null': len([i for i in incidencias_pendientes if i['tipo'] == 'movimiento_tipo_doc_null']),
+        'tipos_documento_no_reconocido': len([i for i in incidencias_pendientes if i['tipo'] == 'movimiento_tipo_doc_no_reconocido'])
     }
     upload_log.resumen = resumen
     upload_log.save(update_fields=['resumen'])
 
+    logger.info(f"Generación de incidencias completada - Total creadas: {creadas}")
+    logger.info(f"Desglose: Clasificaciones: {resumen['incidencias']['clasificaciones']}, " +
+               f"Nombres inglés: {resumen['incidencias']['nombres_ingles']}, " +
+               f"Tipos doc null: {resumen['incidencias']['tipos_documento_null']}, " +
+               f"Tipos doc no reconocido: {resumen['incidencias']['tipos_documento_no_reconocido']}")
     return upload_log_id
 
 # ─── Task 6: Finalizar y limpiar ───────────────────────────────────────────────
@@ -910,11 +949,17 @@ def crear_snapshot_incidencias_consolidadas(upload_log_id):
                 elementos_afectados = []
                 for inc in incidencias_list:  # Incluir TODOS los elementos
                     if inc.cuenta_codigo:
-                        elementos_afectados.append({
+                        elemento = {
                             'tipo': 'cuenta',
                             'codigo': inc.cuenta_codigo,
                             'descripcion': inc.descripcion or ''
-                        })
+                        }
+                        # Para incidencias de clasificación, incluir información del set específico
+                        if tipo == Incidencia.CUENTA_NO_CLASIFICADA and inc.set_clasificacion_id:
+                            elemento['set_id'] = inc.set_clasificacion_id
+                            elemento['set_nombre'] = inc.set_clasificacion_nombre or f'Set ID {inc.set_clasificacion_id}'
+                        
+                        elementos_afectados.append(elemento)
                     if inc.tipo_doc_codigo:
                         elementos_afectados.append({
                             'tipo': 'documento',

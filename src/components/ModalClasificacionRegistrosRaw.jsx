@@ -61,11 +61,24 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
   const [nuevoSet, setNuevoSet] = useState('');
   const [setEditando, setSetEditando] = useState('');
   
-  // Estados para opciones (solo bilingües)
+  // Estados para opciones (con soporte bilingüe mejorado)
   const [editandoOpcion, setEditandoOpcion] = useState(null);
   const [creandoOpcionPara, setCreandoOpcionPara] = useState(null);
-  const [nuevaOpcion, setNuevaOpcion] = useState('');
-  const [opcionEditando, setOpcionEditando] = useState('');
+  
+  // Estados para manejo de creación/edición bilingüe de opciones
+  const [modoCreacionOpcion, setModoCreacionOpcion] = useState('es'); // 'es' | 'en' | 'ambos'
+  const [nuevaOpcionBilingue, setNuevaOpcionBilingue] = useState({
+    es: '',
+    en: '',
+    descripcion_es: '',
+    descripcion_en: ''
+  });
+  const [opcionEditandoBilingue, setOpcionEditandoBilingue] = useState({
+    es: '',
+    en: '',
+    descripcion_es: '',
+    descripcion_en: ''
+  });
 
   // Estados para manejo bilingüe
   const [idiomaMostrado, setIdiomaMostrado] = useState('es'); // Solo para cambiar la visualización
@@ -463,34 +476,130 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
 
   // ==================== FUNCIONES CRUD PARA OPCIONES ====================
   const handleCrearOpcion = async (setId) => {
-    if (!nuevaOpcion.trim()) {
-      alert("El valor de la opción es requerido");
-      return;
-    }
-    try {
-      await crearOpcion(setId, nuevaOpcion.trim());
-      setNuevaOpcion('');
-      setCreandoOpcionPara(null);
-      await cargarSets(); // Recargar para actualizar opciones
-    } catch (error) {
-      console.error("Error creando opción:", error);
-      alert("Error al crear la opción");
+    if (modoCreacionOpcion === 'ambos') {
+      // Validar que ambos idiomas tengan valor
+      if (!nuevaOpcionBilingue.es.trim() || !nuevaOpcionBilingue.en.trim()) {
+        alert("Para crear una opción bilingüe, debe proporcionar el valor en ambos idiomas");
+        return;
+      }
+      
+      try {
+        await crearOpcion(setId, {
+          valor: nuevaOpcionBilingue.es.trim(),
+          valor_en: nuevaOpcionBilingue.en.trim(),
+          descripcion: nuevaOpcionBilingue.descripcion_es.trim(),
+          descripcion_en: nuevaOpcionBilingue.descripcion_en.trim(),
+        });
+        
+        setNuevaOpcionBilingue({ es: '', en: '', descripcion_es: '', descripcion_en: '' });
+        setCreandoOpcionPara(null);
+        await cargarSets();
+      } catch (error) {
+        console.error("Error creando opción bilingüe:", error);
+        alert("Error al crear la opción bilingüe");
+      }
+    } else {
+      // Crear solo en un idioma
+      const valor = modoCreacionOpcion === 'es' ? nuevaOpcionBilingue.es : nuevaOpcionBilingue.en;
+      const descripcion = modoCreacionOpcion === 'es' ? nuevaOpcionBilingue.descripcion_es : nuevaOpcionBilingue.descripcion_en;
+      
+      if (!valor.trim()) {
+        alert("El valor de la opción es requerido");
+        return;
+      }
+      
+      try {
+        const datos = {};
+        
+        if (modoCreacionOpcion === 'es') {
+          datos.valor = valor.trim();
+          if (descripcion.trim()) datos.descripcion = descripcion.trim();
+        } else {
+          datos.valor_en = valor.trim();
+          if (descripcion.trim()) datos.descripcion_en = descripcion.trim();
+        }
+        
+        await crearOpcion(setId, datos);
+        setNuevaOpcionBilingue({ es: '', en: '', descripcion_es: '', descripcion_en: '' });
+        setCreandoOpcionPara(null);
+        await cargarSets();
+      } catch (error) {
+        console.error("Error creando opción:", error);
+        alert("Error al crear la opción");
+      }
     }
   };
 
-  const handleEditarOpcion = async (opcionId) => {
-    if (!opcionEditando.trim()) {
-      alert("El valor de la opción es requerido");
+  const handleEditarOpcion = async (opcionId, setId = null) => {
+    // Determinar qué idioma estamos editando basado en el switch del set
+    const idiomaActual = cliente?.bilingue ? (idiomaPorSet[setId] || 'es') : 'es';
+    
+    let valorAEditar;
+    if (idiomaActual === 'es') {
+      valorAEditar = opcionEditandoBilingue.es.trim();
+    } else {
+      valorAEditar = opcionEditandoBilingue.en.trim();
+    }
+    
+    if (!valorAEditar) {
+      alert(`El valor de la opción en ${idiomaActual.toUpperCase()} es requerido`);
       return;
     }
+    
     try {
-      await actualizarOpcion(opcionId, opcionEditando.trim());
+      // Si no se proporciona setId, intentar obtenerlo desde la opción
+      let setClasId = setId;
+      if (!setClasId) {
+        // Buscar el set que contiene esta opción
+        for (const set of sets) {
+          const opciones = obtenerOpcionesParaSet(set.id);
+          const opcionEncontrada = opciones.find(opcion => opcion.id === opcionId);
+          if (opcionEncontrada) {
+            setClasId = set.id;
+            break;
+          }
+        }
+      }
+      
+      // Preparar datos según el idioma que se está editando
+      const datos = {};
+      if (idiomaActual === 'es') {
+        datos.valor = valorAEditar;
+        if (opcionEditandoBilingue.descripcion_es.trim()) {
+          datos.descripcion = opcionEditandoBilingue.descripcion_es.trim();
+        }
+      } else {
+        datos.valor_en = valorAEditar;
+        if (opcionEditandoBilingue.descripcion_en.trim()) {
+          datos.descripcion_en = opcionEditandoBilingue.descripcion_en.trim();
+        }
+      }
+      
+      await actualizarOpcion(opcionId, datos, setClasId);
       setEditandoOpcion(null);
-      setOpcionEditando('');
+      setOpcionEditandoBilingue({ es: '', en: '', descripcion_es: '', descripcion_en: '' });
       await cargarSets();
     } catch (error) {
       console.error("Error editando opción:", error);
-      alert("Error al editar la opción");
+      console.error("Error response:", error.response?.data);
+      
+      // Mostrar error más específico
+      let errorMessage = "Error al editar la opción";
+      if (error.response?.data) {
+        if (error.response.data.detail) {
+          errorMessage = error.response.data.detail;
+        } else if (error.response.data.valor) {
+          errorMessage = `Error en valor: ${error.response.data.valor.join(', ')}`;
+        } else if (error.response.data.set_clas) {
+          errorMessage = `Error en set: ${error.response.data.set_clas.join(', ')}`;
+        } else if (typeof error.response.data === 'string') {
+          errorMessage = error.response.data;
+        } else {
+          errorMessage = `Error del servidor: ${JSON.stringify(error.response.data)}`;
+        }
+      }
+      
+      alert(errorMessage);
     }
   };
 
@@ -546,7 +655,7 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
       const siguienteFila = maxFila + 1;
       
       const datosAEnviar = {
-        upload: uploadId,
+        upload_log: uploadId,
         cliente: clienteId,
         numero_cuenta: nuevoRegistro.numero_cuenta.trim(),
         clasificaciones: nuevoRegistro.clasificaciones,
@@ -619,11 +728,19 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
   };
 
   const handleGuardarEdicion = async () => {
+    if (!registroEditando.numero_cuenta.trim()) {
+      alert("El número de cuenta es requerido");
+      return;
+    }
+
     try {
       await actualizarClasificacionArchivo(editandoId, registroEditando);
       await cargarRegistros();
       setEditandoId(null);
       setRegistroEditando(null);
+      // Limpiar selecciones
+      setSetSeleccionado('');
+      setOpcionSeleccionada('');
       if (onDataChanged) onDataChanged();
     } catch (error) {
       console.error("Error al editar registro:", error);
@@ -1476,39 +1593,64 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                           <div className="flex flex-wrap gap-2">
                             {obtenerOpcionesParaSet(set.id)?.map((opcion) => {
                               // Determinar el texto a mostrar según el idioma seleccionado
-                              const idiomaActual = idiomaPorSet[set.id] || idiomaCliente;
-                              const textoOpcion = idiomaActual === 'en' && opcion.valor_completo 
-                                ? opcion.valor_completo 
-                                : (opcion.valor || opcion.valor_es || 'Sin texto');
+                              const idiomaActual = idiomaPorSet[set.id] || 'es';
+                              const textoOpcion = idiomaActual === 'en' && opcion.valor_en 
+                                ? opcion.valor_en 
+                                : (opcion.valor || 'Sin texto');
                               
                               return (
                                 <div key={opcion.id} className="flex items-center gap-1 bg-blue-900/30 px-2 py-1 rounded">
                                   {editandoOpcion === opcion.id ? (
-                                    <input
-                                      type="text"
-                                      value={opcionEditando}
-                                      onChange={(e) => setOpcionEditando(e.target.value)}
-                                      className="bg-gray-700 text-white px-1 py-0.5 rounded border border-gray-600 text-sm w-20"
-                                      onKeyPress={(e) => e.key === 'Enter' && handleEditarOpcion(opcion.id)}
-                                    />
+                                    <div className="flex flex-col gap-1">
+                                      <input
+                                        type="text"
+                                        value={idiomaActual === 'es' ? opcionEditandoBilingue.es : opcionEditandoBilingue.en}
+                                        onChange={(e) => setOpcionEditandoBilingue(prev => ({
+                                          ...prev,
+                                          [idiomaActual]: e.target.value
+                                        }))}
+                                        placeholder={`Valor en ${idiomaActual.toUpperCase()}`}
+                                        className="bg-gray-700 text-white px-1 py-0.5 rounded border border-gray-600 text-sm w-24"
+                                        onKeyPress={(e) => e.key === 'Enter' && handleEditarOpcion(opcion.id, set.id)}
+                                      />
+                                      {cliente?.bilingue && (
+                                        <input
+                                          type="text"
+                                          value={idiomaActual === 'es' ? opcionEditandoBilingue.descripcion_es : opcionEditandoBilingue.descripcion_en}
+                                          onChange={(e) => setOpcionEditandoBilingue(prev => ({
+                                            ...prev,
+                                            [`descripcion_${idiomaActual}`]: e.target.value
+                                          }))}
+                                          placeholder={`Descripción en ${idiomaActual.toUpperCase()}`}
+                                          className="bg-gray-700 text-white px-1 py-0.5 rounded border border-gray-600 text-xs w-24"
+                                        />
+                                      )}
+                                    </div>
                                   ) : (
-                                    <span className="text-white text-sm" title={opcion.descripcion || opcion.descripcion_completa}>
+                                    <span className="text-white text-sm" title={opcion.descripcion || opcion.descripcion_en}>
                                       {textoOpcion}
                                     </span>
                                   )}
                                   
-                                  {/* Indicador de idioma */}
-                                  <span className={`text-xs px-1 rounded ${
-                                    idiomaActual === 'en' ? 'bg-green-700 text-green-200' : 'bg-blue-700 text-blue-200'
-                                  }`}>
-                                    {idiomaActual.toUpperCase()}
-                                  </span>
+                                  {/* Indicador de idioma y estado bilingüe */}
+                                  <div className="flex flex-col items-center gap-0.5">
+                                    <span className={`text-xs px-1 rounded ${
+                                      idiomaActual === 'en' ? 'bg-green-700 text-green-200' : 'bg-blue-700 text-blue-200'
+                                    }`}>
+                                      {idiomaActual.toUpperCase()}
+                                    </span>
+                                    {cliente?.bilingue && opcion.es_bilingue && (
+                                      <span className="text-xs px-1 rounded bg-purple-700 text-purple-200" title="Opción bilingüe">
+                                        ES/EN
+                                      </span>
+                                    )}
+                                  </div>
                                   
                                   <div className="flex gap-0.5 ml-1">
                                     {editandoOpcion === opcion.id ? (
                                       <>
                                         <button
-                                          onClick={() => handleEditarOpcion(opcion.id)}
+                                          onClick={() => handleEditarOpcion(opcion.id, set.id)}
                                           className="text-green-400 hover:text-green-300"
                                           title="Guardar"
                                         >
@@ -1517,7 +1659,7 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                                         <button
                                           onClick={() => {
                                             setEditandoOpcion(null);
-                                            setOpcionEditando('');
+                                            setOpcionEditandoBilingue({ es: '', en: '', descripcion_es: '', descripcion_en: '' });
                                           }}
                                           className="text-gray-400 hover:text-gray-300"
                                           title="Cancelar"
@@ -1530,10 +1672,15 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                                         <button
                                           onClick={() => {
                                             setEditandoOpcion(opcion.id);
-                                            setOpcionEditando(opcion.valor || textoOpcion);
+                                            setOpcionEditandoBilingue({
+                                              es: opcion.valor || '',
+                                              en: opcion.valor_en || '',
+                                              descripcion_es: opcion.descripcion || '',
+                                              descripcion_en: opcion.descripcion_en || ''
+                                            });
                                           }}
                                           className="text-blue-400 hover:text-blue-300"
-                                          title="Editar"
+                                          title={`Editar en ${idiomaActual.toUpperCase()}`}
                                         >
                                           <Edit2 size={12} />
                                         </button>
@@ -1553,38 +1700,123 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                           </div>
 
                           {/* Agregar nueva opción */}
-                          <div className="flex gap-2 items-center">
+                          <div className="space-y-2">
                             {creandoOpcionPara === set.id ? (
-                              <>
-                                <input
-                                  type="text"
-                                  value={nuevaOpcion}
-                                  onChange={(e) => setNuevaOpcion(e.target.value)}
-                                  placeholder="Nueva opción"
-                                  className="bg-gray-700 text-white px-2 py-1 rounded border border-gray-600 text-sm"
-                                  onKeyPress={(e) => e.key === 'Enter' && handleCrearOpcion(set.id)}
-                                />
-                                <button
-                                  onClick={() => handleCrearOpcion(set.id)}
-                                  className="text-green-400 hover:text-green-300"
-                                  title="Agregar opción"
-                                >
-                                  <Save size={14} />
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    setCreandoOpcionPara(null);
-                                    setNuevaOpcion('');
-                                  }}
-                                  className="text-gray-400 hover:text-gray-300"
-                                  title="Cancelar"
-                                >
-                                  <XCircle size={14} />
-                                </button>
-                              </>
+                              <div className="bg-gray-700/50 p-3 rounded border border-gray-600">
+                                {/* Selector de modo de creación */}
+                                {cliente?.bilingue && (
+                                  <div className="mb-3">
+                                    <label className="block text-xs text-gray-400 mb-2">Modo de creación:</label>
+                                    <div className="flex gap-2">
+                                      <button
+                                        onClick={() => setModoCreacionOpcion('es')}
+                                        className={`px-3 py-1 rounded text-sm transition ${
+                                          modoCreacionOpcion === 'es' 
+                                            ? 'bg-blue-600 text-white' 
+                                            : 'bg-gray-600 text-gray-300 hover:bg-gray-500'
+                                        }`}
+                                      >
+                                        🇪🇸 Solo Español
+                                      </button>
+                                      <button
+                                        onClick={() => setModoCreacionOpcion('en')}
+                                        className={`px-3 py-1 rounded text-sm transition ${
+                                          modoCreacionOpcion === 'en' 
+                                            ? 'bg-green-600 text-white' 
+                                            : 'bg-gray-600 text-gray-300 hover:bg-gray-500'
+                                        }`}
+                                      >
+                                        🇺🇸 Solo Inglés
+                                      </button>
+                                      <button
+                                        onClick={() => setModoCreacionOpcion('ambos')}
+                                        className={`px-3 py-1 rounded text-sm transition ${
+                                          modoCreacionOpcion === 'ambos' 
+                                            ? 'bg-purple-600 text-white' 
+                                            : 'bg-gray-600 text-gray-300 hover:bg-gray-500'
+                                        }`}
+                                      >
+                                        🌐 Bilingüe
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                                
+                                {/* Campos de entrada según el modo */}
+                                <div className="space-y-2">
+                                  {(modoCreacionOpcion === 'es' || modoCreacionOpcion === 'ambos') && (
+                                    <div>
+                                      <input
+                                        type="text"
+                                        value={nuevaOpcionBilingue.es}
+                                        onChange={(e) => setNuevaOpcionBilingue(prev => ({ ...prev, es: e.target.value }))}
+                                        placeholder="Valor en Español"
+                                        className="w-full bg-gray-800 text-white px-2 py-1 rounded border border-gray-600 text-sm"
+                                        onKeyPress={(e) => e.key === 'Enter' && handleCrearOpcion(set.id)}
+                                      />
+                                      <input
+                                        type="text"
+                                        value={nuevaOpcionBilingue.descripcion_es}
+                                        onChange={(e) => setNuevaOpcionBilingue(prev => ({ ...prev, descripcion_es: e.target.value }))}
+                                        placeholder="Descripción en Español (opcional)"
+                                        className="w-full bg-gray-800 text-white px-2 py-1 rounded border border-gray-600 text-xs mt-1"
+                                      />
+                                    </div>
+                                  )}
+                                  
+                                  {(modoCreacionOpcion === 'en' || modoCreacionOpcion === 'ambos') && (
+                                    <div>
+                                      <input
+                                        type="text"
+                                        value={nuevaOpcionBilingue.en}
+                                        onChange={(e) => setNuevaOpcionBilingue(prev => ({ ...prev, en: e.target.value }))}
+                                        placeholder="Valor en Inglés"
+                                        className="w-full bg-gray-800 text-white px-2 py-1 rounded border border-gray-600 text-sm"
+                                        onKeyPress={(e) => e.key === 'Enter' && handleCrearOpcion(set.id)}
+                                      />
+                                      <input
+                                        type="text"
+                                        value={nuevaOpcionBilingue.descripcion_en}
+                                        onChange={(e) => setNuevaOpcionBilingue(prev => ({ ...prev, descripcion_en: e.target.value }))}
+                                        placeholder="Descripción en Inglés (opcional)"
+                                        className="w-full bg-gray-800 text-white px-2 py-1 rounded border border-gray-600 text-xs mt-1"
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                                
+                                {/* Botones de acción */}
+                                <div className="flex gap-2 mt-3">
+                                  <button
+                                    onClick={() => handleCrearOpcion(set.id)}
+                                    className="bg-green-600 hover:bg-green-500 px-3 py-1 rounded text-white text-sm transition flex items-center gap-1"
+                                    title="Crear opción"
+                                  >
+                                    <Save size={14} />
+                                    Crear
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setCreandoOpcionPara(null);
+                                      setNuevaOpcionBilingue({ es: '', en: '', descripcion_es: '', descripcion_en: '' });
+                                      setModoCreacionOpcion('es');
+                                    }}
+                                    className="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded text-white text-sm transition flex items-center gap-1"
+                                    title="Cancelar"
+                                  >
+                                    <XCircle size={14} />
+                                    Cancelar
+                                  </button>
+                                </div>
+                              </div>
                             ) : (
                               <button
-                                onClick={() => setCreandoOpcionPara(set.id)}
+                                onClick={() => {
+                                  setCreandoOpcionPara(set.id);
+                                  // Detectar idioma actual del switch del set para inicializar el modo
+                                  const idiomaActual = idiomaPorSet[set.id] || 'es';
+                                  setModoCreacionOpcion(cliente?.bilingue ? idiomaActual : 'es');
+                                }}
                                 className="text-blue-400 hover:text-blue-300 flex items-center gap-1 text-sm"
                                 title="Agregar opción"
                               >

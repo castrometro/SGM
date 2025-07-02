@@ -469,11 +469,22 @@ class TarjetaActivityLog(models.Model):
         ("manual_delete", "Eliminación Manual"),
         ("bulk_delete", "Eliminación Masiva"),
         ("view_data", "Visualización de Datos"),
+        ("view_list", "Visualización de Lista"),
         ("validation_error", "Error de Validación"),
         ("process_start", "Inicio de Procesamiento"),
         ("process_complete", "Procesamiento Completado"),
+        ("set_create", "Creación de Set"),
+        ("set_edit", "Edición de Set"),
+        ("set_delete", "Eliminación de Set"),
+        ("option_create", "Creación de Opción"),
+        ("option_edit", "Edición de Opción"),
+        ("option_delete", "Eliminación de Opción"),
+        ("individual_create", "Creación Individual"),
+        ("individual_edit", "Edición Individual"),
+        ("individual_delete", "Eliminación Individual"),
+        ("delete_all", "Eliminación Total"),
     ]
-    accion = models.CharField(max_length=20, choices=ACCION_CHOICES)
+    accion = models.CharField(max_length=25, choices=ACCION_CHOICES)
 
     # Metadatos
     usuario = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True)
@@ -835,5 +846,57 @@ class ExcepcionValidacion(models.Model):
         return f"{self.cliente.nombre} - {self.codigo_cuenta} - {self.get_tipo_excepcion_display()}"
 
 
-
+class ExcepcionClasificacionSet(models.Model):
+    """
+    Modelo para manejar excepciones específicas por set de clasificación.
+    Permite marcar que una cuenta NO aplica para un set específico de clasificación.
+    
+    Ejemplo: Una cuenta de "Caja" no aplica para el set "Tipo de Activo Fijo"
+    """
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
+    cuenta_codigo = models.CharField(max_length=20, help_text="Código de la cuenta")
+    set_clasificacion = models.ForeignKey(
+        'ClasificacionSet', 
+        on_delete=models.CASCADE,
+        help_text="Set de clasificación al que NO aplica esta cuenta"
+    )
+    motivo = models.TextField(
+        blank=True,
+        help_text="Motivo por el cual esta cuenta no aplica a este set específico"
+    )
+    usuario_creador = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.SET_NULL, 
+        null=True,
+        help_text="Usuario que creó la excepción"
+    )
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    activa = models.BooleanField(
+        default=True,
+        help_text="Si está activa, la cuenta no será requerida en este set"
+    )
+    
+    class Meta:
+        unique_together = ['cliente', 'cuenta_codigo', 'set_clasificacion']
+        indexes = [
+            models.Index(fields=['cliente', 'set_clasificacion', 'activa']),
+            models.Index(fields=['cuenta_codigo', 'activa']),
+        ]
+        verbose_name = "Excepción de Clasificación por Set"
+        verbose_name_plural = "Excepciones de Clasificación por Set"
+    
+    def __str__(self):
+        return f"{self.cuenta_codigo} NO aplica en {self.set_clasificacion.nombre} ({self.cliente.nombre})"
+    
+    @property
+    def cuenta_nombre(self):
+        """Obtener el nombre de la cuenta si existe"""
+        try:
+            cuenta = CuentaContable.objects.get(
+                cliente=self.cliente, 
+                codigo=self.cuenta_codigo
+            )
+            return cuenta.nombre
+        except CuentaContable.DoesNotExist:
+            return f"Cuenta {self.cuenta_codigo}"
 from .models_incidencias import Incidencia, IncidenciaResumen

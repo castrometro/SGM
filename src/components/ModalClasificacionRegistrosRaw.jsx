@@ -496,7 +496,13 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
   const registrosFiltrados = aplicarFiltros(registros || []);
   const setsUnicos = obtenerSetsUnicos();
 
-  if (!isOpen) return null;
+  if (!isOpen) {
+    console.log("🚫 Modal no se abre - isOpen:", isOpen);
+    return null;
+  }
+
+  console.log("✅ Modal se está abriendo");
+  console.log("📋 Props recibidas:", { isOpen, uploadId, clienteId });
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">

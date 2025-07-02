@@ -71,19 +71,23 @@ const ClasificacionBulkCard = ({
         
         // Si hay archivo subido, también notificar como completado
         if (onCompletado) onCompletado(data.estado === "subido");
+        
+        // Siempre cargar datos detallados para verificar uploads existentes
+        await cargar();
       } catch (err) {
         setEstado("pendiente");
         if (onCompletado) onCompletado(false);
+        // Intentar cargar datos de uploads de todos modos
+        try {
+          await cargar();
+        } catch (loadErr) {
+          console.error("Error loading uploads:", loadErr);
+        }
       }
     };
     
     if (clienteId && !disabled) fetchEstadoInicial();
   }, [clienteId, disabled, onCompletado]);
-
-  useEffect(() => {
-    // Cargar datos detallados solo si hay estado subido
-    if (!disabled && estado === "subido") cargar();
-  }, [estado, disabled]);
 
   // Monitorear estado del UploadLog
   useEffect(() => {
@@ -129,24 +133,29 @@ const ClasificacionBulkCard = ({
   const cargar = async () => {
     try {
       const data = await obtenerBulkClasificaciones(clienteId);
+      console.log("📤 Cargando uploads:", data);
       setUploads(data);
       const last = data && data.length > 0 ? data[0] : null;
+      console.log("📋 Último upload encontrado:", last);
       setUltimoUpload(last);
       
       if (last && last.id) {
+        console.log("🔗 Intentando cargar registros para upload ID:", last.id);
         // Cargar registros raw para mostrar información
         try {
           const registros = await obtenerClasificacionesArchivo(last.id);
+          console.log("📊 Registros cargados:", registros.length);
           setRegistrosRaw(registros);
         } catch (err) {
-          console.log("No hay registros raw o error cargándolos:", err);
+          console.log("⚠️ No hay registros raw o error cargándolos:", err);
           setRegistrosRaw([]);
         }
       } else {
+        console.log("❌ No hay último upload válido");
         setRegistrosRaw([]);
       }
     } catch (e) {
-      console.error("Error al cargar uploads:", e);
+      console.error("💥 Error al cargar uploads:", e);
       setRegistrosRaw([]);
     }
   };
@@ -339,12 +348,29 @@ const ClasificacionBulkCard = ({
       {/* Botones de acciones */}
       <div className="flex gap-2 mt-2">
         <button
-          onClick={() => setModalRegistrosRaw(true)}
-          className="px-3 py-1 rounded text-sm font-medium transition bg-blue-700 hover:bg-blue-600 text-white flex items-center gap-2"
-          disabled={!ultimoUpload?.id}
+          onClick={() => {
+            console.log("🔘 Botón 'Ver clasificaciones' clickeado");
+            console.log("📋 ultimoUpload:", ultimoUpload);
+            console.log("🆔 ultimoUpload?.id:", ultimoUpload?.id);
+            console.log("✅ Botón habilitado:", !!ultimoUpload?.id);
+            
+            if (!ultimoUpload?.id) {
+              alert("⚠️ No hay datos de archivo para mostrar. Asegúrese de que el archivo se haya subido correctamente.");
+              return;
+            }
+            
+            setModalRegistrosRaw(true);
+          }}
+          className={`px-3 py-1 rounded text-sm font-medium transition flex items-center gap-2 ${
+            !ultimoUpload?.id 
+              ? 'bg-gray-600 text-gray-300 cursor-not-allowed' 
+              : 'bg-blue-700 hover:bg-blue-600 text-white'
+          }`}
+          title={!ultimoUpload?.id ? "No hay datos de archivo disponibles" : "Ver y gestionar clasificaciones"}
         >
           <Settings size={16} />
           Ver clasificaciones
+          {!ultimoUpload?.id && <span className="text-xs ml-1">(No disponible)</span>}
         </button>
       </div>
 

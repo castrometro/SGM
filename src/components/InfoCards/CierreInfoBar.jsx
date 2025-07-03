@@ -1,8 +1,10 @@
 import EstadoBadge from "../EstadoBadge";
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { finalizarCierre, actualizarEstadoCierre, obtenerProgresoTarea } from '../../api/contabilidad';
 
 const CierreInfoBar = ({ cierre, cliente, onCierreActualizado }) => {
+  const navigate = useNavigate();
   const [actualizandoEstado, setActualizandoEstado] = useState(false);
   const [finalizando, setFinalizando] = useState(false);
   const [taskId, setTaskId] = useState(null);
@@ -165,30 +167,49 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado }) => {
           )}
         </button>
 
-        {/* Botón Finalizar Cierre - Solo si está sin incidencias */}
+        {/* Botones para estados permitidos del libro */}
+        {['sin_incidencias', 'generando_reportes', 'finalizado'].includes(cierre?.estado) && (
+          <>
+            {/* Botón Ver Libro */}
+            <button
+              onClick={() => navigate(`/menu/cierres/${cierre.id}/libro`)}
+              className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Ver Libro
+            </button>
+          </>
+        )}
+
+        {/* Botón Finalizar Cierre solo para sin_incidencias */}
         {cierre?.estado === 'sin_incidencias' && (
-          <button
-            onClick={iniciarFinalizacion}
-            disabled={finalizando}
-            className="bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white px-6 py-2 rounded-lg font-bold text-sm transition-colors flex items-center gap-2 shadow-lg"
-          >
-            {finalizando ? (
-              <>
-                <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Finalizando...
-              </>
-            ) : (
-              <>
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                Finalizar Cierre y Generar Reportes
-              </>
-            )}
-          </button>
+          <>
+            {/* Botón Finalizar Cierre */}
+            <button
+              onClick={iniciarFinalizacion}
+              disabled={finalizando}
+              className="bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white px-6 py-2 rounded-lg font-bold text-sm transition-colors flex items-center gap-2 shadow-lg"
+            >
+              {finalizando ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Finalizando...
+                </>
+              ) : (
+                <>
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Finalizar Cierre y Generar Reportes
+                </>
+              )}
+            </button>
+          </>
         )}
 
         {/* Indicador de estado generando reportes con progreso */}

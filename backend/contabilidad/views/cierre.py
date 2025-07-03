@@ -48,6 +48,16 @@ class CierreContabilidadViewSet(ActivityLoggerMixin, viewsets.ModelViewSet):
         """
         cierre = self.get_object()
         
+        # Validar que el cierre esté en estado permitido para ver el libro
+        estados_permitidos = ['sin_incidencias', 'generando_reportes', 'finalizado']
+        if cierre.estado not in estados_permitidos:
+            return Response({
+                'error': 'Acceso restringido',
+                'message': f'El libro del cierre solo está disponible cuando el estado es: {", ".join(estados_permitidos)}. Estado actual: {cierre.estado}',
+                'estado_actual': cierre.estado,
+                'estados_permitidos': estados_permitidos
+            }, status=403)
+        
         # Parámetros de filtrado
         set_id = request.query_params.get("set_id")
         opcion_id = request.query_params.get("opcion_id")
@@ -66,45 +76,62 @@ class CierreContabilidadViewSet(ActivityLoggerMixin, viewsets.ModelViewSet):
             page = int(page)
             page_size = int(page_size)
         
-        # Query base optimizada con select_related para evitar N+1 queries
-        movimientos = MovimientoContable.objects.filter(cierre=cierre).select_related(
-            'cuenta', 'tipo_documento', 'centro_costo', 'auxiliar'
+        # Obtener cuentas que participan en este cierre específico
+        # (cuentas con movimientos OR cuentas con saldo de apertura)
+        cuentas_con_movimientos = MovimientoContable.objects.filter(
+            cierre=cierre
+        ).values_list('cuenta_id', flat=True).distinct()
+        
+        cuentas_con_apertura = AperturaCuenta.objects.filter(
+            cierre=cierre
+        ).values_list('cuenta_id', flat=True).distinct()
+        
+        # Unir ambos conjuntos de cuentas
+        cuentas_del_cierre = set(cuentas_con_movimientos) | set(cuentas_con_apertura)
+        
+        # Filtrar solo las cuentas que participan en el cierre
+        cuentas_base = CuentaContable.objects.filter(
+            cliente=cierre.cliente,
+            id__in=cuentas_del_cierre
         )
         
-        # Filtrado por clasificación
-        cuentas_filtradas = None
-        if set_id and opcion_id:
-            cuentas_filtradas = AccountClassification.objects.filter(
-                set_clas_id=set_id, opcion_id=opcion_id
-            ).values_list("cuenta_id", flat=True)
-            movimientos = movimientos.filter(cuenta_id__in=cuentas_filtradas)
-        
-        # Filtrado por fechas
-        if fecha_desde:
-            movimientos = movimientos.filter(fecha__gte=fecha_desde)
-        if fecha_hasta:
-            movimientos = movimientos.filter(fecha__lte=fecha_hasta)
-        
-        # Filtrado por búsqueda en código/nombre de cuenta
+        # NO filtrar por clasificación aquí - se hará en el frontend
+        # Solo aplicar filtros de búsqueda de texto
         if search:
-            movimientos = movimientos.filter(
-                Q(cuenta__codigo__icontains=search) | 
-                Q(cuenta__nombre__icontains=search)
+            cuentas_base = cuentas_base.filter(
+                Q(codigo__icontains=search) | 
+                Q(nombre__icontains=search)
             )
         
-        # Calcular totales por cuenta con información adicional
+        # Obtener movimientos para estas cuentas con filtros de fecha
+        movimientos_query = MovimientoContable.objects.filter(cierre=cierre)
+        if fecha_desde:
+            movimientos_query = movimientos_query.filter(fecha__gte=fecha_desde)
+        if fecha_hasta:
+            movimientos_query = movimientos_query.filter(fecha__lte=fecha_hasta)
+        
+        # Calcular totales por cuenta (incluyendo cuentas sin movimientos)
+        # Crear filtros dinámicos para fechas
+        fecha_filters = Q(movimientocontable__cierre=cierre)
+        if fecha_desde:
+            fecha_filters &= Q(movimientocontable__fecha__gte=fecha_desde)
+        if fecha_hasta:
+            fecha_filters &= Q(movimientocontable__fecha__lte=fecha_hasta)
+            
         totales_query = (
-            movimientos.values(
-                "cuenta_id", 
-                "cuenta__codigo", 
-                "cuenta__nombre",
-                "cuenta__nombre_en"  # Incluir nombre en inglés si existe
+            cuentas_base.annotate(
+                total_debe=Sum("movimientocontable__debe", filter=fecha_filters),
+                total_haber=Sum("movimientocontable__haber", filter=fecha_filters)
             )
-            .annotate(
-                total_debe=Sum("debe"), 
-                total_haber=Sum("haber")
+            .values(
+                "id", 
+                "codigo", 
+                "nombre",
+                "nombre_en",  # Incluir nombre en inglés si existe
+                "total_debe",
+                "total_haber"
             )
-            .order_by("cuenta__codigo")
+            .order_by("codigo")
         )
         
         # Obtener saldos de apertura optimizado
@@ -124,10 +151,29 @@ class CierreContabilidadViewSet(ActivityLoggerMixin, viewsets.ModelViewSet):
         else:
             totales_procesados = totales_list
         
+        # Obtener TODAS las clasificaciones para todas las cuentas del cierre
+        # para permitir filtrado en el frontend
+        clasificaciones_map = {}
+        if True:  # Siempre obtener clasificaciones
+            clasificaciones = AccountClassification.objects.filter(
+                cuenta_id__in=[t["id"] for t in totales_procesados]
+            ).select_related("opcion", "set_clas")  # Cambio: 'opcion' en lugar de 'opcion_clas'
+            
+            # Crear un mapa con todas las clasificaciones por cuenta
+            for c in clasificaciones:
+                if c.cuenta_id not in clasificaciones_map:
+                    clasificaciones_map[c.cuenta_id] = {}
+                
+                clasificaciones_map[c.cuenta_id][c.set_clas_id] = {
+                    "set_nombre": c.set_clas.nombre,
+                    "opcion_id": c.opcion.id if c.opcion else None,
+                    "opcion_valor": c.opcion.valor if c.opcion else ""
+                }
+        
         # Construir datos de respuesta enriquecidos
         data = []
         for t in totales_procesados:
-            cuenta_id = t["cuenta_id"]
+            cuenta_id = t["id"]  # Cambio: ahora usamos "id" directamente de la cuenta
             saldo_anterior = mapa_aperturas.get(cuenta_id, 0)
             saldo_final = saldo_anterior + (t["total_debe"] or 0) - (t["total_haber"] or 0)
             
@@ -139,18 +185,31 @@ class CierreContabilidadViewSet(ActivityLoggerMixin, viewsets.ModelViewSet):
                 "saldo_anterior": saldo_anterior,  # Siempre incluir saldo_anterior
             }
             
+            # Agregar TODAS las clasificaciones disponibles para esta cuenta
+            item["clasificaciones"] = clasificaciones_map.get(cuenta_id, {})
+            
+            # Para compatibilidad con el frontend existente, incluir la clasificación
+            # del set seleccionado (si existe) en el formato original
+            if set_id and str(set_id) in str(clasificaciones_map.get(cuenta_id, {})):
+                for set_key, cls_data in clasificaciones_map.get(cuenta_id, {}).items():
+                    if str(set_key) == str(set_id):
+                        item["clasificacion"] = {
+                            "opcion_valor": cls_data["opcion_valor"]
+                        }
+                        break
+            
             # Agregar información adicional si hay paginación (API extendida)
             if usar_paginacion:
                 item.update({
-                    "cuenta_codigo": t["cuenta__codigo"],
-                    "cuenta_nombre": t["cuenta__nombre"],
-                    "cuenta_nombre_en": t["cuenta__nombre_en"],
+                    "cuenta_codigo": t["codigo"],
+                    "cuenta_nombre": t["nombre"],
+                    "cuenta_nombre_en": t["nombre_en"],
                 })
             else:
                 # Para compatibilidad con AnalisisLibro.jsx que espera 'codigo' y 'nombre'
                 item.update({
-                    "codigo": t["cuenta__codigo"],
-                    "nombre": t["cuenta__nombre"],
+                    "codigo": t["codigo"],
+                    "nombre": t["nombre"],
                 })
             
             data.append(item)

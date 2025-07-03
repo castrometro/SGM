@@ -212,11 +212,15 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
     
     # Excepciones por set de clasificación
     excepciones_por_set = {}
+    total_excepciones = 0
     for exc in ExcepcionClasificacionSet.objects.filter(cliente=cliente, activa=True).select_related('set_clasificacion'):
         set_id = exc.set_clasificacion.id
         if set_id not in excepciones_por_set:
             excepciones_por_set[set_id] = set()
-        excepciones_por_set[set_id].add(exc.codigo_cuenta)
+        excepciones_por_set[set_id].add(exc.cuenta_codigo)
+        total_excepciones += 1
+    
+    logger.info(f"Cargadas {total_excepciones} excepciones de clasificación activas para {len(excepciones_por_set)} sets")
     
     # Tipos de documento precargados (con caché optimizado)
     tipos_documento_map = {
@@ -446,10 +450,13 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                     
                     # VALIDACIÓN DE CLASIFICACIONES EN LÍNEA - Solo si hay sets configurados
                     if sets_clasificacion:
+                        cuentas_exceptuadas = 0
                         for set_clas in sets_clasificacion:
                             # Verificar si la cuenta tiene excepción para este set
                             excepciones_set = excepciones_por_set.get(set_clas.id, set())
                             if cuenta.codigo in excepciones_set:
+                                cuentas_exceptuadas += 1
+                                logger.debug(f"Cuenta {cuenta.codigo} tiene excepción para set {set_clas.nombre} - NO se validará clasificación")
                                 continue  # Esta cuenta está excenta de clasificación en este set
                             
                             # Verificar si la cuenta está clasificada en este set
@@ -464,6 +471,9 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                                     cuentas_sin_clasificacion_por_set[set_clas.id] = {}
                                 cuentas_sin_clasificacion_por_set[set_clas.id][cuenta.codigo] = set_clas.nombre
                                 logger.debug(f"Cuenta {cuenta.codigo} marcada para incidencia de clasificación en set {set_clas.nombre}")
+                        
+                        if cuentas_exceptuadas > 0:
+                            logger.debug(f"Cuenta {cuenta.codigo} exceptuada de {cuentas_exceptuadas} sets de clasificación")
                     
                     # VALIDACIÓN DE NOMBRES EN INGLÉS EN LÍNEA - Solo si el cliente es bilingüe
                     if cliente.bilingue and not cuenta.nombre_en:
@@ -539,6 +549,12 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
     
     # Actualizar estadísticas
     stats["incidencias_detectadas"] = len(incidencias_pendientes)
+    stats["excepciones_aplicadas"] = {
+        "clasificacion_sets": sum(len(excepciones) for excepciones in excepciones_por_set.values()),
+        "nombres_ingles": len(excepciones_nombres_ingles),
+        "tipo_doc_null": len(excepciones_tipo_doc_null),
+        "tipo_doc_no_reconocido": len(excepciones_tipo_doc_no_reconocido)
+    }
 
     # Guardar stats en upload.resumen
     resumen = upload.resumen or {}
@@ -550,6 +566,10 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
 
     logger.info(f"Procesamiento completado: {stats}")
     logger.info(f"Incidencias detectadas en línea: {len(incidencias_pendientes)}")
+    logger.info(f"Excepciones aplicadas - Sets clasificación: {stats['excepciones_aplicadas']['clasificacion_sets']}, "
+               f"Nombres inglés: {stats['excepciones_aplicadas']['nombres_ingles']}, "
+               f"Tipo doc null: {stats['excepciones_aplicadas']['tipo_doc_null']}, "
+               f"Tipo doc no reconocido: {stats['excepciones_aplicadas']['tipo_doc_no_reconocido']}")
     return upload_log_id
 
 # ─── Task 5: Generar incidencias ───────────────────────────────────────────────

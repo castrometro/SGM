@@ -260,7 +260,88 @@ class MovimientoContableAdmin(admin.ModelAdmin):
 
 @admin.register(ClasificacionSet)
 class ClasificacionSetAdmin(admin.ModelAdmin):
-    list_display = ("cliente", "nombre")
+    list_display = ("cliente", "nombre", "total_opciones", "es_predefinido")
+    list_filter = ("cliente", "nombre")
+    search_fields = ("cliente__nombre", "nombre")
+    actions = ["recuperar_sets_predefinidos", "reinstalar_sets_completos"]
+    
+    def total_opciones(self, obj):
+        return obj.opciones.count()
+    total_opciones.short_description = "Total Opciones"
+    
+    def es_predefinido(self, obj):
+        sets_predefinidos = [
+            "Tipo de Cuenta", "Clasificacion Balance", 
+            "Categoria IFRS", "AGRUPACION CLIENTE"
+        ]
+        return "✓" if obj.nombre in sets_predefinidos else "-"
+    es_predefinido.short_description = "Predefinido"
+    
+    def recuperar_sets_predefinidos(self, request, queryset):
+        """Acción para recuperar sets predefinidos para los clientes seleccionados"""
+        from .tasks_cuentas_bulk import crear_sets_predefinidos_clasificacion
+        
+        clientes_procesados = set()
+        total_exitosos = 0
+        total_errores = 0
+        
+        for obj in queryset:
+            if obj.cliente.id not in clientes_procesados:
+                try:
+                    resultado = crear_sets_predefinidos_clasificacion(obj.cliente.id)
+                    clientes_procesados.add(obj.cliente.id)
+                    total_exitosos += 1
+                except Exception as e:
+                    self.message_user(
+                        request, 
+                        f"Error recuperando sets para cliente {obj.cliente.nombre}: {str(e)}",
+                        level='ERROR'
+                    )
+                    total_errores += 1
+        
+        if total_exitosos > 0:
+            self.message_user(
+                request,
+                f"Sets predefinidos recuperados exitosamente para {total_exitosos} cliente(s)",
+                level='SUCCESS'
+            )
+    
+    recuperar_sets_predefinidos.short_description = "Recuperar sets predefinidos"
+    
+    def reinstalar_sets_completos(self, request, queryset):
+        """Acción para reinstalar completamente sets (RAW + predefinidos) para los clientes seleccionados"""
+        from .tasks_cuentas_bulk import recuperar_sets_clasificacion_cliente
+        
+        clientes_procesados = set()
+        total_exitosos = 0
+        total_errores = 0
+        
+        for obj in queryset:
+            if obj.cliente.id not in clientes_procesados:
+                try:
+                    resultado = recuperar_sets_clasificacion_cliente(
+                        obj.cliente.id,
+                        incluir_predefinidos=True,
+                        limpiar_existentes=False
+                    )
+                    clientes_procesados.add(obj.cliente.id)
+                    total_exitosos += 1
+                except Exception as e:
+                    self.message_user(
+                        request, 
+                        f"Error reinstalando sets para cliente {obj.cliente.nombre}: {str(e)}",
+                        level='ERROR'
+                    )
+                    total_errores += 1
+        
+        if total_exitosos > 0:
+            self.message_user(
+                request,
+                f"Sets completos reinstalados exitosamente para {total_exitosos} cliente(s)",
+                level='SUCCESS'
+            )
+    
+    reinstalar_sets_completos.short_description = "Reinstalar sets completos (RAW + predefinidos)"
 
 
 @admin.register(ClasificacionOption)

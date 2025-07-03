@@ -367,6 +367,117 @@ class ClasificacionViewSet(viewsets.ViewSet):
         verificar_y_marcar_completo(cuenta_id)
         return Response({"ok": True, "id": obj.id, "creado": creado})
 
+    @action(detail=False, methods=["post"], url_path="clasificar-masivo")
+    def clasificar_masivo(self, request):
+        """
+        Clasifica múltiples cuentas con la misma clasificación de una vez.
+        
+        Payload esperado:
+        {
+            "cuentas_ids": [1, 2, 3, 4],
+            "set_clas_id": 5,
+            "opcion_id": 10
+        }
+        """
+        cuentas_ids = request.data.get("cuentas_ids", [])
+        set_clas_id = request.data.get("set_clas_id")
+        opcion_id = request.data.get("opcion_id")
+        usuario = request.user
+        
+        # Validaciones
+        if not cuentas_ids:
+            return Response({"error": "Debe seleccionar al menos una cuenta"}, status=400)
+            
+        if not isinstance(cuentas_ids, list):
+            return Response({"error": "cuentas_ids debe ser una lista"}, status=400)
+            
+        if not (set_clas_id and opcion_id):
+            return Response({"error": "Debe especificar set_clas_id y opcion_id"}, status=400)
+        
+        # Verificar que el set y la opción existen
+        try:
+            set_clas = ClasificacionSet.objects.get(id=set_clas_id)
+            opcion = ClasificacionOption.objects.get(id=opcion_id, set_clas_id=set_clas_id)
+        except (ClasificacionSet.DoesNotExist, ClasificacionOption.DoesNotExist):
+            return Response({"error": "Set o opción de clasificación no válidos"}, status=400)
+        
+        # Verificar que las cuentas existen y pertenecen al cliente autorizado
+        cuentas = CuentaContable.objects.filter(id__in=cuentas_ids)
+        
+        if cuentas.count() != len(cuentas_ids):
+            return Response({"error": "Algunas cuentas no fueron encontradas"}, status=400)
+        
+        # Verificar permisos: todas las cuentas deben pertenecer al mismo cliente
+        cliente_ids = cuentas.values_list('cliente_id', flat=True).distinct()
+        if len(cliente_ids) > 1:
+            return Response({"error": "Las cuentas seleccionadas pertenecen a diferentes clientes"}, status=400)
+        
+        # Realizar clasificación masiva
+        clasificaciones_creadas = 0
+        clasificaciones_actualizadas = 0
+        errores = []
+        
+        for cuenta in cuentas:
+            try:
+                obj, creado = AccountClassification.objects.update_or_create(
+                    cuenta_id=cuenta.id,
+                    set_clas_id=set_clas_id,
+                    defaults={
+                        "opcion_id": opcion_id,
+                        "asignado_por": usuario,
+                    },
+                )
+                
+                if creado:
+                    clasificaciones_creadas += 1
+                else:
+                    clasificaciones_actualizadas += 1
+                    
+                # Verificar y marcar cuenta como completa si es necesario
+                verificar_y_marcar_completo(cuenta.id)
+                
+            except Exception as e:
+                errores.append(f"Error en cuenta {cuenta.codigo}: {str(e)}")
+        
+        # Registrar actividad
+        try:
+            registrar_actividad_tarjeta(
+                cliente_id=cliente_ids[0],
+                periodo=date.today().strftime("%Y-%m"),
+                tarjeta="clasificacion",
+                accion="clasificar_masivo",
+                descripcion=f"Clasificación masiva: {clasificaciones_creadas + clasificaciones_actualizadas} cuentas en set '{set_clas.nombre}' con opción '{opcion.valor}'",
+                usuario=usuario,
+                detalles={
+                    "cuentas_procesadas": len(cuentas_ids),
+                    "clasificaciones_creadas": clasificaciones_creadas,
+                    "clasificaciones_actualizadas": clasificaciones_actualizadas,
+                    "errores_count": len(errores),
+                    "set_nombre": set_clas.nombre,
+                    "opcion_valor": opcion.valor,
+                },
+                resultado="exito" if not errores else "parcial",
+                ip_address=request.META.get("REMOTE_ADDR"),
+            )
+        except Exception as e:
+            # No fallar la operación principal por error de logging
+            logging.getLogger(__name__).warning(f"Error registrando actividad de clasificación masiva: {e}")
+        
+        # Respuesta
+        response_data = {
+            "ok": True,
+            "clasificaciones_creadas": clasificaciones_creadas,
+            "clasificaciones_actualizadas": clasificaciones_actualizadas,
+            "total_procesadas": clasificaciones_creadas + clasificaciones_actualizadas,
+            "cuentas_solicitadas": len(cuentas_ids),
+        }
+        
+        if errores:
+            response_data["errores"] = errores
+            response_data["errores_count"] = len(errores)
+        
+        return Response(response_data)
+
 
 class ClasificacionSetViewSet(viewsets.ModelViewSet):
     queryset = ClasificacionSet.objects.all()

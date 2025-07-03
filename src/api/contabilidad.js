@@ -334,24 +334,43 @@ export const eliminarTodasClasificacionesCuenta = async (clienteId) => {
 export const obtenerMovimientosResumen = async (
   cierreId,
   {
-    page = 1,
-    page_size = 50,
-    search = "",
-    cuenta = "",
-    auxiliar = "",
-    centro_costo = "",
+    setId = undefined,
+    opcionId = undefined,
+    page = undefined,
+    page_size = undefined,
+    search = undefined,
+    cuenta = undefined,
+    auxiliar = undefined,
+    centro_costo = undefined,
+    fecha_desde = undefined,
+    fecha_hasta = undefined,
   } = {},
 ) => {
-  const params = { page, page_size };
-  if (search) params.search = search;
-  if (cuenta) params.cuenta = cuenta;
-  if (auxiliar) params.auxiliar = auxiliar;
-  if (centro_costo) params.centro_costo = centro_costo;
+  const params = {};
+  
+  // Solo agregar parámetros que realmente tienen valor
+  if (setId !== undefined) params.set_id = setId;
+  if (opcionId !== undefined) params.opcion_id = opcionId;
+  if (page !== undefined) params.page = page;
+  if (page_size !== undefined) params.page_size = page_size;
+  if (search !== undefined) params.search = search;
+  if (cuenta !== undefined) params.cuenta = cuenta;
+  if (auxiliar !== undefined) params.auxiliar = auxiliar;
+  if (centro_costo !== undefined) params.centro_costo = centro_costo;
+  if (fecha_desde !== undefined) params.fecha_desde = fecha_desde;
+  if (fecha_hasta !== undefined) params.fecha_hasta = fecha_hasta;
 
   const res = await api.get(
     `/contabilidad/cierres/${cierreId}/movimientos-resumen/`,
     { params },
   );
+  // Devolver siempre el array de movimientos, ya sea con paginación o sin ella
+  if (Array.isArray(res.data)) {
+    return res.data;
+  } else if (res.data.results && Array.isArray(res.data.results)) {
+    return res.data.results;
+  }
+  // Fallback a la data original
   return res.data;
 };
 
@@ -496,6 +515,15 @@ export const actualizarClasificacionArchivo = async (id, data) => {
 
 export const eliminarClasificacionArchivo = async (id) => {
   const res = await api.delete(`/contabilidad/clasificacion-archivo/${id}/`);
+  return res.data;
+};
+
+export const clasificacionBulkArchivo = async (registroIds, setNombre, valorClasificacion) => {
+  const res = await api.post("/contabilidad/clasificacion-archivo/bulk-classify/", {
+    registro_ids: registroIds,
+    set_nombre: setNombre,
+    valor_clasificacion: valorClasificacion
+  });
   return res.data;
 };
 

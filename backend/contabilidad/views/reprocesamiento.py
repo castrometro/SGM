@@ -14,7 +14,8 @@ from ..models import (
     LibroMayorArchivo,
     MovimientoContable,
     AperturaCuenta,
-    Incidencia
+    Incidencia,
+    ExcepcionClasificacionSet
 )
 from ..tasks_libro_mayor import crear_chain_libro_mayor
 
@@ -78,6 +79,13 @@ def reprocesar_libro_mayor_con_excepciones(request):
             request.user,
             motivo="Reprocesamiento con excepciones aplicadas"
         )
+        
+        # Log para verificar que las excepciones están disponibles
+        excepciones_activas = ExcepcionClasificacionSet.objects.filter(
+            cliente=cierre.cliente, 
+            activa=True
+        ).count()
+        logger.info(f"Reprocesamiento iniciado - Excepciones de clasificación activas: {excepciones_activas}")
         
         logger.info(f"Nueva iteración creada: {nueva_iteracion.id} "
                    f"(iteración {nueva_iteracion.iteracion}) para cierre {cierre_id}")

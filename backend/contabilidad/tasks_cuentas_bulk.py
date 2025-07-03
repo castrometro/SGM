@@ -449,9 +449,18 @@ def finalizar_procesamiento_clasificacion_task(upload_log_id):
         logger.info(f"Creando sets y opciones automáticamente para cliente {upload_log.cliente.id}")
         try:
             resultado_sets = crear_sets_y_opciones_clasificacion_desde_raw(upload_log.cliente.id)
-            logger.info(f"Resultado creación sets: {resultado_sets}")
+            logger.info(f"Resultado creación sets desde RAW: {resultado_sets}")
         except Exception as e:
-            logger.error(f"Error creando sets automáticamente: {str(e)}")
+            logger.error(f"Error creando sets desde RAW automáticamente: {str(e)}")
+            # No interrumpir el procesamiento por este error
+        
+        # Crear también sets predefinidos con opciones bilingües estándar
+        logger.info(f"Creando sets predefinidos para cliente {upload_log.cliente.id}")
+        try:
+            resultado_predefinidos = crear_sets_predefinidos_clasificacion(upload_log.cliente.id)
+            logger.info(f"Resultado creación sets predefinidos: {resultado_predefinidos}")
+        except Exception as e:
+            logger.error(f"Error creando sets predefinidos: {str(e)}")
             # No interrumpir el procesamiento por este error
 
         # Registrar actividad exitosa
@@ -943,3 +952,288 @@ def validar_archivo_clasificacion_excel(ruta_archivo, cliente_id):
     except Exception as e:
         errores.append(f"Error inesperado validando archivo: {str(e)}")
         return {'es_valido': False, 'errores': errores, 'advertencias': advertencias, 'estadisticas': estadisticas}
+
+
+@shared_task(name='contabilidad.crear_sets_predefinidos_clasificacion')
+def crear_sets_predefinidos_clasificacion(cliente_id):
+    """
+    Crea sets de clasificación predefinidos con opciones bilingües estándar
+    para clasificación contable. Incluye sets como Tipo de Cuenta, Categoría IFRS, etc.
+    
+    IMPORTANTE: Los sets son únicos, las opciones contienen tanto valor_es como valor_en
+    """
+    logger.info(f"[SETS_PREDEFINIDOS] Iniciando creación para cliente {cliente_id}")
+    
+    try:
+        from .models import Cliente, ClasificacionSet, ClasificacionOption
+        
+        try:
+            cliente = Cliente.objects.get(id=cliente_id)
+            logger.info(f"[SETS_PREDEFINIDOS] Cliente encontrado: {cliente.nombre} (Bilingüe: {cliente.bilingue})")
+        except Cliente.DoesNotExist:
+            msg = f"[crear_sets_predefinidos] Cliente con id={cliente_id} no existe."
+            logger.error(msg)
+            return {'error': msg}
+        
+        sets_creados = 0
+        opciones_creadas = 0
+        sets_actualizados = 0
+        opciones_actualizadas = 0
+        
+        # Definir sets predefinidos con opciones bilingües
+        sets_predefinidos = {
+            'Estado Situacion Financiera': {
+                'descripcion': 'Clasificación para informe ESF',
+                'opciones': [
+                    {'valor': 'Activo Corriente', 'descripcion': 'Cuentas de activo corriente', 'valor_en': 'Current Assets', 'descripcion_en': 'Current assets accounts'},
+                    {'valor': 'Pasivo Corriente', 'descripcion': 'Cuentas de pasivo corriente', 'valor_en': 'Current Liabilities', 'descripcion_en': 'Current liabilities accounts'},
+                    {'valor': 'Activo No Corriente', 'descripcion': 'Cuentas de activo no corriente', 'valor_en': 'Non-Current Assets', 'descripcion_en': 'Non-current assets accounts'},
+                    {'valor': 'Pasivo No Corriente', 'descripcion': 'Cuentas de pasivo no corriente', 'valor_en': 'Non-Current Liabilities', 'descripcion_en': 'Non-current liabilities accounts'},
+                    {'valor': 'Patrimonio', 'descripcion': 'Cuentas de patrimonio', 'valor_en': 'Patrimony', 'descripcion_en': 'Patrimony accounts'},
+                ]
+            },
+            'Estado de Resultados Integral': {
+                'descripcion': 'Clasificación para informe ERI',
+                'opciones': [
+                    {'valor': 'Gross Earnings', 'descripcion': 'Gross Earnings', 'valor_en': 'Gross Earnings', 'descripcion_en': 'Gross earnings'},
+                    {'valor': 'Earnings (Loss)', 'descripcion': 'Earnings (Loss)', 'valor_en': 'Earnings (Loss)', 'descripcion_en': 'Earnings (Loss)'},
+                    {'valor': 'Earnings (Loss) Before Taxes', 'descripcion': 'Earnings (Loss) Before Taxes', 'valor_en': 'Earnings (Loss) Before Taxes', 'descripcion_en': 'Earnings (Loss) before taxes'},
+
+                ]
+            },
+        }
+        
+        logger.info(f"[SETS_PREDEFINIDOS] Creando {len(sets_predefinidos)} sets predefinidos (sets únicos con opciones bilingües)...")
+        
+        # Crear sets y opciones
+        for set_nombre, set_info in sets_predefinidos.items():
+            logger.debug(f"[SETS_PREDEFINIDOS] Procesando set: {set_nombre}")
+            
+            # Crear o actualizar el ClasificacionSet único (no duplicamos por idioma)
+            clasificacion_set, set_created = ClasificacionSet.objects.get_or_create(
+                cliente=cliente,
+                nombre=set_nombre,
+                defaults={
+                    'descripcion': set_info['descripcion'],
+                    'idioma': 'es'  # Set base en español, opciones son bilingües
+                }
+            )
+            
+            if set_created:
+                sets_creados += 1
+                logger.info(f"[SETS_PREDEFINIDOS] ✓ Creado ClasificacionSet: {set_nombre}")
+            else:
+                sets_actualizados += 1
+                logger.debug(f"[SETS_PREDEFINIDOS] - Ya existía ClasificacionSet: {set_nombre}")
+            
+            # Crear opciones bilingües para el set
+            opciones_set_creadas = 0
+            opciones_set_actualizadas = 0
+            
+            for opcion_info in set_info['opciones']:
+                # Preparar datos de la opción (siempre incluye ambos idiomas si están disponibles)
+                opcion_defaults = {
+                    'descripcion': opcion_info['descripcion'],
+                    'parent': None
+                }
+                
+                # Agregar campos en inglés si existen y el cliente es bilingüe
+                if cliente.bilingue and 'valor_en' in opcion_info:
+                    opcion_defaults['valor_en'] = opcion_info['valor_en']
+                    opcion_defaults['descripcion_en'] = opcion_info['descripcion_en']
+                
+                # Crear o actualizar la opción
+                opcion, opcion_created = ClasificacionOption.objects.update_or_create(
+                    set_clas=clasificacion_set,
+                    valor=opcion_info['valor'],  # Clave única: set + valor en español
+                    defaults=opcion_defaults
+                )
+                
+                if opcion_created:
+                    opciones_creadas += 1
+                    opciones_set_creadas += 1
+                    accion = "creada"
+                else:
+                    opciones_actualizadas += 1
+                    opciones_set_actualizadas += 1
+                    accion = "actualizada"
+                
+                # Log detallado de la opción
+                if cliente.bilingue and 'valor_en' in opcion_info:
+                    logger.debug(f"[SETS_PREDEFINIDOS]   - Opción {accion}: '{opcion_info['valor']}' / '{opcion_info['valor_en']}'")
+                else:
+                    logger.debug(f"[SETS_PREDEFINIDOS]   - Opción {accion}: '{opcion_info['valor']}'")
+            
+            logger.debug(f"[SETS_PREDEFINIDOS] Set {set_nombre}: {opciones_set_creadas} opciones creadas, {opciones_set_actualizadas} actualizadas")
+        
+        # Resumen final
+        total_sets = sets_creados + sets_actualizados
+        total_opciones = opciones_creadas + opciones_actualizadas
+        bilingue_msg = " (opciones bilingües ES/EN)" if cliente.bilingue else " (solo español)"
+        
+        resultado = f"Sets predefinidos procesados para cliente {cliente.nombre}{bilingue_msg}: {sets_creados} sets nuevos, {sets_actualizados} sets existentes, {opciones_creadas} opciones nuevas, {opciones_actualizadas} opciones actualizadas"
+        logger.info(f"[SETS_PREDEFINIDOS] ✅ {resultado}")
+        
+        return {
+            'exito': True,
+            'sets_creados': sets_creados,
+            'sets_actualizados': sets_actualizados,
+            'opciones_creadas': opciones_creadas,
+            'opciones_actualizadas': opciones_actualizadas,
+            'total_sets': total_sets,
+            'total_opciones': total_opciones,
+            'cliente_bilingue': cliente.bilingue,
+            'mensaje': resultado
+        }
+        
+    except Exception as e:
+        error_msg = f"Error creando sets predefinidos para cliente {cliente_id}: {str(e)}"
+        logger.exception(f"[SETS_PREDEFINIDOS] ❌ {error_msg}")
+        return {'error': error_msg}
+
+@shared_task(name='contabilidad.reinstalar_sets_predefinidos_clasificacion')
+def reinstalar_sets_predefinidos_clasificacion(cliente_id, limpiar_existentes=False):
+    """
+    Reinstala o recupera los sets predefinidos de clasificación para un cliente.
+    Útil para recuperar sets perdidos o actualizarlos.
+    
+    Args:
+        cliente_id: ID del cliente
+        limpiar_existentes: Si True, elimina sets existentes antes de crear nuevos
+        
+    NOTA: Solo maneja sets únicos, no duplicados por idioma.
+    """
+    logger.info(f"[REINSTALAR_SETS] Iniciando para cliente {cliente_id}, limpiar_existentes={limpiar_existentes}")
+    
+    try:
+        from .models import Cliente, ClasificacionSet, ClasificacionOption
+        
+        try:
+            cliente = Cliente.objects.get(id=cliente_id)
+            logger.info(f"[REINSTALAR_SETS] Cliente: {cliente.nombre} (Bilingüe: {cliente.bilingue})")
+        except Cliente.DoesNotExist:
+            msg = f"[reinstalar_sets] Cliente con id={cliente_id} no existe."
+            logger.error(msg)
+            return {'error': msg}
+        
+        sets_eliminados = 0
+        
+        # Si se solicita limpiar, eliminar sets existentes que coincidan con nombres predefinidos
+        if limpiar_existentes:
+            nombres_predefinidos = [
+                'Tipo de Cuenta', 'Clasificacion Balance', 'Categoria IFRS', 'AGRUPACION CLIENTE'
+            ]
+            
+            # NOTA: Ya no buscamos versiones (EN) porque ahora solo hay sets únicos
+            sets_a_eliminar = ClasificacionSet.objects.filter(
+                cliente=cliente,
+                nombre__in=nombres_predefinidos
+            )
+            
+            logger.info(f"[REINSTALAR_SETS] Eliminando {sets_a_eliminar.count()} sets existentes...")
+            sets_eliminados_result = sets_a_eliminar.delete()
+            sets_eliminados = sets_eliminados_result[0]
+            
+            logger.info(f"[REINSTALAR_SETS] ✓ Eliminados {sets_eliminados} sets existentes")
+        
+        # Crear los sets predefinidos
+        logger.info(f"[REINSTALAR_SETS] Creando sets predefinidos...")
+        resultado = crear_sets_predefinidos_clasificacion(cliente_id)
+        
+        if 'error' in resultado:
+            logger.error(f"[REINSTALAR_SETS] ❌ Error: {resultado['error']}")
+            return resultado
+        
+        mensaje_final = f"Reinstalación completada para {cliente.nombre}: {resultado.get('sets_creados', 0)} sets nuevos, {resultado.get('opciones_creadas', 0)} opciones nuevas"
+        if limpiar_existentes:
+            mensaje_final += f" (eliminados {sets_eliminados} sets anteriores)"
+        
+        logger.info(f"[REINSTALAR_SETS] ✅ {mensaje_final}")
+        return {
+            'exito': True,
+            'mensaje': mensaje_final,
+            'sets_creados': resultado.get('sets_creados', 0),
+            'sets_actualizados': resultado.get('sets_actualizados', 0),
+            'opciones_creadas': resultado.get('opciones_creadas', 0),
+            'opciones_actualizadas': resultado.get('opciones_actualizadas', 0),
+            'sets_eliminados': sets_eliminados,
+            'cliente_bilingue': cliente.bilingue
+        }
+        
+    except Exception as e:
+        error_msg = f"Error reinstalando sets predefinidos para cliente {cliente_id}: {str(e)}"
+        logger.exception(f"[REINSTALAR_SETS] ❌ {error_msg}")
+        return {'error': error_msg}
+
+# ==== FUNCIONES DE UTILIDAD PARA GESTIÓN MANUAL ====
+
+def recuperar_sets_clasificacion_cliente(cliente_id, incluir_predefinidos=True, limpiar_existentes=False):
+    """
+    Función de utilidad para recuperar/reinstalar sets de clasificación para un cliente.
+    Puede ser llamada desde Django admin, shell, o endpoints.
+    
+    Args:
+        cliente_id: ID del cliente
+        incluir_predefinidos: Si incluir sets predefinidos estándar
+        limpiar_existentes: Si eliminar sets existentes antes de crear nuevos
+    
+    Returns:
+        dict con resultado de la operación
+    """
+    try:
+        from .models import Cliente
+        
+        cliente = Cliente.objects.get(id=cliente_id)
+        logger.info(f"Recuperando sets de clasificación para cliente {cliente.nombre} (ID: {cliente_id})")
+        
+        resultados = {}
+        
+        # 1. Crear sets desde datos RAW si existen
+        try:
+            resultado_raw = crear_sets_y_opciones_clasificacion_desde_raw(cliente_id)
+            resultados['desde_raw'] = resultado_raw
+            logger.info(f"Sets desde RAW: {resultado_raw}")
+        except Exception as e:
+            resultados['desde_raw'] = {'error': str(e)}
+            logger.error(f"Error creando sets desde RAW: {e}")
+        
+        # 2. Crear sets predefinidos si se solicita
+        if incluir_predefinidos:
+            try:
+                if limpiar_existentes:
+                    resultado_predefinidos = reinstalar_sets_predefinidos_clasificacion(cliente_id, limpiar_existentes=True)
+                else:
+                    resultado_predefinidos = crear_sets_predefinidos_clasificacion(cliente_id)
+                resultados['predefinidos'] = resultado_predefinidos
+                logger.info(f"Sets predefinidos: {resultado_predefinidos}")
+            except Exception as e:
+                resultados['predefinidos'] = {'error': str(e)}
+                logger.error(f"Error creando sets predefinidos: {e}")
+        
+        # 3. Resumen final
+        total_sets = 0
+        total_opciones = 0
+        
+        if 'desde_raw' in resultados and isinstance(resultados['desde_raw'], str):
+            # Parsear resultado tipo string del RAW
+            pass
+        
+        if 'predefinidos' in resultados and 'sets_creados' in resultados['predefinidos']:
+            total_sets += resultados['predefinidos']['sets_creados']
+            total_opciones += resultados['predefinidos']['opciones_creadas']
+        
+        mensaje_final = f"Recuperación completada para {cliente.nombre}: {total_sets} sets, {total_opciones} opciones"
+        
+        return {
+            'exito': True,
+            'cliente': {'id': cliente.id, 'nombre': cliente.nombre, 'bilingue': cliente.bilingue},
+            'mensaje': mensaje_final,
+            'detalles': resultados,
+            'totales': {'sets': total_sets, 'opciones': total_opciones}
+        }
+        
+    except Cliente.DoesNotExist:
+        return {'error': f"Cliente con ID {cliente_id} no encontrado"}
+    except Exception as e:
+        logger.exception(f"Error recuperando sets para cliente {cliente_id}")
+        return {'error': str(e)}

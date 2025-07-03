@@ -6,9 +6,12 @@ const estadoCierreColors = {
   procesando:         { texto: "Procesando", color: "bg-blue-500" },
   clasificacion:      { texto: "Esperando Clasificación", color: "bg-yellow-400" },
   incidencias:        { texto: "Incidencias Abiertas", color: "bg-red-400" },
+  sin_incidencias:    { texto: "Sin Incidencias", color: "bg-green-600" },
+  generando_reportes: { texto: "Generando Reportes", color: "bg-yellow-500" },
   en_revision:        { texto: "En Revisión", color: "bg-orange-400" },
   rechazado:          { texto: "Rechazado", color: "bg-red-600" },
   aprobado:           { texto: "Aprobado", color: "bg-green-500" },
+  finalizado:         { texto: "Finalizado", color: "bg-green-700" },
   completo:           { texto: "Completado", color: "bg-green-700" },
   
   // Estados específicos de documentos y archivos

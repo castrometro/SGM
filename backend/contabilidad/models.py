@@ -168,14 +168,30 @@ class CierreContabilidad(models.Model):
             ("procesando", "Procesando"),
             ("clasificacion", "Esperando Clasificación"),
             ("incidencias", "Incidencias Abiertas"),
+            ("sin_incidencias", "Sin Incidencias"),
+            ("generando_reportes", "Generando Reportes"),
             ("en_revision", "En Revisión"),
             ("rechazado", "Rechazado"),
             ("aprobado", "Aprobado"),
+            ("finalizado", "Finalizado"),
             ("completo", "Completo"),
         ],
+        default="pendiente"
     )
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_cierre = models.DateTimeField(null=True, blank=True)
+    fecha_sin_incidencias = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Fecha cuando el cierre quedó sin incidencias pendientes"
+    )
+    fecha_finalizacion = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Fecha cuando se finalizó el cierre y se generaron reportes"
+    )
+    reportes_generados = models.BooleanField(
+        default=False,
+        help_text="Indica si se han generado los reportes finales"
+    )
     cuentas_nuevas = models.IntegerField(default=0)
     resumen_parsing = models.JSONField(null=True, blank=True)
     parsing_completado = models.BooleanField(default=False)
@@ -185,6 +201,104 @@ class CierreContabilidad(models.Model):
 
     def __str__(self):
         return f"Cierre {self.periodo} - {self.cliente.nombre}"
+    
+    def puede_finalizar(self):
+        """
+        Verifica si el cierre puede ser finalizado
+        Debe estar en estado 'sin_incidencias' y sin incidencias pendientes
+        """
+        from .models_incidencias import Incidencia
+        
+        # Debe estar en sin_incidencias
+        if self.estado != 'sin_incidencias':
+            return False, f"El cierre debe estar en estado 'sin_incidencias', actualmente está en '{self.estado}'"
+        
+        # Verificar que no hay incidencias pendientes
+        incidencias_pendientes = Incidencia.objects.filter(
+            cierre=self,
+            estado='pendiente'
+        ).count()
+        
+        if incidencias_pendientes > 0:
+            return False, f"Hay {incidencias_pendientes} incidencias pendientes por resolver"
+        
+        # Ya está finalizado
+        if self.estado == 'finalizado':
+            return False, "El cierre ya ha sido finalizado"
+            
+        return True, "El cierre puede ser finalizado"
+    
+    def iniciar_finalizacion(self, usuario=None):
+        """
+        Inicia el proceso de finalización del cierre
+        Cambia el estado a 'generando_reportes' y dispara la tarea de Celery
+        """
+        from django.utils import timezone
+        
+        puede, mensaje = self.puede_finalizar()
+        if not puede:
+            raise ValueError(mensaje)
+        
+        # Cambiar estado
+        self.estado = 'generando_reportes'
+        self.save(update_fields=['estado'])
+        
+        # Disparar tarea de Celery
+        from .tasks_finalizacion import finalizar_cierre_y_generar_reportes
+        task = finalizar_cierre_y_generar_reportes.delay(
+            cierre_id=self.id,
+            usuario_id=usuario.id if usuario else None
+        )
+        
+        return task.id
+    
+    def marcar_como_finalizado(self):
+        """
+        Marca el cierre como finalizado una vez que se generaron los reportes
+        """
+        from django.utils import timezone
+        
+        self.estado = 'finalizado'
+        self.fecha_finalizacion = timezone.now()
+        self.reportes_generados = True
+        self.save(update_fields=['estado', 'fecha_finalizacion', 'reportes_generados'])
+
+    def actualizar_estado_automatico(self):
+        """
+        Actualiza el estado del cierre basado en las incidencias pendientes
+        y otros factores automáticamente.
+        """
+        from .models_incidencias import Incidencia
+        from django.utils import timezone
+        
+        # Si ya está finalizado, no cambiar
+        if self.estado == 'finalizado':
+            return self.estado
+            
+        # Si está generando reportes, no cambiar
+        if self.estado == 'generando_reportes':
+            return self.estado
+        
+        # Contar incidencias pendientes
+        incidencias_pendientes = Incidencia.objects.filter(
+            cierre=self,
+            estado='pendiente'
+        ).count()
+        
+        # Determinar el estado correcto basado en incidencias
+        if incidencias_pendientes == 0:
+            # Sin incidencias pendientes
+            if self.estado != 'sin_incidencias':
+                self.estado = 'sin_incidencias'
+                self.fecha_sin_incidencias = timezone.now()
+                self.save(update_fields=['estado', 'fecha_sin_incidencias'])
+        else:
+            # Hay incidencias pendientes
+            if self.estado != 'incidencias':
+                self.estado = 'incidencias'
+                self.save(update_fields=['estado'])
+        
+        return self.estado
 
 
 def libro_upload_path(instance, filename):

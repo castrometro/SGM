@@ -8,7 +8,7 @@ from rest_framework import status
 import json
 
 from api.models import Cliente
-from ..models import CierreContabilidad, ExcepcionValidacion, CuentaContable
+from ..models import CierreContabilidad, ExcepcionValidacion, CuentaContable, ClasificacionSet, ExcepcionClasificacionSet
 
 
 @api_view(['POST'])
@@ -21,8 +21,9 @@ def marcar_cuenta_no_aplica(request):
     {
         "cierre_id": 123,
         "codigo_cuenta": "1-01-001-001-0001",
-        "tipo_excepcion": "DOC_NULL",  // Tipo de incidencia
-        "motivo": "Cuenta de efectivo no requiere tipo de documento"
+        "tipo_excepcion": "DOC_NULL" | "CUENTA_NO_CLAS",  // Tipo de incidencia
+        "motivo": "Cuenta de efectivo no requiere tipo de documento",
+        "set_clasificacion_id": 123  // Solo requerido para CUENTA_NO_CLAS
     }
     """
     try:
@@ -32,6 +33,7 @@ def marcar_cuenta_no_aplica(request):
         codigo_cuenta = data.get('codigo_cuenta')
         tipo_incidencia = data.get('tipo_excepcion', '')
         motivo = data.get('motivo', '')
+        set_clasificacion_id = data.get('set_clasificacion_id')
         
         if not all([cierre_id, codigo_cuenta, tipo_incidencia]):
             return Response({
@@ -46,21 +48,6 @@ def marcar_cuenta_no_aplica(request):
                 'error': f'Cierre {cierre_id} no encontrado'
             }, status=status.HTTP_404_NOT_FOUND)
         
-        # Mapear tipo de incidencia a tipo de excepción
-        mapeo_tipos = {
-            'DOC_NULL': 'movimientos_tipodoc_nulo',
-            'DOC_NO_REC': 'tipos_doc_no_reconocidos', 
-            'CUENTA_INGLES': 'cuentas_sin_nombre_ingles',
-            'CUENTA_NO_CLAS': 'cuentas_sin_clasificacion',
-        }
-        
-        tipo_excepcion = mapeo_tipos.get(tipo_incidencia)
-        if not tipo_excepcion:
-            return Response({
-                'error': f'Tipo de incidencia no válido: {tipo_incidencia}',
-                'tipos_validos': list(mapeo_tipos.keys())
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
         # Obtener información de la cuenta para el nombre
         nombre_cuenta = ''
         try:
@@ -73,45 +60,122 @@ def marcar_cuenta_no_aplica(request):
             # Si no existe la cuenta, usar el código como nombre
             nombre_cuenta = f'Cuenta {codigo_cuenta}'
         
-        # Crear o actualizar la excepción
-        excepcion, created = ExcepcionValidacion.objects.get_or_create(
-            cliente=cierre.cliente,
-            tipo_excepcion=tipo_excepcion,
-            codigo_cuenta=codigo_cuenta,
-            defaults={
-                'nombre_cuenta': nombre_cuenta,
-                'motivo': motivo,
-                'usuario_creador': request.user,
-                'activa': True
+        # CASO ESPECIAL: CUENTA_NO_CLAS requiere ExcepcionClasificacionSet
+        if tipo_incidencia in ['CUENTA_NO_CLAS', 'CUENTA_NO_CLASIFICADA']:
+            if not set_clasificacion_id:
+                return Response({
+                    'error': 'set_clasificacion_id es requerido para excepciones de clasificación'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            try:
+                set_clasificacion = ClasificacionSet.objects.get(
+                    id=set_clasificacion_id, 
+                    cliente=cierre.cliente
+                )
+            except ClasificacionSet.DoesNotExist:
+                return Response({
+                    'error': f'Set de clasificación {set_clasificacion_id} no encontrado'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Crear o actualizar ExcepcionClasificacionSet
+            excepcion, created = ExcepcionClasificacionSet.objects.get_or_create(
+                cliente=cierre.cliente,
+                set_clasificacion=set_clasificacion,
+                cuenta_codigo=codigo_cuenta,
+                defaults={
+                    'motivo': motivo,
+                    'usuario_creador': request.user,
+                    'activa': True
+                }
+            )
+            
+            if not created:
+                # Si ya existe, actualizar
+                excepcion.motivo = motivo
+                excepcion.activa = True
+                excepcion.save()
+            
+            return Response({
+                'success': True,
+                'excepcion_id': excepcion.id,
+                'mensaje': f'Cuenta {codigo_cuenta} marcada como "No aplica" para clasificación en set "{set_clasificacion.nombre}"',
+                'created': created,
+                'tipo': 'ExcepcionClasificacionSet',
+                'details': {
+                    'codigo_cuenta': codigo_cuenta,
+                    'nombre_cuenta': nombre_cuenta,
+                    'set_clasificacion': set_clasificacion.nombre,
+                    'motivo': motivo,
+                    'fecha_creacion': excepcion.fecha_creacion.isoformat(),
+                    'usuario_creador': request.user.correo_bdo if request.user else None
+                }
+            })
+        
+        # CASOS NORMALES: ExcepcionValidacion
+        else:
+            # Mapear tipo de incidencia a tipo de excepción
+            mapeo_tipos = {
+                'DOC_NULL': 'movimientos_tipodoc_nulo',
+                'DOC_NO_REC': 'tipos_doc_no_reconocidos', 
+                'CUENTA_INGLES': 'cuentas_sin_nombre_ingles',
             }
-        )
+            
+            tipo_excepcion = mapeo_tipos.get(tipo_incidencia)
+            if not tipo_excepcion:
+                return Response({
+                    'error': f'Tipo de incidencia no válido: {tipo_incidencia}',
+                    'tipos_validos': list(mapeo_tipos.keys()) + ['CUENTA_NO_CLAS', 'CUENTA_NO_CLASIFICADA']
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Crear o actualizar la excepción
+            excepcion, created = ExcepcionValidacion.objects.get_or_create(
+                cliente=cierre.cliente,
+                tipo_excepcion=tipo_excepcion,
+                codigo_cuenta=codigo_cuenta,
+                defaults={
+                    'nombre_cuenta': nombre_cuenta,
+                    'motivo': motivo,
+                    'usuario_creador': request.user,
+                    'activa': True
+                }
+            )
+            
+            if not created:
+                # Si ya existe, actualizar
+                excepcion.motivo = motivo
+                excepcion.activa = True
+                excepcion.save()
+            
+            return Response({
+                'success': True,
+                'excepcion_id': excepcion.id,
+                'mensaje': f'Cuenta {codigo_cuenta} marcada como "No aplica" para {excepcion.get_tipo_excepcion_display()}',
+                'created': created,
+                'tipo': 'ExcepcionValidacion',
+                'details': {
+                    'codigo_cuenta': codigo_cuenta,
+                    'nombre_cuenta': nombre_cuenta,
+                    'tipo_excepcion': excepcion.get_tipo_excepcion_display(),
+                    'motivo': motivo,
+                    'fecha_creacion': excepcion.fecha_creacion.isoformat(),
+                    'usuario_creador': request.user.correo_bdo if request.user else None
+                }
+            })
         
-        if not created:
-            # Si ya existe, actualizar
-            excepcion.motivo = motivo
-            excepcion.activa = True
-            excepcion.save()
-        
-        return Response({
-            'success': True,
-            'excepcion_id': excepcion.id,
-            'mensaje': f'Cuenta {codigo_cuenta} marcada como "No aplica" para {excepcion.get_tipo_excepcion_display()}',
-            'created': created,
-            'details': {
-                'codigo_cuenta': codigo_cuenta,
-                'nombre_cuenta': nombre_cuenta,
-                'tipo_excepcion': excepcion.get_tipo_excepcion_display(),
-                'motivo': motivo,
-                'fecha_creacion': excepcion.fecha_creacion.isoformat(),
-                'usuario_creador': request.user.correo_bdo if request.user else None
-            }
-        })
-        
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"JSON inválido en marcar_cuenta_no_aplica: {e}")
         return Response({
             'error': 'JSON inválido en el body de la petición'
         }, status=status.HTTP_400_BAD_REQUEST)
     except Exception as e:
+        import logging
+        import traceback
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error en marcar_cuenta_no_aplica: {e}")
+        logger.error(f"Traceback completo: {traceback.format_exc()}")
+        logger.error(f"Request data: {getattr(request, 'data', 'No data')}")
         return Response({
             'error': f'Error interno: {str(e)}'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

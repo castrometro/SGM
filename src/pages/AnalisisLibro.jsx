@@ -56,6 +56,8 @@ const AnalisisLibro = () => {
         opcionId: selectedOpcion || undefined,
       };
       const movResumen = await obtenerMovimientosResumen(cierreId, params);
+      
+      // Se eliminan logs de debug tras confirmación de formato correcto
       setResumen(movResumen);
     };
     fetchResumen();

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Check, AlertTriangle, Clock, FileText, Plus, Edit2, Trash2, Save, XCircle, Settings, Database, FolderPlus, Globe } from 'lucide-react';
+import { X, Check, AlertTriangle, Clock, FileText, Plus, Edit2, Trash2, Save, XCircle, Settings, Database, FolderPlus, Globe, CheckSquare } from 'lucide-react';
 import { 
   obtenerClasificacionesArchivo,
   registrarVistaClasificaciones,
@@ -84,6 +84,12 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
   const [idiomaMostrado, setIdiomaMostrado] = useState('es'); // Solo para cambiar la visualización
   const [idiomaPorSet, setIdiomaPorSet] = useState({}); // { setId: 'es' | 'en' }
   const [opcionesBilinguesPorSet, setOpcionesBilinguesPorSet] = useState({});
+
+  // Estados para clasificación masiva
+  const [modoClasificacionMasiva, setModoClasificacionMasiva] = useState(false);
+  const [registrosSeleccionados, setRegistrosSeleccionados] = useState(new Set());
+  const [setMasivo, setSetMasivo] = useState('');
+  const [opcionMasiva, setOpcionMasiva] = useState('');
 
   useEffect(() => {
     console.log('🎯 useEffect ejecutado:', { 
@@ -761,6 +767,85 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
     }
   };
 
+  // ==================== FUNCIONES PARA CLASIFICACIÓN MASIVA ====================
+  const alternarModoClasificacionMasiva = () => {
+    setModoClasificacionMasiva(!modoClasificacionMasiva);
+    setRegistrosSeleccionados(new Set());
+    setSetMasivo('');
+    setOpcionMasiva('');
+  };
+
+  const alternarSeleccionRegistro = (registroId) => {
+    const nuevosSeleccionados = new Set(registrosSeleccionados);
+    if (nuevosSeleccionados.has(registroId)) {
+      nuevosSeleccionados.delete(registroId);
+    } else {
+      nuevosSeleccionados.add(registroId);
+    }
+    setRegistrosSeleccionados(nuevosSeleccionados);
+  };
+
+  const seleccionarTodosLosRegistros = () => {
+    const todosLosIds = new Set(registrosFiltrados.map(r => r.id));
+    setRegistrosSeleccionados(todosLosIds);
+  };
+
+  const limpiarSeleccionRegistros = () => {
+    setRegistrosSeleccionados(new Set());
+  };
+
+  const aplicarClasificacionMasiva = async () => {
+    if (!setMasivo || !opcionMasiva) {
+      alert("Debe seleccionar un set y una opción para la clasificación masiva");
+      return;
+    }
+
+    if (registrosSeleccionados.size === 0) {
+      alert("Debe seleccionar al menos un registro");
+      return;
+    }
+
+    const setEncontrado = sets.find(s => s.id === parseInt(setMasivo));
+    if (!setEncontrado) {
+      console.error('Set no encontrado:', setMasivo);
+      alert("Set no encontrado");
+      return;
+    }
+
+    try {
+      const promesas = Array.from(registrosSeleccionados).map(async (registroId) => {
+        const registro = registros.find(r => r.id === registroId);
+        if (!registro) return;
+
+        const nuevasClasificaciones = {
+          ...registro.clasificaciones,
+          [setEncontrado.nombre]: opcionMasiva
+        };
+
+        return actualizarClasificacionArchivo(registroId, {
+          numero_cuenta: registro.numero_cuenta,
+          clasificaciones: nuevasClasificaciones
+        });
+      });
+
+      await Promise.all(promesas);
+      
+      // Recargar datos y limpiar selección
+      await cargarRegistros();
+      setRegistrosSeleccionados(new Set());
+      setSetMasivo('');
+      setOpcionMasiva('');
+      setModoClasificacionMasiva(false);
+      
+      if (onDataChanged) onDataChanged();
+      
+      alert(`Clasificación aplicada exitosamente a ${registrosSeleccionados.size} registros`);
+    } catch (error) {
+      console.error("Error aplicando clasificación masiva:", error);
+      alert("Error al aplicar la clasificación masiva");
+    }
+  };
+
   const registrosFiltrados = aplicarFiltros(registros || []);
   const setsUnicos = obtenerSetsUnicos();
 
@@ -880,14 +965,40 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                   <div className="flex items-center gap-4 text-sm text-gray-300">
                     <span>Total: <strong className="text-white">{registros.length}</strong></span>
                     <span>Filtrados: <strong className="text-blue-400">{registrosFiltrados.length}</strong></span>
+                    {modoClasificacionMasiva && (
+                      <span>Seleccionados: <strong className="text-green-400">{registrosSeleccionados.size}</strong></span>
+                    )}
                   </div>
-                  <button
-                    onClick={handleIniciarCreacion}
-                    className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-medium transition flex items-center gap-2"
-                  >
-                    <Plus size={16} />
-                    Nuevo Registro
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={alternarModoClasificacionMasiva}
+                      className={`px-4 py-2 rounded font-medium transition flex items-center gap-2 ${
+                        modoClasificacionMasiva 
+                          ? 'bg-red-600 hover:bg-red-500 text-white' 
+                          : 'bg-green-600 hover:bg-green-500 text-white'
+                      }`}
+                    >
+                      {modoClasificacionMasiva ? (
+                        <>
+                          <X size={16} />
+                          Cancelar Masiva
+                        </>
+                      ) : (
+                        <>
+                          <CheckSquare size={16} />
+                          Clasificación Masiva
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={handleIniciarCreacion}
+                      className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-medium transition flex items-center gap-2"
+                      disabled={modoClasificacionMasiva}
+                    >
+                      <Plus size={16} />
+                      Nuevo Registro
+                    </button>
+                  </div>
                 </div>
 
                 {/* Filtros */}
@@ -1028,6 +1139,94 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                 </div>
               </div>
 
+              {/* Panel de clasificación masiva */}
+              {modoClasificacionMasiva && (
+                <div className="bg-gray-800 p-4 rounded-lg mb-4 border border-green-500/50">
+                  <div className="flex items-center gap-2 mb-3">
+                    <CheckSquare size={20} className="text-green-400" />
+                    <h3 className="text-green-400 font-medium">Clasificación Masiva</h3>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-end">
+                    {/* Selector de Set */}
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Set:</label>
+                      <select
+                        value={setMasivo}
+                        onChange={(e) => {
+                          setSetMasivo(e.target.value);
+                          setOpcionMasiva('');
+                        }}
+                        className="w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 text-sm focus:border-green-500 focus:outline-none"
+                      >
+                        <option value="">Seleccionar set...</option>
+                        {obtenerSetsDisponibles().map(set => (
+                          <option key={set.id} value={set.id}>{set.nombre}</option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    {/* Selector de Opción */}
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Opción:</label>
+                      <select
+                        value={opcionMasiva}
+                        onChange={(e) => setOpcionMasiva(e.target.value)}
+                        disabled={!setMasivo}
+                        className="w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 text-sm focus:border-green-500 focus:outline-none disabled:opacity-50"
+                      >
+                        <option value="">Seleccionar opción...</option>
+                        {setMasivo && obtenerOpcionesParaSet(setMasivo).map(opcion => (
+                          <option key={opcion.id} value={opcion.valor}>{opcion.valor}</option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    {/* Controles de selección */}
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Selección:</label>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={seleccionarTodosLosRegistros}
+                          className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded text-sm transition"
+                          disabled={registrosFiltrados.length === 0}
+                        >
+                          Todos
+                        </button>
+                        <button
+                          onClick={limpiarSeleccionRegistros}
+                          className="bg-gray-600 hover:bg-gray-500 text-white px-3 py-2 rounded text-sm transition"
+                          disabled={registrosSeleccionados.size === 0}
+                        >
+                          Limpiar
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {/* Botón aplicar */}
+                    <div>
+                      <button
+                        onClick={aplicarClasificacionMasiva}
+                        disabled={!setMasivo || !opcionMasiva || registrosSeleccionados.size === 0}
+                        className="w-full bg-green-600 hover:bg-green-500 disabled:bg-gray-600 disabled:opacity-50 text-white px-4 py-2 rounded font-medium transition"
+                      >
+                        Aplicar ({registrosSeleccionados.size})
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {registrosSeleccionados.size > 0 && setMasivo && opcionMasiva && (
+                    <div className="mt-3 p-3 bg-green-900/20 border border-green-700/50 rounded text-sm">
+                      <span className="text-green-400">Vista previa:</span> Se aplicará la clasificación{' '}
+                      <span className="font-medium text-white">
+                        {obtenerSetsDisponibles().find(s => s.id === parseInt(setMasivo))?.nombre}: {opcionMasiva}
+                      </span>{' '}
+                      a <span className="font-medium text-green-400">{registrosSeleccionados.size}</span> registro(s).
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Tabla */}
               <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
                 {loading ? (
@@ -1065,6 +1264,22 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                   <table className="w-full">
                     <thead className="bg-gray-800 sticky top-0 z-10">
                       <tr>
+                        {modoClasificacionMasiva && (
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider border-b border-gray-700">
+                            <input
+                              type="checkbox"
+                              checked={registrosFiltrados.length > 0 && registrosFiltrados.every(r => registrosSeleccionados.has(r.id))}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  seleccionarTodosLosRegistros();
+                                } else {
+                                  limpiarSeleccionRegistros();
+                                }
+                              }}
+                              className="text-green-600 bg-gray-600 border-gray-500 rounded focus:ring-green-500"
+                            />
+                          </th>
+                        )}
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider border-b border-gray-700">
                           Fila
                         </th>
@@ -1083,6 +1298,11 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                       {/* Fila de creación de nuevo registro */}
                       {creandoNuevo && (
                         <tr className="bg-gray-800 border-l-4 border-l-blue-500">
+                          {modoClasificacionMasiva && (
+                            <td className="px-3 py-2">
+                              {/* Sin checkbox para fila de creación */}
+                            </td>
+                          )}
                           <td className="px-3 py-2 text-gray-400 text-sm">Nuevo</td>
                           <td className="px-3 py-2">
                             {(() => {
@@ -1204,7 +1424,19 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                       
                       {/* Filas de registros existentes */}
                       {registrosFiltrados.map((registro) => (
-                        <tr key={registro.id} className="hover:bg-gray-800/50 transition-colors">
+                        <tr key={registro.id} className={`hover:bg-gray-800/50 transition-colors ${
+                          modoClasificacionMasiva && registrosSeleccionados.has(registro.id) ? 'bg-green-900/20 border-l-4 border-l-green-500' : ''
+                        }`}>
+                          {modoClasificacionMasiva && (
+                            <td className="px-3 py-2">
+                              <input
+                                type="checkbox"
+                                checked={registrosSeleccionados.has(registro.id)}
+                                onChange={() => alternarSeleccionRegistro(registro.id)}
+                                className="text-green-600 bg-gray-600 border-gray-500 rounded focus:ring-green-500"
+                              />
+                            </td>
+                          )}
                           <td className="px-3 py-2 text-gray-400 text-sm">{registro.fila_excel}</td>
                           <td className="px-3 py-2">
                             {editandoId === registro.id ? (

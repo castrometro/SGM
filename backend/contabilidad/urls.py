@@ -177,6 +177,9 @@ urlpatterns = [
     # Upload logs
     path("upload-log/<int:upload_log_id>/estado/", estado_upload_log),
     
+    # Finalización de cierres
+    path("", include("contabilidad.urls_finalizacion")),
+    
     # Utilidades
     path("test-celery/", test_celery),
     path("limpiar-archivos-temporales/", limpiar_archivos_temporales),

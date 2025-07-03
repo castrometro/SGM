@@ -16,5 +16,6 @@ class ContabilidadConfig(AppConfig):
             from . import tasks_cuentas_bulk
             from . import tasks_nombres_ingles
             from . import tasks_libro_mayor
+            from . import tasks_finalizacion  # ✅ Agregar tasks de finalización
         except ImportError:
             pass

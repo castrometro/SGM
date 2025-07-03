@@ -546,9 +546,23 @@ const LibroMayorCard = ({
         onClose={() => setModalIncompletoAbierto(false)}
         incidencias={incidenciasConsolidadas}
         cierreId={cierreId}
-        onReprocesar={() => {
+        onReprocesar={async () => {
           // Recargar el estado del libro mayor después del reprocesamiento
-          cargarEstado();
+          await cargarEstado();
+          
+          // También recargar incidencias del modal si está abierto
+          if (modalIncompletoAbierto) {
+            console.log('🔄 Recargando incidencias del LibroMayorCard después de reprocesar...');
+            try {
+              // Usar endpoint directo para obtener datos actuales post-reprocesamiento
+              const data = await obtenerIncidenciasConsolidadas(cierreId);
+              const incidenciasArray = Array.isArray(data) ? data : (data.incidencias || []);
+              setIncidenciasConsolidadas(incidenciasArray);
+              console.log(`✅ Incidencias del LibroMayorCard actualizadas: ${incidenciasArray.length} encontradas`);
+            } catch (error) {
+              console.error('❌ Error recargando incidencias en LibroMayorCard:', error);
+            }
+          }
         }}
       />
       <ModalHistorialReprocesamiento

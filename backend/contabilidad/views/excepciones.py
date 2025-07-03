@@ -247,3 +247,81 @@ def eliminar_excepcion(request, excepcion_id):
         return Response({
             'error': f'Error interno: {str(e)}'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def eliminar_excepcion_clasificacion(request):
+    """
+    Elimina (desactiva) una excepción específica de clasificación por set
+    
+    Body esperado:
+    {
+        "cierre_id": 123,
+        "codigo_cuenta": "1-01-001-001-0001",
+        "set_clasificacion_id": 456
+    }
+    """
+    try:
+        data = request.data if hasattr(request, 'data') else json.loads(request.body)
+        
+        cierre_id = data.get('cierre_id')
+        codigo_cuenta = data.get('codigo_cuenta') 
+        set_clasificacion_id = data.get('set_clasificacion_id')
+        
+        if not all([cierre_id, codigo_cuenta, set_clasificacion_id]):
+            return Response({
+                'error': 'cierre_id, codigo_cuenta y set_clasificacion_id son requeridos'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Verificar que el cierre existe
+        try:
+            cierre = CierreContabilidad.objects.get(id=cierre_id)
+        except CierreContabilidad.DoesNotExist:
+            return Response({
+                'error': f'Cierre {cierre_id} no encontrado'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Verificar que el set de clasificación existe
+        try:
+            set_clasificacion = ClasificacionSet.objects.get(
+                id=set_clasificacion_id, 
+                cliente=cierre.cliente
+            )
+        except ClasificacionSet.DoesNotExist:
+            return Response({
+                'error': f'Set de clasificación {set_clasificacion_id} no encontrado'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Buscar y eliminar la excepción
+        try:
+            excepcion = ExcepcionClasificacionSet.objects.get(
+                cliente=cierre.cliente,
+                cuenta_codigo=codigo_cuenta,
+                set_clasificacion=set_clasificacion,
+                activa=True
+            )
+            
+            excepcion.activa = False
+            excepcion.save()
+            
+            return Response({
+                'success': True,
+                'mensaje': f'Excepción eliminada para cuenta {codigo_cuenta} en set "{set_clasificacion.nombre}"',
+                'details': {
+                    'codigo_cuenta': codigo_cuenta,
+                    'set_clasificacion': set_clasificacion.nombre,
+                    'cliente': cierre.cliente.nombre,
+                    'fecha_eliminacion': excepcion.fecha_creacion.isoformat()
+                }
+            })
+            
+        except ExcepcionClasificacionSet.DoesNotExist:
+            return Response({
+                'error': f'No se encontró excepción activa para cuenta {codigo_cuenta} en set "{set_clasificacion.nombre}"'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+    except Exception as e:
+        return Response({
+            'error': f'Error interno: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

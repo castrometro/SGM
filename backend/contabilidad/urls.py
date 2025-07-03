@@ -13,11 +13,14 @@ from .views.incidencias import (
     historial_reprocesamiento,
     resumen_tipos_incidencia,
     estadisticas_globales_incidencias,
+    estado_cache_incidencias,
+    limpiar_cache_incidencias,
 )
 from .views.excepciones import (
     marcar_cuenta_no_aplica,
     listar_excepciones_cuenta,
     eliminar_excepcion,
+    eliminar_excepcion_clasificacion,
 )
 from .views.reprocesamiento import (
     reprocesar_libro_mayor_con_excepciones,
@@ -130,6 +133,10 @@ urlpatterns = [
     path("incidencias/tipos/", resumen_tipos_incidencia, name="tipos_incidencia"),
     path("incidencias/estadisticas/", estadisticas_globales_incidencias, name="estadisticas_globales"),
     
+    # Gestión de caché de incidencias
+    path("cache/incidencias/estado/", estado_cache_incidencias, name="estado_cache_incidencias"),
+    path("cache/incidencias/limpiar/", limpiar_cache_incidencias, name="limpiar_cache_incidencias"),
+    
     # URLs para Incidencias del Libro Mayor (para el modal del frontend)
     path("libro-mayor/<int:cierre_id>/incidencias-consolidadas/", 
          obtener_incidencias_consolidadas, 
@@ -145,6 +152,7 @@ urlpatterns = [
     path("libro-mayor/marcar-no-aplica/", marcar_cuenta_no_aplica, name="marcar_cuenta_no_aplica"),
     path("libro-mayor/excepciones/<str:codigo_cuenta>/", listar_excepciones_cuenta, name="listar_excepciones_cuenta"),
     path("libro-mayor/excepciones/<int:excepcion_id>/eliminar/", eliminar_excepcion, name="eliminar_excepcion"),
+    path("libro-mayor/excepciones/clasificacion/eliminar/", eliminar_excepcion_clasificacion, name="eliminar_excepcion_clasificacion"),
     
     # Reprocesamiento
     path("libro-mayor/reprocesar-con-excepciones/", reprocesar_libro_mayor_con_excepciones, name="reprocesar_libro_mayor"),

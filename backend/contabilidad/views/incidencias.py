@@ -8,10 +8,14 @@ from django.shortcuts import get_object_or_404
 from rest_framework import viewsets
 from django.core.cache import cache
 from django.db.models import Prefetch
+from collections import defaultdict, Counter
+import logging
 
 from ..models_incidencias import IncidenciaResumen
-from ..models import CierreContabilidad, UploadLog
+from ..models import CierreContabilidad, UploadLog, ExcepcionValidacion, ExcepcionClasificacionSet
 from api.models import Cliente
+
+logger = logging.getLogger(__name__)
 
 
 @api_view(['GET'])
@@ -19,86 +23,15 @@ from api.models import Cliente
 def obtener_incidencias_consolidadas(request, cierre_id):
     """
     Obtiene las incidencias consolidadas para un cierre específico
+    REDIRIGE a obtener_incidencias_consolidadas_libro_mayor para usar datos actuales
     
     Query params:
     - estado: filtrar por estado (activa, resuelta, obsoleta)
     - severidad: filtrar por severidad (baja, media, alta, critica)
     - tipo: filtrar por tipo de incidencia
     """
-    try:
-        # Validar que el cierre existe
-        cierre = get_object_or_404(CierreContabilidad, id=cierre_id)
-        
-        # Filtros
-        estado = request.GET.get('estado')
-        severidad = request.GET.get('severidad')
-        tipo = request.GET.get('tipo')
-        
-        # Base queryset
-        queryset = IncidenciaResumen.objects.filter(
-            upload_log__cierre_id=cierre_id
-        ).select_related('upload_log', 'resuelto_por', 'creada_por')
-        
-        # Aplicar filtros
-        if estado:
-            queryset = queryset.filter(estado=estado)
-        if severidad:
-            queryset = queryset.filter(severidad=severidad)
-        if tipo:
-            queryset = queryset.filter(tipo_incidencia=tipo)
-        
-        # Obtener incidencias
-        incidencias = []
-        for inc in queryset.order_by('-severidad', '-fecha_deteccion'):
-            incidencias.append({
-                'id': inc.id,
-                'tipo_incidencia': inc.get_tipo_incidencia_display(),
-                'tipo_codigo': inc.tipo_incidencia,
-                'codigo_problema': inc.codigo_problema,
-                'cantidad_afectada': inc.cantidad_afectada,
-                'severidad': inc.get_severidad_display(),
-                'severidad_codigo': inc.severidad,
-                'estado': inc.get_estado_display(),
-                'estado_codigo': inc.estado,
-                'mensaje_usuario': inc.mensaje_usuario,
-                'accion_sugerida': inc.accion_sugerida,
-                'elementos_afectados': inc.elementos_afectados[:10],  # Limitar para performance
-                'detalle_muestra': inc.detalle_muestra,
-                'estadisticas': inc.estadisticas,  # Corregir nombre del campo
-                'fecha_deteccion': inc.fecha_deteccion,
-                'fecha_resolucion': inc.fecha_resolucion,
-                'resuelto_por': inc.resuelto_por.correo_bdo if inc.resuelto_por else None,
-                'creada_por': inc.creada_por.correo_bdo if inc.creada_por else None,
-                'upload_log': {
-                    'id': inc.upload_log.id,
-                    'nombre_archivo': inc.upload_log.nombre_archivo_original,
-                    'fecha_subida': inc.upload_log.fecha_subida,
-                }
-            })
-        
-        # Estadísticas resumen
-        estadisticas = {
-            'total_incidencias': queryset.count(),
-            'por_estado': dict(queryset.values('estado').annotate(count=Count('id')).values_list('estado', 'count')),
-            'por_severidad': dict(queryset.values('severidad').annotate(count=Count('id')).values_list('severidad', 'count')),
-            'por_tipo': dict(queryset.values('tipo_incidencia').annotate(count=Count('id')).values_list('tipo_incidencia', 'count')),
-        }
-        
-        return Response({
-            'incidencias': incidencias,
-            'estadisticas': estadisticas,
-            'total_elementos_afectados': sum(inc.cantidad_afectada for inc in queryset),
-            'cierre_info': {
-                'id': cierre.id,
-                'periodo': cierre.periodo,
-                'cliente': cierre.cliente.nombre,
-            }
-        })
-        
-    except Exception as e:
-        return Response({
-            'error': f'Error obteniendo incidencias: {str(e)}'
-        }, status=500)
+    # REDIRECCIÓN: Usar siempre la función que lee de la tabla Incidencia actual
+    return obtener_incidencias_consolidadas_libro_mayor(request, cierre_id)
 
 
 @api_view(['GET'])
@@ -230,7 +163,7 @@ def dashboard_incidencias(request, cliente_id):
 @permission_classes([IsAuthenticated])
 def marcar_incidencia_resuelta(request, incidencia_id):
     """
-    Marca una incidencia como resuelta y registra el log correspondiente
+    Marca una incidencia como resuelta
     """
     try:
         incidencia = get_object_or_404(IncidenciaResumen, id=incidencia_id)
@@ -242,32 +175,14 @@ def marcar_incidencia_resuelta(request, incidencia_id):
             })
         
         # Marcar como resuelta
-        incidencia.marcar_como_resuelta(usuario=request.user)
-        
-        # Crear log de resolución
-        accion = request.data.get('accion_realizada', 'reprocesamiento')
-        observaciones = request.data.get('observaciones', '')
-        upload_log_relacionado_id = request.data.get('upload_log_relacionado_id')
-        
-        log_resolucion = LogResolucionIncidencia.objects.create(
-            incidencia_resumen=incidencia,
-            usuario=request.user,
-            accion_realizada=accion,
-            elementos_resueltos=incidencia.elementos_afectados,
-            cantidad_resuelta=incidencia.cantidad_afectada,
-            upload_log_relacionado_id=upload_log_relacionado_id,
-            observaciones=observaciones,
-            datos_adicionales={
-                'fecha_resolucion_manual': timezone.now().isoformat(),
-                'metodo_resolucion': 'manual',
-                'usuario_resolucion': request.user.username,
-            }
-        )
+        incidencia.estado = 'resuelta'
+        incidencia.fecha_resolucion = timezone.now()
+        incidencia.resuelto_por = request.user
+        incidencia.save()
         
         return Response({
             'mensaje': 'Incidencia marcada como resuelta exitosamente',
             'incidencia_id': incidencia.id,
-            'log_resolucion_id': log_resolucion.id,
             'fecha_resolucion': incidencia.fecha_resolucion,
         })
         
@@ -287,28 +202,25 @@ def historial_reprocesamiento(request, upload_log_id):
         # Validar que el upload_log existe
         upload_log = get_object_or_404(UploadLog, id=upload_log_id)
         
-        historial = HistorialReprocesamiento.objects.filter(
-            upload_log_id=upload_log_id
+        # Buscar otros upload_logs del mismo cierre para mostrar como historial
+        historial_logs = UploadLog.objects.filter(
+            cierre=upload_log.cierre,
+            tipo_upload=upload_log.tipo_upload
         ).order_by('-iteracion')
         
         historial_data = []
-        for h in historial:
+        for h in historial_logs:
+            incidencias_count = IncidenciaResumen.objects.filter(upload_log=h).count()
+            
             historial_data.append({
                 'id': h.id,
                 'iteracion': h.iteracion,
-                'trigger': h.get_trigger_reprocesamiento_display(),
-                'trigger_codigo': h.trigger_reprocesamiento,
+                'fecha_inicio': h.fecha_subida,
                 'usuario': h.usuario.correo_bdo if h.usuario else None,
-                'fecha_inicio': h.fecha_inicio,
-                'tiempo_procesamiento': h.tiempo_procesamiento.total_seconds(),
-                'incidencias_previas': h.incidencias_previas_count,
-                'incidencias_nuevas': h.incidencias_nuevas_count,
-                'incidencias_resueltas': h.incidencias_resueltas_count,
-                'movimientos_corregidos': h.movimientos_corregidos,
-                'movimientos_total': h.movimientos_total,
-                'efectividad': h.calcular_efectividad(),
-                'mejoras': h.obtener_mejoras(),
-                'notas': h.notas,
+                'estado': h.estado,
+                'incidencias_detectadas': incidencias_count,
+                'archivo': h.nombre_archivo_original,
+                'es_principal': h.es_iteracion_principal,
             })
         
         return Response({
@@ -439,17 +351,20 @@ class IncidenciaViewSet(viewsets.ModelViewSet):
 def obtener_incidencias_consolidadas_libro_mayor(request, cierre_id):
     """
     Obtiene las incidencias consolidadas para un cierre específico,
-    transformando las Incidencias básicas al formato esperado por el frontend
+    transformando las Incidencias básicas al formato esperado por el frontend.
+    SIEMPRE usa datos actuales de la tabla Incidencia y estado actual de excepciones.
     """
     try:
         # Validar que el cierre existe
         cierre = get_object_or_404(CierreContabilidad, id=cierre_id)
+        logger.info(f"📊 Obteniendo incidencias actuales para cierre {cierre_id} desde tabla Incidencia")
         
         # Obtener incidencias básicas del cierre
         from ..models_incidencias import Incidencia
         incidencias_query = Incidencia.objects.filter(cierre_id=cierre_id)
         
         if not incidencias_query.exists():
+            logger.info(f"📊 No hay incidencias en tabla Incidencia para cierre {cierre_id}")
             return Response({
                 'incidencias': [],
                 'estadisticas': {
@@ -463,15 +378,33 @@ def obtener_incidencias_consolidadas_libro_mayor(request, cierre_id):
                     'id': cierre.id,
                     'periodo': cierre.periodo,
                     'cliente': cierre.cliente.nombre,
-                }
+                },
+                '_fuente': 'tabla_incidencia_actual'
             })
         
         # Agrupar incidencias por tipo y consolidar
         from collections import defaultdict
         incidencias_agrupadas = defaultdict(list)
         
+        total_incidencias_en_tabla = incidencias_query.count()
+        logger.info(f"📊 Encontradas {total_incidencias_en_tabla} incidencias en tabla Incidencia para cierre {cierre_id}")
+        
         for inc in incidencias_query:
             incidencias_agrupadas[inc.tipo].append(inc)
+        
+        logger.info(f"📊 Tipos de incidencias encontrados: {list(incidencias_agrupadas.keys())}")
+        
+        # Pre-cargar TODAS las excepciones activas para este cliente (para logs)
+        excepciones_validacion_count = ExcepcionValidacion.objects.filter(
+            cliente=cierre.cliente, activa=True
+        ).count()
+        
+        excepciones_clasificacion_count = ExcepcionClasificacionSet.objects.filter(
+            cliente=cierre.cliente, activa=True
+        ).count()
+        
+        logger.info(f"📊 Excepciones activas para cliente {cierre.cliente.id}: "
+                   f"{excepciones_validacion_count} validación, {excepciones_clasificacion_count} clasificación")
         
         # Transformar a formato consolidado
         incidencias_consolidadas = []
@@ -507,25 +440,70 @@ def obtener_incidencias_consolidadas_libro_mayor(request, cierre_id):
                 mensaje_usuario = f"Se encontraron {cantidad_total} incidencias de tipo {tipo_display}"
                 accion_sugerida = "Revisar y corregir las incidencias detectadas"
             
-            # Recopilar elementos afectados
+            # Recopilar elementos afectados con información de excepciones
             elementos_afectados = []
             cuentas_afectadas = set()
             docs_afectados = set()
             
+            # Pre-cargar excepciones activas para este cliente
+            excepciones_validacion = set(
+                ExcepcionValidacion.objects.filter(
+                    cliente=cierre.cliente,
+                    activa=True
+                ).values_list('codigo_cuenta', flat=True)
+            )
+            
+            excepciones_clasificacion = {}
+            for exc in ExcepcionClasificacionSet.objects.filter(
+                cliente=cierre.cliente,
+                activa=True
+            ).select_related('set_clasificacion'):
+                cuenta_codigo = exc.cuenta_codigo
+                if cuenta_codigo not in excepciones_clasificacion:
+                    excepciones_clasificacion[cuenta_codigo] = []
+                excepciones_clasificacion[cuenta_codigo].append({
+                    'set_id': exc.set_clasificacion.id,
+                    'set_nombre': exc.set_clasificacion.nombre
+                })
+            
             for inc in incidencias_list:
                 if inc.cuenta_codigo:
                     cuentas_afectadas.add(inc.cuenta_codigo)
-                    elementos_afectados.append({
+                    
+                    # Verificar si esta cuenta tiene excepciones
+                    tiene_excepcion_general = inc.cuenta_codigo in excepciones_validacion
+                    tiene_excepcion_clasificacion = inc.cuenta_codigo in excepciones_clasificacion
+                    
+                    elemento = {
                         'tipo': 'cuenta',
                         'codigo': inc.cuenta_codigo,
-                        'descripcion': inc.descripcion or ''
-                    })
+                        'descripcion': inc.descripcion or '',
+                        'tiene_excepcion': tiene_excepcion_general or tiene_excepcion_clasificacion
+                    }
+                    
+                    # Para incidencias de clasificación, agregar info del set específico
+                    if tipo in ['CUENTA_NO_CLAS', 'CUENTA_NO_CLASIFICADA']:
+                        # Si la incidencia tiene información del set específico, agregarla
+                        if hasattr(inc, 'datos_adicionales') and inc.datos_adicionales:
+                            datos = inc.datos_adicionales
+                            if 'set_clasificacion_id' in datos:
+                                elemento['set_id'] = datos['set_clasificacion_id']
+                                elemento['set_nombre'] = datos.get('set_clasificacion_nombre', f'Set ID {datos["set_clasificacion_id"]}')
+                                # Verificar excepción específica para este set
+                                elemento['tiene_excepcion'] = any(
+                                    exc_set['set_id'] == datos['set_clasificacion_id'] 
+                                    for exc_set in excepciones_clasificacion.get(inc.cuenta_codigo, [])
+                                )
+                    
+                    elementos_afectados.append(elemento)
+                    
                 if inc.tipo_doc_codigo:
                     docs_afectados.add(inc.tipo_doc_codigo)
                     elementos_afectados.append({
                         'tipo': 'documento',
                         'codigo': inc.tipo_doc_codigo,
-                        'descripcion': inc.descripcion or ''
+                        'descripcion': inc.descripcion or '',
+                        'tiene_excepcion': False  # Los documentos no tienen excepciones por ahora
                     })
             
             # Estadísticas adicionales
@@ -593,6 +571,14 @@ def obtener_incidencias_consolidadas_libro_mayor(request, cierre_id):
                 'id': cierre.id,
                 'periodo': cierre.periodo,
                 'cliente': cierre.cliente.nombre,
+            },
+            '_fuente': 'tabla_incidencia_actual',
+            '_timestamp': timezone.now().isoformat(),
+            '_debug': {
+                'total_incidencias_tabla': total_incidencias_en_tabla,
+                'tipos_detectados': list(incidencias_agrupadas.keys()),
+                'excepciones_validacion': excepciones_validacion_count,
+                'excepciones_clasificacion': excepciones_clasificacion_count
             }
         })
         
@@ -774,6 +760,7 @@ def obtener_historial_incidencias_por_iteraciones(request, cierre_id):
 def obtener_incidencias_consolidadas_optimizado(request, cierre_id):
     """
     Versión optimizada que utiliza snapshots de incidencias por iteración
+    PERO si no hay snapshots, redirige a la función que usa datos actuales
     
     Query params:
     - iteracion: número de iteración específica (opcional, por defecto la principal)
@@ -789,15 +776,26 @@ def obtener_incidencias_consolidadas_optimizado(request, cierre_id):
         # Parámetros
         iteracion = request.GET.get('iteracion')
         usar_cache = request.GET.get('usar_cache', 'true').lower() == 'true'
+        forzar_actualizacion = request.GET.get('forzar_actualizacion', 'false').lower() == 'true'
         
-        # Generar clave de caché
-        cache_key = f"incidencias_optimizado_{cierre_id}_{iteracion or 'principal'}"
+        # Generar clave de caché más específica y versionada
+        cache_version = request.GET.get('v', '1')  # Para invalidación manual
+        cache_key = f"incidencias_optimizado_v{cache_version}_{cierre_id}_{iteracion or 'principal'}"
         
-        # Intentar obtener del caché
-        if usar_cache:
+        # Si se fuerza actualización, limpiar caché Y usar datos actuales
+        if forzar_actualizacion:
+            cache.delete(cache_key)
+            logger.info(f"Caché forzosamente limpiado para cierre {cierre_id} - FORZANDO datos actuales")
+            return obtener_incidencias_consolidadas_libro_mayor(request, cierre_id)
+        
+        # Intentar obtener del caché solo si no se fuerza actualización
+        if usar_cache and not forzar_actualizacion:
             cached_result = cache.get(cache_key)
             if cached_result:
+                logger.info(f"📦 Datos servidos desde CACHÉ DJANGO para cierre {cierre_id} (clave: {cache_key})")
                 return Response(cached_result)
+        
+        logger.info(f"🔍 Buscando datos frescos para cierre {cierre_id} (forzar: {forzar_actualizacion})")
         
         # Determinar qué iteración usar
         if iteracion:
@@ -814,22 +812,9 @@ def obtener_incidencias_consolidadas_optimizado(request, cierre_id):
             )
         
         if not upload_logs.exists():
-            return Response({
-                'error': 'No se encontraron datos para la iteración especificada',
-                'iteracion_solicitada': iteracion,
-                'incidencias': [],
-                'estadisticas': {},
-                'metadata': {
-                    'iteracion_actual': None,
-                    'total_iteraciones': 0,
-                    'es_iteracion_principal': False
-                }
-            }, status=404)
-        
-        # Filtros adicionales
-        estado = request.GET.get('estado')
-        severidad = request.GET.get('severidad')
-        tipo = request.GET.get('tipo')
+            # Si no hay upload_logs o iteraciones, usar datos actuales de Incidencia
+            logger.info(f"📊 No hay upload_logs para cierre {cierre_id}, usando datos actuales de tabla Incidencia")
+            return obtener_incidencias_consolidadas_libro_mayor(request, cierre_id)
         
         # Obtener snapshot del primer upload log
         upload_log = upload_logs.first()
@@ -837,10 +822,15 @@ def obtener_incidencias_consolidadas_optimizado(request, cierre_id):
         # Verificar si hay snapshot disponible
         if upload_log.resumen and 'incidencias_snapshot' in upload_log.resumen:
             # Usar snapshot optimizado
+            logger.info(f"📷 Usando SNAPSHOT del upload_log {upload_log.id} (iteración {upload_log.iteracion})")
             snapshot = upload_log.resumen['incidencias_snapshot']
             incidencias_snapshot = snapshot.get('incidencias_detectadas', [])
             
-            # Aplicar filtros al snapshot
+            # Aplicar filtros al snapshot si se especificaron
+            estado = request.GET.get('estado')
+            severidad = request.GET.get('severidad')
+            tipo = request.GET.get('tipo')
+            
             incidencias = []
             for inc_data in incidencias_snapshot:
                 # Aplicar filtros
@@ -855,7 +845,6 @@ def obtener_incidencias_consolidadas_optimizado(request, cierre_id):
             
             # Estadísticas del snapshot
             if incidencias:
-                from collections import Counter
                 estadisticas = {
                     'total_incidencias': len(incidencias),
                     'por_estado': dict(Counter(inc.get('estado_codigo') for inc in incidencias)),
@@ -871,95 +860,51 @@ def obtener_incidencias_consolidadas_optimizado(request, cierre_id):
                     'por_tipo': {},
                     'total_elementos_afectados': 0,
                 }
+            
+            # Metadata de iteración
+            iteracion_actual = upload_log.iteracion
+            total_iteraciones = UploadLog.objects.filter(cierre_id=cierre_id).values('iteracion').distinct().count()
+            
+            resultado = {
+                'incidencias': incidencias,
+                'estadisticas': estadisticas,
+                'metadata': {
+                    'iteracion_actual': iteracion_actual,
+                    'total_iteraciones': total_iteraciones,
+                    'es_iteracion_principal': upload_log.es_iteracion_principal,
+                    'timestamp_consulta': timezone.now().isoformat(),
+                    'fuente': 'snapshot_optimizado'
+                },
+                'cierre_info': {
+                    'id': cierre.id,
+                    'periodo': cierre.periodo,
+                    'cliente': cierre.cliente.nombre,
+                }
+            }
+            
+            # Guardar en caché por 5 minutos SOLO si no se forzó actualización
+            if usar_cache and not forzar_actualizacion:
+                # Usar compresión para datos grandes de incidencias
+                cache.set(cache_key, resultado, 300, version=int(cache_version))
+                logger.info(f"💾 Resultado guardado en caché Redis (clave: {cache_key}, versión: {cache_version})")
+            else:
+                logger.info(f"🚫 NO guardando en caché (usar_cache={usar_cache}, forzar={forzar_actualizacion})")
+            
+            return Response(resultado)
+        
         else:
-            # Fallback a consulta directa si no hay snapshot
-            queryset = IncidenciaResumen.objects.filter(
-                upload_log__in=upload_logs
-            ).select_related('upload_log', 'resuelto_por', 'creada_por')
-            
-            # Aplicar filtros
-            if estado:
-                queryset = queryset.filter(estado=estado)
-            if severidad:
-                queryset = queryset.filter(severidad=severidad)
-            if tipo:
-                queryset = queryset.filter(tipo_incidencia=tipo)
-            
-            # Obtener incidencias de forma tradicional
-            incidencias = []
-            for inc in queryset.order_by('-severidad', '-fecha_deteccion'):
-                incidencias.append({
-                    'id': inc.id,
-                    'tipo_incidencia': inc.get_tipo_incidencia_display(),
-                    'tipo_codigo': inc.tipo_incidencia,
-                    'codigo_problema': inc.codigo_problema,
-                    'cantidad_afectada': inc.cantidad_afectada,
-                    'severidad': inc.get_severidad_display(),
-                    'severidad_codigo': inc.severidad,
-                    'estado': inc.get_estado_display(),
-                    'estado_codigo': inc.estado,
-                    'mensaje_usuario': inc.mensaje_usuario,
-                    'accion_sugerida': inc.accion_sugerida,
-                    'elementos_afectados': inc.elementos_afectados[:10],
-                    'detalle_muestra': inc.detalle_muestra,
-                    'estadisticas': inc.estadisticas,
-                    'fecha_deteccion': inc.fecha_deteccion,
-                    'fecha_resolucion': inc.fecha_resolucion,
-                    'resuelto_por': inc.resuelto_por.correo_bdo if inc.resuelto_por else None,
-                    'creada_por': inc.creada_por.correo_bdo if inc.creada_por else None,
-                    'upload_log': {
-                        'id': inc.upload_log.id,
-                        'nombre_archivo': inc.upload_log.nombre_archivo_original,
-                        'fecha_subida': inc.upload_log.fecha_subida,
-                        'iteracion': inc.upload_log.iteracion,
-                        'es_iteracion_principal': inc.upload_log.es_iteracion_principal,
-                    }
-                })
-            
-            # Estadísticas tradicionales
-            estadisticas = {
-                'total_incidencias': queryset.count(),
-                'por_estado': dict(queryset.values('estado').annotate(count=Count('id')).values_list('estado', 'count')),
-                'por_severidad': dict(queryset.values('severidad').annotate(count=Count('id')).values_list('severidad', 'count')),
-                'por_tipo': dict(queryset.values('tipo_incidencia').annotate(count=Count('id')).values_list('tipo_incidencia', 'count')),
-                'total_elementos_afectados': sum(inc.cantidad_afectada for inc in queryset),
-            }
-        
-        # Metadata de iteración
-        iteracion_actual = upload_logs.first().iteracion if upload_logs.exists() else None
-        total_iteraciones = UploadLog.objects.filter(cierre_id=cierre_id).values('iteracion').distinct().count()
-        
-        resultado = {
-            'incidencias': incidencias,
-            'estadisticas': estadisticas,
-            'metadata': {
-                'iteracion_actual': iteracion_actual,
-                'total_iteraciones': total_iteraciones,
-                'es_iteracion_principal': upload_logs.filter(es_iteracion_principal=True).exists(),
-                'timestamp_consulta': timezone.now().isoformat(),
-                'fuente': 'snapshot_optimizado'
-            },
-            'cierre_info': {
-                'id': cierre.id,
-                'periodo': cierre.periodo,
-                'cliente': cierre.cliente.nombre,
-            }
-        }
-        
-        # Guardar en caché por 5 minutos
-        if usar_cache:
-            cache.set(cache_key, resultado, 300)
-        
-        return Response(resultado)
+            # No hay snapshot disponible - usar datos actuales de Incidencia
+            logger.info(f"📊 No hay snapshot para cierre {cierre_id}, redirigiendo a datos actuales de tabla Incidencia")
+            return obtener_incidencias_consolidadas_libro_mayor(request, cierre_id)
         
     except ValueError as e:
         return Response({
             'error': f'Parámetro de iteración inválido: {str(e)}'
         }, status=400)
     except Exception as e:
-        return Response({
-            'error': f'Error obteniendo incidencias optimizadas: {str(e)}'
-        }, status=500)
+        logger.error(f"Error en optimizado, fallback a datos actuales: {e}")
+        # En caso de cualquier error, usar datos actuales como fallback
+        return obtener_incidencias_consolidadas_libro_mayor(request, cierre_id)
 
 
 @api_view(['GET'])
@@ -1100,4 +1045,124 @@ def obtener_historial_incidencias(request, cierre_id):
     except Exception as e:
         return Response({
             'error': f'Error obteniendo historial de incidencias: {str(e)}'
+        }, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def estado_cache_incidencias(request):
+    """
+    Endpoint para monitorear el estado del caché de incidencias
+    """
+    try:
+        from django.core.cache import cache
+        import redis
+        
+        # Información general del caché
+        redis_client = cache._cache.get_client()
+        info = redis_client.info()
+        
+        # Buscar todas las claves relacionadas con incidencias
+        pattern = "sgm_backend:1:incidencias_optimizado_*"
+        cache_keys = redis_client.keys(pattern)
+        
+        cache_info = []
+        total_memory = 0
+        
+        for key in cache_keys:
+            try:
+                key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+                # Remover prefijo para mostrar clave limpia
+                clean_key = key_str.replace('sgm_backend:1:', '')
+                
+                # Obtener TTL y tamaño
+                ttl = redis_client.ttl(key)
+                memory = redis_client.memory_usage(key)
+                total_memory += memory if memory else 0
+                
+                cache_info.append({
+                    'key': clean_key,
+                    'ttl_seconds': ttl,
+                    'ttl_human': f"{ttl//60}m {ttl%60}s" if ttl > 0 else "Expirado" if ttl == -2 else "Sin TTL",
+                    'memory_bytes': memory,
+                    'memory_human': f"{memory/1024:.1f}KB" if memory else "N/A"
+                })
+            except Exception as e:
+                logger.warning(f"Error obteniendo info de clave {key}: {e}")
+        
+        return Response({
+            'redis_info': {
+                'version': info.get('redis_version'),
+                'used_memory': info.get('used_memory_human'),
+                'connected_clients': info.get('connected_clients'),
+                'total_keys': info.get('db0', {}).get('keys', 0)
+            },
+            'incidencias_cache': {
+                'total_keys': len(cache_info),
+                'total_memory_bytes': total_memory,
+                'total_memory_human': f"{total_memory/1024:.1f}KB",
+                'keys': sorted(cache_info, key=lambda x: x['ttl_seconds'], reverse=True)
+            },
+            'timestamp': timezone.now().isoformat()
+        })
+        
+    except Exception as e:
+        return Response({
+            'error': f'Error obteniendo estado del caché: {str(e)}'
+        }, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def limpiar_cache_incidencias(request):
+    """
+    Endpoint para limpiar manualmente el caché de incidencias
+    """
+    try:
+        from django.core.cache import cache
+        
+        # Parámetros
+        cierre_id = request.data.get('cierre_id')
+        limpiar_todo = request.data.get('limpiar_todo', False)
+        
+        keys_eliminadas = 0
+        
+        if limpiar_todo:
+            # Limpiar todo el caché de incidencias
+            redis_client = cache._cache.get_client()
+            pattern = "sgm_backend:1:incidencias_optimizado_*"
+            cache_keys = redis_client.keys(pattern)
+            
+            for key in cache_keys:
+                cache.delete(key.decode('utf-8').replace('sgm_backend:1:', ''))
+                keys_eliminadas += 1
+                
+            logger.info(f"🧹 Caché completo de incidencias limpiado por usuario {request.user}")
+            
+        elif cierre_id:
+            # Limpiar solo las claves del cierre específico
+            redis_client = cache._cache.get_client()
+            pattern = f"sgm_backend:1:incidencias_optimizado_*_{cierre_id}_*"
+            cache_keys = redis_client.keys(pattern)
+            
+            for key in cache_keys:
+                cache.delete(key.decode('utf-8').replace('sgm_backend:1:', ''))
+                keys_eliminadas += 1
+                
+            logger.info(f"🧹 Caché de incidencias limpiado para cierre {cierre_id} por usuario {request.user}")
+            
+        else:
+            return Response({
+                'error': 'Debe especificar cierre_id o limpiar_todo=true'
+            }, status=400)
+        
+        return Response({
+            'mensaje': f'Caché limpiado exitosamente',
+            'keys_eliminadas': keys_eliminadas,
+            'timestamp': timezone.now().isoformat()
+        })
+        
+    except Exception as e:
+        return Response({
+            'error': f'Error limpiando caché: {str(e)}'
         }, status=500)

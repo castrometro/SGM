@@ -1,36 +1,62 @@
 import EstadoBadge from "../EstadoBadge";
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { finalizarCierre, actualizarEstadoCierre, obtenerProgresoTarea } from '../../api/contabilidad';
 
 const CierreInfoBar = ({ cierre, cliente, onCierreActualizado }) => {
   const [actualizandoEstado, setActualizandoEstado] = useState(false);
   const [finalizando, setFinalizando] = useState(false);
+  const [taskId, setTaskId] = useState(null);
+  const [progreso, setProgreso] = useState(null);
+  const intervalRef = useRef(null);
 
-  const actualizarEstadoCierre = async () => {
+  const manejarActualizarEstado = async () => {
     setActualizandoEstado(true);
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`/api/contabilidad/cierres/${cierre.id}/actualizar-estado/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (onCierreActualizado) {
-          onCierreActualizado(data.cierre);
-        }
-        // Refresh de la página como fallback
-        window.location.reload();
-      } else {
-        console.error('Error al actualizar estado del cierre');
+      const data = await actualizarEstadoCierre(cierre.id);
+      if (onCierreActualizado) {
+        onCierreActualizado(data.cierre);
       }
+      // Refresh de la página como fallback
+      window.location.reload();
     } catch (error) {
-      console.error('Error:', error);
+      console.error('Error al actualizar estado del cierre:', error);
     } finally {
       setActualizandoEstado(false);
+    }
+  };
+
+  const consultarProgreso = async (taskId) => {
+    try {
+      const data = await obtenerProgresoTarea(taskId);
+      setProgreso(data);
+      
+      // Si la tarea terminó (éxito o error), detener el polling
+      if (data.estado === 'SUCCESS' || data.estado === 'FAILURE') {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+        
+        if (data.estado === 'SUCCESS') {
+          // Actualizar el estado del cierre
+          if (onCierreActualizado) {
+            onCierreActualizado({ ...cierre, estado: 'finalizado' });
+          }
+          alert('¡Cierre finalizado exitosamente! Los reportes han sido generados.');
+          setTimeout(() => window.location.reload(), 1500);
+        } else {
+          alert(`Error en la finalización: ${data.error || 'Error desconocido'}`);
+          // Revertir estado
+          if (onCierreActualizado) {
+            onCierreActualizado({ ...cierre, estado: 'sin_incidencias' });
+          }
+        }
+        
+        setFinalizando(false);
+        setTaskId(null);
+      }
+    } catch (error) {
+      console.error('Error consultando progreso:', error);
     }
   };
 
@@ -40,35 +66,47 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado }) => {
     }
 
     setFinalizando(true);
+    setProgreso(null);
+    
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`/api/contabilidad/cierres/${cierre.id}/finalizar/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
-      const data = await response.json();
+      const data = await finalizarCierre(cierre.id);
       
       if (data.success) {
-        alert('Finalización iniciada exitosamente. El proceso puede tomar varios minutos.');
+        console.log('🚀 Finalización iniciada:', data);
+        
+        // Guardar el task_id y actualizar estado del cierre
+        setTaskId(data.task_id);
         if (onCierreActualizado) {
           onCierreActualizado({ ...cierre, estado: 'generando_reportes' });
         }
-        // Refresh para ver el nuevo estado
-        setTimeout(() => window.location.reload(), 1000);
+        
+        // Iniciar polling del progreso cada 2 segundos
+        intervalRef.current = setInterval(() => {
+          consultarProgreso(data.task_id);
+        }, 2000);
+        
+        // Primera consulta inmediata
+        setTimeout(() => consultarProgreso(data.task_id), 500);
+        
       } else {
         alert(`Error: ${data.error}`);
+        setFinalizando(false);
       }
     } catch (error) {
       console.error('Error:', error);
       alert('Error de conexión al servidor');
-    } finally {
       setFinalizando(false);
     }
   };
+
+  // Limpiar el interval al desmontar el componente
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div className="bg-gray-800 px-8 py-6 rounded-xl shadow flex flex-wrap items-center gap-6 mb-10 w-full">
@@ -105,7 +143,7 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado }) => {
       {/* Botón Actualizar Estado */}
       <div className="flex items-center gap-3">
         <button
-          onClick={actualizarEstadoCierre}
+          onClick={manejarActualizarEstado}
           disabled={actualizandoEstado}
           className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-4 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2"
         >
@@ -153,14 +191,42 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado }) => {
           </button>
         )}
 
-        {/* Indicador de estado generando reportes */}
-        {cierre?.estado === 'generando_reportes' && (
-          <div className="bg-yellow-600 text-white px-4 py-2 rounded-lg font-semibold text-sm flex items-center gap-2">
-            <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+        {/* Indicador de estado generando reportes con progreso */}
+        {(cierre?.estado === 'generando_reportes' || finalizando) && (
+          <div className="bg-yellow-600 text-white px-4 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 min-w-[300px]">
+            <svg className="animate-spin h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            Generando Reportes...
+            <div className="flex flex-col">
+              <span>Generando Reportes...</span>
+              {progreso && (
+                <div className="text-xs opacity-90 mt-1">
+                  {progreso.estado === 'PENDING' && 'Iniciando proceso...'}
+                  {progreso.estado === 'PROGRESS' && progreso.progreso && (
+                    <>
+                      <div>{progreso.progreso.descripcion || 'Procesando...'}</div>
+                      {progreso.progreso.porcentaje && (
+                        <div className="flex items-center gap-2 mt-1">
+                          <div className="bg-yellow-800 rounded-full h-1 flex-1">
+                            <div 
+                              className="bg-white h-1 rounded-full transition-all duration-300"
+                              style={{ width: `${progreso.progreso.porcentaje}%` }}
+                            ></div>
+                          </div>
+                          <span className="text-xs">{progreso.progreso.porcentaje}%</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {taskId && (
+                    <div className="text-xs opacity-75 mt-1">
+                      Task ID: {taskId.substring(0, 8)}...
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
 

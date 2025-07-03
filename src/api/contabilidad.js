@@ -212,6 +212,27 @@ export const obtenerCuentasPendientes = async (cierreId) => {
   return res.data;
 };
 
+// ==================== FINALIZACIÓN DE CIERRES ====================
+export const finalizarCierre = async (cierreId) => {
+  const res = await api.post(`/contabilidad/cierres/${cierreId}/finalizar/`);
+  return res.data;
+};
+
+export const actualizarEstadoCierre = async (cierreId) => {
+  const res = await api.post(`/contabilidad/cierres/${cierreId}/actualizar-estado/`);
+  return res.data;
+};
+
+export const obtenerEstadoFinalizacion = async (cierreId) => {
+  const res = await api.get(`/contabilidad/cierres/${cierreId}/estado-finalizacion/`);
+  return res.data;
+};
+
+export const obtenerProgresoTarea = async (taskId) => {
+  const res = await api.get(`/contabilidad/tareas/${taskId}/progreso/`);
+  return res.data;
+};
+
 // ==================== CLASIFICACIONES - SETS ====================
 export const obtenerSetsClasificacion = async (clienteId) => {
   const res = await api.get(`/contabilidad/clasificaciones-set/`, {
@@ -727,8 +748,16 @@ export const obtenerIncidenciasConsolidadas = async (cierreId) => {
   return res.data;
 };
 
-export const obtenerIncidenciasConsolidadasOptimizado = async (cierreId) => {
-  const res = await api.get(`/contabilidad/libro-mayor/${cierreId}/incidencias-optimizado/`);
+export const obtenerIncidenciasConsolidadasOptimizado = async (cierreId, forzarActualizacion = false) => {
+  const params = {};
+  if (forzarActualizacion) {
+    params.forzar_actualizacion = 'true';
+    params.usar_cache = 'false'; // También desactivar caché
+  }
+  
+  const res = await api.get(`/contabilidad/libro-mayor/${cierreId}/incidencias-optimizado/`, {
+    params
+  });
   return res.data;
 };
 
@@ -756,5 +785,72 @@ export const marcarCuentaNoAplica = async (cierreId, codigoCuenta, tipoExcepcion
   }
   
   const res = await api.post('/contabilidad/libro-mayor/marcar-no-aplica/', payload);
+  return res.data;
+};
+
+export const eliminarExcepcionNoAplica = async (cierreId, codigoCuenta, tipoExcepcion, setId = null) => {
+  try {
+    // Para clasificaciones (CUENTA_NO_CLAS, CUENTA_NO_CLASIFICADA) usar el endpoint específico
+    if ((tipoExcepcion === 'CUENTA_NO_CLAS' || tipoExcepcion === 'CUENTA_NO_CLASIFICADA') && setId) {
+      const res = await api.delete('/contabilidad/libro-mayor/excepciones/clasificacion/eliminar/', {
+        data: {
+          cierre_id: cierreId,
+          codigo_cuenta: codigoCuenta,
+          set_clasificacion_id: setId
+        }
+      });
+      return res.data;
+    }
+    
+    // Para otros tipos de excepciones (DOC_NULL, etc.), usar el método original
+    const res = await api.get(`/contabilidad/libro-mayor/excepciones/${codigoCuenta}/`, {
+      params: { cierre_id: cierreId }
+    });
+    
+    const excepciones = res.data.excepciones || [];
+    
+    // Mapear tipos de incidencia a tipos de excepción del backend
+    const mapeoTipos = {
+      'DOC_NULL': 'movimientos_tipodoc_nulo',
+      'DOC_NO_REC': 'tipos_doc_no_reconocidos',
+      'CUENTA_INGLES': 'cuentas_sin_nombre_ingles',
+    };
+    
+    const tipoBackend = mapeoTipos[tipoExcepcion];
+    const excepcionAEliminar = excepciones.find(exc => exc.tipo_excepcion === tipoBackend);
+    
+    if (!excepcionAEliminar) {
+      throw new Error(`No se encontró la excepción de tipo "${tipoExcepcion}" para la cuenta ${codigoCuenta}`);
+    }
+    
+    // Eliminar la excepción usando su ID
+    const deleteRes = await api.delete(`/contabilidad/libro-mayor/excepciones/${excepcionAEliminar.id}/eliminar/`);
+    return deleteRes.data;
+    
+  } catch (error) {
+    if (error.response?.status === 404) {
+      throw new Error(`Cuenta ${codigoCuenta} no encontrada o no tiene excepciones`);
+    }
+    throw new Error(`Error al eliminar excepción: ${error.response?.data?.error || error.message}`);
+  }
+};
+
+// ==================== GESTIÓN DE CACHÉ ====================
+export const obtenerEstadoCache = async () => {
+  const res = await api.get('/contabilidad/cache/incidencias/estado/');
+  return res.data;
+};
+
+export const limpiarCacheIncidencias = async (cierreId = null, limpiarTodo = false) => {
+  const data = {};
+  if (cierreId) data.cierre_id = cierreId;
+  if (limpiarTodo) data.limpiar_todo = true;
+  
+  const res = await api.post('/contabilidad/cache/incidencias/limpiar/', data);
+  return res.data;
+};
+
+export const obtenerIncidenciasConsolidadasLibroMayor = async (cierreId) => {
+  const res = await api.get(`/contabilidad/libro-mayor/${cierreId}/incidencias-consolidadas/`);
   return res.data;
 };

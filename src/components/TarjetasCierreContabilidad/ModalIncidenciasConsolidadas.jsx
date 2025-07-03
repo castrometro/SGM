@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { X, RefreshCw, ChevronRight, ChevronDown, CheckCircle } from 'lucide-react';
-import { reprocesarConExcepciones, marcarCuentaNoAplica, obtenerIncidenciasConsolidadasOptimizado } from '../../api/contabilidad';
+import { X, RefreshCw, ChevronRight, ChevronDown, CheckCircle, Trash2, Play, Bug } from 'lucide-react';
+import { reprocesarConExcepciones, marcarCuentaNoAplica, eliminarExcepcionNoAplica, obtenerIncidenciasConsolidadasOptimizado, obtenerIncidenciasConsolidadasLibroMayor } from '../../api/contabilidad';
+import CacheDebugPanel from '../Debug/CacheDebugPanel';
 
 const getSeverityColor = (severidad) => {
   const colors = {
@@ -18,30 +19,148 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
   const [reprocesando, setReprocesando] = useState(false);
   const [incidenciasActuales, setIncidenciasActuales] = useState(incidenciasProp || []);
   const [recargando, setRecargando] = useState(false);
+  const [excepcionesLocales, setExcepcionesLocales] = useState([]); // Nuevo estado para excepciones pendientes
+  const [debugCacheVisible, setDebugCacheVisible] = useState(false);
 
   // Efecto para actualizar incidencias cuando cambian las props
   useEffect(() => {
     setIncidenciasActuales(incidenciasProp || []);
   }, [incidenciasProp]);
 
-  // Función para recargar incidencias desde el servidor
-  const recargarIncidencias = async () => {
+  const recargarIncidencias = async (forzarActualizacion = false) => {
     if (!cierreId) return;
     
     setRecargando(true);
     try {
-      const data = await obtenerIncidenciasConsolidadasOptimizado(cierreId);
+      let data;
+      
+      if (forzarActualizacion) {
+        // DESPUÉS del reprocesamiento, usar SIEMPRE datos actuales de la tabla Incidencia
+        console.log('🔄 Recargando incidencias con datos FRESCOS desde tabla Incidencia...');
+        data = await obtenerIncidenciasConsolidadasLibroMayor(cierreId);
+      } else {
+        // Para recargas normales, usar el endpoint optimizado
+        console.log('📊 Recargando incidencias con endpoint optimizado...');
+        data = await obtenerIncidenciasConsolidadasOptimizado(cierreId, false);
+      }
+      
       const incidenciasArray = Array.isArray(data) ? data : (data.incidencias || []);
       setIncidenciasActuales(incidenciasArray);
       
-      // Limpiar detalles expandidos para forzar recarga
-      setCuentasDetalle({});
-      setExpandida(null);
+      console.log(`📊 Incidencias recargadas (forzar: ${forzarActualizacion}):`, incidenciasArray.length);
+      
+      // Logging adicional para debugging
+      if (data._fuente) {
+        console.log(`📍 Fuente de datos: ${data._fuente}`);
+      }
+      if (data._debug) {
+        console.log(`🐛 Debug info:`, data._debug);
+      }
+      if (data._timestamp) {
+        console.log(`⏰ Timestamp de datos: ${data._timestamp}`);
+      }
       
     } catch (error) {
       console.error('Error recargando incidencias:', error);
     } finally {
       setRecargando(false);
+    }
+  };
+
+  // Nueva función para sincronizar excepciones locales con el backend
+  const sincronizarExcepcionesLocales = async () => {
+    if (excepcionesLocales.length === 0) {
+      console.log('📋 No hay excepciones locales pendientes de sincronización');
+      return true;
+    }
+
+    console.log(`🔄 Sincronizando ${excepcionesLocales.length} excepciones locales con el servidor...`);
+    
+    try {
+      for (const excepcion of excepcionesLocales) {
+        const { codigoCuenta, tipoIncidencia, setId, motivo, accion } = excepcion;
+        
+        if (accion === 'crear') {
+          console.log(`➕ Creando excepción: ${codigoCuenta} (${tipoIncidencia})`);
+          await marcarCuentaNoAplica(cierreId, codigoCuenta, tipoIncidencia, motivo || 'Marcado como no aplica', setId);
+        } else if (accion === 'eliminar') {
+          console.log(`➖ Eliminando excepción: ${codigoCuenta} (${tipoIncidencia})`);
+          await eliminarExcepcionNoAplica(cierreId, codigoCuenta, tipoIncidencia, setId);
+        }
+      }
+      
+      // Limpiar excepciones locales después de sincronizar
+      setExcepcionesLocales([]);
+      console.log('✅ Todas las excepciones locales han sido sincronizadas');
+      return true;
+      
+    } catch (error) {
+      console.error('❌ Error sincronizando excepciones:', error);
+      throw new Error(`Error sincronizando excepciones: ${error.response?.data?.error || error.message}`);
+    }
+  };
+
+  // Función completa de reprocesamiento
+  const handleReprocesar = async () => {
+    if (!cierreId) {
+      alert('❌ Error: ID de cierre no disponible');
+      return;
+    }
+
+    const totalExcepcionesLocales = excepcionesLocales.length;
+    
+    const confirmar = window.confirm(
+      `¿Está seguro de que desea reprocesar el Libro Mayor?\n\n` +
+      `${totalExcepcionesLocales > 0 ? 
+        `Se sincronizarán ${totalExcepcionesLocales} excepciones locales y ` : 
+        ''
+      }se generará una nueva iteración del libro.\n\n` +
+      'Este proceso puede tomar varios minutos.'
+    );
+    
+    if (!confirmar) return;
+
+    setReprocesando(true);
+    try {
+      // 1. Sincronizar excepciones locales si las hay
+      if (totalExcepcionesLocales > 0) {
+        await sincronizarExcepcionesLocales();
+        alert(`✅ ${totalExcepcionesLocales} excepciones sincronizadas correctamente`);
+      }
+      
+      // 2. Reprocesar el libro mayor
+      console.log('🔄 Iniciando reprocesamiento del Libro Mayor...');
+      const resultado = await reprocesarConExcepciones(cierreId);
+      console.log('✅ Reprocesamiento completado:', resultado);
+      
+      // 3. Recargar incidencias FORZANDO uso de datos actuales de tabla Incidencia
+      console.log('🔄 Recargando incidencias con datos FRESCOS (no snapshot)...');
+      await recargarIncidencias(true); // ← FORZAR datos frescos de la tabla Incidencia
+      
+      // 4. Limpiar detalles expandidos para forzar recarga completa
+      setCuentasDetalle({});
+      setExpandida(null);
+      
+      console.log('✅ Modal de incidencias actualizado con datos post-reprocesamiento');
+      
+      alert(
+        `✅ Reprocesamiento completado exitosamente!\n\n` +
+        `Nueva iteración: ${resultado.nueva_iteracion}\n` +
+        `Estado: ${resultado.estado}\n\n` +
+        'El modal se ha actualizado con las incidencias más recientes.'
+      );
+      
+      // 5. Notificar al componente padre
+      if (onReprocesar) {
+        console.log('📡 Notificando al componente padre para actualizar...');
+        onReprocesar();
+      }
+      
+    } catch (error) {
+      console.error('❌ Error en reprocesamiento:', error);
+      alert(`❌ Error en el reprocesamiento: ${error.message}`);
+    } finally {
+      setReprocesando(false);
     }
   };
 
@@ -52,14 +171,17 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
     
     setReprocesando(true);
     try {
-      // Solo recargar las incidencias sin reprocesar
+      // Recargar las incidencias desde el servidor
       await recargarIncidencias();
-      alert('Incidencias actualizadas.');
       
-      if (onReprocesar) onReprocesar();
+      // NO limpiar excepciones locales - preservar cambios pendientes
+      // NO limpiar detalles expandidos completamente - solo actualizar datos del servidor
+      
+      alert('✅ Incidencias actualizadas desde el servidor. Los cambios locales se han preservado.');
+      
     } catch (error) {
       console.error('Error al actualizar incidencias:', error);
-      alert('Error al actualizar: ' + (error.response?.data?.error || error.message));
+      alert(`❌ Error al actualizar: ${error.response?.data?.error || error.message}`);
     } finally {
       setReprocesando(false);
     }
@@ -73,30 +195,30 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
 
     setExpandida(index);
     
-    // Usar los datos que ya tenemos en elementos_afectados en lugar de hacer llamada HTTP
-    if (!cuentasDetalle[tipoIncidencia]) {
-      const incidencia = incidenciasActuales[index];
-      if (incidencia && incidencia.elementos_afectados) {
-        // Transform elementos_afectados to match the expected structure
-        const cuentasFromSnapshot = incidencia.elementos_afectados.map(elemento => {
-          return {
-            codigo: elemento.codigo,
-            nombre: elemento.descripcion || `Cuenta ${elemento.codigo}`,
-            descripcion: elemento.descripcion,
-            set_nombre: elemento.set_nombre || null, // Nombre del set específico faltante
-            set_id: elemento.set_id || null, // ID del set específico faltante
-            tiene_excepcion: false // Default value
-          };
-        });
-        
-        setCuentasDetalle(prev => ({
-          ...prev,
-          [tipoIncidencia]: {
-            cuentas: cuentasFromSnapshot,
-            total: incidencia.cantidad_afectada || cuentasFromSnapshot.length
-          }
-        }));
-      }
+    // Siempre recargar datos del servidor al expandir para obtener estado actual de excepciones
+    const incidencia = incidenciasActuales[index];
+    if (incidencia && incidencia.elementos_afectados) {
+      // Transform elementos_afectados to match the expected structure
+      const cuentasFromSnapshot = incidencia.elementos_afectados.map(elemento => {
+        return {
+          codigo: elemento.codigo,
+          nombre: elemento.descripcion || `Cuenta ${elemento.codigo}`,
+          descripcion: elemento.descripcion,
+          set_nombre: elemento.set_nombre || null, // Nombre del set específico faltante
+          set_id: elemento.set_id || null, // ID del set específico faltante
+          tiene_excepcion: elemento.tiene_excepcion || false // Usar valor del servidor si está disponible
+        };
+      });
+      
+      setCuentasDetalle(prev => ({
+        ...prev,
+        [tipoIncidencia]: {
+          cuentas: cuentasFromSnapshot,
+          total: incidencia.cantidad_afectada || cuentasFromSnapshot.length
+        }
+      }));
+      
+      console.log(`📋 Expandido ${tipoIncidencia}: ${cuentasFromSnapshot.length} cuentas, ${cuentasFromSnapshot.filter(c => c.tiene_excepcion).length} con excepciones`);
     }
   };
 
@@ -112,34 +234,94 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
 
   const handleMarcarNoAplica = async (codigoCuenta, tipoIncidencia, setId = null, motivo = '') => {
     try {
-      // Para clasificaciones, incluir el set_id específico
-      const payload = {
-        codigo_cuenta: codigoCuenta,
-        tipo_incidencia: tipoIncidencia,
-        motivo: motivo
-      };
-      
-      if ((tipoIncidencia === 'CUENTA_NO_CLAS' || tipoIncidencia === 'CUENTA_NO_CLASIFICADA') && setId) {
-        payload.set_clasificacion_id = setId;
-      }
-      
-      await marcarCuentaNoAplica(cierreId, codigoCuenta, tipoIncidencia, motivo, setId);
-      
-      // Actualizar el estado local
+      // Actualizar estado local inmediatamente
       setCuentasDetalle(prev => ({
         ...prev,
         [tipoIncidencia]: {
           ...prev[tipoIncidencia],
           cuentas: prev[tipoIncidencia].cuentas.map(cuenta =>
             cuenta.codigo === codigoCuenta
-              ? { ...cuenta, tiene_excepcion: true }
+              ? { ...cuenta, tiene_excepcion: true, motivo_excepcion: motivo }
               : cuenta
           )
         }
       }));
+      
+      // Agregar a excepciones locales pendientes
+      setExcepcionesLocales(prev => {
+        const nuevaExcepcion = {
+          codigoCuenta,
+          tipoIncidencia,
+          setId,
+          motivo,
+          accion: 'crear'
+        };
+        
+        // Evitar duplicados - si ya existe, reemplazar
+        const filtradas = prev.filter(exc => 
+          !(exc.codigoCuenta === codigoCuenta && 
+            exc.tipoIncidencia === tipoIncidencia && 
+            exc.setId === setId)
+        );
+        
+        return [...filtradas, nuevaExcepcion];
+      });
+      
+      console.log(`📝 Excepción agregada localmente: ${codigoCuenta} (${tipoIncidencia}) - Pendiente de sincronización`);
+      
     } catch (error) {
       console.error('Error marcando cuenta como no aplica:', error);
-      alert('Error al marcar la cuenta. Intente nuevamente.');
+      alert(`❌ Error al marcar la cuenta: ${error.message}`);
+    }
+  };
+
+  const handleEliminarExcepcion = async (codigoCuenta, tipoIncidencia, setId = null) => {
+    try {
+      const confirmar = window.confirm(
+        `¿Está seguro de que desea eliminar la excepción "No aplica" para la cuenta ${codigoCuenta}?\n\n` +
+        'Esta cuenta volverá a aparecer como incidencia hasta que se resuelva correctamente.'
+      );
+      
+      if (!confirmar) return;
+      
+      // Actualizar el estado local inmediatamente
+      setCuentasDetalle(prev => ({
+        ...prev,
+        [tipoIncidencia]: {
+          ...prev[tipoIncidencia],
+          cuentas: prev[tipoIncidencia].cuentas.map(cuenta =>
+            cuenta.codigo === codigoCuenta
+              ? { ...cuenta, tiene_excepcion: false }
+              : cuenta
+          )
+        }
+      }));
+      
+      // Verificar si es una excepción local pendiente o una que existe en el servidor
+      const excepcionLocalIndex = excepcionesLocales.findIndex(exc => 
+        exc.codigoCuenta === codigoCuenta && 
+        exc.tipoIncidencia === tipoIncidencia && 
+        exc.setId === setId
+      );
+      
+      if (excepcionLocalIndex >= 0) {
+        // Es una excepción local - simplemente quitarla de la lista
+        setExcepcionesLocales(prev => prev.filter((_, index) => index !== excepcionLocalIndex));
+        console.log(`🗑️ Excepción local eliminada: ${codigoCuenta} (${tipoIncidencia})`);
+      } else {
+        // Es una excepción del servidor - marcar para eliminación
+        setExcepcionesLocales(prev => [...prev, {
+          codigoCuenta,
+          tipoIncidencia,
+          setId,
+          accion: 'eliminar'
+        }]);
+        console.log(`🗑️ Excepción marcada para eliminación: ${codigoCuenta} (${tipoIncidencia}) - Pendiente de sincronización`);
+      }
+      
+    } catch (error) {
+      console.error('Error eliminando excepción:', error);
+      alert(`❌ Error al eliminar la excepción: ${error.message}`);
     }
   };
 
@@ -148,8 +330,23 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
       <div className="bg-gray-900 rounded-xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-xl">
         {/* Header */}
         <div className="p-4 border-b border-gray-700 flex justify-between items-center">
-          <h3 className="text-lg font-semibold text-white">Incidencias Detectadas</h3>
           <div className="flex items-center gap-3">
+            <h3 className="text-lg font-semibold text-white">Incidencias Detectadas</h3>
+            {excepcionesLocales.length > 0 && (
+              <span className="bg-orange-600 text-white text-xs px-2 py-1 rounded-full">
+                {excepcionesLocales.length} cambios pendientes
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setDebugCacheVisible(true)}
+              className="bg-gray-600 hover:bg-gray-700 text-white px-2 py-1 rounded text-xs flex items-center gap-1 transition-colors"
+              title="Debug del caché Redis"
+            >
+              <Bug size={14} />
+              Debug
+            </button>
             <button
               onClick={handleActualizar}
               disabled={reprocesando}
@@ -158,6 +355,18 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
             >
               <RefreshCw size={16} className={reprocesando ? 'animate-spin' : ''} />
               {reprocesando ? 'Actualizando...' : 'Actualizar'}
+            </button>
+            <button
+              onClick={handleReprocesar}
+              disabled={reprocesando}
+              className="bg-green-600 hover:bg-green-700 disabled:bg-green-800 disabled:opacity-50 text-white px-3 py-1 rounded text-sm flex items-center gap-2 transition-colors font-medium"
+              title={excepcionesLocales.length > 0 ? 
+                `Sincronizar ${excepcionesLocales.length} excepciones y reprocesar` : 
+                'Reprocesar el Libro Mayor'
+              }
+            >
+              <Play size={16} className={reprocesando ? 'animate-spin' : ''} />
+              {reprocesando ? 'Reprocesando...' : 'Reprocesar'}
             </button>
             <button
               onClick={onClose}
@@ -260,14 +469,31 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
                             )}
                           </h4>
                           <div className="space-y-2 max-h-60 overflow-y-auto">
-                            {cuentasDetalle[incidencia.tipo_incidencia].cuentas?.map((cuenta, idx) => (
+                            {cuentasDetalle[incidencia.tipo_incidencia].cuentas?.map((cuenta, idx) => {
+                              // Verificar si esta cuenta tiene cambios locales pendientes
+                              const tieneExcepcionLocal = excepcionesLocales.some(exc => 
+                                exc.codigoCuenta === cuenta.codigo && 
+                                exc.tipoIncidencia === incidencia.tipo_incidencia &&
+                                exc.setId === cuenta.set_id
+                              );
+                              
+                              return (
                               <div 
                                 key={idx}
-                                className="bg-gray-800 p-3 rounded border border-gray-600 flex items-center justify-between"
+                                className={`bg-gray-800 p-3 rounded border flex items-center justify-between ${
+                                  tieneExcepcionLocal ? 'border-orange-500 bg-orange-900/20' : 'border-gray-600'
+                                }`}
                               >
                                 <div className="flex-1">
-                                  <div className="text-white font-medium">
-                                    {cuenta.codigo} - {cuenta.nombre}
+                                  <div className="flex items-center gap-2">
+                                    <div className="text-white font-medium">
+                                      {cuenta.codigo} - {cuenta.nombre}
+                                    </div>
+                                    {tieneExcepcionLocal && (
+                                      <span className="bg-orange-600 text-white text-xs px-2 py-1 rounded">
+                                        Cambio local
+                                      </span>
+                                    )}
                                   </div>
                                   {cuenta.descripcion && (
                                     <div className="text-gray-400 text-sm mt-1">
@@ -288,9 +514,23 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
                                 
                                 <div className="ml-4">
                                   {cuenta.tiene_excepcion ? (
-                                    <div className="flex items-center gap-2 text-green-400">
-                                      <CheckCircle size={16} />
-                                      <span className="text-sm">No aplica</span>
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex items-center gap-2 text-green-400">
+                                        <CheckCircle size={16} />
+                                        <span className="text-sm">No aplica</span>
+                                      </div>
+                                      <button
+                                        onClick={() => handleEliminarExcepcion(
+                                          cuenta.codigo, 
+                                          incidencia.tipo_incidencia,
+                                          cuenta.set_id
+                                        )}
+                                        className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors flex items-center gap-1"
+                                        title="Eliminar excepción - volverá a aparecer como incidencia"
+                                      >
+                                        <Trash2 size={12} />
+                                        Eliminar
+                                      </button>
                                     </div>
                                   ) : puedeMarcarNoAplica(incidencia.tipo_incidencia) ? (
                                     <button
@@ -327,7 +567,7 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
                                   )}
                                 </div>
                               </div>
-                            ))}
+                            )})}
                           </div>
                         </div>
                       ) : (
@@ -346,6 +586,12 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
           )}
         </div>
       </div>
+
+      {/* Debug Panel */}
+      <CacheDebugPanel 
+        visible={debugCacheVisible} 
+        onClose={() => setDebugCacheVisible(false)} 
+      />
     </div>
   );
 };

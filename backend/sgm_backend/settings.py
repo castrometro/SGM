@@ -141,8 +141,18 @@ CACHES = {
     "default": {
         "BACKEND": _cache_backend,
         "LOCATION": REDIS_URL,
-        "OPTIONS": _cache_opts,
+        "OPTIONS": {
+            **_cache_opts,
+            "CONNECTION_POOL_KWARGS": {
+                "max_connections": 20,
+                "retry_on_timeout": True,
+            },
+            "COMPRESSOR": "django_redis.compressors.zlib.ZlibCompressor",
+            "IGNORE_EXCEPTIONS": True,  # No fallar si Redis está down
+        },
         "KEY_PREFIX": "sgm_backend",
+        "VERSION": 1,
+        "TIMEOUT": 300,  # 5 minutos por defecto
     }
 }
 

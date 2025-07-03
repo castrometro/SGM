@@ -207,20 +207,20 @@ class CierreContabilidad(models.Model):
         Verifica si el cierre puede ser finalizado
         Debe estar en estado 'sin_incidencias' y sin incidencias pendientes
         """
-        from .models_incidencias import Incidencia
+        from .models_incidencias import IncidenciaResumen
         
         # Debe estar en sin_incidencias
         if self.estado != 'sin_incidencias':
             return False, f"El cierre debe estar en estado 'sin_incidencias', actualmente está en '{self.estado}'"
         
-        # Verificar que no hay incidencias pendientes
-        incidencias_pendientes = Incidencia.objects.filter(
-            cierre=self,
-            estado='pendiente'
+        # Verificar que no hay incidencias activas pendientes
+        incidencias_activas = IncidenciaResumen.objects.filter(
+            cierre=self, 
+            estado='activa'
         ).count()
         
-        if incidencias_pendientes > 0:
-            return False, f"Hay {incidencias_pendientes} incidencias pendientes por resolver"
+        if incidencias_activas > 0:
+            return False, f"Hay {incidencias_activas} incidencias activas pendientes por resolver"
         
         # Ya está finalizado
         if self.estado == 'finalizado':
@@ -235,22 +235,46 @@ class CierreContabilidad(models.Model):
         """
         from django.utils import timezone
         
+        # ✅ VALIDAR ANTES de cambiar el estado
         puede, mensaje = self.puede_finalizar()
         if not puede:
             raise ValueError(mensaje)
         
-        # Cambiar estado
+        # ✅ CAMBIAR estado después de validar
         self.estado = 'generando_reportes'
         self.save(update_fields=['estado'])
         
         # Disparar tarea de Celery
         from .tasks_finalizacion import finalizar_cierre_y_generar_reportes
-        task = finalizar_cierre_y_generar_reportes.delay(
-            cierre_id=self.id,
-            usuario_id=usuario.id if usuario else None
-        )
         
-        return task.id
+        try:
+            # Intentar con Celery primero
+            task = finalizar_cierre_y_generar_reportes.delay(
+                cierre_id=self.id,
+                usuario_id=usuario.id if usuario else None
+            )
+            
+            if task and hasattr(task, 'id') and task.id:
+                print(f"🚀 Tarea enviada a Celery con ID: {task.id}")
+                return task.id
+            else:
+                print("⚠️ Task ID vacío, ejecutando sincrónicamente...")
+                raise Exception("Celery no disponible")
+                
+        except Exception as e:
+            print(f"⚠️ Error con Celery ({str(e)}), ejecutando sincrónicamente...")
+            
+            # Si Celery falla, ejecutar sincrónicamente
+            resultado = finalizar_cierre_y_generar_reportes(
+                cierre_id=self.id,
+                usuario_id=usuario.id if usuario else None
+            )
+            
+            # Simular un task_id para mantener compatibilidad
+            import uuid
+            fake_task_id = str(uuid.uuid4())
+            print(f"🔄 Ejecución sincrónnica completada con ID simulado: {fake_task_id}")
+            return fake_task_id
     
     def marcar_como_finalizado(self):
         """
@@ -268,7 +292,7 @@ class CierreContabilidad(models.Model):
         Actualiza el estado del cierre basado en las incidencias pendientes
         y otros factores automáticamente.
         """
-        from .models_incidencias import Incidencia
+        from .models_incidencias import IncidenciaResumen
         from django.utils import timezone
         
         # Si ya está finalizado, no cambiar
@@ -279,21 +303,21 @@ class CierreContabilidad(models.Model):
         if self.estado == 'generando_reportes':
             return self.estado
         
-        # Contar incidencias pendientes
-        incidencias_pendientes = Incidencia.objects.filter(
+        # Contar incidencias activas (pendientes de resolución)
+        incidencias_activas = IncidenciaResumen.objects.filter(
             cierre=self,
-            estado='pendiente'
+            estado='activa'
         ).count()
         
         # Determinar el estado correcto basado en incidencias
-        if incidencias_pendientes == 0:
-            # Sin incidencias pendientes
+        if incidencias_activas == 0:
+            # Sin incidencias activas pendientes
             if self.estado != 'sin_incidencias':
                 self.estado = 'sin_incidencias'
                 self.fecha_sin_incidencias = timezone.now()
                 self.save(update_fields=['estado', 'fecha_sin_incidencias'])
         else:
-            # Hay incidencias pendientes
+            # Hay incidencias activas pendientes
             if self.estado != 'incidencias':
                 self.estado = 'incidencias'
                 self.save(update_fields=['estado'])

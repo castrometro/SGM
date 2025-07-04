@@ -3,6 +3,8 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
+from django.http import JsonResponse, HttpResponse
+from django.urls import path
 import json
 
 from .models import (
@@ -23,6 +25,7 @@ from .models import (
     NombreIngles,
     NombreInglesArchivo,
     NombresEnInglesUpload,
+    ReporteFinanciero,  # ✨ NUEVO: Modelo de reportes financieros
     TarjetaActivityLog,
     TipoDocumento,
     TipoDocumentoArchivo,
@@ -1021,3 +1024,378 @@ class ExcepcionValidacionAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('cliente', 'usuario_creador')
+
+
+# ===============================================================================
+#                           REPORTES FINANCIEROS
+# ===============================================================================
+
+@admin.register(ReporteFinanciero)
+class ReporteFinancieroAdmin(admin.ModelAdmin):
+    """
+    Admin para visualizar y gestionar reportes financieros generados
+    """
+    list_display = (
+        'id',
+        'cierre_info',
+        'tipo_reporte_badge',
+        'estado_badge',
+        'usuario_generador',
+        'fecha_generacion',
+        'es_valido_badge',
+        'acciones_reporte'
+    )
+    
+    list_filter = (
+        'tipo_reporte',
+        'estado',
+        'fecha_generacion',
+        'cierre__cliente',
+        'cierre__periodo'
+    )
+    
+    search_fields = (
+        'cierre__cliente__nombre',
+        'cierre__periodo',
+        'usuario_generador__username',
+        'usuario_generador__first_name',
+        'usuario_generador__last_name'
+    )
+    
+    readonly_fields = (
+        'id',
+        'fecha_generacion',
+        'fecha_actualizacion',
+        'es_valido_badge',
+        'datos_preview',
+        'metadata_preview',
+        'resumen_datos'
+    )
+    
+    fieldsets = (
+        ('Información General', {
+            'fields': (
+                'id',
+                'cierre',
+                'tipo_reporte',
+                'estado',
+                'usuario_generador'
+            )
+        }),
+        ('Estado y Validez', {
+            'fields': (
+                'es_valido_badge',
+                'error_mensaje'
+            )
+        }),
+        ('Fechas', {
+            'fields': (
+                'fecha_generacion',
+                'fecha_actualizacion'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Datos del Reporte', {
+            'fields': (
+                'resumen_datos',
+                'datos_preview'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Metadatos', {
+            'fields': (
+                'metadata_preview',
+                'metadata'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def cierre_info(self, obj):
+        """Información del cierre asociado"""
+        return format_html(
+            '<strong>{}</strong><br>'
+            '<small>{} - {}</small>',
+            obj.cierre.cliente.nombre,
+            obj.cierre.periodo,
+            obj.cierre.get_estado_display()
+        )
+    cierre_info.short_description = 'Cierre'
+    
+    def tipo_reporte_badge(self, obj):
+        """Badge para el tipo de reporte"""
+        color_map = {
+            'esf': '#28a745',  # Verde
+            'eri': '#17a2b8',  # Azul
+            'ecp': '#ffc107'   # Amarillo
+        }
+        color = color_map.get(obj.tipo_reporte, '#6c757d')
+        
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 8px; '
+            'border-radius: 3px; font-size: 11px; font-weight: bold;">{}</span>',
+            color,
+            obj.get_tipo_reporte_display()
+        )
+    tipo_reporte_badge.short_description = 'Tipo'
+    
+    def estado_badge(self, obj):
+        """Badge para el estado del reporte"""
+        color_map = {
+            'generando': '#ffc107',    # Amarillo
+            'completado': '#28a745',   # Verde
+            'error': '#dc3545'         # Rojo
+        }
+        color = color_map.get(obj.estado, '#6c757d')
+        
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 8px; '
+            'border-radius: 3px; font-size: 11px; font-weight: bold;">{}</span>',
+            color,
+            obj.get_estado_display()
+        )
+    estado_badge.short_description = 'Estado'
+    
+    def es_valido_badge(self, obj):
+        """Badge para mostrar si el reporte es válido"""
+        if obj.es_valido:
+            return format_html(
+                '<span style="background-color: #28a745; color: white; padding: 3px 8px; '
+                'border-radius: 3px; font-size: 11px; font-weight: bold;">✓ Válido</span>'
+            )
+        else:
+            return format_html(
+                '<span style="background-color: #dc3545; color: white; padding: 3px 8px; '
+                'border-radius: 3px; font-size: 11px; font-weight: bold;">✗ Inválido</span>'
+            )
+    es_valido_badge.short_description = 'Validez'
+    
+    def acciones_reporte(self, obj):
+        """Enlaces de acciones para el reporte"""
+        acciones = []
+        
+        # Descargar JSON del reporte
+        if obj.datos_reporte and obj.estado == 'completado':
+            acciones.append(
+                f'<a href="/admin/contabilidad/reportefinanciero/{obj.id}/descargar-json/" '
+                f'style="color: #28a745; text-decoration: none; font-weight: bold;" '
+                f'title="Descargar JSON del reporte">💾 Descargar JSON</a>'
+            )
+        
+        # Ver JSON en nueva ventana
+        if obj.datos_reporte:
+            acciones.append(
+                f'<a href="/admin/contabilidad/reportefinanciero/{obj.id}/ver-json/" '
+                f'target="_blank" '
+                f'style="color: #007cba; text-decoration: none;" '
+                f'title="Ver JSON del reporte">👁️ Ver JSON</a>'
+            )
+        
+        # Editar reporte
+        acciones.append(
+            f'<a href="/admin/contabilidad/reportefinanciero/{obj.id}/change/" '
+            f'style="color: #ffc107; text-decoration: none;">✏️ Editar</a>'
+        )
+        
+        return format_html(' | '.join(acciones)) if acciones else '-'
+    acciones_reporte.short_description = 'Acciones'
+    
+    def resumen_datos(self, obj):
+        """Resumen de los datos del reporte"""
+        if not obj.datos_reporte:
+            return "Sin datos"
+        
+        if not isinstance(obj.datos_reporte, dict):
+            return f"Datos: {type(obj.datos_reporte).__name__}"
+        
+        # Resumen específico por tipo de reporte
+        if obj.tipo_reporte == 'esf':
+            return self._resumen_esf(obj.datos_reporte)
+        elif obj.tipo_reporte == 'eri':
+            return self._resumen_eri(obj.datos_reporte)
+        else:
+            return f"Claves principales: {', '.join(list(obj.datos_reporte.keys())[:5])}"
+    
+    resumen_datos.short_description = 'Resumen de Datos'
+    
+    def _resumen_esf(self, datos):
+        """Resumen específico para Estado de Situación Financiera"""
+        try:
+            assets = datos.get('assets', {})
+            liabilities = datos.get('liabilities', {})
+            patrimony = datos.get('patrimony', {})
+            
+            total_assets = assets.get('total_assets', 0)
+            total_liabilities = liabilities.get('total_liabilities', 0)
+            total_patrimony = patrimony.get('total_patrimony', 0)
+            
+            return format_html(
+                '<strong>Total Assets:</strong> ${:,.0f}<br>'
+                '<strong>Total Liabilities:</strong> ${:,.0f}<br>'
+                '<strong>Total Patrimony:</strong> ${:,.0f}',
+                float(total_assets),
+                float(total_liabilities),
+                float(total_patrimony)
+            )
+        except (KeyError, ValueError, TypeError):
+            return "Error en formato de datos ESF"
+    
+    def _resumen_eri(self, datos):
+        """Resumen específico para Estado de Resultado Integral"""
+        try:
+            revenue = datos.get('revenue', 0)
+            earnings = datos.get('earnings_loss_before_taxes', 0)
+            
+            return format_html(
+                '<strong>Revenue:</strong> ${:,.0f}<br>'
+                '<strong>Earnings Before Taxes:</strong> ${:,.0f}',
+                float(revenue),
+                float(earnings)
+            )
+        except (KeyError, ValueError, TypeError):
+            return "Error en formato de datos ERI"
+    
+    def datos_preview(self, obj):
+        """Preview de los datos JSON del reporte"""
+        if not obj.datos_reporte:
+            return "Sin datos de reporte"
+        
+        try:
+            # Mostrar JSON formateado (limitado para no sobrecargar la interfaz)
+            json_str = json.dumps(obj.datos_reporte, indent=2, ensure_ascii=False)
+            
+            # Truncar si es muy largo
+            if len(json_str) > 2000:
+                json_str = json_str[:2000] + "\n\n... [Datos truncados para visualización] ..."
+            
+            return format_html(
+                '<pre style="background-color: #f8f9fa; padding: 10px; '
+                'border-radius: 5px; font-size: 12px; max-height: 400px; '
+                'overflow-y: auto;">{}</pre>',
+                json_str
+            )
+        except Exception as e:
+            return f"Error mostrando datos: {str(e)}"
+    
+    datos_preview.short_description = 'Preview de Datos JSON'
+    
+    def metadata_preview(self, obj):
+        """Preview de los metadatos"""
+        if not obj.metadata:
+            return "Sin metadatos"
+        
+        try:
+            json_str = json.dumps(obj.metadata, indent=2, ensure_ascii=False)
+            return format_html(
+                '<pre style="background-color: #f8f9fa; padding: 10px; '
+                'border-radius: 5px; font-size: 12px; max-height: 200px; '
+                'overflow-y: auto;">{}</pre>',
+                json_str
+            )
+        except Exception as e:
+            return f"Error mostrando metadatos: {str(e)}"
+    
+    metadata_preview.short_description = 'Preview de Metadatos'
+    
+    def get_queryset(self, request):
+        """Optimizar consultas con select_related"""
+        return super().get_queryset(request).select_related(
+            'cierre',
+            'cierre__cliente',
+            'usuario_generador'
+        )
+    
+    def get_urls(self):
+        """URLs personalizadas para el admin"""
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                '<path:object_id>/descargar-json/',
+                self.admin_site.admin_view(self.descargar_json),
+                name='contabilidad_reportefinanciero_descargar_json'
+            ),
+            path(
+                '<path:object_id>/ver-json/',
+                self.admin_site.admin_view(self.ver_json),
+                name='contabilidad_reportefinanciero_ver_json'
+            ),
+        ]
+        return custom_urls + urls
+    
+    def descargar_json(self, request, object_id):
+        """Vista para descargar el JSON del reporte financiero"""
+        try:
+            reporte = self.get_object(request, object_id)
+            if not reporte:
+                return HttpResponse("Reporte no encontrado", status=404)
+            
+            if not reporte.datos_reporte:
+                return HttpResponse("El reporte no tiene datos JSON", status=400)
+            
+            # Preparar el nombre del archivo
+            cliente_nombre = reporte.cierre.cliente.nombre.replace(' ', '_').replace('/', '_')
+            periodo = reporte.cierre.periodo.replace('/', '_').replace(' ', '_')
+            tipo_reporte = reporte.get_tipo_reporte_display().replace(' ', '_')
+            
+            filename = f"{cliente_nombre}_{periodo}_{tipo_reporte}_{reporte.id}.json"
+            
+            # Crear la respuesta HTTP con el archivo JSON
+            response = HttpResponse(
+                json.dumps(reporte.datos_reporte, indent=2, ensure_ascii=False),
+                content_type='application/json; charset=utf-8'
+            )
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            
+            return response
+            
+        except Exception as e:
+            return HttpResponse(f"Error al descargar el archivo: {str(e)}", status=500)
+    
+    def ver_json(self, request, object_id):
+        """Vista para mostrar el JSON del reporte en el navegador"""
+        try:
+            reporte = self.get_object(request, object_id)
+            if not reporte:
+                return HttpResponse("Reporte no encontrado", status=404)
+            
+            if not reporte.datos_reporte:
+                return HttpResponse("El reporte no tiene datos JSON", status=400)
+            
+            # Crear página HTML simple para mostrar el JSON
+            json_formateado = json.dumps(reporte.datos_reporte, indent=2, ensure_ascii=False)
+            
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>JSON - {reporte.get_tipo_reporte_display()} - {reporte.cierre.cliente.nombre}</title>
+                <style>
+                    body {{ font-family: 'Courier New', monospace; margin: 20px; background-color: #f5f5f5; }}
+                    .header {{ background-color: #007cba; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; }}
+                    .json-container {{ background-color: white; padding: 20px; border-radius: 5px; border: 1px solid #ddd; overflow: auto; }}
+                    pre {{ margin: 0; white-space: pre-wrap; word-wrap: break-word; }}
+                    .download-btn {{ background-color: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px; }}
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h2>Reporte Financiero - JSON</h2>
+                    <p><strong>Cliente:</strong> {reporte.cierre.cliente.nombre}</p>
+                    <p><strong>Período:</strong> {reporte.cierre.periodo}</p>
+                    <p><strong>Tipo:</strong> {reporte.get_tipo_reporte_display()}</p>
+                    <p><strong>Estado:</strong> {reporte.get_estado_display()}</p>
+                    <a href="/admin/contabilidad/reportefinanciero/{reporte.id}/descargar-json/" class="download-btn">
+                        Descargar como archivo JSON
+                    </a>
+                </div>
+                <div class="json-container">
+                    <pre>{json_formateado}</pre>
+                </div>
+            </body>
+            </html>
+            """
+            
+            return HttpResponse(html_content, content_type='text/html; charset=utf-8')
+            
+        except Exception as e:
+            return HttpResponse(f"Error al mostrar el JSON: {str(e)}", status=500)

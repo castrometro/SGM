@@ -1,4 +1,5 @@
 from django.db.models import Sum, Q
+from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -479,3 +480,290 @@ class CierreContabilidadViewSet(ActivityLoggerMixin, viewsets.ModelViewSet):
         except Exception as e:
             print(f"Error iniciando finalización del cierre: {e}")
             return Response({"success": False, "error": "Error interno del servidor"}, status=500)
+
+    @action(detail=True, methods=["post"], url_path="reportes/generar")
+    def generar_reportes(self, request, pk=None):
+        """
+        Genera o regenera reportes financieros específicos para el cierre.
+        
+        Body params:
+        - tipo_reporte: 'esf', 'eri', 'ecp' (opcional, si no se especifica genera todos)
+        - regenerar: true/false (opcional, default false)
+        """
+        cierre = self.get_object()
+        
+        # Validar que el cierre esté en estado permitido
+        estados_permitidos = ['sin_incidencias', 'generando_reportes', 'finalizado']
+        if cierre.estado not in estados_permitidos:
+            return Response({
+                'error': 'Estado no permitido',
+                'message': f'Los reportes solo se pueden generar cuando el estado es: {", ".join(estados_permitidos)}',
+                'estado_actual': cierre.estado
+            }, status=403)
+        
+        # Obtener parámetros
+        tipo_reporte = request.data.get('tipo_reporte')
+        regenerar = request.data.get('regenerar', False)
+        
+        tipos_disponibles = ['esf', 'eri', 'ecp']
+        tipos_a_generar = [tipo_reporte] if tipo_reporte in tipos_disponibles else tipos_disponibles
+        
+        resultados = []
+        
+        for tipo in tipos_a_generar:
+            try:
+                if tipo == 'esf':
+                    # Importar y ejecutar la tarea de ESF
+                    from ..tasks_reportes import generar_estado_situacion_financiera
+                    
+                    # Ejecutar la tarea (puede ser async o sync dependiendo de Celery)
+                    try:
+                        task = generar_estado_situacion_financiera.delay(
+                            cierre_id=cierre.id,
+                            usuario_id=request.user.id,
+                            regenerar=regenerar
+                        )
+                        task_id = task.id if hasattr(task, 'id') else None
+                    except Exception as celery_error:
+                        # Fallback a ejecución síncrona
+                        resultado = generar_estado_situacion_financiera(
+                            cierre_id=cierre.id,
+                            usuario_id=request.user.id,
+                            regenerar=regenerar
+                        )
+                        task_id = None
+                    
+                    resultados.append({
+                        'tipo': 'esf',
+                        'nombre': 'Estado de Situación Financiera',
+                        'task_id': task_id,
+                        'estado': 'iniciado' if task_id else 'completado',
+                        'regenerar': regenerar
+                    })
+                    
+                elif tipo == 'eri':
+                    # TODO: Implementar Estado de Resultado Integral
+                    resultados.append({
+                        'tipo': 'eri',
+                        'nombre': 'Estado de Resultado Integral',
+                        'estado': 'no_implementado',
+                        'mensaje': 'Próximamente disponible'
+                    })
+                    
+                elif tipo == 'ecp':
+                    # TODO: Implementar Estado de Cambios en el Patrimonio
+                    resultados.append({
+                        'tipo': 'ecp',
+                        'nombre': 'Estado de Cambios en el Patrimonio',
+                        'estado': 'no_implementado',
+                        'mensaje': 'Próximamente disponible'
+                    })
+                    
+            except Exception as e:
+                resultados.append({
+                    'tipo': tipo,
+                    'estado': 'error',
+                    'error': str(e)
+                })
+        
+        # Registrar actividad
+        try:
+            self.log_activity(
+                cliente_id=cierre.cliente.id,
+                periodo=cierre.periodo,
+                tarjeta="reportes",
+                accion="manual_generate",
+                descripcion=f"Generación manual de reportes: {', '.join(tipos_a_generar)}",
+                usuario=request.user,
+                detalles={
+                    "cierre_id": cierre.id,
+                    "tipos_solicitados": tipos_a_generar,
+                    "regenerar": regenerar,
+                    "resultados": resultados
+                },
+                resultado="exito",
+                ip_address=request.META.get("REMOTE_ADDR"),
+            )
+        except Exception as e:
+            print(f"Error registrando actividad en generar_reportes: {e}")
+        
+        return Response({
+            'success': True,
+            'message': f'Generación iniciada para {len(tipos_a_generar)} tipo(s) de reporte',
+            'resultados': resultados,
+            'cierre_id': cierre.id,
+            'regenerar': regenerar
+        })
+
+    @action(detail=True, methods=["get"], url_path="reportes")
+    def consultar_reportes(self, request, pk=None):
+        """
+        Consulta el estado y datos de los reportes financieros del cierre.
+        
+        Query params:
+        - tipo: 'esf', 'eri', 'ecp' (opcional, si no se especifica devuelve todos)
+        - incluir_datos: true/false (opcional, default false - si incluir los datos JSON)
+        """
+        cierre = self.get_object()
+        
+        # Validar acceso a reportes
+        estados_permitidos = ['sin_incidencias', 'generando_reportes', 'finalizado']
+        if cierre.estado not in estados_permitidos:
+            return Response({
+                'error': 'Acceso restringido',
+                'message': f'Los reportes solo están disponibles cuando el estado es: {", ".join(estados_permitidos)}',
+                'estado_actual': cierre.estado
+            }, status=403)
+        
+        # Obtener parámetros
+        tipo_filtro = request.query_params.get('tipo')
+        incluir_datos = request.query_params.get('incluir_datos', 'false').lower() == 'true'
+        
+        # Importar modelo dentro de la función para evitar problemas de importación circular
+        from ..models import ReporteFinanciero
+        
+        # Construir query
+        reportes_query = ReporteFinanciero.objects.filter(cierre=cierre)
+        if tipo_filtro:
+            reportes_query = reportes_query.filter(tipo_reporte=tipo_filtro)
+        
+        reportes = reportes_query.order_by('tipo_reporte', '-fecha_actualizacion')
+        
+        # Serializar reportes
+        reportes_data = []
+        for reporte in reportes:
+            datos_reporte = {
+                'id': reporte.id,
+                'tipo_reporte': reporte.tipo_reporte,
+                'tipo_reporte_display': reporte.get_tipo_reporte_display(),
+                'estado': reporte.estado,
+                'fecha_generacion': reporte.fecha_generacion.isoformat(),
+                'fecha_actualizacion': reporte.fecha_actualizacion.isoformat(),
+                'usuario_generador': {
+                    'id': reporte.usuario_generador.id,
+                    'username': reporte.usuario_generador.username
+                } if reporte.usuario_generador else None,
+                'es_valido': reporte.es_valido,
+                'metadata': reporte.metadata,
+                'error_mensaje': reporte.error_mensaje if reporte.estado == 'error' else None
+            }
+            
+            # Incluir datos si se solicita y está disponible
+            if incluir_datos and reporte.datos_reporte:
+                datos_reporte['datos_reporte'] = reporte.datos_reporte
+            elif reporte.datos_reporte:
+                # Solo incluir un resumen de los datos
+                datos_reporte['datos_disponibles'] = True
+                if isinstance(reporte.datos_reporte, dict):
+                    datos_reporte['resumen_datos'] = {
+                        'claves': list(reporte.datos_reporte.keys()),
+                        'tamaño_aproximado': len(str(reporte.datos_reporte))
+                    }
+            else:
+                datos_reporte['datos_disponibles'] = False
+            
+            reportes_data.append(datos_reporte)
+        
+        # Registrar actividad
+        try:
+            self.log_activity(
+                cliente_id=cierre.cliente.id,
+                periodo=cierre.periodo,
+                tarjeta="reportes",
+                accion="view_data",
+                descripcion=f"Consulta de reportes financieros - {len(reportes_data)} reportes",
+                usuario=request.user,
+                detalles={
+                    "cierre_id": cierre.id,
+                    "tipo_filtro": tipo_filtro,
+                    "incluir_datos": incluir_datos,
+                    "reportes_encontrados": len(reportes_data)
+                },
+                resultado="exito",
+                ip_address=request.META.get("REMOTE_ADDR"),
+            )
+        except Exception as e:
+            print(f"Error registrando actividad en consultar_reportes: {e}")
+        
+        return Response({
+            'cierre_id': cierre.id,
+            'cierre_periodo': cierre.periodo,
+            'cliente_nombre': cierre.cliente.nombre,
+            'estado_cierre': cierre.estado,
+            'reportes': reportes_data,
+            'total_reportes': len(reportes_data),
+            'tipos_disponibles': ['esf', 'eri', 'ecp'],
+            'metadata': {
+                'incluir_datos': incluir_datos,
+                'tipo_filtro': tipo_filtro,
+                'fecha_consulta': timezone.now().isoformat()
+            }
+        })
+
+    @action(detail=True, methods=["delete"], url_path="reportes/(?P<reporte_id>[^/.]+)")
+    def eliminar_reporte(self, request, pk=None, reporte_id=None):
+        """
+        Elimina un reporte financiero específico (para regeneración o limpieza).
+        """
+        cierre = self.get_object()
+        
+        # Validar permisos (solo en estado sin_incidencias o generando_reportes)
+        if cierre.estado not in ['sin_incidencias', 'generando_reportes']:
+            return Response({
+                'error': 'Operación no permitida',
+                'message': 'Solo se pueden eliminar reportes en estado sin_incidencias o generando_reportes'
+            }, status=403)
+        
+        try:
+            from ..models import ReporteFinanciero
+            reporte = ReporteFinanciero.objects.get(
+                id=reporte_id,
+                cierre=cierre
+            )
+            
+            tipo_reporte = reporte.tipo_reporte
+            tipo_display = reporte.get_tipo_reporte_display()
+            
+            reporte.delete()
+            
+            # Registrar actividad
+            try:
+                self.log_activity(
+                    cliente_id=cierre.cliente.id,
+                    periodo=cierre.periodo,
+                    tarjeta="reportes",
+                    accion="manual_delete",
+                    descripcion=f"Eliminación manual de reporte: {tipo_display}",
+                    usuario=request.user,
+                    detalles={
+                        "cierre_id": cierre.id,
+                        "reporte_id": int(reporte_id),
+                        "tipo_reporte": tipo_reporte,
+                        "tipo_display": tipo_display
+                    },
+                    resultado="exito",
+                    ip_address=request.META.get("REMOTE_ADDR"),
+                )
+            except Exception as e:
+                print(f"Error registrando actividad en eliminar_reporte: {e}")
+            
+            return Response({
+                'success': True,
+                'message': f'Reporte {tipo_display} eliminado exitosamente',
+                'reporte_eliminado': {
+                    'id': int(reporte_id),
+                    'tipo': tipo_reporte,
+                    'tipo_display': tipo_display
+                }
+            })
+            
+        except ReporteFinanciero.DoesNotExist:
+            return Response({
+                'error': 'Reporte no encontrado',
+                'message': f'No existe un reporte con ID {reporte_id} para este cierre'
+            }, status=404)
+        except Exception as e:
+            return Response({
+                'error': 'Error interno',
+                'message': f'Error eliminando reporte: {str(e)}'
+            }, status=500)

@@ -8,11 +8,177 @@ Este módulo maneja todas las tareas relacionadas con:
 - Consolidación de datos
 """
 
-from celery import shared_task
+from celery import shared_task, group
 from django.utils import timezone
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+@shared_task(bind=True, name='contabilidad.iniciar_finalizacion')
+def iniciar_finalizacion(self=None, cierre_id=None, usuario_id=None):
+    """
+    Tarea para iniciar el proceso de finalización de un cierre contable.
+    
+    Esta tarea:
+    1. Valida que el cierre esté en estado 'en_revision'
+    2. Ejecuta validaciones previas
+    3. Cambia el estado a 'generando_reportes'
+    4. Ejecuta la tarea principal de finalización
+    
+    Args:
+        self: Contexto de Celery (puede ser None si se ejecuta sincrónicamente)
+        cierre_id (int): ID del cierre a iniciar
+        usuario_id (int, optional): ID del usuario que inició el proceso
+        
+    Returns:
+        dict: Resultado del proceso de inicio
+    """
+    from .models import CierreContabilidad
+    from api.models import Usuario
+    from django.utils import timezone
+    
+    try:
+        # Obtener el cierre
+        cierre = CierreContabilidad.objects.get(id=cierre_id)
+        usuario = Usuario.objects.get(id=usuario_id) if usuario_id else None
+        
+        logger.info(f"[INICIO FINALIZACIÓN] Iniciando proceso para cierre {cierre_id} - {cierre.cliente.nombre} - {cierre.periodo}")
+        
+        print(f"🚀 INICIANDO PROCESO DE FINALIZACIÓN")
+        print(f"   Cliente: {cierre.cliente.nombre}")
+        print(f"   Período: {cierre.periodo}")
+        print(f"   Estado actual: {cierre.estado}")
+        print(f"   Usuario: {usuario.correo_bdo if usuario else 'Sistema'}")
+        
+        # =================== VALIDACIÓN DE ESTADO ===================
+        if cierre.estado != 'en_revision':
+            error_msg = f"El cierre debe estar en estado 'en_revision' para poder finalizarse. Estado actual: {cierre.estado}"
+            print(f"❌ {error_msg}")
+            return {
+                'success': False,
+                'error': error_msg,
+                'cierre_id': cierre_id,
+                'estado_actual': cierre.estado
+            }
+        
+        print(f"✅ Estado válido para finalización")
+        
+        # =================== VALIDACIONES PREVIAS ===================
+        print(f"🔍 Ejecutando validaciones previas...")
+        
+        # Validar que el cierre tenga movimientos
+        from .models import MovimientoContable
+        total_movimientos = MovimientoContable.objects.filter(cierre=cierre).count()
+        if total_movimientos == 0:
+            error_msg = f"El cierre no tiene movimientos contables asociados"
+            print(f"❌ {error_msg}")
+            return {
+                'success': False,
+                'error': error_msg,
+                'cierre_id': cierre_id
+            }
+        
+        print(f"✅ Cierre tiene {total_movimientos} movimientos")
+        
+        # Validar que existan sets de clasificación
+        from .models import ClasificacionSet
+        sets_disponibles = ClasificacionSet.objects.filter(cliente=cierre.cliente).count()
+        if sets_disponibles == 0:
+            error_msg = f"El cliente no tiene sets de clasificación configurados"
+            print(f"❌ {error_msg}")
+            return {
+                'success': False,
+                'error': error_msg,
+                'cierre_id': cierre_id
+            }
+        
+        print(f"✅ Cliente tiene {sets_disponibles} sets de clasificación")
+        
+        # =================== CAMBIO DE ESTADO ===================
+        print(f"🔄 Cambiando estado a 'generando_reportes'...")
+        cierre.estado = 'generando_reportes'
+        cierre.fecha_inicio_finalizacion = timezone.now()
+        cierre.save(update_fields=['estado', 'fecha_inicio_finalizacion'])
+        
+        print(f"✅ Estado cambiado exitosamente")
+        
+        # =================== EJECUTAR FINALIZACIÓN ===================
+        print(f"🚀 Ejecutando tarea principal de finalización...")
+        
+        try:
+            # Ejecutar la tarea principal de forma síncrona para obtener el resultado
+            resultado_finalizacion = finalizar_cierre_y_generar_reportes.apply(
+                args=[cierre_id, usuario_id]
+            ).result
+            
+            if resultado_finalizacion.get('success'):
+                print(f"✅ Finalización completada exitosamente")
+                return {
+                    'success': True,
+                    'mensaje': 'Proceso de finalización iniciado y completado exitosamente',
+                    'cierre_id': cierre_id,
+                    'estado_inicial': 'en_revision',
+                    'estado_final': 'finalizado',
+                    'total_movimientos': total_movimientos,
+                    'sets_clasificacion': sets_disponibles,
+                    'resultado_finalizacion': resultado_finalizacion
+                }
+            else:
+                print(f"❌ Error en finalización: {resultado_finalizacion.get('error')}")
+                return {
+                    'success': False,
+                    'error': f"Error en finalización: {resultado_finalizacion.get('error')}",
+                    'cierre_id': cierre_id,
+                    'resultado_finalizacion': resultado_finalizacion
+                }
+                
+        except Exception as finalizacion_error:
+            print(f"❌ Excepción en finalización: {str(finalizacion_error)}")
+            
+            # Revertir estado en caso de error
+            try:
+                cierre.estado = 'en_revision'
+                cierre.save(update_fields=['estado'])
+                print(f"🔄 Estado revertido a 'en_revision'")
+            except:
+                pass
+            
+            return {
+                'success': False,
+                'error': f"Excepción en finalización: {str(finalizacion_error)}",
+                'cierre_id': cierre_id
+            }
+        
+    except CierreContabilidad.DoesNotExist:
+        error_msg = f"No se encontró el cierre con ID {cierre_id}"
+        print(f"❌ {error_msg}")
+        return {
+            'success': False,
+            'error': error_msg,
+            'cierre_id': cierre_id
+        }
+        
+    except Exception as e:
+        error_msg = f"Error inesperado: {str(e)}"
+        logger.error(f"[INICIO FINALIZACIÓN] Error en cierre {cierre_id}: {error_msg}")
+        print(f"❌ {error_msg}")
+        
+        # Revertir estado si es necesario
+        try:
+            cierre = CierreContabilidad.objects.get(id=cierre_id)
+            if cierre.estado == 'generando_reportes':
+                cierre.estado = 'en_revision'
+                cierre.save(update_fields=['estado'])
+                print(f"🔄 Estado revertido a 'en_revision'")
+        except:
+            pass
+        
+        return {
+            'success': False,
+            'error': error_msg,
+            'cierre_id': cierre_id
+        }
 
 
 @shared_task(bind=True, name='contabilidad.finalizar_cierre_y_generar_reportes')
@@ -85,7 +251,6 @@ def finalizar_cierre_y_generar_reportes(self=None, cierre_id=None, usuario_id=No
         
         try:
             # Intentar ejecución paralela con Celery
-            from celery import group
             job = group([
                 ejecutar_calculos_contables.s(cierre_id),
                 consolidar_datos_dashboard.s(cierre_id)
@@ -330,27 +495,94 @@ def generar_reportes_finales(cierre_id):
     Returns:
         dict: Resultado de la generación de reportes
     """
-    print(f"   📋 Generando Balance General...")
-    print(f"   📋 Generando Estado de Resultados...")
+    from .tasks_reportes import generar_estado_situacion_financiera
+    
+    reportes_generados = []
+    reportes_exitosos = 0
+    reportes_fallidos = 0
+    
+    # 1. Generar Estado de Situación Financiera
+    print(f"   📋 Generando Estado de Situación Financiera...")
+    try:
+        # Ejecutar la tarea de forma síncrona dentro de esta tarea
+        resultado_esf = generar_estado_situacion_financiera.apply(args=[cierre_id]).result
+        if resultado_esf.get('success'):
+            reportes_generados.append({
+                'nombre': 'Estado de Situación Financiera',
+                'tipo': 'esf',
+                'formato': 'JSON',
+                'estado': 'generado',
+                'reporte_id': resultado_esf.get('reporte_id'),
+                'total_cuentas': resultado_esf.get('total_cuentas'),
+                'tiempo_generacion': resultado_esf.get('tiempo_generacion')
+            })
+            reportes_exitosos += 1
+            print(f"   ✅ Estado de Situación Financiera generado exitosamente")
+        else:
+            reportes_generados.append({
+                'nombre': 'Estado de Situación Financiera',
+                'tipo': 'esf',
+                'estado': 'error',
+                'error': resultado_esf.get('error')
+            })
+            reportes_fallidos += 1
+            print(f"   ❌ Error generando Estado de Situación Financiera: {resultado_esf.get('error')}")
+    except Exception as e:
+        print(f"   ❌ Excepción generando Estado de Situación Financiera: {str(e)}")
+        reportes_generados.append({
+            'nombre': 'Estado de Situación Financiera',
+            'tipo': 'esf',
+            'estado': 'error',
+            'error': str(e)
+        })
+        reportes_fallidos += 1
+    
+    # 2. TODO: Generar Estado de Resultado Integral
+    print(f"   📋 Estado de Resultado Integral (próximamente)...")
+    reportes_generados.append({
+        'nombre': 'Estado de Resultado Integral',
+        'tipo': 'eri',
+        'estado': 'pendiente',
+        'nota': 'Implementación pendiente'
+    })
+    
+    # 3. TODO: Generar Estado de Cambios en el Patrimonio
+    print(f"   📋 Estado de Cambios en el Patrimonio (próximamente)...")
+    reportes_generados.append({
+        'nombre': 'Estado de Cambios en el Patrimonio',
+        'tipo': 'ecp',
+        'estado': 'pendiente',
+        'nota': 'Implementación pendiente'
+    })
+    
+    # 4. Reportes complementarios (mantenemos la funcionalidad existente)
     print(f"   📋 Generando reporte de Clasificaciones...")
     print(f"   📋 Generando reporte Bilingüe (si aplica)...")
     print(f"   📋 Generando Dashboard Ejecutivo...")
     
-    # Simulación de generación de reportes
+    # Simulación de reportes complementarios (mantenemos el comportamiento original)
     import time
-    time.sleep(2)
+    time.sleep(1)  # Reducido para no impactar tanto el rendimiento
+    
+    reportes_complementarios = [
+        {'nombre': 'Reporte de Clasificaciones', 'formato': 'Excel', 'estado': 'generado'},
+        {'nombre': 'Reporte Bilingüe', 'formato': 'Excel', 'estado': 'generado'},
+        {'nombre': 'Dashboard Ejecutivo', 'formato': 'PDF', 'estado': 'generado'}
+    ]
+    
+    reportes_generados.extend(reportes_complementarios)
+    reportes_exitosos += len(reportes_complementarios)
+    
+    total_reportes = len(reportes_generados)
+    
+    print(f"   📊 Resumen: {reportes_exitosos}/{total_reportes} reportes generados exitosamente")
     
     return {
-        'reportes': [
-            {'nombre': 'Balance General', 'formato': 'PDF', 'estado': 'generado'},
-            {'nombre': 'Estado de Resultados', 'formato': 'PDF', 'estado': 'generado'},
-            {'nombre': 'Reporte de Clasificaciones', 'formato': 'Excel', 'estado': 'generado'},
-            {'nombre': 'Reporte Bilingüe', 'formato': 'Excel', 'estado': 'generado'},
-            {'nombre': 'Dashboard Ejecutivo', 'formato': 'PDF', 'estado': 'generado'}
-        ],
-        'total_reportes': 5,
-        'reportes_exitosos': 5,
-        'reportes_fallidos': 0
+        'reportes': reportes_generados,
+        'total_reportes': total_reportes,
+        'reportes_exitosos': reportes_exitosos,
+        'reportes_fallidos': reportes_fallidos,
+        'reportes_financieros_generados': reportes_exitosos - len(reportes_complementarios)
     }
 
 
@@ -389,34 +621,34 @@ def calcular_saldos_por_cuenta(cierre):
         cierre: Instancia de CierreContabilidad
         
     Returns:
-        dict: {codigo_cuenta: {'saldo': Decimal, 'cuenta_obj': Cuenta, 'movimientos': int}}
+        dict: {codigo_cuenta: {'saldo': Decimal, 'cuenta_obj': CuentaContable, 'movimientos': int}}
     """
-    from .models import MovimientoContable, Cuenta
+    from .models import MovimientoContable, CuentaContable
     from decimal import Decimal
     from django.db.models import Sum, Count
     
     print(f"   📊 Calculando saldos por cuenta para cierre {cierre.id}...")
     
     # Obtener todas las cuentas del cliente
-    cuentas = Cuenta.objects.filter(cliente=cierre.cliente)
+    cuentas = CuentaContable.objects.filter(cliente=cierre.cliente)
     saldos_por_cuenta = {}
     
     for cuenta in cuentas:
         # Sumar débitos y créditos por separado
         movimientos_qs = MovimientoContable.objects.filter(
             cierre=cierre,
-            codigo_cuenta=cuenta.codigo
+            cuenta=cuenta
         )
         
         agregados = movimientos_qs.aggregate(
-            total_debito=Sum('debito') or Decimal('0'),
-            total_credito=Sum('credito') or Decimal('0'),
+            total_debe=Sum('debe') or Decimal('0'),
+            total_haber=Sum('haber') or Decimal('0'),
             total_movimientos=Count('id')
         )
         
         # Calcular saldo según naturaleza de la cuenta
-        debito = agregados['total_debito'] or Decimal('0')
-        credito = agregados['total_credito'] or Decimal('0')
+        debe = agregados['total_debe'] or Decimal('0')
+        haber = agregados['total_haber'] or Decimal('0')
         
         # Determinar naturaleza de cuenta por su código (simplificado)
         # 1xxx = Activos (débito positivo)
@@ -425,17 +657,17 @@ def calcular_saldos_por_cuenta(cierre):
         # 4xxx = Ingresos (crédito positivo)
         # 5xxx = Gastos (débito positivo)
         if cuenta.codigo.startswith(('1', '5')):  # Activos y Gastos
-            saldo_final = debito - credito
+            saldo_final = debe - haber
         else:  # Pasivos, Patrimonio, Ingresos
-            saldo_final = credito - debito
+            saldo_final = haber - debe
             
         if agregados['total_movimientos'] > 0:  # Solo incluir cuentas con movimientos
             saldos_por_cuenta[cuenta.codigo] = {
                 'saldo': saldo_final,
                 'cuenta_obj': cuenta,
                 'movimientos': agregados['total_movimientos'],
-                'debito_total': debito,
-                'credito_total': credito
+                'debe_total': debe,
+                'haber_total': haber
             }
     
     print(f"   ✅ Calculados saldos de {len(saldos_por_cuenta)} cuentas con movimientos")
@@ -453,20 +685,85 @@ def calcular_balance_general_esf(cierre, cuentas_saldos):
     Returns:
         dict: Estructura del Estado de Situación Financiera
     """
-    from .models import Clasificacion, ClasificacionSet, ClasificacionOpcion
+    from .models import AccountClassification, ClasificacionSet, ClasificacionOption
     from decimal import Decimal
     
     print(f"   📊 Generando Estado de Situación Financiera (ESF)...")
     
     # Obtener set de "Estado Situacion Financiera"
+    set_esf = None
+    
+    # Estrategia 1: Buscar exactamente "Estado de Situación Financiera"
     try:
-        set_esf = ClasificacionSet.objects.get(
+        set_esf = ClasificacionSet.objects.filter(
             cliente=cierre.cliente,
-            nombre="Estado Situacion Financiera"
-        )
-    except ClasificacionSet.DoesNotExist:
-        print(f"   ⚠️ No existe set 'Estado Situacion Financiera' para el cliente")
-        return {}
+            nombre__iexact="Estado de Situación Financiera"
+        ).first()
+        if set_esf:
+            print(f"   ✅ Encontrado set ESF exacto: {set_esf.nombre}")
+    except Exception as e:
+        print(f"   ⚠️ Error buscando set ESF exacto: {e}")
+    
+    # Estrategia 2: Buscar que contenga "ESF"
+    if not set_esf:
+        try:
+            sets_esf = ClasificacionSet.objects.filter(
+                cliente=cierre.cliente,
+                nombre__icontains="esf"
+            )
+            if sets_esf.exists():
+                set_esf = sets_esf.first()  # Tomar el primero
+                print(f"   ✅ Encontrado set ESF por contenido: {set_esf.nombre} (de {sets_esf.count()} sets)")
+        except Exception as e:
+            print(f"   ⚠️ Error buscando sets con 'esf': {e}")
+    
+    # Estrategia 3: Buscar que contenga "estado" y "situacion"
+    if not set_esf:
+        try:
+            sets_estado = ClasificacionSet.objects.filter(
+                cliente=cierre.cliente,
+                nombre__icontains="estado"
+            ).filter(
+                nombre__icontains="situacion"
+            )
+            if sets_estado.exists():
+                set_esf = sets_estado.first()
+                print(f"   ✅ Encontrado set por 'estado situacion': {set_esf.nombre} (de {sets_estado.count()} sets)")
+        except Exception as e:
+            print(f"   ⚠️ Error buscando sets con 'estado situacion': {e}")
+    
+    # Estrategia 4: Buscar que contenga "balance"
+    if not set_esf:
+        try:
+            sets_balance = ClasificacionSet.objects.filter(
+                cliente=cierre.cliente,
+                nombre__icontains="balance"
+            )
+            if sets_balance.exists():
+                set_esf = sets_balance.first()
+                print(f"   ✅ Encontrado set por 'balance': {set_esf.nombre} (de {sets_balance.count()} sets)")
+        except Exception as e:
+            print(f"   ⚠️ Error buscando sets con 'balance': {e}")
+    
+    # Si no se encuentra ningún set apropiado
+    if not set_esf:
+        # Listar todos los sets disponibles para diagnóstico
+        try:
+            todos_sets = ClasificacionSet.objects.filter(cliente=cierre.cliente)
+            print(f"   ⚠️ No se encontró set ESF. Sets disponibles para cliente {cierre.cliente.nombre}:")
+            for set_item in todos_sets:
+                print(f"      - {set_item.nombre}")
+            
+            # Como fallback, usar el primer set disponible si existe
+            if todos_sets.exists():
+                set_esf = todos_sets.first()
+                print(f"   🔄 Usando como fallback el primer set: {set_esf.nombre}")
+            else:
+                print(f"   ❌ No hay sets de clasificación para este cliente")
+                return {}
+        except Exception as e:
+            print(f"   ❌ Error listando sets: {e}")
+            return {}
     
     # Inicializar estructura del ESF
     esf = {
@@ -493,7 +790,7 @@ def calcular_balance_general_esf(cierre, cuentas_saldos):
     }
     
     # Obtener clasificaciones de cuentas
-    clasificaciones = Clasificacion.objects.filter(
+    clasificaciones = AccountClassification.objects.filter(
         cuenta__cliente=cierre.cliente,
         set_clas=set_esf
     ).select_related('cuenta', 'opcion')
@@ -571,21 +868,57 @@ def calcular_estado_resultados_integral(cierre, cuentas_saldos):
     Returns:
         dict: Estructura del Estado de Resultados Integral
     """
-    from .models import ClasificacionSet, Clasificacion
+    from .models import ClasificacionSet, AccountClassification
     from decimal import Decimal
     
     print(f"   📊 Generando Estado de Resultados Integral...")
     
-    # Intentar obtener set de "Estado de Resultados Integral"
+    # Obtener set de "Estado de Resultados Integral" de forma robusta
+    set_resultados = None
+    
+    # Estrategia 1: Buscar exactamente "Estado de Resultados Integral"
     try:
-        set_resultados = ClasificacionSet.objects.get(
+        set_resultados = ClasificacionSet.objects.filter(
             cliente=cierre.cliente,
-            nombre="Estado de Resultados Integral"
-        )
+            nombre__iexact="Estado de Resultados Integral"
+        ).first()
+        if set_resultados:
+            print(f"   ✅ Encontrado set Estado de Resultados exacto: {set_resultados.nombre}")
+    except Exception as e:
+        print(f"   ⚠️ Error buscando set Estado de Resultados exacto: {e}")
+    
+    # Estrategia 2: Buscar que contenga "resultado"
+    if not set_resultados:
+        try:
+            sets_resultado = ClasificacionSet.objects.filter(
+                cliente=cierre.cliente,
+                nombre__icontains="resultado"
+            )
+            if sets_resultado.exists():
+                set_resultados = sets_resultado.first()
+                print(f"   ✅ Encontrado set por 'resultado': {set_resultados.nombre} (de {sets_resultado.count()} sets)")
+        except Exception as e:
+            print(f"   ⚠️ Error buscando sets con 'resultado': {e}")
+    
+    # Estrategia 3: Buscar que contenga "integral"
+    if not set_resultados:
+        try:
+            sets_integral = ClasificacionSet.objects.filter(
+                cliente=cierre.cliente,
+                nombre__icontains="integral"
+            )
+            if sets_integral.exists():
+                set_resultados = sets_integral.first()
+                print(f"   ✅ Encontrado set por 'integral': {set_resultados.nombre} (de {sets_integral.count()} sets)")
+        except Exception as e:
+            print(f"   ⚠️ Error buscando sets con 'integral': {e}")
+    
+    # Si encontramos un set, usarlo
+    if set_resultados:
         return calcular_estado_resultados_por_clasificacion(cierre, cuentas_saldos, set_resultados)
-    except ClasificacionSet.DoesNotExist:
+    else:
         # Fallback: clasificar por código de cuenta
-        print(f"   ⚠️ No existe set 'Estado de Resultados Integral', usando clasificación por código")
+        print(f"   ⚠️ No se encontró set de Estado de Resultados, usando clasificación por código")
         return calcular_estado_resultados_por_codigo_integral(cuentas_saldos)
 
 
@@ -593,7 +926,7 @@ def calcular_estado_resultados_por_clasificacion(cierre, cuentas_saldos, set_res
     """
     Calcula Estado de Resultados usando clasificaciones específicas.
     """
-    from .models import Clasificacion
+    from .models import AccountClassification
     from decimal import Decimal
     
     # Inicializar estructura
@@ -616,7 +949,7 @@ def calcular_estado_resultados_por_clasificacion(cierre, cuentas_saldos, set_res
     }
     
     # Obtener clasificaciones de cuentas
-    clasificaciones = Clasificacion.objects.filter(
+    clasificaciones = AccountClassification.objects.filter(
         cuenta__cliente=cierre.cliente,
         set_clas=set_resultados
     ).select_related('cuenta', 'opcion')

@@ -11,6 +11,7 @@ from datetime import date
 
 import pandas as pd
 from celery import shared_task
+from django.contrib.auth.models import User
 from django.core.files.base import ContentFile
 from contabilidad.models import (
     AccountClassification,
@@ -29,7 +30,9 @@ from contabilidad.models import (
     NombresEnInglesUpload,
     TipoDocumento,
     UploadLog,
-    ExcepcionValidacion, 
+    ExcepcionValidacion,
+    CierreContabilidad,
+    ReporteFinanciero,
 )
 # ✨ NUEVO: Importar modelo de incidencias consolidadas
 from contabilidad.models_incidencias import IncidenciaResumen
@@ -675,4 +678,247 @@ def limpiar_archivos_temporales_antiguos_task():
         f"🧹 Limpieza automática: {archivos_eliminados} archivos temporales eliminados"
     )
     return f"Eliminados {archivos_eliminados} archivos temporales"
+
+# ===== TAREAS DE REPORTES FINANCIEROS =====
+
+@shared_task
+def generar_estado_situacion_financiera(cierre_id, usuario_id=None):
+    """
+    Genera el Estado de Situación Financiera para un cierre específico.
+    
+    Args:
+        cierre_id (int): ID del cierre para el cual generar el reporte
+        usuario_id (int): ID del usuario que solicita el reporte (opcional)
+    
+    Returns:
+        dict: Resultado de la generación del reporte
+    """
+    from decimal import Decimal
+    from django.contrib.auth.models import User
+    import json
+    
+    logger.info(f"🏛️ Iniciando generación de Estado de Situación Financiera para cierre {cierre_id}")
+    
+    inicio = timezone.now()
+    usuario = None
+    
+    try:
+        # Validar que el cierre existe
+        try:
+            cierre = CierreContabilidad.objects.get(id=cierre_id)
+        except CierreContabilidad.DoesNotExist:
+            error_msg = f"Cierre con ID {cierre_id} no encontrado"
+            logger.error(error_msg)
+            return {"error": error_msg}
+        
+        # Obtener usuario si se proporciona
+        if usuario_id:
+            try:
+                usuario = User.objects.get(id=usuario_id)
+            except User.DoesNotExist:
+                logger.warning(f"Usuario con ID {usuario_id} no encontrado, continuando sin usuario")
+        
+        # Verificar si ya existe un reporte para este cierre
+        reporte_existente = ReporteFinanciero.objects.filter(
+            cierre=cierre,
+            tipo_reporte='esf'
+        ).first()
+        
+        if reporte_existente:
+            logger.info(f"Ya existe un reporte ESF para el cierre {cierre_id}, actualizando...")
+            reporte = reporte_existente
+        else:
+            # Crear nuevo reporte
+            reporte = ReporteFinanciero.objects.create(
+                cierre=cierre,
+                tipo_reporte='esf',
+                usuario_generador=usuario,
+                estado='generando'
+            )
+        
+        # Actualizar estado a generando
+        reporte.estado = 'generando'
+        reporte.fecha_generacion = inicio
+        reporte.save(update_fields=['estado', 'fecha_generacion'])
+        
+        # Obtener todas las cuentas con movimientos en el cierre
+        movimientos = MovimientoContable.objects.filter(cierre=cierre).select_related('cuenta')
+        
+        # Obtener saldos de apertura
+        saldos_apertura = AperturaCuenta.objects.filter(cierre=cierre).select_related('cuenta')
+        
+        # Construir diccionario de cuentas únicas
+        cuentas_data = {}
+        
+        # Procesar saldos de apertura
+        for apertura in saldos_apertura:
+            cuenta_codigo = apertura.cuenta.codigo
+            if cuenta_codigo not in cuentas_data:
+                cuentas_data[cuenta_codigo] = {
+                    'codigo': apertura.cuenta.codigo,
+                    'nombre': apertura.cuenta.nombre,
+                    'saldo_anterior': float(apertura.saldo_anterior or 0),
+                    'debe': 0.0,
+                    'haber': 0.0,
+                    'saldo_final': float(apertura.saldo_anterior or 0)
+                }
+            else:
+                cuentas_data[cuenta_codigo]['saldo_anterior'] = float(apertura.saldo_anterior or 0)
+                cuentas_data[cuenta_codigo]['saldo_final'] = float(apertura.saldo_anterior or 0)
+        
+        # Procesar movimientos
+        for movimiento in movimientos:
+            cuenta_codigo = movimiento.cuenta.codigo
+            if cuenta_codigo not in cuentas_data:
+                cuentas_data[cuenta_codigo] = {
+                    'codigo': movimiento.cuenta.codigo,
+                    'nombre': movimiento.cuenta.nombre,
+                    'saldo_anterior': 0.0,
+                    'debe': 0.0,
+                    'haber': 0.0,
+                    'saldo_final': 0.0
+                }
+            
+            # Acumular debe y haber
+            cuentas_data[cuenta_codigo]['debe'] += float(movimiento.debe or 0)
+            cuentas_data[cuenta_codigo]['haber'] += float(movimiento.haber or 0)
+        
+        # Calcular saldos finales
+        for cuenta_codigo, data in cuentas_data.items():
+            data['saldo_final'] = data['saldo_anterior'] + data['debe'] - data['haber']
+        
+        # Obtener clasificaciones para estructurar el reporte
+        # Buscar el set de clasificación "Estado de Situación Financiera" o similar
+        try:
+            set_esf = ClasificacionSet.objects.filter(
+                nombre__icontains='situación financiera'
+            ).first()
+            
+            if not set_esf:
+                # Si no existe, buscar el primer set disponible
+                set_esf = ClasificacionSet.objects.first()
+                
+            if not set_esf:
+                raise ValueError("No se encontró ningún set de clasificación disponible")
+                
+        except Exception as e:
+            logger.error(f"Error al obtener set de clasificación: {e}")
+            set_esf = None
+        
+        # Estructura del Estado de Situación Financiera
+        estructura_esf = {
+            'activos': {
+                'corrientes': {},
+                'no_corrientes': {},
+                'total': 0.0
+            },
+            'pasivos': {
+                'corrientes': {},
+                'no_corrientes': {},
+                'total': 0.0
+            },
+            'patrimonio': {
+                'capital': {},
+                'resultados': {},
+                'total': 0.0
+            },
+            'total_pasivos_patrimonio': 0.0
+        }
+        
+        # Clasificar cuentas según su código (lógica básica)
+        for cuenta_codigo, data in cuentas_data.items():
+            saldo = data['saldo_final']
+            
+            # Lógica básica de clasificación por código de cuenta
+            if cuenta_codigo.startswith('1'):  # Activos
+                if cuenta_codigo.startswith('11'):  # Activos corrientes
+                    estructura_esf['activos']['corrientes'][cuenta_codigo] = {
+                        'nombre': data['nombre'],
+                        'saldo': saldo
+                    }
+                else:  # Activos no corrientes
+                    estructura_esf['activos']['no_corrientes'][cuenta_codigo] = {
+                        'nombre': data['nombre'],
+                        'saldo': saldo
+                    }
+                estructura_esf['activos']['total'] += saldo
+                
+            elif cuenta_codigo.startswith('2'):  # Pasivos
+                if cuenta_codigo.startswith('21'):  # Pasivos corrientes
+                    estructura_esf['pasivos']['corrientes'][cuenta_codigo] = {
+                        'nombre': data['nombre'],
+                        'saldo': saldo
+                    }
+                else:  # Pasivos no corrientes
+                    estructura_esf['pasivos']['no_corrientes'][cuenta_codigo] = {
+                        'nombre': data['nombre'],
+                        'saldo': saldo
+                    }
+                estructura_esf['pasivos']['total'] += saldo
+                
+            elif cuenta_codigo.startswith('3'):  # Patrimonio
+                if 'capital' in data['nombre'].lower():
+                    estructura_esf['patrimonio']['capital'][cuenta_codigo] = {
+                        'nombre': data['nombre'],
+                        'saldo': saldo
+                    }
+                else:
+                    estructura_esf['patrimonio']['resultados'][cuenta_codigo] = {
+                        'nombre': data['nombre'],
+                        'saldo': saldo
+                    }
+                estructura_esf['patrimonio']['total'] += saldo
+        
+        # Calcular total pasivos + patrimonio
+        estructura_esf['total_pasivos_patrimonio'] = (
+            estructura_esf['pasivos']['total'] + 
+            estructura_esf['patrimonio']['total']
+        )
+        
+        # Metadatos del reporte
+        metadatos = {
+            'cierre_id': cierre.id,
+            'cliente': cierre.cliente.nombre,
+            'periodo': cierre.periodo,
+            'fecha_generacion': inicio.isoformat(),
+            'usuario': usuario.username if usuario else 'Sistema',
+            'total_cuentas': len(cuentas_data),
+            'set_clasificacion_usado': set_esf.nombre if set_esf else 'N/A'
+        }
+        
+        # Preparar datos completos del reporte
+        datos_reporte = {
+            'metadatos': metadatos,
+            'estructura': estructura_esf,
+            'detalle_cuentas': cuentas_data
+        }
+        
+        # Guardar el reporte
+        reporte.datos_reporte = datos_reporte
+        reporte.estado = 'completado'
+        reporte.save(update_fields=['datos_reporte', 'estado'])
+        
+        logger.info(f"✅ Estado de Situación Financiera generado exitosamente para cierre {cierre_id}")
+        
+        return {
+            'success': True,
+            'reporte_id': reporte.id,
+            'total_cuentas': len(cuentas_data),
+            'total_activos': estructura_esf['activos']['total'],
+            'total_pasivos_patrimonio': estructura_esf['total_pasivos_patrimonio']
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error generando Estado de Situación Financiera: {str(e)}")
+        
+        # Actualizar estado del reporte si existe
+        if 'reporte' in locals():
+            reporte.estado = 'error'
+            reporte.error_mensaje = str(e)
+            reporte.save(update_fields=['estado', 'error_mensaje'])
+        
+        return {
+            'error': str(e),
+            'cierre_id': cierre_id
+        }
 

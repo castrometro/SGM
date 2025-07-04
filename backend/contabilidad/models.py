@@ -1037,4 +1037,89 @@ class ExcepcionClasificacionSet(models.Model):
             return cuenta.nombre
         except CuentaContable.DoesNotExist:
             return f"Cuenta {self.cuenta_codigo}"
+        
+
+# ======================================
+#          REPORTES FINANCIEROS
+# ======================================
+
+class ReporteFinanciero(models.Model):
+    """
+    Modelo para almacenar reportes financieros generados en formato JSON
+    """
+    TIPOS_REPORTE = [
+        ('esf', 'Estado de Situación Financiera / State of Financial Situation'),
+        ('eri', 'Estado de Resultado Integral / Statements of Comprehensive Income'),
+        ('ecp', 'Estado de Cambios en el Patrimonio / State of Change of Patrimony'),
+    ]
+    
+    ESTADOS = [
+        ('generando', 'Generando'),
+        ('completado', 'Completado'),
+        ('error', 'Error'),
+    ]
+    
+    id = models.BigAutoField(primary_key=True)
+    cierre = models.ForeignKey(CierreContabilidad, on_delete=models.CASCADE, related_name='reportes')
+    tipo_reporte = models.CharField(max_length=10, choices=TIPOS_REPORTE)
+    estado = models.CharField(max_length=20, choices=ESTADOS, default='generando')
+    fecha_generacion = models.DateTimeField(auto_now_add=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+    usuario_generador = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.SET_NULL, 
+        null=True,
+        help_text="Usuario que solicitó la generación del reporte"
+    )
+    
+    # Datos del reporte en formato JSON
+    datos_reporte = models.JSONField(
+        null=True, 
+        blank=True,
+        help_text="Datos estructurados del reporte financiero"
+    )
+    
+    # Metadatos adicionales
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Información adicional sobre el reporte (tiempo generación, versión, etc.)"
+    )
+    
+    # Error si falló la generación
+    error_mensaje = models.TextField(
+        blank=True,
+        help_text="Mensaje de error si la generación falló"
+    )
+    
+    class Meta:
+        unique_together = ['cierre', 'tipo_reporte']
+        indexes = [
+            models.Index(fields=['cierre', 'tipo_reporte']),
+            models.Index(fields=['estado', 'fecha_generacion']),
+        ]
+        verbose_name = "Reporte Financiero"
+        verbose_name_plural = "Reportes Financieros"
+    
+    def __str__(self):
+        return f"{self.get_tipo_reporte_display()} - {self.cierre.cliente.nombre} {self.cierre.periodo}"
+    
+    @property
+    def es_valido(self):
+        """Verifica si el reporte es válido y está completado"""
+        return self.estado == 'completado' and self.datos_reporte is not None
+    
+    def marcar_como_error(self, mensaje_error):
+        """Marca el reporte como fallido"""
+        self.estado = 'error'
+        self.error_mensaje = mensaje_error
+        self.save()
+    
+    def marcar_como_completado(self, datos):
+        """Marca el reporte como completado con los datos"""
+        self.estado = 'completado'
+        self.datos_reporte = datos
+        self.error_mensaje = ''
+        self.save()
+
 from .models_incidencias import Incidencia, IncidenciaResumen

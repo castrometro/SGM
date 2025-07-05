@@ -265,6 +265,19 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
     cuentas_con_tipo_doc_null = set()
     cuentas_con_tipo_doc_no_reconocido = {}  # dict para guardar también el código no reconocido
     
+    # NUEVO: Totales ESF/ERI calculados durante el procesamiento
+    totales_esf_eri = {
+        'ESF': {'saldo_ant': Decimal('0'), 'debe': Decimal('0'), 'haber': Decimal('0')},
+        'ERI': {'saldo_ant': Decimal('0'), 'debe': Decimal('0'), 'haber': Decimal('0')},
+    }
+    
+    # NUEVO: Contadores para debugging
+    contadores_clasificacion = {
+        'ESF': 0,
+        'ERI': 0,
+        'Sin_clasificacion': 0
+    }
+    
     stats = {"cuentas_nuevas": 0, "aperturas": 0, "movimientos": 0, "incidencias_detectadas": 0}
     
     logger.info(f"CARGA INICIAL COMPLETADA:")
@@ -299,11 +312,87 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
             generar_incidencia = cuenta_codigo not in excepciones_tipo_doc_no_reconocido
             return None, False, generar_incidencia
 
+    # -- helper para identificar clasificación ESF/ERI --
+    def identificar_clasificacion_esf_eri(cuenta_obj):
+        """
+        Identifica si una cuenta es ESF o ERI basándose en sus clasificaciones
+        Retorna: 'ESF', 'ERI' o None
+        """
+        try:
+            # Obtener todas las clasificaciones de la cuenta
+            clasificaciones = AccountClassification.objects.filter(
+                cuenta=cuenta_obj
+            ).select_related('set_clas', 'opcion')
+            
+            if not clasificaciones.exists():
+                logger.debug(f"Cuenta {cuenta_obj.codigo}: Sin clasificaciones")
+                return None
+            
+            for clasificacion in clasificaciones:
+                if not clasificacion.opcion:
+                    continue
+                    
+                set_nombre = clasificacion.set_clas.nombre.upper()
+                valor = clasificacion.opcion.valor.upper()
+                
+                logger.debug(f"Cuenta {cuenta_obj.codigo}: Set='{set_nombre}' | Valor='{valor}'")
+                
+                # Identificar ESF (Estado de Situación Financiera)
+                if ('ESTADO' in set_nombre and 'SITUACION' in set_nombre and 'FINANCIERA' in set_nombre) or \
+                   ('BALANCE' in set_nombre) or \
+                   (valor in ['ACTIVO CORRIENTE', 'ACTIVO NO CORRIENTE', 'PASIVO CORRIENTE', 'PASIVO NO CORRIENTE', 'PATRIMONIO']) or \
+                   (valor in ['CASH AND CASH EQUIVALENT', 'OTHER CURRENT FINANCIAL ASSETS', 'INVENTORIES',
+                             'COMMERCIAL DEBTORS AND OTHER RECEIVABLES, CURRENT', 'CURRENT TAX RECEIVABLE',
+                             'OTHER CURRENT ASSETS', 'PROPERTIES, FACILITY AND EQUIPMENT', 'DEFERRED TAX ASSETS',
+                             'OTHER NON-CURRENT ASSETS', 'OTHER FINANCIAL, NON-CURRENT ASSETS',
+                             'COMMERCIAL ACCOUNTS AND OTHER ACCOUNTS PAYABLE, CURRENT', 'LIABILITY FOR CURRENT TAXES',
+                             'OTHER LIABILITY, CURRENT', 'PROVISIONS', 'ACCOUNTS PAYABLE TO RELATED ENTITIES, NO CURRENT',
+                             'DEFERRED TAX LIABILITY', 'PAID-IN CAPITAL', 'OTHER RESERVES']):
+                    # LOGGING ESPECIAL PARA PATRIMONIO Y ESF
+                    if 'PATRIMONIO' in valor or 'CAPITAL' in valor or 'RESERVES' in valor:
+                        logger.info(f"🏛️  CUENTA PATRIMONIO ESF: {cuenta_obj.codigo} ({cuenta_obj.nombre}) | Set: '{set_nombre}' | Valor: '{valor}'")
+                    else:
+                        logger.debug(f"Cuenta {cuenta_obj.codigo}: Identificada como ESF por Set='{set_nombre}' | Valor='{valor}'")
+                    return 'ESF'
+                
+                # Identificar ERI (Estado de Resultados Integrales)
+                elif ('RESULTADO' in set_nombre) or ('INCOME' in set_nombre) or \
+                     (valor in ['INGRESOS', 'GASTOS', 'COSTOS', 'OTROS INGRESOS', 'OTROS GASTOS']) or \
+                     (valor in ['ADMINISTRATION EXPENSES', 'COST SALE', 'FINANCIAL EXPENSES', 'FINANCIAL INCOME', 
+                               'OTHER EXPENSES', 'INCOME', 'GANANCIAS', 'PERDIDAS', 'GAINS (LOSSES) ACCUMULATED',
+                               'GANANCIAS (ANTES DE IMPUESTOS)', 'GANANCIAS (PERDIDAS)', 'GANANCIAS BRUTAS',
+                               'INCOME / (LOSS) OF THE OPERATION', 'OTHER EXPENSES, BY FUNCTION', 'DIFFERENCE IN CHANGES']):
+                    # LOGGING ESPECIAL para detectar si alguna cuenta patrimonio está clasificada como ERI
+                    if 'PATRIMONIO' in cuenta_obj.nombre.upper() or 'CAPITAL' in cuenta_obj.nombre.upper():
+                        logger.warning(f"⚠️  POSIBLE ERROR: Cuenta aparentemente de PATRIMONIO clasificada como ERI: {cuenta_obj.codigo} ({cuenta_obj.nombre}) | Set: '{set_nombre}' | Valor: '{valor}'")
+                    else:
+                        logger.debug(f"Cuenta {cuenta_obj.codigo}: Identificada como ERI por Set='{set_nombre}' | Valor='{valor}'")
+                    return 'ERI'
+                
+                # Búsqueda por valores específicos que identifiquen ESF/ERI
+                elif valor in ['ESF', 'ERI']:
+                    logger.debug(f"Cuenta {cuenta_obj.codigo}: Identificada como {valor} por valor directo")
+                    return valor
+            
+            logger.debug(f"Cuenta {cuenta_obj.codigo}: No identificada como ESF/ERI")
+            return None
+        except Exception as e:
+            logger.debug(f"Error identificando clasificación ESF/ERI para cuenta {cuenta_obj.codigo}: {e}")
+            return None
+
     # 2. FUNCIONES AUXILIARES
-    def procesar_saldo_anterior(row, cierre, code, aperturas, stats):
+    def procesar_saldo_anterior(row, cierre, code, aperturas, stats, totales_esf_eri, identificar_clasificacion_esf_eri):
         """Procesa un saldo anterior y lo añade a la lista de aperturas"""
         try:
-            saldo = Decimal(row[S] if S and row[S] else (row[D] or 0))
+            # Determinar de dónde viene el saldo
+            if S and row[S] is not None:
+                saldo = Decimal(row[S])
+                origen_saldo = f"columna SALDO = {row[S]}"
+            else:
+                saldo = Decimal(row[D] or 0)
+                origen_saldo = f"columna DEBE = {row[D]} (no hay columna SALDO)"
+            
+            logger.info(f"📊 PROCESANDO SALDO ANTERIOR: Cuenta {code} | {origen_saldo} | Saldo final: ${saldo:,.2f}")
             cuenta_obj = processed_accounts[code]
             apertura = AperturaCuenta(
                 cierre=cierre,
@@ -312,11 +401,22 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
             )
             aperturas.append(apertura)
             stats["aperturas"] += 1
+            
+            # NUEVO: Acumular en totales ESF/ERI si corresponde
+            clasificacion_esf_eri = identificar_clasificacion_esf_eri(cuenta_obj)
+            if clasificacion_esf_eri in ['ESF', 'ERI']:
+                totales_esf_eri[clasificacion_esf_eri]['saldo_ant'] += saldo
+                contadores_clasificacion[clasificacion_esf_eri] += 1
+                logger.info(f"🔍 SALDO ANTERIOR {clasificacion_esf_eri}: Cuenta {code} = ${saldo:,.2f} | Total acumulado: ${totales_esf_eri[clasificacion_esf_eri]['saldo_ant']:,.2f}")
+            else:
+                contadores_clasificacion['Sin_clasificacion'] += 1
+                logger.info(f"⚠️  CUENTA SIN CLASIFICACIÓN ESF/ERI: {code} = ${saldo:,.2f} | Clasificación: {clasificacion_esf_eri}")
+            
             logger.debug(f"Saldo anterior procesado para cuenta {code}: {saldo}")
         except Exception as e:
             logger.error(f"Error procesando saldo anterior para cuenta {code}: {e}")
 
-    def procesar_movimiento(row, cierre, cuenta_obj, get_tipo_doc, movimientos, stats, indices_cols):
+    def procesar_movimiento(row, cierre, cuenta_obj, get_tipo_doc, movimientos, stats, indices_cols, totales_esf_eri, identificar_clasificacion_esf_eri):
         """Procesa un movimiento contable con validación completa en línea"""
         try:
             # Desempaquetar índices de columnas
@@ -324,6 +424,10 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
             
             # Extraer código de tipo documento
             codigo_td = (str(row[TD]).strip()[:10] if (TD is not None and row[TD]) else "")
+            
+            # Extraer valores debe/haber
+            debe = Decimal(row[D] or 0)
+            haber = Decimal(row[H] or 0)
             
             # Validar tipo documento con el helper optimizado
             tipo_doc_obj, generar_inc_null, generar_inc_no_reconocido = get_tipo_doc(codigo_td, cuenta_obj.codigo)
@@ -337,13 +441,20 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                 cuentas_con_tipo_doc_no_reconocido[cuenta_obj.codigo] = codigo_td
                 logger.debug(f"Cuenta {cuenta_obj.codigo} marcada para incidencia tipo doc no reconocido: '{codigo_td}'")
             
+            # NUEVO: Acumular en totales ESF/ERI si corresponde
+            clasificacion_esf_eri = identificar_clasificacion_esf_eri(cuenta_obj)
+            if clasificacion_esf_eri in ['ESF', 'ERI']:
+                totales_esf_eri[clasificacion_esf_eri]['debe'] += debe
+                totales_esf_eri[clasificacion_esf_eri]['haber'] += haber
+                logger.debug(f"Movimiento {clasificacion_esf_eri} acumulado para cuenta {cuenta_obj.codigo}: Debe={debe}, Haber={haber}")
+            
             # Crear el movimiento contable con TODOS los datos disponibles
             mov = MovimientoContable(
                 cierre=cierre,
                 cuenta=cuenta_obj,
                 fecha=_parse_fecha(row[F]),
-                debe=Decimal(row[D] or 0),
-                haber=Decimal(row[H] or 0),
+                debe=debe,
+                haber=haber,
                 descripcion=str(row[DS] or "")[:500] if (DS is not None and row[DS]) else "",
                 tipo_doc_codigo=codigo_td,
                 tipo_documento=tipo_doc_obj,  # Asignar directamente si existe
@@ -489,7 +600,7 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                     processed_accounts[code] = cuenta
                 
                 # Llamar a procesar_saldo_anterior para añadir la apertura
-                procesar_saldo_anterior(row, cierre, code, aperturas, stats)
+                procesar_saldo_anterior(row, cierre, code, aperturas, stats, totales_esf_eri, identificar_clasificacion_esf_eri)
                 continue
             
             # Si current_code definido y row[F] no es None
@@ -498,7 +609,7 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                 cuenta_obj = processed_accounts[current_code]
                 # Llamar a procesar_movimiento con validación completa
                 indices_cols = (ND, TP, NC, NI, CC, AUX, DG, DS, TD, D, H, F)
-                procesar_movimiento(row, cierre, cuenta_obj, get_tipo_doc, movimientos, stats, indices_cols)
+                procesar_movimiento(row, cierre, cuenta_obj, get_tipo_doc, movimientos, stats, indices_cols, totales_esf_eri, identificar_clasificacion_esf_eri)
                 continue
             
             # Ignorar el resto de filas
@@ -556,16 +667,111 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
         "tipo_doc_no_reconocido": len(excepciones_tipo_doc_no_reconocido)
     }
 
+    # Calcular balances ESF/ERI
+    balance_esf = float(totales_esf_eri['ESF']['saldo_ant'] + totales_esf_eri['ESF']['debe'] - totales_esf_eri['ESF']['haber'])
+    balance_eri = float(totales_esf_eri['ERI']['saldo_ant'] + totales_esf_eri['ERI']['debe'] - totales_esf_eri['ERI']['haber'])
+    balance_total = balance_esf + balance_eri
+
+    # LOGGING DETALLADO DE TOTALES FINALES
+    logger.info("="*80)
+    logger.info("📊 RESUMEN FINAL DE TOTALES ESF/ERI")
+    logger.info("="*80)
+    logger.info(f"CONTADORES DE CUENTAS:")
+    logger.info(f"  ESF: {contadores_clasificacion['ESF']} cuentas")
+    logger.info(f"  ERI: {contadores_clasificacion['ERI']} cuentas")
+    logger.info(f"  Sin clasificación: {contadores_clasificacion['Sin_clasificacion']} cuentas")
+    logger.info("")
+    logger.info(f"ESF TOTALES:")
+    logger.info(f"  Saldo Anterior: ${totales_esf_eri['ESF']['saldo_ant']:,.2f}")
+    logger.info(f"  Debe:           ${totales_esf_eri['ESF']['debe']:,.2f}")
+    logger.info(f"  Haber:          ${totales_esf_eri['ESF']['haber']:,.2f}")
+    logger.info(f"  Balance:        ${balance_esf:,.2f}")
+    logger.info("")
+    logger.info(f"ERI TOTALES:")
+    logger.info(f"  Saldo Anterior: ${totales_esf_eri['ERI']['saldo_ant']:,.2f}")
+    logger.info(f"  Debe:           ${totales_esf_eri['ERI']['debe']:,.2f}")
+    logger.info(f"  Haber:          ${totales_esf_eri['ERI']['haber']:,.2f}")
+    logger.info(f"  Balance:        ${balance_eri:,.2f}")
+    logger.info("")
+    logger.info(f"BALANCE TOTAL: ${balance_total:,.2f}")
+    logger.info("="*80)
+    
+    # NUEVO: DETALLAR TODAS LAS CUENTAS ESF Y ERI PROCESADAS
+    logger.info("🏛️  DETALLE DE CUENTAS ESF (Estado de Situación Financiera):")
+    logger.info("="*80)
+    cuentas_esf_procesadas = []
+    cuentas_eri_procesadas = []
+    
+    # Recorrer todas las cuentas procesadas y clasificarlas
+    for codigo, cuenta_obj in processed_accounts.items():
+        clasificacion = identificar_clasificacion_esf_eri(cuenta_obj)
+        if clasificacion == 'ESF':
+            # Buscar el saldo anterior de esta cuenta
+            for apertura in aperturas:
+                if apertura.cuenta.codigo == codigo:
+                    cuentas_esf_procesadas.append({
+                        'codigo': codigo,
+                        'nombre': cuenta_obj.nombre,
+                        'saldo_anterior': apertura.saldo_anterior
+                    })
+                    logger.info(f"  {codigo} | {cuenta_obj.nombre} | Saldo: ${apertura.saldo_anterior:,.2f}")
+                    break
+        elif clasificacion == 'ERI':
+            # Buscar el saldo anterior de esta cuenta
+            for apertura in aperturas:
+                if apertura.cuenta.codigo == codigo:
+                    cuentas_eri_procesadas.append({
+                        'codigo': codigo,
+                        'nombre': cuenta_obj.nombre,
+                        'saldo_anterior': apertura.saldo_anterior
+                    })
+                    break
+    
+    logger.info(f"TOTAL CUENTAS ESF PROCESADAS: {len(cuentas_esf_procesadas)}")
+    logger.info("="*80)
+    
+    logger.info("💼 DETALLE DE CUENTAS ERI (Estado de Resultados Integrales):")
+    logger.info("="*80)
+    for cuenta in cuentas_eri_procesadas:
+        logger.info(f"  {cuenta['codigo']} | {cuenta['nombre']} | Saldo: ${cuenta['saldo_anterior']:,.2f}")
+    
+    logger.info(f"TOTAL CUENTAS ERI PROCESADAS: {len(cuentas_eri_procesadas)}")
+    logger.info("="*80)
+
     # Guardar stats en upload.resumen
     resumen = upload.resumen or {}
     resumen["procesamiento"] = stats
     resumen["incidencias_pendientes"] = incidencias_pendientes  # Guardar para el siguiente task
+    
+    # NUEVO: Guardar totales ESF/ERI calculados durante el procesamiento
+    resumen['totales_esf_eri'] = {
+        'totales': {
+            'ESF': {
+                'saldo_ant': float(totales_esf_eri['ESF']['saldo_ant']),
+                'debe': float(totales_esf_eri['ESF']['debe']),
+                'haber': float(totales_esf_eri['ESF']['haber'])
+            },
+            'ERI': {
+                'saldo_ant': float(totales_esf_eri['ERI']['saldo_ant']),
+                'debe': float(totales_esf_eri['ERI']['debe']),
+                'haber': float(totales_esf_eri['ERI']['haber'])
+            }
+        },
+        'balance_esf': balance_esf,
+        'balance_eri': balance_eri,
+        'balance_total': balance_total,
+        'balance_validado': abs(balance_total - float(totales_esf_eri['ESF']['saldo_ant'])) <= 0.01,
+        'diferencia_saldo_esf': abs(balance_total - float(totales_esf_eri['ESF']['saldo_ant'])),
+        'explicacion_balance': "Balance total debe coincidir con saldo anterior ESF"
+    }
+    
     upload.resumen = resumen
     upload.tiempo_procesamiento = timezone.now() - inicio
     upload.save(update_fields=["resumen", "tiempo_procesamiento"])
 
     logger.info(f"Procesamiento completado: {stats}")
     logger.info(f"Incidencias detectadas en línea: {len(incidencias_pendientes)}")
+    logger.info(f"Totales ESF/ERI calculados - ESF: {balance_esf:,.2f}, ERI: {balance_eri:,.2f}, Total: {balance_total:,.2f}")
     logger.info(f"Excepciones aplicadas - Sets clasificación: {stats['excepciones_aplicadas']['clasificacion_sets']}, "
                f"Nombres inglés: {stats['excepciones_aplicadas']['nombres_ingles']}, "
                f"Tipo doc null: {stats['excepciones_aplicadas']['tipo_doc_null']}, "
@@ -584,6 +790,40 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
 
     upload_log = UploadLog.objects.get(id=upload_log_id)
     cierre = upload_log.cierre
+
+    print("\n" + "🔄 INICIANDO GENERACIÓN DE INCIDENCIAS LIBRO MAYOR")
+    print("="*80)
+    print(f"📄 Upload Log ID: {upload_log_id}")
+    print(f"🏢 Cliente: {upload_log.cliente}")
+    print(f"📅 Cierre: {cierre}")
+    print("="*80)
+
+    # Obtener totales ESF/ERI ya calculados durante el procesamiento
+    totales_esf_eri = upload_log.resumen.get('totales_esf_eri', {})
+    
+    if not totales_esf_eri:
+        print("⚠️  WARNING: No se encontraron totales ESF/ERI precalculados")
+        logger.warning("No se encontraron totales ESF/ERI en el resumen del upload_log")
+        # Crear estructura vacía para evitar errores
+        totales_esf_eri = {
+            'totales': {
+                'ESF': {'saldo_ant': 0, 'debe': 0, 'haber': 0},
+                'ERI': {'saldo_ant': 0, 'debe': 0, 'haber': 0}
+            },
+            'balance_esf': 0,
+            'balance_eri': 0,
+            'balance_total': 0,
+            'balance_validado': True
+        }
+    else:
+        print(f"✅ Totales ESF/ERI obtenidos del procesamiento:")
+        print(f"   ESF: Saldo=${totales_esf_eri['totales']['ESF']['saldo_ant']:,.2f} | "
+              f"Debe=${totales_esf_eri['totales']['ESF']['debe']:,.2f} | "
+              f"Haber=${totales_esf_eri['totales']['ESF']['haber']:,.2f}")
+        print(f"   ERI: Saldo=${totales_esf_eri['totales']['ERI']['saldo_ant']:,.2f} | "
+              f"Debe=${totales_esf_eri['totales']['ERI']['debe']:,.2f} | "
+              f"Haber=${totales_esf_eri['totales']['ERI']['haber']:,.2f}")
+        print(f"   Balance total: ${totales_esf_eri['balance_total']:,.2f}")
 
     # Limpiar incidencias anteriores
     Incidencia.objects.filter(cierre=cierre).delete()
@@ -665,7 +905,86 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
 
-    # Guardar resumen…
+    # 3. VALIDAR BALANCE ESF/ERI - Usar totales ya calculados
+    try:
+        print("\n" + "="*80)
+        print("🧮 VALIDACIÓN DE BALANCE ESF/ERI")
+        print("="*80)
+        
+        # Extraer valores de balance ya calculados
+        balance_esf = totales_esf_eri['balance_esf']
+        balance_eri = totales_esf_eri['balance_eri']
+        balance_total = totales_esf_eri['balance_total']
+        
+        # Mostrar totales detallados
+        print(f"\n� TOTALES ACUMULADOS (calculados durante procesamiento):")
+        print(f"   ESF (Estado de Situación Financiera):")
+        print(f"      Saldo Anterior: ${totales_esf_eri['totales']['ESF']['saldo_ant']:,.2f}")
+        print(f"      Debe:           ${totales_esf_eri['totales']['ESF']['debe']:,.2f}")
+        print(f"      Haber:          ${totales_esf_eri['totales']['ESF']['haber']:,.2f}")
+        
+        print(f"\n   ERI (Estado de Resultados Integrales):")
+        print(f"      Saldo Anterior: ${totales_esf_eri['totales']['ERI']['saldo_ant']:,.2f}")
+        print(f"      Debe:           ${totales_esf_eri['totales']['ERI']['debe']:,.2f}")
+        print(f"      Haber:          ${totales_esf_eri['totales']['ERI']['haber']:,.2f}")
+        
+        print(f"\n🔢 CÁLCULOS DE BALANCE:")
+        print(f"   ESF = Saldo_Ant + Debe - Haber")
+        print(f"   ESF = {totales_esf_eri['totales']['ESF']['saldo_ant']:,.2f} + {totales_esf_eri['totales']['ESF']['debe']:,.2f} - {totales_esf_eri['totales']['ESF']['haber']:,.2f}")
+        print(f"   ESF = ${balance_esf:,.2f}")
+        
+        print(f"\n   ERI = Saldo_Ant + Debe - Haber")
+        print(f"   ERI = {totales_esf_eri['totales']['ERI']['saldo_ant']:,.2f} + {totales_esf_eri['totales']['ERI']['debe']:,.2f} - {totales_esf_eri['totales']['ERI']['haber']:,.2f}")
+        print(f"   ERI = ${balance_eri:,.2f}")
+        
+        print(f"\n⚖️  BALANCE TOTAL:")
+        print(f"   Total = ESF + ERI")
+        print(f"   Total = {balance_esf:,.2f} + {balance_eri:,.2f}")
+        print(f"   Total = ${balance_total:,.2f}")
+        
+        # VALIDACIÓN CONCEPTUAL MEJORADA
+        print(f"\n✅ ANÁLISIS DE BALANCE:")
+        print(f"   Balance Total calculado: ${balance_total:,.2f}")
+        print(f"   Saldo Anterior ESF: ${totales_esf_eri['totales']['ESF']['saldo_ant']:,.2f}")
+        
+        # LA VALIDACIÓN CORRECTA: Balance total debe ser cercano a 0 (contabilidad balanceada)
+        if abs(balance_total) <= 0.01:
+            print(f"   ✅ BALANCE CORRECTO: Balance total = ${balance_total:,.2f} (contabilidad balanceada)")
+            print(f"   📊 Interpretación: ESF + ERI = 0 indica que todos los movimientos están balanceados")
+            print(f"   🔍 Validación: Balance total dentro de tolerancia (±$0.01)")
+            logger.info("✓ Balance ESF/ERI validado correctamente - contabilidad balanceada")
+        else:
+            print(f"   ❌ BALANCE DESCUADRADO")
+            print(f"   📊 Balance total: ${balance_total:,.2f}")
+            print(f"   📊 ESF: ${balance_esf:,.2f} | ERI: ${balance_eri:,.2f}")
+            print(f"   📊 El balance debería ser cercano a $0.00 para una contabilidad balanceada")
+            print(f"   📝 Creando incidencia de balance descuadrado...")
+            
+            incidencia_balance = Incidencia(
+                cierre=cierre,
+                tipo=Incidencia.BALANCE_DESCUADRADO,
+                descripcion=f"Balance descuadrado: ESF=${balance_esf:,.2f}, ERI=${balance_eri:,.2f}, Total=${balance_total:,.2f}. El balance total debería ser cercano a $0.00",
+                creada_por=creador
+            )
+            incidencia_balance.save()
+            creadas += 1
+            logger.warning(f"BALANCE DESCUADRADO - ESF: {balance_esf}, ERI: {balance_eri}, Total: {balance_total}")
+        
+        logger.info(f"Balance ESF: {balance_esf}, Balance ERI: {balance_eri}, Balance total: {balance_total}")
+        
+        print("="*80)
+            
+    except Exception as e:
+        print(f"\n❌ ERROR validando balance ESF/ERI: {e}")
+        logger.error(f"Error validando balance ESF/ERI: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        # Usar valores por defecto en caso de error
+        balance_esf = 0
+        balance_eri = 0
+        balance_total = 0
+    
+    # Guardar resumen (los totales ESF/ERI ya están calculados y guardados desde el procesamiento)
     resumen = upload_log.resumen or {}
     resumen['incidencias'] = {
         'creadas': creadas,
@@ -675,16 +994,49 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
         'clasificaciones': len([i for i in incidencias_pendientes if i['tipo'] == 'cuenta_no_clasificada']),
         'nombres_ingles': len([i for i in incidencias_pendientes if i['tipo'] == 'cuenta_sin_ingles']),
         'tipos_documento_null': len([i for i in incidencias_pendientes if i['tipo'] == 'movimiento_tipo_doc_null']),
-        'tipos_documento_no_reconocido': len([i for i in incidencias_pendientes if i['tipo'] == 'movimiento_tipo_doc_no_reconocido'])
+        'tipos_documento_no_reconocido': len([i for i in incidencias_pendientes if i['tipo'] == 'movimiento_tipo_doc_no_reconocido']),
+        'balance_descuadrado': 1 if abs(balance_total - totales_esf_eri['totales']['ESF']['saldo_ant']) > 0.01 else 0
     }
+    
+    # Actualizar solo el estado de validación del balance en los totales existentes
+    if 'totales_esf_eri' in resumen:
+        # Validar si el balance total coincide con el saldo anterior ESF (lógica contable correcta)
+        diferencia_saldo_esf = abs(balance_total - totales_esf_eri['totales']['ESF']['saldo_ant'])
+        balance_validado = diferencia_saldo_esf <= 0.01
+        resumen['totales_esf_eri']['balance_validado'] = balance_validado
+        resumen['totales_esf_eri']['diferencia_saldo_esf'] = float(diferencia_saldo_esf)
+        resumen['totales_esf_eri']['explicacion_balance'] = "Balance total debe coincidir con saldo anterior ESF"
+    
     upload_log.resumen = resumen
     upload_log.save(update_fields=['resumen'])
+
+    print("\n" + "📋 RESUMEN FINAL DE INCIDENCIAS")
+    print("="*80)
+    print(f"✅ Total incidencias creadas: {creadas}")
+    print(f"📊 Desglose por tipo:")
+    print(f"   - Clasificaciones: {resumen['incidencias']['clasificaciones']}")
+    print(f"   - Nombres inglés: {resumen['incidencias']['nombres_ingles']}")
+    print(f"   - Tipos doc null: {resumen['incidencias']['tipos_documento_null']}")
+    print(f"   - Tipos doc no reconocido: {resumen['incidencias']['tipos_documento_no_reconocido']}")
+    print(f"   - Balance descuadrado: {resumen['incidencias']['balance_descuadrado']}")
+    
+    print(f"\n💰 BALANCE ESF/ERI FINAL:")
+    print(f"   - Balance total: ${balance_total:,.2f}")
+    print(f"   - Saldo anterior ESF: ${totales_esf_eri['totales']['ESF']['saldo_ant']:,.2f}")
+    diferencia_saldo_esf = abs(balance_total - totales_esf_eri['totales']['ESF']['saldo_ant'])
+    print(f"   - Diferencia: ${diferencia_saldo_esf:,.2f}")
+    print(f"   - Balance validado: {'✅ SÍ' if diferencia_saldo_esf <= 0.01 else '❌ NO'}")
+    print("="*80)
 
     logger.info(f"Generación de incidencias completada - Total creadas: {creadas}")
     logger.info(f"Desglose: Clasificaciones: {resumen['incidencias']['clasificaciones']}, " +
                f"Nombres inglés: {resumen['incidencias']['nombres_ingles']}, " +
                f"Tipos doc null: {resumen['incidencias']['tipos_documento_null']}, " +
-               f"Tipos doc no reconocido: {resumen['incidencias']['tipos_documento_no_reconocido']}")
+               f"Tipos doc no reconocido: {resumen['incidencias']['tipos_documento_no_reconocido']}, " +
+               f"Balance descuadrado: {resumen['incidencias']['balance_descuadrado']}")
+    logger.info(f"Balance ESF/ERI - Total: {balance_total}, Saldo ESF: {totales_esf_eri['totales']['ESF']['saldo_ant']}, " +
+               f"Diferencia: {abs(balance_total - totales_esf_eri['totales']['ESF']['saldo_ant'])}, " +
+               f"Validado: {abs(balance_total - totales_esf_eri['totales']['ESF']['saldo_ant']) <= 0.01}")
     return upload_log_id
 
 # ─── Task 6: Finalizar y limpiar ───────────────────────────────────────────────

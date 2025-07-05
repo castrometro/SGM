@@ -9,16 +9,18 @@ class Incidencia(models.Model):
     CUENTA_SIN_INGLES    = "CUENTA_INGLES"
     DOC_NO_RECONOCIDO    = "DOC_NO_REC"
     DOC_NULL             = "DOC_NULL"
+    BALANCE_DESCUADRADO  = "BALANCE_DESC"
 
     TIPO_CHOICES = [
         (CUENTA_NO_CLASIFICADA, "Cuenta no clasificada"),
         (CUENTA_SIN_INGLES,      "Cuenta sin mapeo inglés"),
         (DOC_NO_RECONOCIDO,      "Tipo de documento no reconocido"),
         (DOC_NULL,               "Tipo de documento vacío"),
+        (BALANCE_DESCUADRADO,    "Balance ESF/ERI descuadrado"),
     ]
 
     cierre                 = models.ForeignKey("CierreContabilidad", on_delete=models.CASCADE)
-    tipo                   = models.CharField(max_length=16, choices=TIPO_CHOICES)
+    tipo                   = models.CharField(max_length=20, choices=TIPO_CHOICES)
     cuenta_codigo          = models.CharField("Código Cuenta", max_length=50, null=True, blank=True)
     tipo_doc_codigo        = models.CharField("Código Doc.",    max_length=20, null=True, blank=True)
     # Campos específicos para incidencias de clasificación

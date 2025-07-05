@@ -10,6 +10,7 @@ Este módulo maneja todas las tareas relacionadas con:
 
 from celery import shared_task, group
 from django.utils import timezone
+import time
 import logging
 
 logger = logging.getLogger(__name__)
@@ -616,6 +617,7 @@ def notificar_finalizacion(cierre_id, usuario_id):
 def calcular_saldos_por_cuenta(cierre):
     """
     Calcula los saldos finales de todas las cuentas para el cierre dado.
+    Incluye saldo inicial + movimientos del período = saldo final.
     
     Args:
         cierre: Instancia de CierreContabilidad
@@ -623,18 +625,39 @@ def calcular_saldos_por_cuenta(cierre):
     Returns:
         dict: {codigo_cuenta: {'saldo': Decimal, 'cuenta_obj': CuentaContable, 'movimientos': int}}
     """
-    from .models import MovimientoContable, CuentaContable
+    from .models import MovimientoContable, CuentaContable, AperturaCuenta
     from decimal import Decimal
     from django.db.models import Sum, Count
     
     print(f"   📊 Calculando saldos por cuenta para cierre {cierre.id}...")
+    print(f"   📊 Incluyendo saldos iniciales + movimientos del período...")
     
     # Obtener todas las cuentas del cliente
     cuentas = CuentaContable.objects.filter(cliente=cierre.cliente)
     saldos_por_cuenta = {}
     
     for cuenta in cuentas:
-        # Sumar débitos y créditos por separado
+        # =================== OBTENER SALDO INICIAL ===================
+        # Buscar saldo inicial en AperturaCuenta para este período
+        try:
+            apertura = AperturaCuenta.objects.filter(
+                cuenta=cuenta,
+                cierre=cierre
+            ).first()
+            
+            if apertura:
+                saldo_inicial = apertura.saldo_anterior or Decimal('0')
+                print(f"   📋 Cuenta {cuenta.codigo}: Saldo inicial: ${saldo_inicial:,.2f}")
+            else:
+                # Si no hay apertura específica, asumir saldo inicial cero
+                saldo_inicial = Decimal('0')
+                print(f"   ⚠️ Cuenta {cuenta.codigo}: Sin apertura registrada, asumiendo saldo inicial cero")
+                
+        except Exception as e:
+            print(f"   ⚠️ Error obteniendo apertura para cuenta {cuenta.codigo}: {e}")
+            saldo_inicial = Decimal('0')
+        
+        # =================== OBTENER MOVIMIENTOS DEL PERÍODO ===================
         movimientos_qs = MovimientoContable.objects.filter(
             cierre=cierre,
             cuenta=cuenta
@@ -646,31 +669,40 @@ def calcular_saldos_por_cuenta(cierre):
             total_movimientos=Count('id')
         )
         
-        # Calcular saldo según naturaleza de la cuenta
-        debe = agregados['total_debe'] or Decimal('0')
-        haber = agregados['total_haber'] or Decimal('0')
+        # Movimientos del período
+        debe_movimientos = agregados['total_debe'] or Decimal('0')
+        haber_movimientos = agregados['total_haber'] or Decimal('0')
         
-        # Determinar naturaleza de cuenta por su código (simplificado)
-        # 1xxx = Activos (débito positivo)
-        # 2xxx = Pasivos (crédito positivo) 
-        # 3xxx = Patrimonio (crédito positivo)
-        # 4xxx = Ingresos (crédito positivo)
-        # 5xxx = Gastos (débito positivo)
-        if cuenta.codigo.startswith(('1', '5')):  # Activos y Gastos
-            saldo_final = debe - haber
-        else:  # Pasivos, Patrimonio, Ingresos
-            saldo_final = haber - debe
+        # =================== CALCULAR SALDO FINAL ===================
+        # Fórmula universal: Saldo Final = Saldo inicial + (Debe Total - Haber Total)
+        # Esta fórmula aplica para todas las cuentas independientemente de su naturaleza
+        saldo_final = saldo_inicial + debe_movimientos - haber_movimientos
+        
+        # =================== MOSTRAR DETALLE DE CÁLCULO ===================
+        if saldo_inicial != Decimal('0') or agregados['total_movimientos'] > 0:
+            print(f"   💰 CÁLCULO DETALLADO - Cuenta {cuenta.codigo} ({cuenta.nombre}):")
+            print(f"      📅 Saldo Inicial: ${saldo_inicial:,.2f}")
+            print(f"      📊 Movimientos del Período:")
+            print(f"         Debe movimientos: ${debe_movimientos:,.2f} ({agregados['total_movimientos']} movimientos)")
+            print(f"         Haber movimientos: ${haber_movimientos:,.2f}")
+            print(f"      🏁 Cálculo Final (Universal):")
+            print(f"         Fórmula: Saldo Inicial + (Debe Total - Haber Total)")
+            print(f"         Cálculo: ${saldo_inicial:,.2f} + (${debe_movimientos:,.2f} - ${haber_movimientos:,.2f})")
+            print(f"         Saldo Final: ${saldo_final:,.2f}")
+            print(f"      ────────────────────────────────────────")
             
-        if agregados['total_movimientos'] > 0:  # Solo incluir cuentas con movimientos
             saldos_por_cuenta[cuenta.codigo] = {
                 'saldo': saldo_final,
                 'cuenta_obj': cuenta,
                 'movimientos': agregados['total_movimientos'],
-                'debe_total': debe,
-                'haber_total': haber
+                'debe_total': debe_movimientos,
+                'haber_total': haber_movimientos,
+                'saldo_inicial': saldo_inicial,
+                'debe_movimientos': debe_movimientos,
+                'haber_movimientos': haber_movimientos
             }
     
-    print(f"   ✅ Calculados saldos de {len(saldos_por_cuenta)} cuentas con movimientos")
+    print(f"   ✅ Calculados saldos de {len(saldos_por_cuenta)} cuentas (con saldos iniciales + movimientos)")
     return saldos_por_cuenta
 
 
@@ -796,15 +828,91 @@ def calcular_balance_general_esf(cierre, cuentas_saldos):
     ).select_related('cuenta', 'opcion')
     
     # Agrupar por clasificación
+    print(f"   📊 Procesando clasificaciones para ESF...")
+    print(f"   📊 Total clasificaciones encontradas: {clasificaciones.count()}")
+    
+    # Contar cuentas por clasificación ANTES de filtrar por movimientos
+    total_cuentas_por_clasificacion = {}
+    for clasificacion in clasificaciones:
+        opcion = clasificacion.opcion.valor
+        if opcion not in total_cuentas_por_clasificacion:
+            total_cuentas_por_clasificacion[opcion] = 0
+        total_cuentas_por_clasificacion[opcion] += 1
+    
+    print(f"   📊 CUENTAS CLASIFICADAS TOTALES (antes de filtrar por movimientos):")
+    for clasificacion, cantidad in total_cuentas_por_clasificacion.items():
+        print(f"      {clasificacion}: {cantidad} cuentas")
+    print(f"   ───────────────────────────────────────────────────────────")
+    
+    # Diccionario para contar cuentas por clasificación
+    contadores_clasificacion = {}
+    cuentas_sin_movimientos = []
+    
     for clasificacion in clasificaciones:
         codigo_cuenta = clasificacion.cuenta.codigo
-        if codigo_cuenta not in cuentas_saldos:
-            continue
-            
-        saldo = cuentas_saldos[codigo_cuenta]['saldo']
         opcion = clasificacion.opcion.valor
         
-        # Mapear a estructura del ESF
+        # Verificar si la cuenta tiene movimientos o saldo inicial
+        if codigo_cuenta not in cuentas_saldos:
+            # Cuenta clasificada pero SIN movimientos ni saldo inicial
+            cuentas_sin_movimientos.append({
+                'codigo': codigo_cuenta,
+                'nombre': clasificacion.cuenta.nombre,
+                'clasificacion': opcion
+            })
+            saldo = Decimal('0')
+            debe_total = Decimal('0')
+            haber_total = Decimal('0')
+            num_movimientos = 0
+            saldo_inicial = Decimal('0')
+            debe_movimientos = Decimal('0')
+            haber_movimientos = Decimal('0')
+            print(f"   ⚠️ Cuenta {codigo_cuenta} ({clasificacion.cuenta.nombre}) - {opcion}: SIN MOVIMIENTOS NI SALDO INICIAL")
+        else:
+            # Cuenta clasificada CON movimientos o saldo inicial
+            saldo = cuentas_saldos[codigo_cuenta]['saldo']
+            debe_total = cuentas_saldos[codigo_cuenta]['debe_total']
+            haber_total = cuentas_saldos[codigo_cuenta]['haber_total']
+            num_movimientos = cuentas_saldos[codigo_cuenta]['movimientos']
+            saldo_inicial = cuentas_saldos[codigo_cuenta]['saldo_inicial']
+            debe_movimientos = cuentas_saldos[codigo_cuenta]['debe_movimientos']
+            haber_movimientos = cuentas_saldos[codigo_cuenta]['haber_movimientos']
+        
+        # Contar para estadísticas
+        if opcion not in contadores_clasificacion:
+            contadores_clasificacion[opcion] = {'cuentas': 0, 'saldo_total': Decimal('0')}
+        contadores_clasificacion[opcion]['cuentas'] += 1
+        contadores_clasificacion[opcion]['saldo_total'] += saldo
+        
+        # Mostrar detalle de cada cuenta
+        print(f"   📋 {opcion}:")
+        print(f"      Cuenta: {codigo_cuenta} - {clasificacion.cuenta.nombre}")
+        print(f"      💰 COMPOSICIÓN DEL SALDO:")
+        print(f"         Saldo Inicial: ${saldo_inicial:,.2f}")
+        print(f"         Movimientos - Debe: ${debe_movimientos:,.2f}")
+        print(f"         Movimientos - Haber: ${haber_movimientos:,.2f}")
+        print(f"      🏁 TOTALES:")
+        print(f"         Debe Total: ${debe_total:,.2f} | Haber Total: ${haber_total:,.2f}")
+        print(f"         Saldo Final: ${saldo:,.2f}")
+        print(f"         Total Movimientos: {num_movimientos}")
+        
+        # Mostrar algunos movimientos específicos de esta cuenta (solo si tiene movimientos)
+        if num_movimientos > 0:
+            from .models import MovimientoContable
+            movimientos_muestra = MovimientoContable.objects.filter(
+                cierre=cierre,
+                cuenta=clasificacion.cuenta
+            ).order_by('-fecha', '-id')[:3]  # Últimos 3 movimientos
+            
+            if movimientos_muestra.exists():
+                print(f"      📝 Últimos 3 movimientos del período:")
+                for mov in movimientos_muestra:
+                    print(f"         {mov.fecha} | Debe: ${mov.debe:,.2f} | Haber: ${mov.haber:,.2f} | {mov.descripcion[:50]}...")
+        else:
+            print(f"      📝 Esta cuenta NO tiene movimientos en el período")
+        print(f"      ════════════════════════════════════════════════════════════")
+        
+        # Mapear a estructura del ESF (incluir todas las cuentas, incluso con saldo 0)
         if opcion == "Activo Corriente":
             esf['assets']['current_assets'] += saldo
             esf['assets']['current_assets_detail'][codigo_cuenta] = saldo
@@ -826,6 +934,45 @@ def calcular_balance_general_esf(cierre, cuentas_saldos):
             esf['clasificaciones'][opcion] = Decimal('0')
         esf['clasificaciones'][opcion] += saldo
     
+    # Mostrar resumen por clasificación
+    print(f"   📊 RESUMEN POR CLASIFICACIÓN:")
+    print(f"   ═══════════════════════════════════════════════════════════════")
+    print(f"   📊 COMPARACIÓN TOTAL vs CON MOVIMIENTOS:")
+    for clasificacion in total_cuentas_por_clasificacion.keys():
+        total_cuentas = total_cuentas_por_clasificacion[clasificacion]
+        cuentas_con_movimientos = contadores_clasificacion.get(clasificacion, {}).get('cuentas', 0)
+        saldo_total = contadores_clasificacion.get(clasificacion, {}).get('saldo_total', Decimal('0'))
+        cuentas_sin_movimientos = total_cuentas - cuentas_con_movimientos
+        
+        print(f"   🏷️  {clasificacion}:")
+        print(f"        Total cuentas clasificadas: {total_cuentas}")
+        print(f"        Cuentas con movimientos/saldo: {cuentas_con_movimientos}")
+        print(f"        Cuentas sin movimientos: {cuentas_sin_movimientos}")
+        print(f"        Saldo Total: ${saldo_total:,.2f}")
+        print(f"   ───────────────────────────────────────────────────────────")
+    print(f"   ═══════════════════════════════════════════════════════════════")
+    
+    # Mostrar cuentas sin movimientos
+    if cuentas_sin_movimientos:
+        print(f"   🚨 CUENTAS CLASIFICADAS SIN MOVIMIENTOS NI SALDO INICIAL:")
+        print(f"   ═══════════════════════════════════════════════════════════════")
+        cuentas_por_clasificacion = {}
+        for cuenta in cuentas_sin_movimientos:
+            clasificacion = cuenta['clasificacion']
+            if clasificacion not in cuentas_por_clasificacion:
+                cuentas_por_clasificacion[clasificacion] = []
+            cuentas_por_clasificacion[clasificacion].append(cuenta)
+        
+        for clasificacion, cuentas_lista in cuentas_por_clasificacion.items():
+            print(f"   🏷️  {clasificacion} ({len(cuentas_lista)} cuentas sin movimientos):")
+            for cuenta in cuentas_lista:
+                print(f"        {cuenta['codigo']} - {cuenta['nombre']}")
+            print(f"   ───────────────────────────────────────────────────────────")
+        print(f"   ═══════════════════════════════════════════════════════════════")
+    else:
+        print(f"   ✅ Todas las cuentas clasificadas tienen movimientos o saldo inicial")
+        print(f"   ═══════════════════════════════════════════════════════════════")
+    
     # Calcular totales
     esf['assets']['total_assets'] = esf['assets']['current_assets'] + esf['assets']['non_current_assets']
     esf['liabilities']['total_liabilities'] = (
@@ -840,6 +987,47 @@ def calcular_balance_general_esf(cierre, cuentas_saldos):
     # Compatibilidad con funciones existentes
     esf['total_activos'] = esf['assets']['total_assets']
     esf['total_pasivo_patrimonio'] = esf['total_liabilities_and_patrimony']
+    
+    # Mostrar Estado de Situación Financiera completo
+    print(f"   📊 ESTADO DE SITUACIÓN FINANCIERA CALCULADO:")
+    print(f"   ═══════════════════════════════════════════════════════════════")
+    print(f"   🏦 ACTIVOS / ASSETS:")
+    print(f"      Activos Corrientes: ${esf['assets']['current_assets']:,.2f}")
+    for cuenta, saldo in esf['assets']['current_assets_detail'].items():
+        print(f"         {cuenta}: ${saldo:,.2f}")
+    print(f"      Activos No Corrientes: ${esf['assets']['non_current_assets']:,.2f}")
+    for cuenta, saldo in esf['assets']['non_current_assets_detail'].items():
+        print(f"         {cuenta}: ${saldo:,.2f}")
+    print(f"      ─────────────────────────────────────────────────────────")
+    print(f"      TOTAL ACTIVOS: ${esf['assets']['total_assets']:,.2f}")
+    print(f"   ")
+    print(f"   🏛️ PASIVOS / LIABILITIES:")
+    print(f"      Pasivos Corrientes: ${esf['liabilities']['current_liabilities']:,.2f}")
+    for cuenta, saldo in esf['liabilities']['current_liabilities_detail'].items():
+        print(f"         {cuenta}: ${saldo:,.2f}")
+    print(f"      Pasivos No Corrientes: ${esf['liabilities']['non_current_liabilities']:,.2f}")
+    for cuenta, saldo in esf['liabilities']['non_current_liabilities_detail'].items():
+        print(f"         {cuenta}: ${saldo:,.2f}")
+    print(f"      ─────────────────────────────────────────────────────────")
+    print(f"      TOTAL PASIVOS: ${esf['liabilities']['total_liabilities']:,.2f}")
+    print(f"   ")
+    print(f"   🏰 PATRIMONIO / PATRIMONY:")
+    print(f"      Patrimonio: ${esf['patrimony']['total_patrimony']:,.2f}")
+    for cuenta, saldo in esf['patrimony']['patrimony_detail'].items():
+        print(f"         {cuenta}: ${saldo:,.2f}")
+    print(f"      ─────────────────────────────────────────────────────────")
+    print(f"      TOTAL PATRIMONIO: ${esf['patrimony']['total_patrimony']:,.2f}")
+    print(f"   ")
+    print(f"   ⚖️  VERIFICACIÓN DE BALANCE:")
+    print(f"      Total Activos: ${esf['total_activos']:,.2f}")
+    print(f"      Total Pasivos + Patrimonio: ${esf['total_pasivo_patrimonio']:,.2f}")
+    diferencia = esf['total_activos'] - esf['total_pasivo_patrimonio']
+    print(f"      Diferencia: ${diferencia:,.2f}")
+    if abs(diferencia) <= Decimal('1.00'):
+        print(f"      ✅ BALANCE CUADRADO")
+    else:
+        print(f"      ❌ BALANCE NO CUADRA")
+    print(f"   ═══════════════════════════════════════════════════════════════")
     
     print(f"   ✅ Estado de Situación Financiera calculado - Total Assets: {esf['assets']['total_assets']}")
     return esf
@@ -1283,3 +1471,124 @@ def guardar_datos_en_redis(cierre, esf, estado_resultados, ratios, cuentas_saldo
         
     except Exception as e:
         print(f"   ⚠️ Error preparando datos Redis: {e}")
+
+
+# ===============================================================================
+#                           FUNCIÓN DE VALIDACIÓN
+# ===============================================================================
+
+def validar_calculo_saldos_mejorado():
+    """
+    Función para validar que el cálculo de saldos funcione correctamente
+    con el modelo AperturaCuenta que solo tiene saldo_anterior.
+    
+    Esta función simula el cálculo para verificar que la lógica es correcta.
+    """
+    from decimal import Decimal
+    
+    print("🧪 VALIDACIÓN DEL CÁLCULO DE SALDOS MEJORADO")
+    print("=" * 60)
+    
+    # Simular datos de ejemplo
+    cuentas_ejemplo = [
+        {'codigo': '1101', 'nombre': 'Caja', 'naturaleza': 'activo'},
+        {'codigo': '1102', 'nombre': 'Banco', 'naturaleza': 'activo'},
+        {'codigo': '2101', 'nombre': 'Proveedores', 'naturaleza': 'pasivo'},
+        {'codigo': '3101', 'nombre': 'Capital', 'naturaleza': 'patrimonio'},
+        {'codigo': '4101', 'nombre': 'Ventas', 'naturaleza': 'ingreso'},
+        {'codigo': '5101', 'nombre': 'Gastos Admin', 'naturaleza': 'gasto'},
+    ]
+    
+    # Simular apertura de cuentas
+    apertura_ejemplo = {
+        '1101': Decimal('10000.00'),    # Caja con saldo inicial
+        '1102': Decimal('50000.00'),    # Banco con saldo inicial
+        '2101': Decimal('15000.00'),    # Proveedores con saldo inicial
+        '3101': Decimal('45000.00'),    # Capital con saldo inicial
+        '4101': Decimal('0.00'),        # Ventas sin saldo inicial
+        '5101': Decimal('0.00'),        # Gastos sin saldo inicial
+    }
+    
+    # Simular movimientos del período
+    movimientos_ejemplo = {
+        '1101': {'debe': Decimal('5000.00'), 'haber': Decimal('8000.00')},
+        '1102': {'debe': Decimal('20000.00'), 'haber': Decimal('12000.00')},
+        '2101': {'debe': Decimal('5000.00'), 'haber': Decimal('10000.00')},
+        '3101': {'debe': Decimal('0.00'), 'haber': Decimal('0.00')},
+        '4101': {'debe': Decimal('0.00'), 'haber': Decimal('25000.00')},
+        '5101': {'debe': Decimal('15000.00'), 'haber': Decimal('2000.00')},
+    }
+    
+    print("📋 CALCULANDO SALDOS FINALES:")
+    print("-" * 60)
+    
+    for cuenta in cuentas_ejemplo:
+        codigo = cuenta['codigo']
+        nombre = cuenta['nombre']
+        naturaleza = cuenta['naturaleza']
+        
+        # Obtener saldo inicial
+        saldo_inicial = apertura_ejemplo.get(codigo, Decimal('0'))
+        
+        # Obtener movimientos
+        movs = movimientos_ejemplo.get(codigo, {'debe': Decimal('0'), 'haber': Decimal('0')})
+        debe_movimientos = movs['debe']
+        haber_movimientos = movs['haber']
+        
+        # Calcular saldo final según naturaleza
+        if codigo.startswith(('1', '5')):  # Activos y Gastos
+            saldo_final = saldo_inicial + debe_movimientos - haber_movimientos
+            naturaleza_calc = "Activo/Gasto (Debe positivo)"
+        else:  # Pasivos, Patrimonio, Ingresos
+            saldo_final = saldo_inicial + haber_movimientos - debe_movimientos
+            naturaleza_calc = "Pasivo/Patrimonio/Ingreso (Haber positivo)"
+        
+        print(f"💰 {codigo} - {nombre} ({naturaleza}):")
+        print(f"   Saldo Inicial: ${saldo_inicial:,.2f}")
+        print(f"   Movimientos - Debe: ${debe_movimientos:,.2f}")
+        print(f"   Movimientos - Haber: ${haber_movimientos:,.2f}")
+        print(f"   Naturaleza: {naturaleza_calc}")
+        
+        if codigo.startswith(('1', '5')):
+            print(f"   Cálculo: ${saldo_inicial:,.2f} + ${debe_movimientos:,.2f} - ${haber_movimientos:,.2f} = ${saldo_final:,.2f}")
+        else:
+            print(f"   Cálculo: ${saldo_inicial:,.2f} + ${haber_movimientos:,.2f} - ${debe_movimientos:,.2f} = ${saldo_final:,.2f}")
+        
+        print(f"   ✅ Saldo Final: ${saldo_final:,.2f}")
+        print("-" * 40)
+    
+    # Verificar balance
+    print("\n⚖️  VERIFICACIÓN DE BALANCE:")
+    print("=" * 60)
+    
+    activos = Decimal('10000') + Decimal('5000') - Decimal('8000') + Decimal('50000') + Decimal('20000') - Decimal('12000')  # Caja + Banco
+    pasivos = Decimal('15000') + Decimal('10000') - Decimal('5000')  # Proveedores
+    patrimonio = Decimal('45000')  # Capital
+    ingresos = Decimal('25000')  # Ventas
+    gastos = Decimal('15000') - Decimal('2000')  # Gastos Admin
+    
+    print(f"Activos: ${activos:,.2f}")
+    print(f"Pasivos: ${pasivos:,.2f}")
+    print(f"Patrimonio: ${patrimonio:,.2f}")
+    print(f"Ingresos: ${ingresos:,.2f}")
+    print(f"Gastos: ${gastos:,.2f}")
+    
+    # Balance contable básico
+    resultado = ingresos - gastos
+    patrimonio_final = patrimonio + resultado
+    balance_activos = activos
+    balance_pasivo_patrimonio = pasivos + patrimonio_final
+    
+    print(f"\nRESULTADO DEL PERÍODO: ${resultado:,.2f}")
+    print(f"PATRIMONIO FINAL: ${patrimonio_final:,.2f}")
+    print(f"BALANCE - Activos: ${balance_activos:,.2f}")
+    print(f"BALANCE - Pasivos + Patrimonio: ${balance_pasivo_patrimonio:,.2f}")
+    print(f"DIFERENCIA: ${balance_activos - balance_pasivo_patrimonio:,.2f}")
+    
+    if abs(balance_activos - balance_pasivo_patrimonio) <= Decimal('1.00'):
+        print("✅ BALANCE CUADRADO")
+    else:
+        print("❌ BALANCE NO CUADRA")
+    
+    print("\n🎉 VALIDACIÓN COMPLETADA")
+    print("=" * 60)

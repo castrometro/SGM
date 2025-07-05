@@ -234,7 +234,67 @@ class LibroMayorArchivoAdmin(admin.ModelAdmin):
 
 @admin.register(AperturaCuenta)
 class AperturaCuentaAdmin(admin.ModelAdmin):
-    list_display = ("cierre", "cuenta", "saldo_anterior")
+    list_display = (
+        "cierre", 
+        "cuenta_info", 
+        "saldo_inicial_debe", 
+        "saldo_inicial_haber", 
+        "saldo_neto",
+        "periodo_info"
+    )
+    list_filter = (
+        "cierre__cliente",  # Filtro por cliente
+        "cierre",           # Filtro por cierre específico
+        "cierre__periodo",  # Filtro por período
+    )
+    search_fields = (
+        "cuenta__codigo",
+        "cuenta__nombre",
+        "cierre__periodo",
+        "cierre__cliente__nombre"
+    )
+    raw_id_fields = ("cuenta",)
+    
+    def cuenta_info(self, obj):
+        return f"{obj.cuenta.codigo} - {obj.cuenta.nombre}"
+    cuenta_info.short_description = "Cuenta"
+    cuenta_info.admin_order_field = "cuenta__codigo"
+    
+    def periodo_info(self, obj):
+        return f"{obj.cierre.cliente.nombre} - {obj.cierre.periodo}"
+    periodo_info.short_description = "Cliente - Período"
+    
+    def saldo_inicial_debe(self, obj):
+        # Buscar campos de saldo inicial en el modelo
+        # Nota: El modelo actual solo tiene 'saldo_anterior', 
+        # pero necesitaríamos campos separados para debe/haber inicial
+        return f"${obj.saldo_anterior:,.2f}" if obj.saldo_anterior > 0 else "$0.00"
+    saldo_inicial_debe.short_description = "Saldo Inicial"
+    
+    def saldo_inicial_haber(self, obj):
+        # Placeholder - necesitaríamos agregar este campo al modelo
+        return "$0.00"  
+    saldo_inicial_haber.short_description = "Saldo Inicial Haber"
+    
+    def saldo_neto(self, obj):
+        return f"${obj.saldo_anterior:,.2f}"
+    saldo_neto.short_description = "Saldo Neto"
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'cierre', 
+            'cierre__cliente',
+            'cuenta'
+        )
+    
+    fieldsets = (
+        ("Información Principal", {
+            "fields": ("cierre", "cuenta")
+        }),
+        ("Saldos", {
+            "fields": ("saldo_anterior",)
+        })
+    )
 
 
 @admin.register(MovimientoContable)
@@ -245,20 +305,79 @@ class MovimientoContableAdmin(admin.ModelAdmin):
         "cuenta",
         "debe",
         "haber",
+        "saldo_movimiento",
         "tipo_documento",
         "numero_documento",
         "tipo",
         "numero_comprobante",
         "numero_interno",
     )
-    list_filter = ("fecha", "numero_interno", "tipo_documento", "cuenta")
-    search_fields = ("descripcion",)
+    list_filter = (
+        "fecha", 
+        "cierre__cliente",  # Filtro por cliente
+        "cierre",           # Filtro por cierre específico
+        "cuenta",           # Filtro por cuenta
+        "tipo_documento",   # Filtro por tipo de documento
+        "numero_interno",   # Filtro por número interno
+        "flag_incompleto",  # Filtro por movimientos incompletos
+    )
+    search_fields = (
+        "descripcion",
+        "cuenta__codigo",
+        "cuenta__nombre", 
+        "numero_documento",
+        "numero_comprobante",
+        "cierre__periodo"
+    )
+    raw_id_fields = ("cuenta", "tipo_documento", "centro_costo", "auxiliar")
+    readonly_fields = ("saldo_movimiento",)
+    date_hierarchy = "fecha"
 
     def periodo(self, obj):
         """Muestra el periodo del cierre asociado"""
         return obj.cierre.periodo if obj.cierre else "-"
 
     periodo.short_description = "Periodo"
+    
+    def saldo_movimiento(self, obj):
+        """Muestra el efecto neto del movimiento (debe - haber)"""
+        saldo = obj.debe - obj.haber
+        if saldo > 0:
+            return f"${saldo:,.2f} (Débito)"
+        elif saldo < 0:
+            return f"${abs(saldo):,.2f} (Crédito)"
+        else:
+            return "$0.00"
+    saldo_movimiento.short_description = "Efecto Neto"
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'cierre', 
+            'cierre__cliente',
+            'cuenta', 
+            'tipo_documento',
+            'centro_costo',
+            'auxiliar'
+        )
+    
+    fieldsets = (
+        ("Información Principal", {
+            "fields": ("cierre", "cuenta", "fecha")
+        }),
+        ("Montos", {
+            "fields": ("debe", "haber", "saldo_movimiento")
+        }),
+        ("Documentos", {
+            "fields": ("tipo_documento", "tipo_doc_codigo", "numero_documento", "numero_comprobante", "numero_interno")
+        }),
+        ("Detalles", {
+            "fields": ("tipo", "centro_costo", "auxiliar", "detalle_gasto", "descripcion")
+        }),
+        ("Estado", {
+            "fields": ("flag_incompleto",),
+            "classes": ("collapse",)
+        })
+    )
 
 
 @admin.register(ClasificacionSet)
@@ -355,6 +474,41 @@ class ClasificacionOptionAdmin(admin.ModelAdmin):
 @admin.register(AccountClassification)
 class AccountClassificationAdmin(admin.ModelAdmin):
     list_display = ("cuenta", "set_clas", "opcion", "asignado_por", "fecha")
+    list_filter = (
+        "set_clas",  # Filtro por set de clasificación
+        "opcion",    # Filtro por opción de clasificación
+        "cuenta__cliente",  # Filtro por cliente
+        "asignado_por",     # Filtro por quien asignó
+        "fecha",            # Filtro por fecha
+    )
+    search_fields = (
+        "cuenta__codigo", 
+        "cuenta__nombre", 
+        "set_clas__nombre", 
+        "opcion__valor",
+        "cuenta__cliente__nombre"
+    )
+    raw_id_fields = ("cuenta",)  # Para facilitar búsqueda de cuentas
+    readonly_fields = ("fecha",)
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'cuenta', 
+            'cuenta__cliente', 
+            'set_clas', 
+            'opcion', 
+            'asignado_por'
+        )
+    
+    fieldsets = (
+        ("Clasificación Principal", {
+            "fields": ("cuenta", "set_clas", "opcion")
+        }),
+        ("Metadatos", {
+            "fields": ("asignado_por", "fecha"),
+            "classes": ("collapse",)
+        })
+    )
 
 
 @admin.register(Incidencia)

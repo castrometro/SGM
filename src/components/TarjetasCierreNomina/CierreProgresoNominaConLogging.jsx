@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import ArchivosTalanaSection from "./ArchivosTalanaSection";
-import ArchivosAnalistaSection from "./ArchivosAnalistaSection";
-import IncidenciasEncontradasSection from "./IncidenciasEncontradasSection";
+import LibroRemuneracionesCardConLogging from "./LibroRemuneracionesCardConLogging";
+import MovimientosMesCard from "./MovimientosMesCard";
 import ModalClasificacionHeaders from "../ModalClasificacionHeaders";
 import {
   obtenerEstadoLibroRemuneraciones,
@@ -11,9 +10,22 @@ import {
   subirMovimientosMes,
   guardarConceptosRemuneracion,
   eliminarConceptoRemuneracion,
+  obtenerEstadoArchivoAnalista,
+  obtenerEstadoArchivoNovedades,
 } from "../../api/nomina";
 
-const CierreProgresoNomina = ({ cierre, cliente }) => {
+const CierreProgresoNominaConLogging = ({ 
+  cierre, 
+  cliente,
+  libroRemuneracionesReady,
+  setLibroRemuneracionesReady,
+  movimientosMesReady,
+  setMovimientosMesReady,
+  archivoAnalistaReady,
+  setArchivoAnalistaReady,
+  archivoNovedadesReady,
+  setArchivoNovedadesReady,
+}) => {
   const [libro, setLibro] = useState(null);
   const [libroId, setLibroId] = useState(null);
   const [subiendo, setSubiendo] = useState(false);
@@ -23,6 +35,10 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
   const [libroListo, setLibroListo] = useState(false);
   const [mensajeLibro, setMensajeLibro] = useState("");
   const [modoSoloLectura, setModoSoloLectura] = useState(false);
+
+  // Estados para los otros archivos
+  const [archivoAnalista, setArchivoAnalista] = useState(null);
+  const [archivoNovedades, setArchivoNovedades] = useState(null);
 
   const handleGuardarClasificaciones = async ({ guardar, eliminar }) => {
     try {
@@ -62,17 +78,61 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
     );
   }
 
+  // Fetch por etapas, basado en el estado de cada paso
   useEffect(() => {
-    if (cierre?.id) {
-      obtenerEstadoLibroRemuneraciones(cierre.id).then((data) => {
-        setLibro(data);
-        if (data?.id) {
-          setLibroId(data.id);
+    const fetchEstados = async () => {
+      if (!cierre?.id) return;
+
+      try {
+        // 1. Libro de Remuneraciones
+        const estadoLibro = await obtenerEstadoLibroRemuneraciones(cierre.id);
+        setLibro(estadoLibro);
+        if (estadoLibro?.id) {
+          setLibroId(estadoLibro.id);
         }
-      });
-      obtenerEstadoMovimientosMes(cierre.id).then(setMovimientos);
-    }
-  }, [cierre]);
+        const libroOk = estadoLibro?.estado === "procesado";
+        setLibroRemuneracionesReady(libroOk);
+
+        // 2. Movimientos del Mes (solo si libro está listo)
+        if (libroOk) {
+          const estadoMov = await obtenerEstadoMovimientosMes(cierre.id);
+          setMovimientos(estadoMov);
+          const movOk = estadoMov?.estado === "procesado";
+          setMovimientosMesReady(movOk);
+
+          // 3. Archivo Analista (solo si movimientos están listos)
+          if (movOk) {
+            const estadoAnalista = await obtenerEstadoArchivoAnalista(cierre.id);
+            setArchivoAnalista(estadoAnalista);
+            const analistaOk = estadoAnalista?.estado === "procesado";
+            setArchivoAnalistaReady(analistaOk);
+
+            // 4. Archivo Novedades (solo si analista está listo)
+            if (analistaOk) {
+              const estadoNovedades = await obtenerEstadoArchivoNovedades(cierre.id);
+              setArchivoNovedades(estadoNovedades);
+              const novedadesOk = estadoNovedades?.estado === "procesado";
+              setArchivoNovedadesReady(novedadesOk);
+            } else {
+              setArchivoNovedadesReady(false);
+            }
+          } else {
+            setArchivoAnalistaReady(false);
+            setArchivoNovedadesReady(false);
+          }
+        } else {
+          setMovimientosMesReady(false);
+          setArchivoAnalistaReady(false);
+          setArchivoNovedadesReady(false);
+        }
+
+      } catch (error) {
+        console.error("Error fetching estados:", error);
+      }
+    };
+
+    fetchEstados();
+  }, [cierre, cliente, setLibroRemuneracionesReady, setMovimientosMesReady, setArchivoAnalistaReady, setArchivoNovedadesReady]);
 
   // Detecta cuando no quedan headers por clasificar
   useEffect(() => {
@@ -95,6 +155,12 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
       if (res?.id) {
         setLibroId(res.id);
       }
+      
+      // Si hay upload_log_id en la respuesta, devolverlo para el monitoreo
+      if (res?.upload_log_id) {
+        return { upload_log_id: res.upload_log_id };
+      }
+      
       setTimeout(() => {
         obtenerEstadoLibroRemuneraciones(cierre.id).then((data) => {
           setLibro(data);
@@ -103,6 +169,8 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
           }
         });
       }, 1200);
+      
+      return res;
     } finally {
       setSubiendo(false);
     }
@@ -141,7 +209,7 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
         ...prev,
         estado: "procesando"
       }));
-      setLibroListo(false); // asegura que la tarjeta muestre el estado de procesamiento
+      setLibroListo(false);
       
       await procesarLibroRemuneraciones(id);
       console.log('✅ Procesamiento iniciado - el polling monitoreará el progreso');
@@ -162,12 +230,9 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
       console.log('📡 Consultando estado actual de movimientos...');
       const estadoActual = await obtenerEstadoMovimientosMes(cierre.id);
       console.log('📊 Estado movimientos recibido del servidor:', estadoActual);
-      console.log('📊 Estado movimientos anterior:', movimientos?.estado);
-      console.log('📊 Estado movimientos nuevo:', estadoActual?.estado);
       
       setMovimientos(estadoActual);
       
-      // Log adicional para verificar el cambio
       if (estadoActual?.estado !== movimientos?.estado) {
         console.log(`🔄 Estado movimientos cambió de "${movimientos?.estado}" a "${estadoActual?.estado}"`);
       }
@@ -182,12 +247,9 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
       console.log('📡 Consultando estado actual del libro...');
       const estadoActual = await obtenerEstadoLibroRemuneraciones(cierre.id);
       console.log('📊 Estado recibido del servidor:', estadoActual);
-      console.log('📊 Estado anterior:', libro?.estado);
-      console.log('📊 Estado nuevo:', estadoActual?.estado);
       
       setLibro(estadoActual);
       
-      // Log adicional para verificar el cambio
       if (estadoActual?.estado !== libro?.estado) {
         console.log(`🔄 Estado cambió de "${libro?.estado}" a "${estadoActual?.estado}"`);
       }
@@ -198,64 +260,86 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
   };
 
   const handleVerClasificacion = (soloLectura = false) => {
-    // Si el libro ya está procesado, forzar modo solo lectura
-    const esSoloLectura = soloLectura || libro?.estado === "procesado";
-    
+    setModoSoloLectura(soloLectura);
     setModalAbierto(true);
-    setModoSoloLectura(esSoloLectura);
   };
 
-  const headersSinClasificar = Array.isArray(libro?.header_json?.headers_sin_clasificar)
-    ? libro.header_json.headers_sin_clasificar
-    : [];
-
-  const estadoMovimientos = movimientos?.estado || "pendiente";
-
-  // Agregar esta función temporal para debug
-  const debugEstado = async () => {
-    try {
-      console.log('🔍 DEBUG: Consultando estado directamente...');
-      const estado = await obtenerEstadoLibroRemuneraciones(cierre.id);
-      console.log('🔍 DEBUG: Respuesta completa:', estado);
-    } catch (error) {
-      console.error('🔍 DEBUG: Error:', error);
-    }
+  const handleLibroCompletado = (ready) => {
+    setLibroRemuneracionesReady(ready);
   };
+
+  const handleMovimientosCompletado = (ready) => {
+    setMovimientosMesReady(ready);
+  };
+
+  const handleAnalistaCompletado = (ready) => {
+    setArchivoAnalistaReady(ready);
+  };
+
+  const handleNovedadesCompletado = (ready) => {
+    setArchivoNovedadesReady(ready);
+  };
+
+  let paso = 1;
 
   return (
-    <div className="space-y-10">
-      {/* Sección 1: Archivos Talana */}
-      <ArchivosTalanaSection
-        libro={libro}
-        subiendo={subiendo}
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Paso 1: Libro de Remuneraciones */}
+      <LibroRemuneracionesCardConLogging
+        estado={libro?.estado || "no_subido"}
+        archivoNombre={libro?.archivo ? libro.archivo.split("/").pop() : ""}
         onSubirArchivo={handleSubirArchivo}
-        onVerClasificacion={handleVerClasificacion}
-        onProcesarLibro={handleProcesarLibro}
+        onVerClasificacion={() => handleVerClasificacion()}
+        onProcesar={handleProcesarLibro}
         onActualizarEstado={handleActualizarEstado}
-        headersSinClasificar={headersSinClasificar}
-        mensajeLibro={mensajeLibro}
-        libroListo={libroListo}
-        movimientos={movimientos}
-        subiendoMov={subiendoMov}
-        onSubirMovimientos={handleSubirMovimientos}
-        onActualizarEstadoMovimientos={handleActualizarEstadoMovimientos}
-      />
-      
-      {/* Sección 2: Archivos del Analista */}
-      <ArchivosAnalistaSection
-        cierreId={cierre.id}
-        cliente={cliente}
+        headersSinClasificar={libro?.header_json?.headers_sin_clasificar || []}
+        headerClasificados={libro?.header_json?.headers_clasificados || []}
+        subiendo={subiendo}
         disabled={false}
+        mensaje={mensajeLibro}
+        onEliminarArchivo={() => {
+          // Implementar eliminación si es necesario
+          console.log("Eliminar archivo libro");
+        }}
+        libroId={libroId}
+        onCompletado={handleLibroCompletado}
+        numeroPaso={paso++}
       />
 
-      {/* Sección 3: Incidencias Encontradas */}
-      <IncidenciasEncontradasSection cierre={cierre} />
+      {/* Paso 2: Movimientos del Mes */}
+      <MovimientosMesCard
+        estado={movimientos?.estado || "no_subido"}
+        archivoNombre={movimientos?.archivo ? movimientos.archivo.split("/").pop() : ""}
+        onSubirArchivo={handleSubirMovimientos}
+        onActualizarEstado={handleActualizarEstadoMovimientos}
+        subiendo={subiendoMov}
+        disabled={!libroRemuneracionesReady}
+        onCompletado={handleMovimientosCompletado}
+        numeroPaso={paso++}
+      />
 
+      {/* Paso 3: Archivo Analista - Implementar cuando esté listo */}
+      {/* <ArchivoAnalistaCard
+        estado={archivoAnalista?.estado || "no_subido"}
+        disabled={!movimientosMesReady}
+        onCompletado={handleAnalistaCompletado}
+        numeroPaso={paso++}
+      /> */}
+
+      {/* Paso 4: Archivo Novedades - Implementar cuando esté listo */}
+      {/* <ArchivoNovedadesCard
+        estado={archivoNovedades?.estado || "no_subido"}
+        disabled={!archivoAnalistaReady}
+        onCompletado={handleNovedadesCompletado}
+        numeroPaso={paso++}
+      /> */}
+
+      {/* Modal de Clasificación */}
       <ModalClasificacionHeaders
         isOpen={modalAbierto}
         onClose={() => setModalAbierto(false)}
         clienteId={cliente.id}
-        headersSinClasificar={headersSinClasificar}
+        headersSinClasificar={libro?.header_json?.headers_sin_clasificar || []}
         onGuardarClasificaciones={handleGuardarClasificaciones}
         soloLectura={modoSoloLectura}
       />
@@ -263,4 +347,4 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
   );
 };
 
-export default CierreProgresoNomina;
+export default CierreProgresoNominaConLogging;

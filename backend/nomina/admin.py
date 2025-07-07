@@ -488,7 +488,7 @@ class ResolucionIncidenciaAdmin(admin.ModelAdmin):
         'campo_corregido',
         'incidencia__rut_empleado',
         'incidencia__descripcion',
-        'usuario__username',
+        'usuario__correo_bdo',
         'usuario__first_name',
         'usuario__last_name'
     )
@@ -559,7 +559,7 @@ def asignar_incidencias_a_mi(modeladmin, request, queryset):
     count = queryset.update(asignado_a=request.user)
     modeladmin.message_user(
         request,
-        f'{count} incidencia(s) asignada(s) a {request.user.get_full_name() or request.user.username}'
+        f'{count} incidencia(s) asignada(s) a {request.user.get_full_name() or request.user.correo_bdo}'
     )
 
 @admin.action(description='Marcar como pendientes')

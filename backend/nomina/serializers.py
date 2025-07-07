@@ -120,7 +120,7 @@ class ArchivoAnalistaUploadSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class ArchivoNovedadesUploadSerializer(serializers.ModelSerializer):
-    analista_nombre = serializers.CharField(source='analista.username', read_only=True)
+    analista_nombre = serializers.CharField(source='analista.correo_bdo', read_only=True)
     
     class Meta:
         model = ArchivoNovedadesUpload
@@ -180,7 +180,7 @@ class EmpleadoCierreNovedadesSerializer(serializers.ModelSerializer):
 
 
 class ConceptoRemuneracionNovedadesSerializer(serializers.ModelSerializer):
-    usuario_mapea_nombre = serializers.CharField(source='usuario_mapea.username', read_only=True)
+    usuario_mapea_nombre = serializers.CharField(source='usuario_mapea.correo_bdo', read_only=True)
     concepto_libro_nombre = serializers.CharField(source='concepto_libro.nombre_concepto', read_only=True)
     clasificacion = serializers.CharField(read_only=True)  # Viene del concepto del libro
     hashtags = serializers.JSONField(read_only=True)  # Viene del concepto del libro
@@ -219,7 +219,7 @@ class RegistroConceptoEmpleadoNovedadesSerializer(serializers.ModelSerializer):
 
 class ResolucionIncidenciaSerializer(serializers.ModelSerializer):
     usuario_nombre = serializers.CharField(source='usuario.get_full_name', read_only=True)
-    usuario_username = serializers.CharField(source='usuario.username', read_only=True)
+    usuario_correo = serializers.CharField(source='usuario.correo_bdo', read_only=True)
     usuarios_mencionados_nombres = serializers.SerializerMethodField()
     
     class Meta:
@@ -228,13 +228,13 @@ class ResolucionIncidenciaSerializer(serializers.ModelSerializer):
             'id', 'tipo_resolucion', 'comentario', 'adjunto',
             'fecha_resolucion', 'estado_anterior', 'estado_nuevo',
             'valor_corregido', 'campo_corregido', 'usuario',
-            'usuario_nombre', 'usuario_username', 'usuarios_mencionados',
+            'usuario_nombre', 'usuario_correo', 'usuarios_mencionados',
             'usuarios_mencionados_nombres'
         ]
         read_only_fields = ['usuario', 'fecha_resolucion', 'estado_anterior', 'estado_nuevo']
     
     def get_usuarios_mencionados_nombres(self, obj):
-        return [user.get_full_name() or user.username for user in obj.usuarios_mencionados.all()]
+        return [user.get_full_name() or user.correo_bdo for user in obj.usuarios_mencionados.all()]
 
 class IncidenciaCierreSerializer(serializers.ModelSerializer):
     empleado_libro_nombre = serializers.SerializerMethodField()

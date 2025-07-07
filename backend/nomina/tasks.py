@@ -50,59 +50,145 @@ def analizar_headers_libro_remuneraciones(libro_id):
 
 @shared_task
 def clasificar_headers_libro_remuneraciones_task(result):
+    """
+    Tarea de clasificación de headers mejorada con logging
+    Mantiene compatibilidad con el resultado de la tarea anterior
+    """
+    from .utils.mixins import UploadLogNominaMixin
+    from .models_logging import registrar_actividad_tarjeta_nomina
+    
+    # Extraer datos del resultado
     libro_id = result["libro_id"]
+    upload_log_id = result.get("upload_log_id", None)
+    
     try:
         libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
         cierre = libro.cierre
         cliente = cierre.cliente
+        
+        # Inicializar mixin solo si tenemos upload_log_id
+        mixin = UploadLogNominaMixin() if upload_log_id else None
 
-        # Marcamos estado "en proceso de clasificación"
+        # 1. Marcamos estado "en proceso de clasificación"
         libro.estado = "clasif_en_proceso"
         libro.save()
+        
+        if mixin and upload_log_id:
+            mixin.actualizar_upload_log(upload_log_id, estado='clasif_en_proceso')
 
+        # 2. Registrar inicio de clasificación
+        if upload_log_id:
+            from .models_logging import UploadLogNomina
+            upload_log = UploadLogNomina.objects.get(id=upload_log_id)
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=cierre.id,
+                tarjeta="libro_remuneraciones",
+                accion="classification_start",
+                descripcion="Inicio de clasificación de conceptos",
+                upload_log=upload_log
+            )
+
+        # 3. Obtener headers
         headers = (
             libro.header_json
             if isinstance(libro.header_json, list)
             else result["headers"]
         )
 
+        # 4. Ejecutar clasificación
         headers_clasificados, headers_sin_clasificar = (
             clasificar_headers_libro_remuneraciones(headers, cliente)
         )
 
-        # Escribe el resultado final en el campo JSON
+        # 5. Guardar resultados
         libro.header_json = {
             "headers_clasificados": headers_clasificados,
             "headers_sin_clasificar": headers_sin_clasificar,
         }
 
-        # Cambia el estado según si quedan pendientes o no
+        # 6. Determinar estado final
         if headers_sin_clasificar:
             libro.estado = "clasif_pendiente"
+            estado_desc = f"Clasificación parcial: {len(headers_clasificados)} clasificados, {len(headers_sin_clasificar)} pendientes"
         else:
             libro.estado = "clasificado"
+            estado_desc = f"Clasificación completa: {len(headers_clasificados)} conceptos clasificados"
 
         libro.save()
+        
+        # 7. Actualizar upload log con estadísticas
+        if mixin and upload_log_id:
+            mixin.actualizar_upload_log(
+                upload_log_id, 
+                estado=libro.estado,
+                resumen={
+                    **libro.upload_log.resumen,
+                    "headers_clasificados": len(headers_clasificados),
+                    "headers_sin_clasificar": len(headers_sin_clasificar),
+                    "fase": "clasificacion_completada"
+                }
+            )
+
+        # 8. Registrar resultado
+        if upload_log_id:
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=cierre.id,
+                tarjeta="libro_remuneraciones",
+                accion="classification_complete",
+                descripcion=estado_desc,
+                resultado="exito",
+                detalles={
+                    "headers_clasificados": len(headers_clasificados),
+                    "headers_sin_clasificar": len(headers_sin_clasificar),
+                    "clasificacion_completa": len(headers_sin_clasificar) == 0
+                },
+                upload_log=upload_log
+            )
+
         logger.info(
             f"Libro {libro_id}: {len(headers_clasificados)} headers clasificados, "
             f"{len(headers_sin_clasificar)} sin clasificar"
         )
+        
         return {
             "libro_id": libro_id,
+            "upload_log_id": upload_log_id,
             "headers_clasificados": len(headers_clasificados),
             "headers_sin_clasificar": len(headers_sin_clasificar),
         }
+        
     except Exception as e:
-        logger.error(f"Error clasificando headers para libro id={libro_id}: {e}")
-        # Intenta dejar el libro en estado error, pero no interrumpe la excepción.
+        error_msg = f"Error clasificando headers para libro id={libro_id}: {e}"
+        logger.error(error_msg)
+        
+        # Actualizar estados de error
         try:
             libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
             libro.estado = "con_error"
             libro.save()
         except Exception as ex:
-            logger.error(
-                f"Error guardando estado 'con_error' para libro id={libro_id}: {ex}"
-            )
+            logger.error(f"Error guardando estado 'con_error' para libro id={libro_id}: {ex}")
+        
+        # Actualizar upload log si existe
+        if mixin and upload_log_id:
+            mixin.marcar_como_error(upload_log_id, error_msg)
+        
+        # Registrar error en actividades si tenemos upload_log_id
+        if upload_log_id:
+            try:
+                registrar_actividad_tarjeta_nomina(
+                    cierre_id=libro.cierre.id,
+                    tarjeta="libro_remuneraciones",
+                    accion="classification_complete",
+                    descripcion=f"Error en clasificación: {str(e)}",
+                    resultado="error",
+                    detalles={"error": str(e)},
+                    upload_log=upload_log if upload_log_id else None
+                )
+            except Exception:
+                pass  # No fallar si no se puede registrar la actividad
+        
+        raise
         raise
 
 
@@ -436,3 +522,161 @@ def _verificar_archivos_listos_para_incidencias(cierre):
         return False
     
     return True
+
+
+# ===== NUEVAS TAREAS CON SISTEMA DE LOGGING INTEGRADO =====
+
+@shared_task
+def analizar_headers_libro_remuneraciones_con_logging(libro_id, upload_log_id):
+    """
+    Analiza headers del libro de remuneraciones con logging integrado
+    """
+    from .models_logging import UploadLogNomina
+    logger.info(f"Procesando libro de remuneraciones id={libro_id} con upload_log={upload_log_id}")
+    
+    try:
+        # Obtener upload_log y actualizar estado
+        upload_log = UploadLogNomina.objects.get(id=upload_log_id)
+        upload_log.estado = "analizando_hdrs"
+        upload_log.save()
+        
+        # Obtener libro
+        libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
+        libro.estado = "analizando_hdrs"
+        libro.save()
+        
+        # Procesar headers
+        headers = obtener_headers_libro_remuneraciones(libro.archivo.path)
+        libro.header_json = headers
+        libro.estado = "hdrs_analizados"
+        libro.save()
+        
+        # Actualizar upload_log
+        upload_log.estado = "hdrs_analizados"
+        upload_log.headers_detectados = headers
+        upload_log.save()
+        
+        logger.info(f"Headers analizados exitosamente para libro {libro_id}")
+        return {
+            "libro_id": libro_id, 
+            "upload_log_id": upload_log_id,
+            "headers": headers
+        }
+        
+    except Exception as e:
+        logger.error(f"Error analizando headers libro {libro_id}: {e}")
+        
+        # Marcar errores en ambos modelos
+        try:
+            libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
+            libro.estado = "con_error"
+            libro.save()
+        except:
+            pass
+            
+        try:
+            upload_log = UploadLogNomina.objects.get(id=upload_log_id)
+            upload_log.marcar_como_error(f"Error analizando headers: {str(e)}")
+        except:
+            pass
+            
+        raise
+
+
+@shared_task  
+def clasificar_headers_libro_remuneraciones_con_logging(result):
+    """
+    Clasifica headers del libro de remuneraciones con logging integrado
+    """
+    from .models_logging import UploadLogNomina
+    
+    libro_id = result["libro_id"]
+    upload_log_id = result["upload_log_id"]
+    
+    logger.info(f"Clasificando headers para libro {libro_id} con upload_log {upload_log_id}")
+    
+    try:
+        # Obtener modelos
+        libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
+        upload_log = UploadLogNomina.objects.get(id=upload_log_id)
+        cierre = libro.cierre
+        cliente = cierre.cliente
+        
+        # Actualizar estados
+        libro.estado = "clasif_en_proceso"
+        libro.save()
+        upload_log.estado = "clasif_en_proceso"
+        upload_log.save()
+        
+        # Obtener headers
+        headers = (
+            libro.header_json
+            if isinstance(libro.header_json, list)
+            else result["headers"]
+        )
+        
+        # Clasificar headers
+        headers_clasificados, headers_sin_clasificar = (
+            clasificar_headers_libro_remuneraciones(headers, cliente)
+        )
+        
+        # Actualizar libro
+        libro.header_json = {
+            "headers_clasificados": headers_clasificados,
+            "headers_sin_clasificar": headers_sin_clasificar,
+        }
+        
+        # Determinar estado final
+        if headers_sin_clasificar:
+            libro.estado = "clasif_pendiente"
+            upload_log.estado = "clasif_pendiente"
+        else:
+            libro.estado = "clasificado"
+            upload_log.estado = "clasificado"
+        
+        libro.save()
+        
+        # Actualizar upload_log con resumen
+        resumen_final = {
+            "libro_id": libro_id,
+            "headers_total": len(headers),
+            "headers_clasificados": len(headers_clasificados),
+            "headers_sin_clasificar": len(headers_sin_clasificar),
+            "clasificados": headers_clasificados,
+            "sin_clasificar": headers_sin_clasificar
+        }
+        
+        upload_log.resumen = resumen_final
+        upload_log.save()
+        
+        logger.info(
+            f"Libro {libro_id}: {len(headers_clasificados)} headers clasificados, "
+            f"{len(headers_sin_clasificar)} sin clasificar"
+        )
+        
+        return {
+            "libro_id": libro_id,
+            "upload_log_id": upload_log_id,
+            "headers_clasificados": len(headers_clasificados),
+            "headers_sin_clasificar": len(headers_sin_clasificar),
+            "estado_final": libro.estado
+        }
+        
+    except Exception as e:
+        logger.error(f"Error clasificando headers para libro {libro_id}: {e}")
+        
+        # Marcar errores en ambos modelos
+        try:
+            libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
+            libro.estado = "con_error"
+            libro.save()
+        except:
+            pass
+            
+        try:
+            upload_log = UploadLogNomina.objects.get(id=upload_log_id)
+            upload_log.marcar_como_error(f"Error clasificando headers: {str(e)}")
+        except:
+            pass
+            
+        raise

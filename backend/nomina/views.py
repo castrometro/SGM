@@ -1,4 +1,4 @@
-from rest_framework import viewsets, mixins, status
+from rest_framework import viewsets, mixins, status, serializers
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from api.models import Cliente, AsignacionClienteUsuario
 from .permissions import SupervisorPuedeVerCierresNominaAnalistas
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 import logging
 
 from .utils.LibroRemuneraciones import clasificar_headers_libro_remuneraciones
@@ -70,7 +71,9 @@ from .serializers import (
 
 from .tasks import (
     analizar_headers_libro_remuneraciones,
+    analizar_headers_libro_remuneraciones_con_logging,
     clasificar_headers_libro_remuneraciones_task,
+    clasificar_headers_libro_remuneraciones_con_logging,
     actualizar_empleados_desde_libro,
     guardar_registros_nomina,
     procesar_movimientos_mes,
@@ -187,17 +190,393 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
     serializer_class = LibroRemuneracionesUploadSerializer
     
     def perform_create(self, serializer):
+        """
+        Crear libro de remuneraciones con logging completo integrado
+        """
+        from .utils.mixins import UploadLogNominaMixin, ValidacionArchivoCRUDMixin
+        from .utils.clientes import get_client_ip
+        from .utils.uploads import guardar_temporal
+        from .models_logging import registrar_actividad_tarjeta_nomina
+        from django.db import transaction
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        # 1. OBTENER DATOS DEL REQUEST
+        request = self.request
+        archivo = request.FILES.get('archivo')
+        cierre_id = request.data.get('cierre')
+        
+        if not archivo or not cierre_id:
+            raise ValueError("Archivo y cierre_id son requeridos")
+        
+        # 2. OBTENER CIERRE Y CLIENTE
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            cliente = cierre.cliente
+        except CierreNomina.DoesNotExist:
+            raise ValueError("Cierre no encontrado")
+        
+        # 3. VALIDAR ARCHIVO
+        try:
+            validator = ValidacionArchivoCRUDMixin()
+            validator.validar_archivo(archivo)
+        except ValueError as e:
+            logger.error(f"Error validando archivo: {e}")
+            raise
+        
+        # 4. CREAR UPLOAD LOG
+        log_mixin = UploadLogNominaMixin()
+        log_mixin.tipo_upload = "libro_remuneraciones"
+        log_mixin.usuario = request.user
+        log_mixin.ip_usuario = get_client_ip(request)
+        
+        upload_log = log_mixin.crear_upload_log(cliente, archivo)
+        logger.info(f"Upload log creado con ID: {upload_log.id}")
+        
+        # 5. GUARDAR ARCHIVO TEMPORAL
+        nombre_temporal = f"libro_remuneraciones_cierre_{cierre_id}_{upload_log.id}.xlsx"
+        ruta = guardar_temporal(nombre_temporal, archivo)
+        upload_log.ruta_archivo = ruta
+        upload_log.save()
+        
+        # 6. CREAR/ACTUALIZAR REGISTRO DE LIBRO
+        libro_existente = LibroRemuneracionesUpload.objects.filter(cierre=cierre).first()
+        
+        if libro_existente:
+            # Actualizar existente
+            libro_existente.archivo = archivo
+            libro_existente.estado = 'pendiente'
+            libro_existente.header_json = []
+            libro_existente.upload_log = upload_log
+            libro_existente.save()
+            instance = libro_existente
+            logger.info(f"Libro actualizado con ID: {instance.id}")
+        else:
+            # Crear nuevo
+            instance = serializer.save(upload_log=upload_log)
+            logger.info(f"Libro creado con ID: {instance.id}")
+        
+        # 7. REGISTRAR ACTIVIDAD
+        registrar_actividad_tarjeta_nomina(
+            cierre_id=cierre.id,
+            tarjeta="libro_remuneraciones",
+            accion="upload_excel",
+            descripcion=f"Archivo {archivo.name} subido para procesamiento",
+            usuario=request.user,
+            detalles={
+                "nombre_archivo": archivo.name,
+                "tamaño_archivo": archivo.size,
+                "upload_log_id": upload_log.id
+            },
+            ip_address=get_client_ip(request),
+            upload_log=upload_log
+        )
+        
+        # 8. GUARDAR LIBRO_ID EN RESUMEN DEL UPLOAD_LOG
+        upload_log.resumen = {"libro_id": instance.id}
+        upload_log.save(update_fields=['resumen'])
+        
+        # 9. INICIAR PROCESAMIENTO CON CELERY
+        with transaction.atomic():
+            try:
+                chain(
+                    analizar_headers_libro_remuneraciones_con_logging.s(instance.id, upload_log.id),
+                    clasificar_headers_libro_remuneraciones_con_logging.s(),
+                ).apply_async()
+                logger.info(f"Chain de Celery iniciado para libro {instance.id} y upload_log {upload_log.id}")
+            except Exception as e:
+                logger.error(f"Error iniciando procesamiento: {e}")
+                upload_log.marcar_como_error(f"Error iniciando procesamiento: {str(e)}")
+                raise
+        validator = ValidacionArchivoCRUDMixin()
+        validator.validar_archivo(archivo)
+        
+        # 4. CREAR UPLOAD LOG
+        mixin = UploadLogNominaMixin()
+        mixin.tipo_upload = "libro_remuneraciones"
+        mixin.usuario = request.user
+        mixin.ip_usuario = get_client_ip(request)
+        
+        upload_log = mixin.crear_upload_log(cliente, archivo)
+        logger.info(f"Upload log creado con ID: {upload_log.id}")
+        
+        # 5. GUARDAR ARCHIVO TEMPORAL
+        nombre_temporal = f"libro_remuneraciones_cierre_{cierre_id}_{upload_log.id}.xlsx"
+        ruta = guardar_temporal(nombre_temporal, archivo)
+        upload_log.ruta_archivo = ruta
+        upload_log.cierre = cierre
+        upload_log.save()
+        
+        # 6. CREAR REGISTRO DEL LIBRO
+        with transaction.atomic():
+            # Marcar como no principal cualquier iteración anterior
+            LibroRemuneracionesUpload.objects.filter(
+                cierre=cierre
+            ).update(estado='con_error')  # Marcar anteriores como error
+            
+            # Crear nueva instancia
+            serializer.save(
+                cierre=cierre,
+                upload_log=upload_log,
+                estado='pendiente'
+            )
+            instance = serializer.instance
+            
+            # Registrar actividad
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=cierre.id,
+                tarjeta="libro_remuneraciones",
+                accion="upload_excel",
+                descripcion=f"Archivo {archivo.name} subido para procesamiento",
+                usuario=request.user,
+                detalles={
+                    "nombre_archivo": archivo.name,
+                    "tamaño_archivo": archivo.size,
+                    "upload_log_id": upload_log.id,
+                    "libro_id": instance.id
+                },
+                ip_address=get_client_ip(request),
+                upload_log=upload_log
+            )
+        
+        # 7. EJECUTAR CHAIN DE CELERY CON LOGGING
+        try:
+            chain(
+                analizar_headers_libro_remuneraciones_con_logging.s(
+                    instance.id, upload_log.id
+                ),
+            ).apply_async()
+            
+            logger.info(f"Chain iniciado para libro {instance.id} con upload_log {upload_log.id}")
+            
+        except Exception as e:
+            logger.error(f"Error iniciando chain: {e}")
+            upload_log.marcar_como_error(f"Error iniciando procesamiento: {str(e)}")
+            raise
+        try:
+            validator.validar_archivo(archivo)
+        except ValueError as e:
+            raise ValueError(f"Error de validación: {e}")
+        
+        # 4. CREAR UPLOAD_LOG
+        mixin = UploadLogNominaMixin()
+        mixin.tipo_upload = "libro_remuneraciones"
+        mixin.usuario = request.user
+        mixin.ip_usuario = get_client_ip(request)
+        
+        upload_log = mixin.crear_upload_log(cliente, archivo)
+        logger.info(f"Upload log creado con ID: {upload_log.id}")
+        
+        # 5. GUARDAR ARCHIVO TEMPORAL
+        nombre_temporal = f"libro_remuneraciones_cierre_{cierre_id}_{upload_log.id}.xlsx"
+        ruta = guardar_temporal(nombre_temporal, archivo)
+        upload_log.ruta_archivo = ruta
+        upload_log.save()
+        
+        # 6. CREAR/ACTUALIZAR LIBRO REMUNERACIONES
         instance = serializer.save()
-        chain(
-            analizar_headers_libro_remuneraciones.s(instance.id),
-            clasificar_headers_libro_remuneraciones_task.s(),
-        )()
+        instance.upload_log = upload_log
+        instance.save()
+        
+        # 7. REGISTRAR ACTIVIDAD
+        mixin.registrar_actividad(
+            tarjeta_tipo="libro_remuneraciones",
+            tarjeta_id=instance.id,
+            accion="upload_excel",
+            descripcion=f"Archivo {archivo.name} subido para procesamiento",
+            datos_adicionales={
+                "nombre_archivo": archivo.name,
+                "tamaño_archivo": archivo.size,
+                "upload_log_id": upload_log.id
+            }
+        )
+        
+        # 8. INICIAR CHAIN DE CELERY CON LOGGING
+        try:
+            with transaction.atomic():
+                chain(
+                    analizar_headers_libro_remuneraciones_con_logging.s(instance.id, upload_log.id),
+                    clasificar_headers_libro_remuneraciones_con_logging.s(),
+                ).apply_async()
+                
+                logger.info(f"Chain iniciado para libro {instance.id} con upload_log {upload_log.id}")
+                
+        except Exception as e:
+            # Marcar upload como error si falla el chain
+            upload_log.estado = 'error'
+            upload_log.errores = f"Error iniciando procesamiento: {str(e)}"
+            upload_log.save()
+            logger.error(f"Error iniciando chain: {e}")
+            raise
+        validador = ValidacionArchivoCRUDMixin()
+        try:
+            validador.validar_archivo(archivo)
+        except ValueError as e:
+            logger.error(f"Validación de archivo falló: {e}")
+            raise ValueError(f"Archivo no válido: {e}")
+        
+        # 3. CREAR UPLOAD LOG ANTES DE GUARDAR
+        mixin = UploadLogNominaMixin()
+        mixin.tipo_upload = "libro_remuneraciones"
+        mixin.usuario = self.request.user
+        mixin.ip_usuario = get_client_ip(self.request)
+        
+        upload_log = mixin.crear_upload_log(cliente, archivo)
+        logger.info(f"Upload log creado con ID: {upload_log.id}")
+        
+        # 4. GUARDAR ARCHIVO TEMPORAL
+        nombre_temporal = f"libro_remuneraciones_cierre_{cierre_id}_{upload_log.id}.xlsx"
+        ruta = guardar_temporal(nombre_temporal, archivo)
+        upload_log.ruta_archivo = ruta
+        upload_log.save()
+        
+        # 5. CREAR/ACTUALIZAR REGISTRO Y ENLAZAR CON UPLOAD_LOG
+        with transaction.atomic():
+            # Verificar si ya existe un libro para este cierre
+            libro_existente = LibroRemuneracionesUpload.objects.filter(cierre=cierre).first()
+            
+            if libro_existente:
+                # Actualizar archivo existente
+                libro_existente.archivo = serializer.validated_data.get('archivo')
+                libro_existente.fecha_subida = timezone.now()
+                libro_existente.estado = 'pendiente'
+                libro_existente.upload_log = upload_log
+                libro_existente.save()
+                instance = libro_existente
+                logger.info(f"Archivo actualizado para cierre {cierre_id}")
+            else:
+                # Crear nuevo registro
+                instance = serializer.save(upload_log=upload_log)
+                logger.info(f"Nuevo archivo creado para cierre {cierre_id}")
+        
+        # 6. REGISTRAR ACTIVIDAD
+        mixin.registrar_actividad(
+            tarjeta_tipo="libro_remuneraciones",
+            tarjeta_id=instance.id,
+            accion="upload_excel",
+            descripcion=f"Archivo {archivo.name} subido correctamente",
+            datos_adicionales={
+                "nombre_archivo": archivo.name,
+                "tamaño_archivo": archivo.size,
+                "upload_log_id": upload_log.id,
+                "ruta_temporal": ruta
+            }
+        )
+        
+        # 7. GUARDAR INSTANCIA_ID EN EL RESUMEN DEL UPLOAD_LOG
+        upload_log.resumen = {
+            "libro_id": instance.id,
+            "cierre_id": cierre_id,
+            "cliente_id": cliente.id
+        }
+        upload_log.save(update_fields=['resumen'])
+        
+        # 8. INICIAR PROCESAMIENTO CELERY CON LOGGING
+        try:
+            # Usar la nueva tarea que incluye logging
+            chain(
+                analizar_headers_libro_remuneraciones_con_logging.s(instance.id, upload_log.id),
+                clasificar_headers_libro_remuneraciones_con_logging.s()
+            ).apply_async()
+            
+            logger.info(f"Chain de procesamiento iniciado para libro {instance.id} con upload_log {upload_log.id}")
+            
+        except Exception as e:
+            logger.error(f"Error iniciando chain de procesamiento: {e}")
+            # Marcar upload_log como error
+            mixin.marcar_como_error(upload_log.id, f"Error iniciando procesamiento: {str(e)}")
+            raise
+        mixin = UploadLogNominaMixin()
+        mixin.tipo_upload = "libro_remuneraciones"
+        mixin.usuario = self.request.user
+        mixin.ip_usuario = get_client_ip(self.request)
+        
+        upload_log = mixin.crear_upload_log(cliente, archivo)
+        
+        # 4. GUARDAR ARCHIVO TEMPORAL
+        nombre_temporal = f"libro_remuneraciones_cierre_{cierre_id}_{upload_log.id}.xlsx"
+        ruta_temporal = guardar_temporal(nombre_temporal, archivo)
+        upload_log.ruta_archivo = ruta_temporal
+        upload_log.cierre = cierre
+        upload_log.save()
+        
+        logger.info(f"Upload log creado: {upload_log.id} para cierre {cierre_id}")
+        
+        # 5. CREAR INSTANCIA DE LIBRO
+        instance = serializer.save(upload_log=upload_log)
+        
+        # 6. REGISTRAR ACTIVIDAD
+        try:
+            mixin.registrar_actividad(
+                tarjeta_tipo="libro_remuneraciones",
+                tarjeta_id=instance.id,
+                accion="upload_excel",
+                descripcion=f"Archivo {archivo.name} subido para procesamiento",
+                datos_adicionales={
+                    "nombre_archivo": archivo.name,
+                    "tamaño_archivo": archivo.size,
+                    "upload_log_id": upload_log.id,
+                    "cierre_id": cierre_id,
+                }
+            )
+        except Exception as e:
+            logger.warning(f"No se pudo registrar actividad: {e}")
+        
+        # 7. ACTUALIZAR RESUMEN DEL UPLOAD LOG
+        upload_log.resumen = {
+            "libro_id": instance.id,
+            "cierre_id": cierre_id,
+            "cliente_id": cliente.id,
+            "archivo_original": archivo.name
+        }
+        upload_log.save(update_fields=['resumen'])
+        
+        # 8. EJECUTAR CHAIN DE CELERY CON LOGGING
+        try:
+            with transaction.atomic():
+                # Forzar commit antes del chain
+                transaction.on_commit(lambda: self._ejecutar_procesamiento_con_logging(instance.id, upload_log.id))
+                
+        except Exception as e:
+            logger.error(f"Error iniciando procesamiento: {e}")
+            # Marcar upload_log como error
+            mixin.marcar_como_error(upload_log.id, f"Error iniciando procesamiento: {e}")
+            raise
+    
+    def _ejecutar_procesamiento_con_logging(self, libro_id, upload_log_id):
+        """
+        Ejecuta el chain de procesamiento con logging integrado
+        """
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Chain mejorado con logging
+            chain(
+                analizar_headers_libro_remuneraciones_con_logging.s(libro_id, upload_log_id),
+                clasificar_headers_libro_remuneraciones_task.s(),
+            ).apply_async()
+            
+            logger.info(f"Chain iniciado para libro {libro_id} con upload_log {upload_log_id}")
+            
+        except Exception as e:
+            logger.error(f"Error ejecutando chain: {e}")
+            # Marcar como error
+            from .utils.mixins import UploadLogNominaMixin
+            mixin = UploadLogNominaMixin()
+            mixin.marcar_como_error(upload_log_id, f"Error en chain: {e}")
 
     @action(detail=False, methods=['get'], url_path='estado/(?P<cierre_id>[^/.]+)')
     def estado(self, request, cierre_id=None):
+        """
+        Obtiene el estado del libro con información de logging
+        """
         libro = self.get_queryset().filter(cierre_id=cierre_id).order_by('-fecha_subida').first()
         if libro:
-            return Response({
+            # Información básica del libro
+            response_data = {
                 "id": libro.id,
                 "estado": libro.estado,
                 "archivo_nombre": libro.archivo.name.split("/")[-1],
@@ -206,7 +585,24 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
                 "fecha_subida": libro.fecha_subida,
                 "cliente_id": libro.cierre.cliente.id,
                 "cliente_nombre": libro.cierre.cliente.nombre,
-            })
+            }
+            
+            # Agregar información de logging si existe
+            if libro.upload_log:
+                response_data.update({
+                    "upload_log": {
+                        "id": libro.upload_log.id,
+                        "estado_upload": libro.upload_log.estado,
+                        "registros_procesados": libro.upload_log.registros_procesados,
+                        "registros_exitosos": libro.upload_log.registros_exitosos,
+                        "registros_fallidos": libro.upload_log.registros_fallidos,
+                        "errores": libro.upload_log.errores,
+                        "usuario": libro.upload_log.usuario.correo_bdo if libro.upload_log.usuario else None,
+                        "iteracion": libro.upload_log.iteracion,
+                    }
+                })
+            
+            return Response(response_data)
         else:
             return Response({
                 "id": None,
@@ -217,7 +613,40 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
                 "fecha_subida": None,
                 "cliente_id": None,
                 "cliente_nombre": "",
+                "upload_log": None,
             })
+    
+    @action(detail=True, methods=['get'], url_path='log-actividades')
+    def log_actividades(self, request, pk=None):
+        """
+        Obtiene el log de actividades para este libro específico
+        """
+        libro = self.get_object()
+        
+        from .models_logging import TarjetaActivityLogNomina
+        
+        actividades = TarjetaActivityLogNomina.objects.filter(
+            cierre=libro.cierre,
+            tarjeta="libro_remuneraciones"
+        ).order_by('-timestamp')[:20]  # Últimas 20 actividades
+        
+        data = []
+        for actividad in actividades:
+            data.append({
+                "id": actividad.id,
+                "accion": actividad.accion,
+                "descripcion": actividad.descripcion,
+                "usuario": actividad.usuario.correo_bdo if actividad.usuario else None,
+                "timestamp": actividad.timestamp,
+                "resultado": actividad.resultado,
+                "detalles": actividad.detalles,
+            })
+        
+        return Response({
+            "libro_id": libro.id,
+            "actividades": data,
+            "total": len(data)
+        })
 
     @action(detail=True, methods=['post'])
     def procesar(self, request, pk=None):
@@ -805,7 +1234,6 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
     def procesar_final(self, request, pk=None):
         """Procesa finalmente un archivo de novedades (actualiza empleados y guarda registros)"""
         from nomina.tasks import actualizar_empleados_desde_novedades_task, guardar_registros_novedades_task
-        from celery import chain
         
         archivo = self.get_object()
         

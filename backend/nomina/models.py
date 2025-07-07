@@ -3,12 +3,21 @@ from api.models import Cliente
 from django.contrib.auth import get_user_model
 from datetime import datetime
 
+# Importar modelos de logging
+from .models_logging import UploadLogNomina, TarjetaActivityLogNomina
+
 User = get_user_model()
 
+# Actualizar las clasificaciones según la migración 0012
 CLASIFICACION_CHOICES = [
-    ('haber', 'Haber'),
-    ('descuento', 'Descuento'),
-    ('informacion', 'Información'),
+    ('haberes_imponibles', 'Haberes Imponibles'),
+    ('haberes_no_imponibles', 'Haberes No Imponibles'),
+    ('horas_extras', 'Horas Extras'),
+    ('descuentos_legales', 'Descuentos Legales'),
+    ('otros_descuentos', 'Otros Descuentos'),
+    ('aportes_patronales', 'Aportes Patronales'),
+    ('informacion_adicional', 'Información Adicional (No Monto)'),
+    ('impuestos', 'Impuestos'),
 ]
 
 def libro_remuneraciones_upload_to(instance, filename):
@@ -90,7 +99,7 @@ class EmpleadoCierre(models.Model):
 class ConceptoRemuneracion(models.Model):
     cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
     nombre_concepto = models.CharField(max_length=120)
-    clasificacion = models.CharField(max_length=20, choices=CLASIFICACION_CHOICES)
+    clasificacion = models.CharField(max_length=30, choices=CLASIFICACION_CHOICES)
     hashtags = models.JSONField(default=list, blank=True)
     usuario_clasifica = models.ForeignKey(
         User,
@@ -178,7 +187,6 @@ class MovimientoAusentismo(models.Model):
     cargo = models.CharField(max_length=120)
     centro_de_costo = models.CharField(max_length=120)
     sucursal = models.CharField(max_length=120)
-    fecha_ingreso = models.DateField()
     fecha_inicio_ausencia = models.DateField()
     fecha_fin_ausencia = models.DateField()
     dias = models.IntegerField()
@@ -205,7 +213,7 @@ class MovimientoVacaciones(models.Model):
     cargo = models.CharField(max_length=120)
     centro_de_costo = models.CharField(max_length=120)
     sucursal = models.CharField(max_length=120)
-    fecha_ingreso = models.DateField()
+    fecha_ingreso = models.DateField(null=True, blank=True)
     fecha_inicio = models.DateField()
     fecha_fin_vacaciones = models.DateField()
     fecha_retorno = models.DateField()
@@ -230,7 +238,7 @@ class MovimientoVariacionSueldo(models.Model):
     cargo = models.CharField(max_length=120)
     centro_de_costo = models.CharField(max_length=120)
     sucursal = models.CharField(max_length=120)
-    fecha_ingreso = models.DateField()
+    fecha_ingreso = models.DateField(null=True, blank=True)
     tipo_contrato = models.CharField(max_length=80)
     sueldo_base_anterior = models.DecimalField(max_digits=12, decimal_places=2)
     sueldo_base_actual = models.DecimalField(max_digits=12, decimal_places=2)
@@ -256,7 +264,7 @@ class MovimientoVariacionContrato(models.Model):
     cargo = models.CharField(max_length=120)
     centro_de_costo = models.CharField(max_length=120)
     sucursal = models.CharField(max_length=120)
-    fecha_ingreso = models.DateField()
+    fecha_ingreso = models.DateField(null=True, blank=True)
     tipo_contrato_anterior = models.CharField(max_length=80)
     tipo_contrato_actual = models.CharField(max_length=80)
 
@@ -283,6 +291,13 @@ class LibroRemuneracionesUpload(models.Model):
         ('con_error', 'Con Error')
     ], default='pendiente')
     header_json = models.JSONField(default=list)
+    upload_log = models.ForeignKey(
+        'UploadLogNomina', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        help_text="Referencia al log del upload que generó este archivo"
+    )
 
 
 class MovimientosMesUpload(models.Model):
@@ -297,6 +312,13 @@ class MovimientosMesUpload(models.Model):
         ('con_errores_parciales', 'Con Errores Parciales')
     ], default='pendiente')
     resultados_procesamiento = models.JSONField(default=dict, blank=True)
+    upload_log = models.ForeignKey(
+        'UploadLogNomina', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        help_text="Referencia al log del upload que generó este archivo"
+    )
 
 
 class ArchivoAnalistaUpload(models.Model):
@@ -315,6 +337,13 @@ class ArchivoAnalistaUpload(models.Model):
         ('procesado', 'Procesado'),
         ('con_error', 'Con Error')
     ], default='pendiente')
+    upload_log = models.ForeignKey(
+        'UploadLogNomina', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        help_text="Referencia al log del upload que generó este archivo"
+    )
 
 
 class ArchivoNovedadesUpload(models.Model):
@@ -333,6 +362,13 @@ class ArchivoNovedadesUpload(models.Model):
         ('con_error', 'Con Error')
     ], default='pendiente')
     header_json = models.JSONField(default=list)
+    upload_log = models.ForeignKey(
+        'UploadLogNomina', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        help_text="Referencia al log del upload que generó este archivo"
+    )
 
 
 class ChecklistItem(models.Model):
@@ -670,7 +706,4 @@ class ResolucionIncidencia(models.Model):
         ordering = ['-fecha_resolucion']
     
     def __str__(self):
-        return f"{self.get_tipo_resolucion_display()} por {self.usuario.username} - {self.incidencia}"
-
-# Agregar campos al modelo CierreNomina existente
-# Nota: Esto requiere una migración
+        return f"{self.get_tipo_resolucion_display()} por {self.usuario.correo_bdo} - {self.incidencia}"

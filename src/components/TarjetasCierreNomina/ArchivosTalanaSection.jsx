@@ -12,7 +12,6 @@ const ArchivosTalanaSection = ({
   onProcesarLibro,
   onActualizarEstado,
   headersSinClasificar,
-  headersClasificados,
   mensajeLibro,
   libroListo,
   
@@ -84,7 +83,7 @@ const ArchivosTalanaSection = ({
             onActualizarEstado={onActualizarEstado}
             libroId={libro?.id}
             headersSinClasificar={headersSinClasificar}
-            headerClasificados={Object.keys(headersClasificados)}
+            headerClasificados={libro?.header_json?.headers_clasificados || []}
             mensaje={mensajeLibro}
             disabled={libro?.estado === "procesando"}
           />

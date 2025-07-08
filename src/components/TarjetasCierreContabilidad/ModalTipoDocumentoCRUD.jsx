@@ -4,7 +4,8 @@ import Notificacion from "../Notificacion";
 import { 
   crearTipoDocumento, 
   actualizarTipoDocumento, 
-  eliminarTipoDocumento 
+  eliminarTipoDocumento,
+  registrarActividadTarjeta
 } from "../../api/contabilidad";
 
 const ModalTipoDocumentoCRUD = ({ 
@@ -16,7 +17,8 @@ const ModalTipoDocumentoCRUD = ({
   onEliminarTodos,
   eliminando = false,
   errorEliminando = '',
-  onNotificacion = null // Nueva prop para callback de notificaciones externas
+  onNotificacion = null, // Nueva prop para callback de notificaciones externas
+  cierreId = null // Agregar cierreId para logging
 }) => {
   const [editando, setEditando] = useState(null);
   const [agregando, setAgregando] = useState(false);
@@ -55,6 +57,17 @@ const ModalTipoDocumentoCRUD = ({
       setConfirmandoEliminar(null);
       setConfirmandoEliminarTodos(false);
       cerrarNotificacion();
+    } else {
+      // Registrar vista en el backend al abrir el modal
+      const registrarVista = async () => {
+        try {
+          await registrarVistaTiposDocumento(cierreId);
+        } catch (err) {
+          console.error("Error al registrar vista de tipos de documento:", err);
+        }
+      };
+
+      registrarVista();
     }
   }, [abierto]);
 
@@ -71,7 +84,27 @@ const ModalTipoDocumentoCRUD = ({
         codigo: nuevoTipo.codigo.trim(),
         descripcion: nuevoTipo.descripcion.trim()
       };
-      await crearTipoDocumento(clienteId, tipoData);
+      const tipoCreado = await crearTipoDocumento(clienteId, tipoData);
+      
+      // Registrar actividad detallada de creación manual
+      try {
+        await registrarActividadTarjeta(
+          clienteId,
+          "tipo_documento", 
+          "manual_create",
+          `Creó tipo documento manual desde modal: ${tipoData.codigo} - ${tipoData.descripcion}`,
+          {
+            tipo_documento_id: tipoCreado.id,
+            codigo: tipoData.codigo,
+            descripcion: tipoData.descripcion,
+            accion_origen: "modal_crud"
+          },
+          cierreId
+        );
+      } catch (logErr) {
+        console.warn("Error registrando actividad de creación:", logErr);
+      }
+      
       setNuevoTipo({ codigo: "", descripcion: "" });
       setAgregando(false);
       onActualizar();
@@ -113,7 +146,36 @@ const ModalTipoDocumentoCRUD = ({
         codigo: editForm.codigo.trim(),
         descripcion: editForm.descripcion.trim()
       };
+      
+      // Obtener datos del tipo actual para el log
+      const tipoActual = tiposDocumento.find(t => t.id === editando);
+      const datosAnteriores = tipoActual ? {
+        codigo_anterior: tipoActual.codigo,
+        descripcion_anterior: tipoActual.descripcion
+      } : {};
+      
       await actualizarTipoDocumento(editando, updateData);
+      
+      // Registrar actividad detallada de edición manual
+      try {
+        await registrarActividadTarjeta(
+          clienteId,
+          "tipo_documento", 
+          "manual_edit",
+          `Editó tipo documento desde modal: ${updateData.codigo} - ${updateData.descripcion}`,
+          {
+            tipo_documento_id: editando,
+            codigo_nuevo: updateData.codigo,
+            descripcion_nueva: updateData.descripcion,
+            ...datosAnteriores,
+            accion_origen: "modal_crud"
+          },
+          cierreId
+        );
+      } catch (logErr) {
+        console.warn("Error registrando actividad de edición:", logErr);
+      }
+      
       setEditando(null);
       setEditForm({ codigo: "", descripcion: "" });
       onActualizar();
@@ -145,7 +207,33 @@ const ModalTipoDocumentoCRUD = ({
     setLoading(true);
     setError("");
     try {
+      // Obtener datos del tipo antes de eliminar para el log
+      const tipoAEliminar = tiposDocumento.find(t => t.id === id);
+      const datosEliminado = tipoAEliminar ? {
+        codigo: tipoAEliminar.codigo,
+        descripcion: tipoAEliminar.descripcion
+      } : {};
+      
       await eliminarTipoDocumento(id);
+      
+      // Registrar actividad detallada de eliminación manual
+      try {
+        await registrarActividadTarjeta(
+          clienteId,
+          "tipo_documento", 
+          "manual_delete",
+          `Eliminó tipo documento desde modal: ${datosEliminado.codigo || 'N/A'} - ${datosEliminado.descripcion || 'N/A'}`,
+          {
+            tipo_documento_id: id,
+            ...datosEliminado,
+            accion_origen: "modal_crud"
+          },
+          cierreId
+        );
+      } catch (logErr) {
+        console.warn("Error registrando actividad de eliminación:", logErr);
+      }
+      
       setConfirmandoEliminar(null);
       onActualizar();
       mostrarNotificacion("exito", "Tipo de documento eliminado exitosamente");

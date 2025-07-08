@@ -43,19 +43,47 @@ export const obtenerTiposDocumentoCliente = async (clienteId) => {
   return res.data;
 };
 
-export const registrarVistaTiposDocumento = async (clienteId) => {
+export const registrarVistaTiposDocumento = async (clienteId, cierreId = null) => {
+  const params = cierreId ? `?cierre_id=${cierreId}` : '';
   const res = await api.post(
-    `/contabilidad/tipo-documento/${clienteId}/registrar-vista/`,
+    `/contabilidad/tipo-documento/${clienteId}/registrar-vista/${params}`,
   );
+  return res.data;
+};
+
+// ==================== LOGGING DE ACTIVIDADES CRUD ====================
+export const registrarActividadTarjeta = async (
+  clienteId, 
+  tarjeta, 
+  accion, 
+  descripcion, 
+  detalles = null,
+  cierreId = null
+) => {
+  const data = {
+    cliente_id: clienteId,
+    tarjeta: tarjeta,
+    accion: accion,
+    descripcion: descripcion,
+    detalles: detalles || {},
+  };
+  
+  if (cierreId) {
+    data.cierre_id = cierreId;
+  }
+  
+  const res = await api.post("/contabilidad/registrar-actividad/", data);
   return res.data;
 };
 
 export const registrarVistaClasificaciones = async (
   clienteId,
   uploadId = null,
+  cierreId = null,
 ) => {
+  const params = cierreId ? `?cierre_id=${cierreId}` : '';
   const res = await api.post(
-    `/contabilidad/clasificacion/${clienteId}/registrar-vista/`,
+    `/contabilidad/clasificacion/${clienteId}/registrar-vista/${params}`,
     {
       upload_log_id: uploadId,
     },
@@ -431,17 +459,19 @@ export const eliminarNombresEnIngles = async (clienteId) => {
 };
 
 // ==================== NOMBRES EN INGLÉS CRUD ====================
-export const obtenerNombresInglesCliente = async (clienteId) => {
+export const obtenerNombresInglesCliente = async (clienteId, registrarActividad = false) => {
+  const params = registrarActividad ? '?registrar_actividad=true' : '';
   const res = await api.get(
-    `/contabilidad/nombre-ingles/${clienteId}/list/`,
+    `/contabilidad/nombre-ingles/${clienteId}/list/${params}`,
   );
   // El backend devuelve { cliente, total, nombres }, necesitamos solo el array nombres
   return res.data.nombres || [];
 };
 
-export const registrarVistaNombresIngles = async (clienteId) => {
+export const registrarVistaNombresIngles = async (clienteId, cierreId = null) => {
+  const params = cierreId ? `?cierre_id=${cierreId}` : '';
   const res = await api.post(
-    `/contabilidad/nombre-ingles/${clienteId}/registrar-vista/`,
+    `/contabilidad/nombre-ingles/${clienteId}/registrar-vista/${params}`,
   );
   return res.data;
 };

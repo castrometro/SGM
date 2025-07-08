@@ -11,6 +11,8 @@ from ..tasks_de_tipo_doc import iniciar_procesamiento_tipo_documento_chain
 from ..utils.mixins import UploadLogMixin
 from ..utils.clientes import get_client_ip
 from ..utils.uploads import guardar_temporal
+from ..utils.activity_logger import registrar_actividad_tarjeta
+from .helpers import obtener_periodo_actividad_para_cliente
 
 
 class TipoDocumentoViewSet(viewsets.ModelViewSet):
@@ -24,6 +26,100 @@ class TipoDocumentoViewSet(viewsets.ModelViewSet):
         if cliente:
             qs = qs.filter(cliente_id=cliente)
         return qs
+
+    def perform_create(self, serializer):
+        """Registrar actividad al crear tipo documento manualmente"""
+        instance = serializer.save()
+        
+        # Registrar actividad
+        try:
+            cliente = Cliente.objects.get(id=instance.cliente_id)
+            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+            
+            registrar_actividad_tarjeta(
+                cliente_id=instance.cliente_id,
+                periodo=periodo_actividad,
+                tarjeta="tipo_documento",
+                accion="manual_create",
+                descripcion=f"Creó tipo documento manual: {instance.codigo} - {instance.descripcion}",
+                usuario=self.request.user,
+                detalles={
+                    "tipo_documento_id": instance.id,
+                    "codigo": instance.codigo,
+                    "descripcion": instance.descripcion,
+                    "accion_origen": "crud_manual",
+                },
+                resultado="exito",
+                ip_address=get_client_ip(self.request),
+            )
+        except Exception as e:
+            # No fallar la creación si hay error en el logging
+            pass
+
+    def perform_update(self, serializer):
+        """Registrar actividad al actualizar tipo documento"""
+        instance = serializer.save()
+        
+        # Registrar actividad
+        try:
+            cliente = Cliente.objects.get(id=instance.cliente_id)
+            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+            
+            registrar_actividad_tarjeta(
+                cliente_id=instance.cliente_id,
+                periodo=periodo_actividad,
+                tarjeta="tipo_documento",
+                accion="manual_edit",
+                descripcion=f"Editó tipo documento: {instance.codigo} - {instance.descripcion}",
+                usuario=self.request.user,
+                detalles={
+                    "tipo_documento_id": instance.id,
+                    "codigo": instance.codigo,
+                    "descripcion": instance.descripcion,
+                    "accion_origen": "crud_manual",
+                },
+                resultado="exito",
+                ip_address=get_client_ip(self.request),
+            )
+        except Exception as e:
+            # No fallar la actualización si hay error en el logging
+            pass
+
+    def perform_destroy(self, instance):
+        """Registrar actividad al eliminar tipo documento"""
+        # Capturar datos antes de eliminar
+        cliente_id = instance.cliente_id
+        codigo = instance.codigo
+        descripcion = instance.descripcion
+        tipo_documento_id = instance.id
+        
+        # Eliminar el registro
+        instance.delete()
+        
+        # Registrar actividad
+        try:
+            cliente = Cliente.objects.get(id=cliente_id)
+            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+            
+            registrar_actividad_tarjeta(
+                cliente_id=cliente_id,
+                periodo=periodo_actividad,
+                tarjeta="tipo_documento",
+                accion="manual_delete",
+                descripcion=f"Eliminó tipo documento: {codigo} - {descripcion}",
+                usuario=self.request.user,
+                detalles={
+                    "tipo_documento_id": tipo_documento_id,
+                    "codigo": codigo,
+                    "descripcion": descripcion,
+                    "accion_origen": "crud_manual",
+                },
+                resultado="exito",
+                ip_address=get_client_ip(self.request),
+            )
+        except Exception as e:
+            # Ya se eliminó, no se puede deshacer
+            pass
 
 
 @api_view(["POST"])

@@ -31,6 +31,112 @@ class NombreInglesViewSet(viewsets.ModelViewSet):
             qs = qs.filter(cliente_id=cliente)
         return qs
 
+    def perform_create(self, serializer):
+        """Registrar actividad al crear nombre en inglés manualmente"""
+        instance = serializer.save()
+        
+        # Registrar actividad
+        try:
+            from api.models import Cliente
+            from ..utils.activity_logger import registrar_actividad_tarjeta
+            from .helpers import obtener_periodo_actividad_para_cliente
+            
+            cliente = Cliente.objects.get(id=instance.cliente_id)
+            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+            
+            registrar_actividad_tarjeta(
+                cliente_id=instance.cliente_id,
+                periodo=periodo_actividad,
+                tarjeta="nombres_ingles",
+                accion="manual_create",
+                descripcion=f"Creó nombre en inglés manual: {instance.cuenta_codigo} - {instance.nombre_ingles}",
+                usuario=self.request.user,
+                detalles={
+                    "nombre_ingles_id": instance.id,
+                    "cuenta_codigo": instance.cuenta_codigo,
+                    "nombre_ingles": instance.nombre_ingles,
+                    "accion_origen": "crud_manual",
+                },
+                resultado="exito",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
+            )
+        except Exception as e:
+            # No fallar la creación si hay error en el logging
+            pass
+
+    def perform_update(self, serializer):
+        """Registrar actividad al actualizar nombre en inglés"""
+        instance = serializer.save()
+        
+        # Registrar actividad
+        try:
+            from api.models import Cliente
+            from ..utils.activity_logger import registrar_actividad_tarjeta
+            from .helpers import obtener_periodo_actividad_para_cliente
+            
+            cliente = Cliente.objects.get(id=instance.cliente_id)
+            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+            
+            registrar_actividad_tarjeta(
+                cliente_id=instance.cliente_id,
+                periodo=periodo_actividad,
+                tarjeta="nombres_ingles",
+                accion="manual_edit",
+                descripcion=f"Editó nombre en inglés: {instance.cuenta_codigo} - {instance.nombre_ingles}",
+                usuario=self.request.user,
+                detalles={
+                    "nombre_ingles_id": instance.id,
+                    "cuenta_codigo": instance.cuenta_codigo,
+                    "nombre_ingles": instance.nombre_ingles,
+                    "accion_origen": "crud_manual",
+                },
+                resultado="exito",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
+            )
+        except Exception as e:
+            # No fallar la actualización si hay error en el logging
+            pass
+
+    def perform_destroy(self, instance):
+        """Registrar actividad al eliminar nombre en inglés"""
+        # Capturar datos antes de eliminar
+        cliente_id = instance.cliente_id
+        cuenta_codigo = instance.cuenta_codigo
+        nombre_ingles = instance.nombre_ingles
+        nombre_ingles_id = instance.id
+        
+        # Eliminar el registro
+        instance.delete()
+        
+        # Registrar actividad
+        try:
+            from api.models import Cliente
+            from ..utils.activity_logger import registrar_actividad_tarjeta
+            from .helpers import obtener_periodo_actividad_para_cliente
+            
+            cliente = Cliente.objects.get(id=cliente_id)
+            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+            
+            registrar_actividad_tarjeta(
+                cliente_id=cliente_id,
+                periodo=periodo_actividad,
+                tarjeta="nombres_ingles",
+                accion="manual_delete",
+                descripcion=f"Eliminó nombre en inglés: {cuenta_codigo} - {nombre_ingles}",
+                usuario=self.request.user,
+                detalles={
+                    "nombre_ingles_id": nombre_ingles_id,
+                    "cuenta_codigo": cuenta_codigo,
+                    "nombre_ingles": nombre_ingles,
+                    "accion_origen": "crud_manual",
+                },
+                resultado="exito",
+                ip_address=self.request.META.get("REMOTE_ADDR"),
+            )
+        except Exception as e:
+            # Ya se eliminó, no se puede deshacer
+            pass
+
 
 @api_view(["POST"])
 @parser_classes([MultiPartParser])

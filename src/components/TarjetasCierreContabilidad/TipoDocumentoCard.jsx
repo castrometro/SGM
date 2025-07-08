@@ -13,7 +13,7 @@ import {
   obtenerEstadoUploadLog
 } from "../../api/contabilidad";
 
-const TipoDocumentoCard = ({ clienteId, cliente, onCompletado, disabled, numeroPaso }) => {
+const TipoDocumentoCard = ({ clienteId, cierreId, cliente, onCompletado, disabled, numeroPaso }) => {
   const [estado, setEstado] = useState("pendiente");
   const [archivoNombre, setArchivoNombre] = useState("");
   const [subiendo, setSubiendo] = useState(false);
@@ -223,8 +223,8 @@ const TipoDocumentoCard = ({ clienteId, cliente, onCompletado, disabled, numeroP
   // Handler para abrir modal y cargar lista
   const handleVerTiposDocumento = async () => {
     try {
-      // Registrar que se abrió el modal manualmente
-      await registrarVistaTiposDocumento(clienteId);
+      // Registrar que se abrió el modal manualmente (pasando cierreId si está disponible)
+      await registrarVistaTiposDocumento(clienteId, cierreId);
       
       // Cargar los datos
       const datos = await obtenerTiposDocumentoCliente(clienteId);
@@ -371,6 +371,7 @@ const TipoDocumentoCard = ({ clienteId, cliente, onCompletado, disabled, numeroP
                     abierto={modalAbierto}
                     onClose={() => setModalAbierto(false)}
                     clienteId={clienteId}
+                    cierreId={cierreId}
                     tiposDocumento={tiposDocumento}
                     onActualizar={handleActualizarTiposDocumento}
                     onEliminarTodos={handleEliminarTodos}

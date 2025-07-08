@@ -24,6 +24,7 @@ import {
 
 const ClasificacionBulkCard = ({
   clienteId,
+  cierreId,
   cliente,
   onCompletado,
   disabled,
@@ -31,6 +32,7 @@ const ClasificacionBulkCard = ({
 }) => {
   console.log('🏗️ ClasificacionBulkCard props recibidos:', { 
     clienteId, 
+    cierreId,
     clienteExiste: !!cliente,
     clienteBilingue: cliente?.bilingue,
     clienteCompleto: cliente ? { id: cliente.id, nombre: cliente.nombre, bilingue: cliente.bilingue } : null,
@@ -445,6 +447,7 @@ const ClasificacionBulkCard = ({
         onClose={() => setModalRegistrosRaw(false)}
         uploadId={ultimoUpload?.id}
         clienteId={clienteId}
+        cierreId={cierreId}
         cliente={cliente}
         onDataChanged={() => {
           cargar(); // Recargar datos después de cambios CRUD

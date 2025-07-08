@@ -4,6 +4,10 @@ from django.views.static import serve
 from rest_framework.routers import DefaultRouter
 
 from .views import libro_mayor
+from .views.actividad import (
+    TarjetaActivityLogViewSet,
+    registrar_actividad_crud,
+)
 from .views.incidencias import (
     obtener_incidencias_consolidadas,
     obtener_incidencias_consolidadas_optimizado,
@@ -36,7 +40,6 @@ from .views import (
     AperturaCuentaViewSet,
     MovimientoContableViewSet,
     CierreContabilidadViewSet,
-    TarjetaActivityLogViewSet,
     NombresEnInglesView,
     # ViewSets migrados
     ClasificacionViewSet,
@@ -173,6 +176,7 @@ urlpatterns = [
     
     # Clasificaciones
     path("clasificacion/<int:cliente_id>/estado/", estado_clasificaciones, name="estado_clasificaciones"),
+    path("clasificacion/<int:cliente_id>/registrar-vista/", registrar_vista_clasificaciones),
     
     # Nombres en inglés
     path("nombre-ingles/<int:cliente_id>/estado/", estado_nombres_ingles),
@@ -184,6 +188,9 @@ urlpatterns = [
     
     # Upload logs
     path("upload-log/<int:upload_log_id>/estado/", estado_upload_log),
+    
+    # Logging de actividades
+    path("registrar-actividad/", registrar_actividad_crud, name="registrar_actividad_crud"),
     
     # Finalización de cierres
     path("", include("contabilidad.urls_finalizacion")),

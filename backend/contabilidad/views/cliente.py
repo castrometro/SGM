@@ -243,17 +243,30 @@ def registrar_vista_tipos_documento(request, cliente_id):
         cliente = Cliente.objects.get(id=cliente_id)
         tipos = TipoDocumento.objects.filter(cliente_id=cliente_id)
 
-        # Buscar cierre activo para actividad
-        cierre_para_actividad = None
-        try:
-            cierre_para_actividad = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
-        except Exception:
-            pass
+        # Obtener cierre_id del query parameter si se proporciona
+        cierre_id = request.GET.get('cierre_id')
         
-        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
+        if cierre_id:
+            # Si se proporciona cierre_id específico, usarlo
+            try:
+                cierre_para_actividad = CierreContabilidad.objects.get(id=cierre_id, cliente=cliente)
+                periodo_actividad = cierre_para_actividad.periodo
+            except CierreContabilidad.DoesNotExist:
+                # Si el cierre específico no existe, usar método genérico
+                cierre_para_actividad = None
+                periodo_actividad = date.today().strftime("%Y-%m")
+        else:
+            # Buscar cierre activo para actividad (método original)
+            cierre_para_actividad = None
+            try:
+                cierre_para_actividad = CierreContabilidad.objects.filter(
+                    cliente=cliente,
+                    estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+                ).order_by('-fecha_creacion').first()
+            except Exception:
+                pass
+            
+            periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
 
         # Registrar visualización manual del modal
         registrar_actividad_tarjeta(
@@ -267,6 +280,7 @@ def registrar_vista_tipos_documento(request, cliente_id):
                 "total_registros": tipos.count(), 
                 "accion_origen": "modal_manual",
                 "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+                "cierre_especifico": bool(cierre_id),
             },
             resultado="exito",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -620,22 +634,27 @@ def nombres_ingles_cliente(request, cliente_id):
             "fecha_creacion": nombre.fecha_creacion,
         })
 
-    # Registrar actividad
-    periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
-    registrar_actividad_tarjeta(
-        cliente_id=cliente.id,
-        periodo=periodo_actividad,
-        tarjeta="nombres_ingles",
-        accion="view_list",
-        descripcion=f"Consultó lista de nombres en inglés ({len(data)} registros)",
-        usuario=request.user,
-        detalles={
-            "total_registros": len(data),
-            "accion_origen": "consulta_api",
-        },
-        resultado="exito",
-        ip_address=request.META.get("REMOTE_ADDR"),
-    )
+    # Solo registrar actividad si es una consulta manual (con parámetro)
+    # Las consultas automáticas para conteo no deberían registrar actividad
+    registro_manual = request.GET.get('registrar_actividad', 'false').lower() == 'true'
+    
+    if registro_manual:
+        # Registrar actividad solo cuando es una consulta manual del usuario
+        periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+        registrar_actividad_tarjeta(
+            cliente_id=cliente.id,
+            periodo=periodo_actividad,
+            tarjeta="nombres_ingles",
+            accion="view_list",
+            descripcion=f"Consultó lista de nombres en inglés ({len(data)} registros)",
+            usuario=request.user,
+            detalles={
+                "total_registros": len(data),
+                "accion_origen": "consulta_manual",
+            },
+            resultado="exito",
+            ip_address=request.META.get("REMOTE_ADDR"),
+        )
 
     return Response({
         "cliente": cliente.nombre,
@@ -654,8 +673,29 @@ def registrar_vista_nombres_ingles(request, cliente_id):
         cliente = Cliente.objects.get(id=cliente_id)
         nombres = NombreIngles.objects.filter(cliente=cliente)
         
-        # Buscar cierre para actividad
-        periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+        # Obtener cierre_id del query parameter si se proporciona
+        cierre_id = request.GET.get('cierre_id')
+        
+        if cierre_id:
+            # Si se proporciona cierre_id específico, usarlo
+            try:
+                cierre_para_actividad = CierreContabilidad.objects.get(id=cierre_id, cliente=cliente)
+                periodo_actividad = cierre_para_actividad.periodo
+            except CierreContabilidad.DoesNotExist:
+                # Si el cierre específico no existe, usar método genérico
+                periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+                cierre_para_actividad = None
+        else:
+            # Usar método genérico
+            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+            # Buscar cierre activo
+            try:
+                cierre_para_actividad = CierreContabilidad.objects.filter(
+                    cliente=cliente,
+                    estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+                ).order_by('-fecha_creacion').first()
+            except Exception:
+                cierre_para_actividad = None
 
         # Registrar actividad
         registrar_actividad_tarjeta(
@@ -668,6 +708,8 @@ def registrar_vista_nombres_ingles(request, cliente_id):
             detalles={
                 "total_registros": nombres.count(),
                 "accion_origen": "modal_manual",
+                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+                "cierre_especifico": bool(cierre_id),
             },
             resultado="exito",
             ip_address=request.META.get("REMOTE_ADDR"),
@@ -697,8 +739,29 @@ def registrar_vista_clasificaciones(request, cliente_id):
             # Aquí podrías contar las líneas del archivo o usar otro método
             total_registros = "archivo_activo"
         
-        # Buscar cierre para actividad
-        periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+        # Obtener cierre_id del query parameter si se proporciona
+        cierre_id = request.GET.get('cierre_id')
+        
+        if cierre_id:
+            # Si se proporciona cierre_id específico, usarlo
+            try:
+                cierre_para_actividad = CierreContabilidad.objects.get(id=cierre_id, cliente=cliente)
+                periodo_actividad = cierre_para_actividad.periodo
+            except CierreContabilidad.DoesNotExist:
+                # Si el cierre específico no existe, usar método genérico
+                periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+                cierre_para_actividad = None
+        else:
+            # Usar método genérico
+            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
+            # Buscar cierre activo
+            try:
+                cierre_para_actividad = CierreContabilidad.objects.filter(
+                    cliente=cliente,
+                    estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+                ).order_by('-fecha_creacion').first()
+            except Exception:
+                cierre_para_actividad = None
 
         # Registrar actividad
         registrar_actividad_tarjeta(
@@ -712,6 +775,8 @@ def registrar_vista_clasificaciones(request, cliente_id):
                 "total_registros": total_registros,
                 "accion_origen": "modal_manual",
                 "tiene_archivo": bool(archivo_clasificacion),
+                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
+                "cierre_especifico": bool(cierre_id),
             },
             resultado="exito",
             ip_address=request.META.get("REMOTE_ADDR"),

@@ -11,7 +11,6 @@ import {
 } from "../../api/contabilidad";
 import EstadoBadge from "../EstadoBadge";
 import Notificacion from "../Notificacion";
-import ModalMovimientosIncompletos from "./ModalMovimientosIncompletos";
 import ModalIncidenciasConsolidadas from "./ModalIncidenciasConsolidadas";
 import ModalHistorialReprocesamiento from "./ModalHistorialReprocesamiento";
 
@@ -547,22 +546,34 @@ const LibroMayorCard = ({
         incidencias={incidenciasConsolidadas}
         cierreId={cierreId}
         onReprocesar={async () => {
+          console.log('🔄 LibroMayorCard: Iniciando callback onReprocesar...');
+          
           // Recargar el estado del libro mayor después del reprocesamiento
           await cargarEstado();
+          console.log('✅ LibroMayorCard: Estado del libro mayor recargado');
           
           // También recargar incidencias del modal si está abierto
           if (modalIncompletoAbierto) {
-            console.log('🔄 Recargando incidencias del LibroMayorCard después de reprocesar...');
+            console.log('🔄 LibroMayorCard: Modal abierto, recargando incidencias...');
             try {
-              // Usar endpoint directo para obtener datos actuales post-reprocesamiento
+              // Usar endpoint directo para obtener datos actuales sin caché
               const data = await obtenerIncidenciasConsolidadas(cierreId);
               const incidenciasArray = Array.isArray(data) ? data : (data.incidencias || []);
+              console.log('📊 LibroMayorCard: Datos de incidencias obtenidos del servidor:', {
+                tipoData: Array.isArray(data) ? 'array' : 'object',
+                totalIncidencias: incidenciasArray.length,
+                incidenciasAnteriores: incidenciasConsolidadas.length
+              });
               setIncidenciasConsolidadas(incidenciasArray);
-              console.log(`✅ Incidencias del LibroMayorCard actualizadas: ${incidenciasArray.length} encontradas`);
+              console.log(`✅ LibroMayorCard: Incidencias actualizadas de ${incidenciasConsolidadas.length} a ${incidenciasArray.length}`);
             } catch (error) {
               console.error('❌ Error recargando incidencias en LibroMayorCard:', error);
             }
+          } else {
+            console.log('ℹ️ LibroMayorCard: Modal cerrado, no es necesario recargar incidencias');
           }
+          
+          console.log('✅ LibroMayorCard: Callback onReprocesar completado');
         }}
       />
       <ModalHistorialReprocesamiento

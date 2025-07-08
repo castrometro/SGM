@@ -31,7 +31,8 @@ def obtener_incidencias_consolidadas(request, cierre_id):
     - tipo: filtrar por tipo de incidencia
     """
     # REDIRECCIÓN: Usar siempre la función que lee de la tabla Incidencia actual
-    return obtener_incidencias_consolidadas_libro_mayor(request, cierre_id)
+    # Llamar directamente a la función lógica, no a la vista
+    return _obtener_incidencias_consolidadas_libro_mayor_logic(request, cierre_id)
 
 
 @api_view(['GET'])
@@ -346,13 +347,10 @@ class IncidenciaViewSet(viewsets.ModelViewSet):
         return queryset.order_by("-fecha_creacion")
 
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def obtener_incidencias_consolidadas_libro_mayor(request, cierre_id):
+def _obtener_incidencias_consolidadas_libro_mayor_logic(request, cierre_id):
     """
-    Obtiene las incidencias consolidadas para un cierre específico,
-    transformando las Incidencias básicas al formato esperado por el frontend.
-    SIEMPRE usa datos actuales de la tabla Incidencia y estado actual de excepciones.
+    Lógica principal para obtener incidencias consolidadas.
+    Esta función NO es una vista de DRF, es una función auxiliar.
     """
     try:
         # Validar que el cierre existe
@@ -590,6 +588,16 @@ def obtener_incidencias_consolidadas_libro_mayor(request, cierre_id):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+def obtener_incidencias_consolidadas_libro_mayor(request, cierre_id):
+    """
+    Vista DRF que envuelve la lógica principal.
+    Esta es la función que se expone como endpoint API.
+    """
+    return _obtener_incidencias_consolidadas_libro_mayor_logic(request, cierre_id)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def obtener_cuentas_detalle_incidencia_libro_mayor(request, cierre_id, tipo_incidencia):
     """
     Obtiene el detalle de cuentas afectadas por un tipo específico de incidencia
@@ -759,15 +767,16 @@ def obtener_historial_incidencias_por_iteraciones(request, cierre_id):
 @permission_classes([IsAuthenticated])
 def obtener_incidencias_consolidadas_optimizado(request, cierre_id):
     """
-    Versión optimizada que utiliza snapshots de incidencias por iteración
-    PERO si no hay snapshots, redirige a la función que usa datos actuales
+    Versión optimizada que utiliza snapshots de incidencias por iteración.
+    SIEMPRE devuelve datos frescos (sin caché) para evitar problemas de sincronización.
     
     Query params:
     - iteracion: número de iteración específica (opcional, por defecto la principal)
     - estado: filtrar por estado (activa, resuelta, obsoleta)
     - severidad: filtrar por severidad (baja, media, alta, critica)
     - tipo: filtrar por tipo de incidencia
-    - usar_cache: si usar caché (default: true)
+    
+    NOTA: Caché removido para garantizar datos actuales después de marcar excepciones.
     """
     try:
         # Validar que el cierre existe
@@ -775,27 +784,8 @@ def obtener_incidencias_consolidadas_optimizado(request, cierre_id):
         
         # Parámetros
         iteracion = request.GET.get('iteracion')
-        usar_cache = request.GET.get('usar_cache', 'true').lower() == 'true'
-        forzar_actualizacion = request.GET.get('forzar_actualizacion', 'false').lower() == 'true'
         
-        # Generar clave de caché más específica y versionada
-        cache_version = request.GET.get('v', '1')  # Para invalidación manual
-        cache_key = f"incidencias_optimizado_v{cache_version}_{cierre_id}_{iteracion or 'principal'}"
-        
-        # Si se fuerza actualización, limpiar caché Y usar datos actuales
-        if forzar_actualizacion:
-            cache.delete(cache_key)
-            logger.info(f"Caché forzosamente limpiado para cierre {cierre_id} - FORZANDO datos actuales")
-            return obtener_incidencias_consolidadas_libro_mayor(request, cierre_id)
-        
-        # Intentar obtener del caché solo si no se fuerza actualización
-        if usar_cache and not forzar_actualizacion:
-            cached_result = cache.get(cache_key)
-            if cached_result:
-                logger.info(f"📦 Datos servidos desde CACHÉ DJANGO para cierre {cierre_id} (clave: {cache_key})")
-                return Response(cached_result)
-        
-        logger.info(f"🔍 Buscando datos frescos para cierre {cierre_id} (forzar: {forzar_actualizacion})")
+        logger.info(f"🔍 Obteniendo datos frescos para cierre {cierre_id} (sin caché)")
         
         # Determinar qué iteración usar
         if iteracion:
@@ -873,7 +863,7 @@ def obtener_incidencias_consolidadas_optimizado(request, cierre_id):
                     'total_iteraciones': total_iteraciones,
                     'es_iteracion_principal': upload_log.es_iteracion_principal,
                     'timestamp_consulta': timezone.now().isoformat(),
-                    'fuente': 'snapshot_optimizado'
+                    'fuente': 'snapshot_sin_cache'
                 },
                 'cierre_info': {
                     'id': cierre.id,
@@ -882,14 +872,7 @@ def obtener_incidencias_consolidadas_optimizado(request, cierre_id):
                 }
             }
             
-            # Guardar en caché por 5 minutos SOLO si no se forzó actualización
-            if usar_cache and not forzar_actualizacion:
-                # Usar compresión para datos grandes de incidencias
-                cache.set(cache_key, resultado, 300, version=int(cache_version))
-                logger.info(f"💾 Resultado guardado en caché Redis (clave: {cache_key}, versión: {cache_version})")
-            else:
-                logger.info(f"🚫 NO guardando en caché (usar_cache={usar_cache}, forzar={forzar_actualizacion})")
-            
+            logger.info(f"✅ Datos frescos servidos sin caché para cierre {cierre_id}")
             return Response(resultado)
         
         else:

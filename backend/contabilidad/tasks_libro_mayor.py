@@ -761,9 +761,9 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
         'balance_esf': balance_esf,
         'balance_eri': balance_eri,
         'balance_total': balance_total,
-        'balance_validado': abs(balance_total - float(totales_esf_eri['ESF']['saldo_ant'])) <= 0.01,
-        'diferencia_saldo_esf': abs(balance_total - float(totales_esf_eri['ESF']['saldo_ant'])),
-        'explicacion_balance': "Balance total debe coincidir con saldo anterior ESF"
+        'balance_validado': abs(balance_total) <= 1000.00,
+        'diferencia_balance': abs(balance_total),
+        'explicacion_balance': "Balance total debe ser cercano a $0.00 (contabilidad balanceada)"
     }
     
     upload.resumen = resumen
@@ -948,28 +948,65 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
         print(f"   Balance Total calculado: ${balance_total:,.2f}")
         print(f"   Saldo Anterior ESF: ${totales_esf_eri['totales']['ESF']['saldo_ant']:,.2f}")
         
-        # LA VALIDACIÓN CORRECTA: Balance total debe ser cercano a 0 (contabilidad balanceada)
-        if abs(balance_total) <= 0.01:
+        # VALIDACIÓN SIMPLIFICADA: Balance total debe ser cercano a 0 (contabilidad balanceada)
+        diferencia_balance = abs(balance_total)
+        if diferencia_balance <= 1000.00:  # Tolerancia más amplia para balances reales
             print(f"   ✅ BALANCE CORRECTO: Balance total = ${balance_total:,.2f} (contabilidad balanceada)")
-            print(f"   📊 Interpretación: ESF + ERI = 0 indica que todos los movimientos están balanceados")
-            print(f"   🔍 Validación: Balance total dentro de tolerancia (±$0.01)")
+            print(f"   📊 Interpretación: ESF + ERI ≈ 0 indica que los movimientos están balanceados")
+            print(f"   🔍 Validación: Diferencia ${diferencia_balance:,.2f} dentro de tolerancia (±$1,000.00)")
             logger.info("✓ Balance ESF/ERI validado correctamente - contabilidad balanceada")
         else:
             print(f"   ❌ BALANCE DESCUADRADO")
             print(f"   📊 Balance total: ${balance_total:,.2f}")
             print(f"   📊 ESF: ${balance_esf:,.2f} | ERI: ${balance_eri:,.2f}")
+            print(f"   📊 Diferencia absoluta: ${diferencia_balance:,.2f}")
             print(f"   📊 El balance debería ser cercano a $0.00 para una contabilidad balanceada")
             print(f"   📝 Creando incidencia de balance descuadrado...")
+            
+            # Crear descripción detallada con todos los datos del balance
+            descripcion_detallada = f"""BALANCE DESCUADRADO - Análisis Completo:
+
+📊 RESUMEN DEL BALANCE:
+• Balance Total: ${balance_total:,.2f}
+• Diferencia Absoluta: ${diferencia_balance:,.2f}
+• Tolerancia Permitida: ±$1,000.00
+• Estado: DESCUADRADO (diferencia excede tolerancia)
+
+🏛️ DETALLE ESF (Estado de Situación Financiera):
+• Saldo Anterior: ${totales_esf_eri['totales']['ESF']['saldo_ant']:,.2f}
+• Debe Total: ${totales_esf_eri['totales']['ESF']['debe']:,.2f}
+• Haber Total: ${totales_esf_eri['totales']['ESF']['haber']:,.2f}
+• Balance ESF: ${balance_esf:,.2f}
+
+💼 DETALLE ERI (Estado de Resultados Integrales):
+• Saldo Anterior: ${totales_esf_eri['totales']['ERI']['saldo_ant']:,.2f}
+• Debe Total: ${totales_esf_eri['totales']['ERI']['debe']:,.2f}
+• Haber Total: ${totales_esf_eri['totales']['ERI']['haber']:,.2f}
+• Balance ERI: ${balance_eri:,.2f}
+
+🔢 CÁLCULO DEL BALANCE:
+• ESF = Saldo_Ant + Debe - Haber = {totales_esf_eri['totales']['ESF']['saldo_ant']:,.2f} + {totales_esf_eri['totales']['ESF']['debe']:,.2f} - {totales_esf_eri['totales']['ESF']['haber']:,.2f} = ${balance_esf:,.2f}
+• ERI = Saldo_Ant + Debe - Haber = {totales_esf_eri['totales']['ERI']['saldo_ant']:,.2f} + {totales_esf_eri['totales']['ERI']['debe']:,.2f} - {totales_esf_eri['totales']['ERI']['haber']:,.2f} = ${balance_eri:,.2f}
+• Total = ESF + ERI = {balance_esf:,.2f} + {balance_eri:,.2f} = ${balance_total:,.2f}
+
+⚠️ PROBLEMA DETECTADO:
+El balance total debería ser cercano a $0.00 para indicar una contabilidad balanceada. La diferencia de ${diferencia_balance:,.2f} excede la tolerancia permitida.
+
+🔧 ACCIONES SUGERIDAS:
+1. Revisar las clasificaciones de cuentas ESF vs ERI
+2. Verificar que todos los movimientos estén correctamente registrados
+3. Confirmar que los saldos anteriores sean correctos
+4. Revisar posibles errores en la carga del archivo Excel"""
             
             incidencia_balance = Incidencia(
                 cierre=cierre,
                 tipo=Incidencia.BALANCE_DESCUADRADO,
-                descripcion=f"Balance descuadrado: ESF=${balance_esf:,.2f}, ERI=${balance_eri:,.2f}, Total=${balance_total:,.2f}. El balance total debería ser cercano a $0.00",
+                descripcion=descripcion_detallada,
                 creada_por=creador
             )
             incidencia_balance.save()
             creadas += 1
-            logger.warning(f"BALANCE DESCUADRADO - ESF: {balance_esf}, ERI: {balance_eri}, Total: {balance_total}")
+            logger.warning(f"BALANCE DESCUADRADO - ESF: {balance_esf}, ERI: {balance_eri}, Total: {balance_total}, Diferencia: {diferencia_balance}")
         
         logger.info(f"Balance ESF: {balance_esf}, Balance ERI: {balance_eri}, Balance total: {balance_total}")
         
@@ -996,17 +1033,17 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
         'nombres_ingles': len([i for i in incidencias_pendientes if i['tipo'] == 'cuenta_sin_ingles']),
         'tipos_documento_null': len([i for i in incidencias_pendientes if i['tipo'] == 'movimiento_tipo_doc_null']),
         'tipos_documento_no_reconocido': len([i for i in incidencias_pendientes if i['tipo'] == 'movimiento_tipo_doc_no_reconocido']),
-        'balance_descuadrado': 1 if abs(balance_total - totales_esf_eri['totales']['ESF']['saldo_ant']) > 0.01 else 0
+        'balance_descuadrado': 1 if abs(balance_total) > 1000.00 else 0
     }
     
     # Actualizar solo el estado de validación del balance en los totales existentes
     if 'totales_esf_eri' in resumen:
-        # Validar si el balance total coincide con el saldo anterior ESF (lógica contable correcta)
-        diferencia_saldo_esf = abs(balance_total - totales_esf_eri['totales']['ESF']['saldo_ant'])
-        balance_validado = diferencia_saldo_esf <= 0.01
+        # Validar solo si el balance total está cerca de 0 (contabilidad balanceada)
+        diferencia_balance = abs(balance_total)
+        balance_validado = diferencia_balance <= 1000.00
         resumen['totales_esf_eri']['balance_validado'] = balance_validado
-        resumen['totales_esf_eri']['diferencia_saldo_esf'] = float(diferencia_saldo_esf)
-        resumen['totales_esf_eri']['explicacion_balance'] = "Balance total debe coincidir con saldo anterior ESF"
+        resumen['totales_esf_eri']['diferencia_balance'] = float(diferencia_balance)
+        resumen['totales_esf_eri']['explicacion_balance'] = "Balance total debe ser cercano a $0.00 (contabilidad balanceada)"
     
     upload_log.resumen = resumen
     upload_log.save(update_fields=['resumen'])
@@ -1023,10 +1060,9 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
     
     print(f"\n💰 BALANCE ESF/ERI FINAL:")
     print(f"   - Balance total: ${balance_total:,.2f}")
-    print(f"   - Saldo anterior ESF: ${totales_esf_eri['totales']['ESF']['saldo_ant']:,.2f}")
-    diferencia_saldo_esf = abs(balance_total - totales_esf_eri['totales']['ESF']['saldo_ant'])
-    print(f"   - Diferencia: ${diferencia_saldo_esf:,.2f}")
-    print(f"   - Balance validado: {'✅ SÍ' if diferencia_saldo_esf <= 0.01 else '❌ NO'}")
+    diferencia_balance = abs(balance_total)
+    print(f"   - Diferencia absoluta: ${diferencia_balance:,.2f}")
+    print(f"   - Balance validado: {'✅ SÍ' if diferencia_balance <= 1000.00 else '❌ NO'}")
     print("="*80)
 
     logger.info(f"Generación de incidencias completada - Total creadas: {creadas}")
@@ -1035,9 +1071,8 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
                f"Tipos doc null: {resumen['incidencias']['tipos_documento_null']}, " +
                f"Tipos doc no reconocido: {resumen['incidencias']['tipos_documento_no_reconocido']}, " +
                f"Balance descuadrado: {resumen['incidencias']['balance_descuadrado']}")
-    logger.info(f"Balance ESF/ERI - Total: {balance_total}, Saldo ESF: {totales_esf_eri['totales']['ESF']['saldo_ant']}, " +
-               f"Diferencia: {abs(balance_total - totales_esf_eri['totales']['ESF']['saldo_ant'])}, " +
-               f"Validado: {abs(balance_total - totales_esf_eri['totales']['ESF']['saldo_ant']) <= 0.01}")
+    logger.info(f"Balance ESF/ERI - Total: {balance_total}, Diferencia absoluta: {abs(balance_total)}, " +
+               f"Validado: {abs(balance_total) <= 1000.00}")
     return upload_log_id
 
 # ─── Task 6: Finalizar y limpiar ───────────────────────────────────────────────

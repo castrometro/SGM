@@ -10,11 +10,13 @@ import {
   registrarVistaNombresIngles,
   subirNombresIngles,
   eliminarTodosNombresIngles,
-  obtenerEstadoUploadLog
+  obtenerEstadoUploadLog,
+  registrarActividadTarjeta
 } from "../../api/contabilidad";
 
 const NombresEnInglesCard = ({
   clienteId,
+  cierreId,
   cliente = null,
   onCompletado,
   disabled,
@@ -58,10 +60,10 @@ const NombresEnInglesCard = ({
         const estadoActual = typeof data === "string" ? data : data.estado;
         setEstado(estadoActual);
         
-        // Si hay datos, cargar también los nombres en inglés para el conteo
+        // Si hay datos, cargar también los nombres en inglés para el conteo (SIN registrar actividad)
         if (estadoActual === "subido") {
           try {
-            const nombres = await obtenerNombresInglesCliente(clienteId);
+            const nombres = await obtenerNombresInglesCliente(clienteId, false); // No registrar actividad automática
             setNombresIngles(Array.isArray(nombres) ? nombres : []);
           } catch (err) {
             console.error("Error cargando nombres en inglés:", err);
@@ -95,7 +97,7 @@ const NombresEnInglesCard = ({
           if (onCompletado) onCompletado(true);
 
           try {
-            const nombres = await obtenerNombresInglesCliente(clienteId);
+            const nombres = await obtenerNombresInglesCliente(clienteId, false); // No registrar actividad automática
             setNombresIngles(Array.isArray(nombres) ? nombres : []);
           } catch (err) {
             console.error("Error recargando nombres:", err);
@@ -103,6 +105,27 @@ const NombresEnInglesCard = ({
           }
 
           const creados = logData.resumen?.nombres_creados || 0;
+          
+          // Registrar actividad de upload exitoso
+          try {
+            await registrarActividadTarjeta(
+              clienteId,
+              "nombres_ingles",
+              "upload_excel",
+              `Subió archivo Excel de nombres en inglés exitosamente`,
+              {
+                cierre_id: cierreId,
+                upload_log_id: uploadLogId,
+                nombres_creados: creados,
+                tiempo_procesamiento: logData.tiempo_procesamiento,
+                accion_origen: "card_nombres_ingles"
+              },
+              cierreId
+            );
+          } catch (logErr) {
+            console.warn("Error registrando actividad de upload:", logErr);
+          }
+          
           mostrarNotificacion(
             "success",
             `✅ Archivo procesado exitosamente. ${creados} nombres almacenados.`
@@ -201,11 +224,11 @@ const NombresEnInglesCard = ({
   // Handler para abrir modal y cargar lista
   const handleVerNombresIngles = async () => {
     try {
-      // Registrar que se abrió el modal manualmente
-      await registrarVistaNombresIngles(clienteId);
+      // Registrar que se abrió el modal manualmente (esto ya registra la actividad)
+      await registrarVistaNombresIngles(clienteId, cierreId);
       
-      // Cargar los datos
-      const datos = await obtenerNombresInglesCliente(clienteId);
+      // Cargar los datos SIN registrar actividad adicional para evitar doble registro
+      const datos = await obtenerNombresInglesCliente(clienteId, false);
       setNombresIngles(Array.isArray(datos) ? datos : []);
       setModalAbierto(true);
     } catch (err) {
@@ -218,7 +241,7 @@ const NombresEnInglesCard = ({
   // Handler para actualizar la lista de nombres en inglés
   const handleActualizarNombresIngles = async () => {
     try {
-      const datos = await obtenerNombresInglesCliente(clienteId);
+      const datos = await obtenerNombresInglesCliente(clienteId, false); // No registrar actividad automática
       setNombresIngles(Array.isArray(datos) ? datos : []);
     } catch (err) {
       console.error("Error al actualizar nombres en inglés:", err);
@@ -232,6 +255,26 @@ const NombresEnInglesCard = ({
     setErrorEliminando("");
     try {
       const result = await eliminarTodosNombresIngles(clienteId);
+      
+      // Registrar actividad de eliminación masiva
+      try {
+        await registrarActividadTarjeta(
+          clienteId,
+          "nombres_ingles",
+          "delete_all",
+          `Eliminó todos los nombres en inglés desde card`,
+          {
+            cierre_id: cierreId,
+            registros_eliminados: result.registros_eliminados || 0,
+            archivos_eliminados: result.archivos_eliminados || 0,
+            accion_origen: "card_nombres_ingles"
+          },
+          cierreId
+        );
+      } catch (logErr) {
+        console.warn("Error registrando actividad de eliminación masiva:", logErr);
+      }
+      
       setEstado("pendiente");
       setNombresIngles([]);
       setArchivoNombre("");
@@ -351,6 +394,7 @@ const NombresEnInglesCard = ({
         abierto={modalAbierto}
         onClose={() => setModalAbierto(false)}
         clienteId={clienteId}
+        cierreId={cierreId}
         nombresIngles={nombresIngles}
         onActualizar={handleActualizarNombresIngles}
         onEliminarTodos={handleEliminarTodos}

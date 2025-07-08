@@ -79,6 +79,7 @@ const CierreProgreso = ({ cierre, cliente }) => {
       {/* Paso 1: Tipos de Documento */}
       <TipoDocumentoCard
         clienteId={cliente.id}
+        cierreId={cierre.id}
         cliente={cliente}
         onCompletado={handleTipoDocumentoCompletado}
         disabled={false}
@@ -88,6 +89,7 @@ const CierreProgreso = ({ cierre, cliente }) => {
       {/* Paso 2: Clasificación de Cuentas */}
       <ClasificacionBulkCard
         clienteId={cliente.id}
+        cierreId={cierre.id}
         cliente={cliente}
         onCompletado={handleClasificacionCompletado}
         disabled={!tipoDocumentoReady}
@@ -98,6 +100,7 @@ const CierreProgreso = ({ cierre, cliente }) => {
       {cliente.bilingue && (
         <NombresEnInglesCard
           clienteId={cliente.id}
+          cierreId={cierre.id}
           cliente={cliente}
           onCompletado={handleTraduccionCompletada}
           disabled={!clasificacionReady}

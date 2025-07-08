@@ -4,13 +4,15 @@ import Notificacion from "../Notificacion";
 import { 
   crearNombreIngles, 
   actualizarNombreIngles, 
-  eliminarNombreIngles 
+  eliminarNombreIngles,
+  registrarActividadTarjeta
 } from "../../api/contabilidad";
 
 const ModalNombresInglesCRUD = ({ 
   abierto, 
   onClose, 
-  clienteId, 
+  clienteId,
+  cierreId, 
   nombresIngles, 
   onActualizar,
   onEliminarTodos,
@@ -75,6 +77,21 @@ const ModalNombresInglesCRUD = ({
         cliente: clienteId
       };
       await crearNombreIngles(nombreData);
+      
+      // Registrar actividad de creación
+      try {
+        await registrarActividad(
+          "manual_create",
+          `Creó nombre en inglés desde modal: ${nuevoNombre.cuenta_codigo.trim()} - ${nuevoNombre.nombre_ingles.trim()}`,
+          {
+            cuenta_codigo: nuevoNombre.cuenta_codigo.trim(),
+            nombre_ingles: nuevoNombre.nombre_ingles.trim()
+          }
+        );
+      } catch (logErr) {
+        console.warn("Error registrando actividad de creación:", logErr);
+      }
+      
       setNuevoNombre({ cuenta_codigo: "", nombre_ingles: "" });
       setAgregando(false);
       onActualizar();
@@ -117,6 +134,22 @@ const ModalNombresInglesCRUD = ({
         nombre_ingles: editForm.nombre_ingles.trim()
       };
       await actualizarNombreIngles(editando, updateData);
+      
+      // Registrar actividad de edición
+      try {
+        await registrarActividad(
+          "manual_edit",
+          `Editó nombre en inglés desde modal: ${editForm.cuenta_codigo.trim()} - ${editForm.nombre_ingles.trim()}`,
+          {
+            id: editando,
+            cuenta_codigo: editForm.cuenta_codigo.trim(),
+            nombre_ingles: editForm.nombre_ingles.trim()
+          }
+        );
+      } catch (logErr) {
+        console.warn("Error registrando actividad de edición:", logErr);
+      }
+      
       setEditando(null);
       setEditForm({ cuenta_codigo: "", nombre_ingles: "" });
       onActualizar();
@@ -148,7 +181,29 @@ const ModalNombresInglesCRUD = ({
     setLoading(true);
     setError("");
     try {
+      // Obtener datos del nombre antes de eliminar para el log
+      const nombreAEliminar = nombresOrdenados.find(n => n.id === id);
+      const datosEliminado = nombreAEliminar ? {
+        cuenta_codigo: nombreAEliminar.cuenta_codigo,
+        nombre_ingles: nombreAEliminar.nombre_ingles
+      } : {};
+      
       await eliminarNombreIngles(id);
+      
+      // Registrar actividad de eliminación
+      try {
+        await registrarActividad(
+          "manual_delete",
+          `Eliminó nombre en inglés desde modal: ${datosEliminado.cuenta_codigo || 'N/A'} - ${datosEliminado.nombre_ingles || 'N/A'}`,
+          {
+            id: id,
+            ...datosEliminado
+          }
+        );
+      } catch (logErr) {
+        console.warn("Error registrando actividad de eliminación:", logErr);
+      }
+      
       setConfirmandoEliminar(null);
       onActualizar();
       mostrarNotificacion("exito", "Nombre en inglés eliminado exitosamente");
@@ -198,6 +253,62 @@ const ModalNombresInglesCRUD = ({
     setError("");
   };
 
+  // Función auxiliar para registrar actividades CRUD
+  const registrarActividad = async (accion, descripcion, detalles = {}) => {
+    try {
+      if (!clienteId) {
+        console.warn('No hay clienteId para registrar actividad');
+        return;
+      }
+
+      await registrarActividadTarjeta(
+        clienteId,
+        "nombres_ingles", 
+        accion,
+        descripcion,
+        {
+          cierre_id: cierreId,
+          accion_origen: "modal_nombres_ingles",
+          ...detalles
+        },
+        cierreId
+      );
+    } catch (error) {
+      console.warn('Error registrando actividad:', error);
+      // No fallar la operación principal por un error de logging
+    }
+  };
+
+  // Función para manejar el cierre del modal con logging
+  const handleClose = async () => {
+    try {
+      await registrarActividad(
+        "view_data",
+        `Cerró modal de nombres en inglés`,
+        {
+          nombres_cargados: nombresOrdenados.length
+        }
+      );
+    } catch (logErr) {
+      console.warn("Error registrando cierre del modal:", logErr);
+    }
+    
+    onClose();
+  };
+
+  // Registrar actividad cuando se abre el modal
+  useEffect(() => {
+    if (abierto && clienteId) {
+      registrarActividad(
+        "view_data",
+        `Abrió modal de nombres en inglés`,
+        {
+          nombres_disponibles: nombresOrdenados.length
+        }
+      ).catch(logErr => console.warn("Error registrando apertura del modal:", logErr));
+    }
+  }, [abierto, clienteId]);
+
   if (!abierto) return null;
 
   return (
@@ -219,7 +330,7 @@ const ModalNombresInglesCRUD = ({
           <h2 className="text-xl font-semibold">Gestión de Nombres en Inglés</h2>
           <button
             className="text-gray-400 hover:text-red-500"
-            onClick={onClose}
+            onClick={handleClose}
             disabled={loading}
           >
             <X size={20} />

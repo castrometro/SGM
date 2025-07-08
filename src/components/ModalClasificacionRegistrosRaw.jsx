@@ -13,18 +13,48 @@ import {
   obtenerOpcionesSet,
   crearOpcion,
   actualizarOpcion,
-  eliminarOpcion
+  eliminarOpcion,
+  registrarActividadTarjeta
 } from '../api/contabilidad';
 
-const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, cliente, onDataChanged }) => {
+const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, cierreId, cliente, onDataChanged }) => {
   console.log('🏗️ Modal props recibidos:', { 
     isOpen, 
     uploadId, 
-    clienteId, 
+    clienteId,
+    cierreId,
     clienteExiste: !!cliente,
     clienteBilingue: cliente?.bilingue,
     onDataChanged: !!onDataChanged 
   });
+
+  // Función auxiliar para registrar actividades CRUD
+  const registrarActividad = async (tipo, accion, descripcion, detalles = {}) => {
+    try {
+      if (!clienteId) {
+        console.warn('No hay clienteId para registrar actividad');
+        return;
+      }
+
+      await registrarActividadTarjeta(
+        clienteId,
+        tipo, 
+        accion,
+        descripcion,
+        {
+          upload_id: uploadId,
+          cierre_id: cierreId,
+          accion_origen: "modal_clasificaciones",
+          ...detalles
+        },
+        cierreId
+      );
+    } catch (error) {
+      console.warn('Error registrando actividad:', error);
+      // No fallar la operación principal por un error de logging
+    }
+  };
+
   const [registros, setRegistros] = useState([]);
   const [loading, setLoading] = useState(false);
   const [estadisticas, setEstadisticas] = useState({});
@@ -104,10 +134,24 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
     if (isOpen && uploadId && clienteId) {
       console.log('✅ Condiciones cumplidas - iniciando carga');
       
+      // Registrar timestamp de apertura para calcular tiempo de sesión
+      window.modalClasificacionesOpenTime = Date.now();
+      
       // Registrar que se abrió el modal manualmente
-      registrarVistaClasificaciones(clienteId, uploadId)
+      registrarVistaClasificaciones(clienteId, uploadId, cierreId)
         .then(() => {
           console.log('📋 Vista registrada - cargando datos');
+          
+          // Registrar actividad de vista del modal
+          registrarActividad(
+            "clasificacion",
+            "view_data",
+            `Abrió modal de clasificaciones para upload ${uploadId}`,
+            {
+              upload_id: uploadId
+            }
+          ).catch(logErr => console.warn("Error registrando vista del modal:", logErr));
+          
           // Después de registrar, cargar los datos
           cargarRegistros();
           // Cargar sets también
@@ -283,6 +327,30 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
     }
   };
 
+  // Función para manejar el cierre del modal con logging
+  const handleClose = async () => {
+    try {
+      await registrarActividad(
+        "clasificacion",
+        "view_data",
+        `Cerró modal de clasificaciones para upload ${uploadId}`,
+        {
+          tiempo_sesion: Date.now() - (window.modalClasificacionesOpenTime || Date.now()),
+          pestana_activa: pestanaActiva,
+          registros_cargados: registros.length,
+          sets_disponibles: sets.length
+        }
+      );
+    } catch (logErr) {
+      console.warn("Error registrando cierre del modal:", logErr);
+    }
+    
+    // Limpiar timestamp
+    delete window.modalClasificacionesOpenTime;
+    
+    onClose();
+  };
+
   // ==================== FUNCIONES DE FILTRADO ====================
   const obtenerSetsUnicos = () => {
     const setsEncontrados = new Set();
@@ -422,15 +490,20 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
     // Si ya está en esa pestaña, no hacer nada
     if (pestanaActiva === nuevaPestana) return;
     
-    // TODO: Implementar registro de vista de sets si es necesario
-    // Comentado temporalmente porque el endpoint no existe en el backend
-    // if (nuevaPestana === 'sets') {
-    //   try {
-    //     await registrarVistaSetsClasificacion(clienteId);
-    //   } catch (error) {
-    //     console.error("Error al registrar vista de sets:", error);
-    //   }
-    // }
+    // Registrar actividad de cambio de pestaña
+    try {
+      await registrarActividad(
+        "clasificacion",
+        "view_data",
+        `Cambió a pestaña ${nuevaPestana} en modal de clasificaciones`,
+        {
+          pestana_anterior: pestanaActiva,
+          pestana_nueva: nuevaPestana
+        }
+      );
+    } catch (logErr) {
+      console.warn("Error registrando cambio de pestaña:", logErr);
+    }
     
     setPestanaActiva(nuevaPestana);
   };
@@ -442,7 +515,23 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
       return;
     }
     try {
-      await crearSet(clienteId, nuevoSet.trim());
+      const setCreado = await crearSet(clienteId, nuevoSet.trim());
+      
+      // Registrar actividad detallada de creación de set
+      try {
+        await registrarActividad(
+          "clasificacion",
+          "set_create",
+          `Creó set de clasificación desde modal: ${nuevoSet.trim()}`,
+          {
+            set_id: setCreado.id,
+            nombre_set: nuevoSet.trim()
+          }
+        );
+      } catch (logErr) {
+        console.warn("Error registrando actividad de creación de set:", logErr);
+      }
+      
       setNuevoSet('');
       setCreandoSet(false);
       await cargarSets();
@@ -458,7 +547,30 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
       return;
     }
     try {
+      // Obtener datos del set antes de editar para el log
+      const setActual = sets.find(s => s.id === editandoSet);
+      const datosAnteriores = setActual ? {
+        nombre_anterior: setActual.nombre
+      } : {};
+      
       await actualizarSet(editandoSet, setEditando.trim());
+      
+      // Registrar actividad detallada de edición de set
+      try {
+        await registrarActividad(
+          "clasificacion",
+          "set_edit",
+          `Editó set de clasificación desde modal: ${setEditando.trim()}`,
+          {
+            set_id: editandoSet,
+            nombre_nuevo: setEditando.trim(),
+            ...datosAnteriores
+          }
+        );
+      } catch (logErr) {
+        console.warn("Error registrando actividad de edición de set:", logErr);
+      }
+      
       setEditandoSet(null);
       setSetEditando('');
       await cargarSets();
@@ -471,7 +583,29 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
   const handleEliminarSet = async (setId) => {
     if (window.confirm("¿Estás seguro de eliminar este set? Se eliminarán también todas sus opciones.")) {
       try {
+        // Obtener datos del set antes de eliminar para el log
+        const setAEliminar = sets.find(s => s.id === setId);
+        const datosEliminado = setAEliminar ? {
+          nombre: setAEliminar.nombre
+        } : {};
+        
         await eliminarSet(setId);
+        
+        // Registrar actividad detallada de eliminación de set
+        try {
+          await registrarActividad(
+            "clasificacion",
+            "set_delete",
+            `Eliminó set de clasificación desde modal: ${datosEliminado.nombre || 'N/A'}`,
+            {
+              set_id: setId,
+              ...datosEliminado
+            }
+          );
+        } catch (logErr) {
+          console.warn("Error registrando actividad de eliminación de set:", logErr);
+        }
+        
         await cargarSets();
       } catch (error) {
         console.error("Error eliminando set:", error);
@@ -490,12 +624,36 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
       }
       
       try {
-        await crearOpcion(setId, {
+        const datosOpcion = {
           valor: nuevaOpcionBilingue.es.trim(),
           valor_en: nuevaOpcionBilingue.en.trim(),
           descripcion: nuevaOpcionBilingue.descripcion_es.trim(),
           descripcion_en: nuevaOpcionBilingue.descripcion_en.trim(),
-        });
+        };
+        
+        const opcionCreada = await crearOpcion(setId, datosOpcion);
+        
+        // Registrar actividad detallada de creación de opción bilingüe
+        try {
+          const setActual = sets.find(s => s.id === setId);
+          await registrarActividad(
+            "clasificacion",
+            "option_create",
+            `Creó opción bilingüe desde modal: ${datosOpcion.valor} / ${datosOpcion.valor_en}`,
+            {
+              opcion_id: opcionCreada.id,
+              set_id: setId,
+              set_nombre: setActual?.nombre,
+              valor_es: datosOpcion.valor,
+              valor_en: datosOpcion.valor_en,
+              descripcion_es: datosOpcion.descripcion,
+              descripcion_en: datosOpcion.descripcion_en,
+              tipo_creacion: "bilingue"
+            }
+          );
+        } catch (logErr) {
+          console.warn("Error registrando actividad de creación de opción bilingüe:", logErr);
+        }
         
         setNuevaOpcionBilingue({ es: '', en: '', descripcion_es: '', descripcion_en: '' });
         setCreandoOpcionPara(null);
@@ -525,7 +683,29 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
           if (descripcion.trim()) datos.descripcion_en = descripcion.trim();
         }
         
-        await crearOpcion(setId, datos);
+        const opcionCreada = await crearOpcion(setId, datos);
+        
+        // Registrar actividad detallada de creación de opción monolingüe
+        try {
+          const setActual = sets.find(s => s.id === setId);
+          await registrarActividad(
+            "clasificacion",
+            "option_create",
+            `Creó opción en ${modoCreacionOpcion.toUpperCase()} desde modal: ${valor.trim()}`,
+            {
+              opcion_id: opcionCreada.id,
+              set_id: setId,
+              set_nombre: setActual?.nombre,
+              idioma: modoCreacionOpcion,
+              valor: valor.trim(),
+              descripcion: descripcion.trim(),
+              tipo_creacion: "monolingue"
+            }
+          );
+        } catch (logErr) {
+          console.warn("Error registrando actividad de creación de opción:", logErr);
+        }
+        
         setNuevaOpcionBilingue({ es: '', en: '', descripcion_es: '', descripcion_en: '' });
         setCreandoOpcionPara(null);
         await cargarSets();
@@ -581,7 +761,39 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
         }
       }
       
+      // Obtener datos actuales de la opción para el log
+      const opcionesActuales = obtenerOpcionesParaSet(setClasId);
+      const opcionActual = opcionesActuales.find(o => o.id === opcionId);
+      const datosAnteriores = opcionActual ? {
+        valor_anterior: opcionActual.valor,
+        descripcion_anterior: opcionActual.descripcion
+      } : {};
+      
       await actualizarOpcion(opcionId, datos, setClasId);
+      
+      // Registrar actividad detallada de edición de opción
+      try {
+        const setActual = sets.find(s => s.id === setClasId);
+        await registrarActividad(
+          "clasificacion",
+          "option_edit",
+          `Editó opción en ${idiomaActual.toUpperCase()} desde modal: ${valorAEditar}`,
+          {
+            opcion_id: opcionId,
+            set_id: setClasId,
+            set_nombre: setActual?.nombre,
+            idioma_editado: idiomaActual,
+            valor_nuevo: valorAEditar,
+            descripcion_nueva: idiomaActual === 'es' ? 
+              opcionEditandoBilingue.descripcion_es.trim() : 
+              opcionEditandoBilingue.descripcion_en.trim(),
+            ...datosAnteriores
+          }
+        );
+      } catch (logErr) {
+        console.warn("Error registrando actividad de edición de opción:", logErr);
+      }
+      
       setEditandoOpcion(null);
       setOpcionEditandoBilingue({ es: '', en: '', descripcion_es: '', descripcion_en: '' });
       await cargarSets();
@@ -612,7 +824,45 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
   const handleEliminarOpcion = async (opcionId) => {
     if (window.confirm("¿Estás seguro de eliminar esta opción?")) {
       try {
+        // Obtener datos de la opción antes de eliminar para el log
+        let opcionAEliminar = null;
+        let setContenedor = null;
+        
+        // Buscar la opción en todos los sets
+        for (const set of sets) {
+          const opciones = obtenerOpcionesParaSet(set.id);
+          const opcionEncontrada = opciones.find(o => o.id === opcionId);
+          if (opcionEncontrada) {
+            opcionAEliminar = opcionEncontrada;
+            setContenedor = set;
+            break;
+          }
+        }
+        
+        const datosEliminado = opcionAEliminar ? {
+          valor: opcionAEliminar.valor,
+          descripcion: opcionAEliminar.descripcion
+        } : {};
+        
         await eliminarOpcion(opcionId);
+        
+        // Registrar actividad detallada de eliminación de opción
+        try {
+          await registrarActividad(
+            "clasificacion",
+            "option_delete",
+            `Eliminó opción desde modal: ${datosEliminado.valor || 'N/A'}`,
+            {
+              opcion_id: opcionId,
+              set_id: setContenedor?.id,
+              set_nombre: setContenedor?.nombre,
+              ...datosEliminado
+            }
+          );
+        } catch (logErr) {
+          console.warn("Error registrando actividad de eliminación de opción:", logErr);
+        }
+        
         await cargarSets();
       } catch (error) {
         console.error("Error eliminando opción:", error);
@@ -675,7 +925,25 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
       console.log('Tipo de clasificaciones:', typeof nuevoRegistro.clasificaciones);
       console.log('¿Clasificaciones es object?:', nuevoRegistro.clasificaciones && typeof nuevoRegistro.clasificaciones === 'object');
 
-      await crearClasificacionArchivo(datosAEnviar);
+      const registroCreado = await crearClasificacionArchivo(datosAEnviar);
+      
+      // Registrar actividad detallada de creación de registro
+      try {
+        await registrarActividad(
+          "clasificacion",
+          "individual_create",
+          `Creó registro de clasificación desde modal: ${nuevoRegistro.numero_cuenta.trim()}`,
+          {
+            registro_id: registroCreado.id,
+            numero_cuenta: nuevoRegistro.numero_cuenta.trim(),
+            cantidad_clasificaciones: Object.keys(nuevoRegistro.clasificaciones).length,
+            clasificaciones: nuevoRegistro.clasificaciones,
+            fila_excel: siguienteFila
+          }
+        );
+      } catch (logErr) {
+        console.warn("Error registrando actividad de creación de registro:", logErr);
+      }
       
       console.log('✅ Registro creado exitosamente');
       await cargarRegistros();
@@ -740,7 +1008,33 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
     }
 
     try {
+      // Obtener datos del registro actual para el log
+      const registroActual = registros.find(r => r.id === editandoId);
+      const datosAnteriores = registroActual ? {
+        numero_cuenta_anterior: registroActual.numero_cuenta,
+        clasificaciones_anteriores: registroActual.clasificaciones
+      } : {};
+      
       await actualizarClasificacionArchivo(editandoId, registroEditando);
+      
+      // Registrar actividad detallada de edición de registro
+      try {
+        await registrarActividad(
+          "clasificacion",
+          "individual_edit",
+          `Editó registro de clasificación desde modal: ${registroEditando.numero_cuenta.trim()}`,
+          {
+            registro_id: editandoId,
+            numero_cuenta_nuevo: registroEditando.numero_cuenta.trim(),
+            cantidad_clasificaciones_nueva: Object.keys(registroEditando.clasificaciones).length,
+            clasificaciones_nuevas: registroEditando.clasificaciones,
+            ...datosAnteriores
+          }
+        );
+      } catch (logErr) {
+        console.warn("Error registrando actividad de edición de registro:", logErr);
+      }
+      
       await cargarRegistros();
       setEditandoId(null);
       setRegistroEditando(null);
@@ -757,7 +1051,31 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
   const handleEliminar = async (id) => {
     if (window.confirm("¿Estás seguro de que quieres eliminar este registro?")) {
       try {
+        // Obtener datos del registro antes de eliminar para el log
+        const registroAEliminar = registros.find(r => r.id === id);
+        const datosEliminado = registroAEliminar ? {
+          numero_cuenta: registroAEliminar.numero_cuenta,
+          clasificaciones: registroAEliminar.clasificaciones,
+          cantidad_clasificaciones: Object.keys(registroAEliminar.clasificaciones || {}).length
+        } : {};
+        
         await eliminarClasificacionArchivo(id);
+        
+        // Registrar actividad detallada de eliminación de registro
+        try {
+          await registrarActividad(
+            "clasificacion",
+            "individual_delete",
+            `Eliminó registro de clasificación desde modal: ${datosEliminado.numero_cuenta || 'N/A'}`,
+            {
+              registro_id: id,
+              ...datosEliminado
+            }
+          );
+        } catch (logErr) {
+          console.warn("Error registrando actividad de eliminación de registro:", logErr);
+        }
+        
         await cargarRegistros();
         if (onDataChanged) onDataChanged();
       } catch (error) {
@@ -829,6 +1147,30 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
       });
 
       await Promise.all(promesas);
+      
+      // Registrar actividad detallada de clasificación masiva
+      try {
+        const registrosAfectados = Array.from(registrosSeleccionados).map(id => {
+          const registro = registros.find(r => r.id === id);
+          return registro ? registro.numero_cuenta : `ID:${id}`;
+        });
+        
+        await registrarActividad(
+          "clasificacion",
+          "manual_edit",
+          `Aplicó clasificación masiva desde modal: ${setEncontrado.nombre} = ${opcionMasiva} a ${registrosSeleccionados.size} registros`,
+          {
+            set_nombre: setEncontrado.nombre,
+            set_id: setEncontrado.id,
+            opcion_aplicada: opcionMasiva,
+            cantidad_registros: registrosSeleccionados.size,
+            registros_afectados: registrosAfectados,
+            registros_ids: Array.from(registrosSeleccionados)
+          }
+        );
+      } catch (logErr) {
+        console.warn("Error registrando actividad de clasificación masiva:", logErr);
+      }
       
       // Recargar datos y limpiar selección
       await cargarRegistros();
@@ -918,7 +1260,7 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
           </div>
           
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="text-gray-400 hover:text-white transition-colors"
           >
             <X size={24} />
@@ -2088,7 +2430,7 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
               )}
             </div>
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded font-medium transition"
             >
               Cerrar

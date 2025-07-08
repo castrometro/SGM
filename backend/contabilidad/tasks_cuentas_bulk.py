@@ -457,7 +457,17 @@ def finalizar_procesamiento_clasificacion_task(upload_log_id):
         # Crear también sets predefinidos con opciones bilingües estándar
         logger.info(f"Creando sets predefinidos para cliente {upload_log.cliente.id}")
         try:
-            resultado_predefinidos = crear_sets_predefinidos_clasificacion(upload_log.cliente.id)
+            resumen = upload_log.resumen or {}
+            sets_archivo = [s.lower().strip() for s in resumen.get('sets_encontrados', [])]
+            omit_sets = []
+            if any(s in ['esr', 'estado de resultado'] for s in sets_archivo):
+                omit_sets.append('Estado de Resultados')
+            if any(s in ['eri', 'estado de resultado integral'] for s in sets_archivo):
+                omit_sets.append('Estado de Resultados Integral')
+
+            resultado_predefinidos = crear_sets_predefinidos_clasificacion(
+                upload_log.cliente.id, omit_sets=omit_sets
+            )
             logger.info(f"Resultado creación sets predefinidos: {resultado_predefinidos}")
         except Exception as e:
             logger.error(f"Error creando sets predefinidos: {str(e)}")
@@ -955,7 +965,7 @@ def validar_archivo_clasificacion_excel(ruta_archivo, cliente_id):
 
 
 @shared_task(name='contabilidad.crear_sets_predefinidos_clasificacion')
-def crear_sets_predefinidos_clasificacion(cliente_id):
+def crear_sets_predefinidos_clasificacion(cliente_id, omit_sets=None):
     """
     Crea sets de clasificación predefinidos con opciones bilingües estándar
     para clasificación contable. Incluye sets como Tipo de Cuenta, Categoría IFRS, etc.
@@ -975,6 +985,9 @@ def crear_sets_predefinidos_clasificacion(cliente_id):
             logger.error(msg)
             return {'error': msg}
         
+        if omit_sets is None:
+            omit_sets = []
+
         sets_creados = 0
         opciones_creadas = 0
         sets_actualizados = 0
@@ -1007,6 +1020,9 @@ def crear_sets_predefinidos_clasificacion(cliente_id):
         
         # Crear sets y opciones
         for set_nombre, set_info in sets_predefinidos.items():
+            if set_nombre in omit_sets:
+                logger.info(f"[SETS_PREDEFINIDOS] Omitiendo set existente en archivo: {set_nombre}")
+                continue
             logger.debug(f"[SETS_PREDEFINIDOS] Procesando set: {set_nombre}")
             
             # Crear o actualizar el ClasificacionSet único (no duplicamos por idioma)

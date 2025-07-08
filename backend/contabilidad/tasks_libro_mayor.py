@@ -384,13 +384,14 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
     def procesar_saldo_anterior(row, cierre, code, aperturas, stats, totales_esf_eri, identificar_clasificacion_esf_eri):
         """Procesa un saldo anterior y lo añade a la lista de aperturas"""
         try:
-            # Determinar de dónde viene el saldo
-            if S and row[S] is not None:
-                saldo = Decimal(row[S])
+            # Obtener el saldo exclusivamente de la columna SALDO
+            if S is not None:
+                saldo = Decimal(row[S] or 0)
                 origen_saldo = f"columna SALDO = {row[S]}"
             else:
-                saldo = Decimal(row[D] or 0)
-                origen_saldo = f"columna DEBE = {row[D]} (no hay columna SALDO)"
+                # Si no existe la columna SALDO, usar 0
+                saldo = Decimal(0)
+                origen_saldo = "columna SALDO no encontrada - usando saldo 0"
             
             logger.info(f"📊 PROCESANDO SALDO ANTERIOR: Cuenta {code} | {origen_saldo} | Saldo final: ${saldo:,.2f}")
             cuenta_obj = processed_accounts[code]

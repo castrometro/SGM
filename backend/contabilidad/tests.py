@@ -13,6 +13,7 @@ from contabilidad.models import (
     ClasificacionCuentaArchivo,
     NombreIngles,
     Incidencia,
+    TarjetaActivityLog,
 )
 
 
@@ -94,6 +95,16 @@ class MovimientosResumenTests(TestCase):
         data = response.json()
         self.assertEqual(len(data), 1)
         self.assertEqual(data[0]["cuenta_id"], self.c1.id)
+
+    def test_log_periodo_correcto(self):
+        """Verifica que registrar_actividad_tarjeta usa el periodo del cierre"""
+        url = f"/api/contabilidad/cierres/{self.cierre.id}/movimientos-resumen/"
+        self.client.get(url)
+
+        log = TarjetaActivityLog.objects.filter(
+            cierre=self.cierre, accion="view_data"
+        ).first()
+        self.assertIsNotNone(log)
 
 
 class ReprocesarIncompletosTests(TestCase):

@@ -1,6 +1,9 @@
 # backend/contabilidad/utils/activity_logger.py
 from ..models import TarjetaActivityLog, CierreContabilidad
 from django.contrib.auth import get_user_model
+import logging
+
+logger = logging.getLogger(__name__)
 
 Usuario = get_user_model()
 
@@ -33,15 +36,29 @@ def registrar_actividad_tarjeta(
         TarjetaActivityLog: El log creado
     """
     try:
-        # Buscar o crear el cierre
-        cierre, _ = CierreContabilidad.objects.get_or_create(
+        logger.debug(
+            "registrar_actividad_tarjeta cliente=%s periodo=%s tarjeta=%s accion=%s",
+            cliente_id,
+            periodo,
+            tarjeta,
+            accion,
+        )
+
+        # Buscar el cierre (no crearlo implícitamente)
+        cierre = CierreContabilidad.objects.filter(
             cliente_id=cliente_id,
             periodo=periodo,
-            defaults={
-                'usuario': usuario,
-                'estado': 'pendiente'
-            }
-        )
+        ).first()
+
+        if not cierre:
+            # Si no existe el cierre, no registrar actividad para evitar
+            # crearlo de forma involuntaria
+            logger.warning(
+                "Se intent\u00f3 registrar actividad para un cierre inexistente (%s - %s)",
+                cliente_id,
+                periodo,
+            )
+            return None
         
         # Crear el log
         log_entry = TarjetaActivityLog.objects.create(
@@ -58,8 +75,8 @@ def registrar_actividad_tarjeta(
         return log_entry
         
     except Exception as e:
-        # En caso de error, no fallar la operación principal
-        print(f"Error registrando actividad: {e}")
+        # En caso de error, no fallar la operaci\u00f3n principal
+        logger.error("Error registrando actividad: %s", e)
         return None
 
 def obtener_logs_tarjeta(cliente_id, periodo, tarjeta=None):

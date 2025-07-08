@@ -16,16 +16,20 @@ from django.core.cache import cache
 from django.core.exceptions import ImproperlyConfigured
 import os
 
-CELERY_BROKER_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
-CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
+# Redis y Celery Configuration
+REDIS_PASSWORD = os.environ.get('REDIS_PASSWORD', '')
+if REDIS_PASSWORD:
+    REDIS_URL = f"redis://:{REDIS_PASSWORD}@redis:6379/0"
+    CACHE_REDIS_URL = f"redis://:{REDIS_PASSWORD}@redis:6379/1"
+else:
+    REDIS_URL = "redis://redis:6379/0"
+    CACHE_REDIS_URL = "redis://redis:6379/1"
+
+CELERY_BROKER_URL = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
-CELERY_BROKER_URL    = REDIS_URL
-CELERY_RESULT_BACKEND = REDIS_URL
-
 
 
 # Ajustes para guardar archivos multimedia
@@ -140,7 +144,7 @@ except ModuleNotFoundError:
 CACHES = {
     "default": {
         "BACKEND": _cache_backend,
-        "LOCATION": REDIS_URL,
+        "LOCATION": CACHE_REDIS_URL,  # ← Cambiar esta línea
         "OPTIONS": {
             **_cache_opts,
             "CONNECTION_POOL_KWARGS": {

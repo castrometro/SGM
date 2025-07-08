@@ -8,6 +8,28 @@ from .views.actividad import (
     TarjetaActivityLogViewSet,
     registrar_actividad_crud,
 )
+# Imports para cache Redis
+from .views.cache_views import (
+    get_kpis_with_cache,
+    get_estado_financiero_with_cache,
+    get_movimientos_with_cache,
+    get_procesamiento_status_with_cache,
+    invalidar_cache_cliente,
+    get_cache_stats,
+    get_cache_health,
+    set_kpis_cache,
+    set_estado_financiero_cache,
+    set_movimientos_cache,
+    set_procesamiento_status_cache,
+    # Endpoints de pruebas
+    set_prueba_esf,
+    get_prueba_esf,
+    set_prueba_data,
+    get_prueba_data,
+    list_pruebas_cliente,
+    invalidate_pruebas_cliente,
+    capture_current_esf,
+)
 from .views.incidencias import (
     obtener_incidencias_consolidadas,
     obtener_incidencias_consolidadas_optimizado,
@@ -208,4 +230,96 @@ urlpatterns = [
         "document_root": settings.BASE_DIR / "static/plantillas",
         "path": "plantilla_clasificacion.xlsx",
     }, name="descargar_plantilla_clasificacion_bulk"),
+    
+    # ===================================
+    # SISTEMA DE CACHE REDIS - SGM
+    # ===================================
+    
+    # Endpoints de lectura (GET) con cache
+    path("cache/kpis/<int:cliente_id>/<str:periodo>/", 
+         get_kpis_with_cache, 
+         name="cache_get_kpis"),
+    
+    path("cache/estado-financiero/<int:cliente_id>/<str:periodo>/<str:tipo_estado>/", 
+         get_estado_financiero_with_cache, 
+         name="cache_get_estado_financiero"),
+    
+    path("cache/movimientos/<int:cliente_id>/<str:periodo>/", 
+         get_movimientos_with_cache, 
+         name="cache_get_movimientos"),
+    
+    path("cache/procesamiento/<int:cliente_id>/<str:periodo>/", 
+         get_procesamiento_status_with_cache, 
+         name="cache_get_procesamiento"),
+    
+    # Endpoints de escritura (POST) para cache
+    path("cache/kpis/<int:cliente_id>/<str:periodo>/set/", 
+         set_kpis_cache, 
+         name="cache_set_kpis"),
+    
+    path("cache/estado-financiero/<int:cliente_id>/<str:periodo>/<str:tipo_estado>/set/", 
+         set_estado_financiero_cache, 
+         name="cache_set_estado_financiero"),
+    
+    path("cache/movimientos/<int:cliente_id>/<str:periodo>/set/", 
+         set_movimientos_cache, 
+         name="cache_set_movimientos"),
+    
+    path("cache/procesamiento/<int:cliente_id>/<str:periodo>/set/", 
+         set_procesamiento_status_cache, 
+         name="cache_set_procesamiento"),
+    
+    # Gestión del cache
+    path("cache/invalidar/<int:cliente_id>/", 
+         invalidar_cache_cliente, 
+         name="cache_invalidar_cliente"),
+    
+    path("cache/invalidar/<int:cliente_id>/<str:periodo>/", 
+         invalidar_cache_cliente, 
+         name="cache_invalidar_cliente_periodo"),
+    
+    # Monitoreo del cache
+    path("cache/stats/", 
+         get_cache_stats, 
+         name="cache_stats"),
+    
+    path("cache/health/", 
+         get_cache_health, 
+         name="cache_health"),
+    
+    # ===================================
+    # ENDPOINTS DE PRUEBAS - SISTEMA DE CACHE
+    # ===================================
+    
+    # ESF de pruebas
+    path("cache/pruebas/esf/<int:cliente_id>/<str:periodo>/", 
+         set_prueba_esf, 
+         name="cache_set_prueba_esf"),
+    
+    path("cache/pruebas/esf/<int:cliente_id>/<str:periodo>/get/", 
+         get_prueba_esf, 
+         name="cache_get_prueba_esf"),
+    
+    # Datos de prueba genéricos
+    path("cache/pruebas/<str:data_type>/<int:cliente_id>/<str:periodo>/", 
+         set_prueba_data, 
+         name="cache_set_prueba_data"),
+    
+    path("cache/pruebas/<str:data_type>/<int:cliente_id>/<str:periodo>/get/", 
+         get_prueba_data, 
+         name="cache_get_prueba_data"),
+    
+    # Gestión de pruebas
+    path("cache/pruebas/list/<int:cliente_id>/", 
+         list_pruebas_cliente, 
+         name="cache_list_pruebas_cliente"),
+    
+    path("cache/pruebas/invalidate/<int:cliente_id>/", 
+         invalidate_pruebas_cliente, 
+         name="cache_invalidate_pruebas_cliente"),
+    
+    # Captura ESF del sistema actual
+    path("cache/pruebas/capture-esf/<int:cliente_id>/<str:periodo>/", 
+         capture_current_esf, 
+         name="cache_capture_current_esf"),
 ]

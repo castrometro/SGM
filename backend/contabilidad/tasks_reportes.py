@@ -69,6 +69,9 @@ def generar_estado_situacion_financiera(self, cierre_id, usuario_id=None, regene
                 reporte.estado = 'generando'
                 reporte.error_mensaje = ''
                 reporte.fecha_actualizacion = timezone.now()
+                # IMPORTANTE: Actualizar el usuario generador cuando se regenera
+                if usuario_id:
+                    reporte.usuario_generador_id = usuario_id
                 reporte.save()
         
         # Actualizar progreso

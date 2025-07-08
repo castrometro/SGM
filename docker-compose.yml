@@ -16,12 +16,38 @@ services:
     image: redis:7.2.5
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data  # ← AGREGADO: Persistencia para Redis
+    command: redis-server --appendonly yes  --requirepass ${REDIS_PASSWORD} # ← AGREGADO: Habilitar persistencia
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD} 
+    env_file:
+    - .env
+  # ← NUEVO: RedisInsight para análisis y métricas
+  redisinsight:
+    image: redislabs/redisinsight:latest
+    ports:
+      - "8001:5540"
+    volumes:
+      - redisinsight_data:/db
+    environment:
+      - RIPORT=5540
+      - RIHOST=0.0.0.0
+      - RIUSER=${REDISINSIGHT_USER}
+      - RIPASSWORD=${REDISINSIGHT_PASS}
+      - RIENCRYPTION=true
+      - RITLS=false  # ← Sin TLS hacia Redis
+      - RISSL=false  # ← Sin SSL hacia Redis
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    restart: unless-stopped
 
   django:
     build:
       context: ./backend
     command: bash -c "python manage.py migrate && python manage.py collectstatic --noinput && python manage.py runserver 0.0.0.0:8000"
-
     volumes:
       - ./backend:/app
     ports:
@@ -46,16 +72,22 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_HOST=${POSTGRES_HOST}
       - POSTGRES_PORT=${POSTGRES_PORT}
-      - REDIS_URL=${REDIS_URL}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}  # ← AGREGAR: Solo la contraseña
+    env_file:
+      - .env  # ← AGREGAR: Para que lea las variables del .env
     depends_on:
       - db
       - redis
 
   flower:
     image: mher/flower
-    command: python -m celery --broker=${REDIS_URL} flower
+    command: python -m celery --broker=redis://:${REDIS_PASSWORD}@redis:6379/0 flower
     ports:
       - "5555:5555"
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}  # ← AGREGAR
+    env_file:
+      - .env  # ← AGREGAR
     depends_on:
       - redis
       - celery_worker
@@ -83,7 +115,12 @@ services:
       - "8502:8502"
     environment:
       - PORT=8502
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_DB_CONTABILIDAD=1
     depends_on:
+      - redis
       - ollama
 
   streamlit_nomina:
@@ -96,7 +133,12 @@ services:
       - "8503:8503"
     environment:
       - PORT=8503
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_DB_NOMINA=2
     depends_on:
+      - redis
       - ollama
 
   ollama:
@@ -107,9 +149,10 @@ services:
       - ollama_data:/root/.ollama
     restart: always
 
-
 volumes:
   postgres_data:
+  redis_data:        # ← NUEVO: Persistencia para Redis
+  redisinsight_data: # ← NUEVO: Configuración de RedisInsight
   ollama_data:
 
 

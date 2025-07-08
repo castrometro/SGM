@@ -1,0 +1,110 @@
+{
+  "cliente_rut": "76895432-1",
+  "cliente_nombre": "EMPRESA XYZ LTDA",
+  "periodo": "2025-04",
+  "generado_por": "pablo.castro",
+  "generado_fecha": "2025-07-06T12:05:00Z",
+
+  "resumen_dotacion": {
+    "dotacion_inicial": 48,
+    "ingresos_mes": 5,
+    "finiquitos_mes": 3,
+    "dotacion_final": 50,
+    "tasa_ingreso_pct": 10.2,
+    "tasa_finiquitos_pct": 6.1,
+    "rotacion_pct": 6.2
+  },
+
+  "resumen_costos": {
+    "total_haberes_imponibles": 40250000,
+    "total_haberes_no_imponibles": 2650000,
+    "total_haberes": 42900000,
+    "total_descuentos_legales": 5032000,
+    "total_otros_descuentos": 410000,
+    "total_aportes_patronales": 1786000,
+    "costo_empresa": 44686000,
+    "variacion_remuneraciones_pct": 4.5
+  },
+
+  "resumen_afiliaciones": {
+    "total_trabajadores": 50,
+    "afp": {
+      "AFP Modelo": 28,
+      "AFP Habitat": 12,
+      "AFP Provida": 10
+    },
+    "salud": {
+      "Fonasa": 30,
+      "Isapre": 20
+    }
+  },
+
+  "horas_extras": {
+    "total_horas_50": 88,
+    "total_monto_50": 560000,
+    "total_horas_100": 20,
+    "total_monto_100": 280000
+  },
+
+  "remuneracion_promedio": {
+    "global": 858000,
+    "por_centro_costo": [
+      {
+        "centro_costo": "Administración",
+        "promedio": 950000
+      },
+      {
+        "centro_costo": "Producción",
+        "promedio": 800000
+      }
+    ]
+  },
+
+  "conceptos_resumidos": [
+    {
+      "concepto": "Sueldo Base",
+      "categoria": "Haberes Imponibles",
+      "total_monto": 32000000
+    },
+    {
+      "concepto": "Gratificación Mensual",
+      "categoria": "Haberes Imponibles",
+      "total_monto": 4000000
+    },
+    {
+      "concepto": "Bono por Inventario",
+      "categoria": "Haberes Imponibles",
+      "total_monto": 2500000
+    },
+    {
+      "concepto": "Viáticos",
+      "categoria": "Haberes No Imponibles",
+      "total_monto": 1400000
+    },
+    {
+      "concepto": "Movilización",
+      "categoria": "Haberes No Imponibles",
+      "total_monto": 1250000
+    }
+  ],
+
+  "incidencias_fase_1_5": [
+    {
+      "rut": "12345678-9",
+      "nombre": "Héctor Pérez",
+      "concepto": "Licencia Médica",
+      "detalle_actual": {
+        "fecha_inicio": "2025-04-15",
+        "fecha_fin": "2025-04-25",
+        "dias": 11
+      },
+      "detalle_mes_anterior": {
+        "fecha_inicio": "2025-04-15",
+        "fecha_fin": "2025-04-15",
+        "dias": 1
+      },
+      "variacion": "+10 días",
+      "observacion": "Diferencia en duración de licencia médica respecto al mes anterior."
+    }
+  ]
+}

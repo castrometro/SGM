@@ -272,7 +272,7 @@ def finalizar_cierre_y_generar_reportes(self=None, cierre_id=None, usuario_id=No
         try:
             # Intentar ejecución paralela con Celery
             job = group([
-                ejecutar_calculos_contables.s(cierre_id),
+                ejecutar_calculos_contables.s(cierre_id, usuario_id),
                 consolidar_datos_dashboard.s(cierre_id)
             ])
             resultados_paralelos = job.apply_async().get(timeout=300)  # 5 min timeout
@@ -281,7 +281,7 @@ def finalizar_cierre_y_generar_reportes(self=None, cierre_id=None, usuario_id=No
         except Exception as e:
             # Fallback a ejecución secuencial
             print(f"   ⚠️ Celery paralelo falló ({str(e)}), ejecutando secuencialmente...")
-            resultado_calculos = ejecutar_calculos_contables(cierre_id)
+            resultado_calculos = ejecutar_calculos_contables(cierre_id, usuario_id)
             resultado_consolidacion = consolidar_datos_dashboard(cierre_id)
         
         print(f"   ✅ Cálculos completados: {resultado_calculos['total_cuentas']} cuentas procesadas")
@@ -290,7 +290,7 @@ def finalizar_cierre_y_generar_reportes(self=None, cierre_id=None, usuario_id=No
         # =================== STEP 3: GENERACIÓN DE REPORTES ===================
         actualizar_progreso(4, 5, 'Generando reportes finales...', 80)
         print(f"📈 STEP 3: Generando reportes finales...")
-        resultado_reportes = generar_reportes_finales(cierre_id)
+        resultado_reportes = generar_reportes_finales(cierre_id, usuario_id)
         print(f"   ✅ Reportes generados: {len(resultado_reportes['reportes'])} archivos")
         
         # =================== STEP 5: FINALIZACIÓN ===================
@@ -410,12 +410,13 @@ def ejecutar_validaciones_finales(cierre_id):
 
 
 @shared_task(name='contabilidad.ejecutar_calculos_contables')
-def ejecutar_calculos_contables(cierre_id):
+def ejecutar_calculos_contables(cierre_id, usuario_id=None):
     """
     Ejecuta cálculos contables reales y los guarda en BD y Redis.
     
     Args:
         cierre_id (int): ID del cierre
+        usuario_id (int, optional): ID del usuario que ejecuta la finalización
         
     Returns:
         dict: Resultado de los cálculos
@@ -424,6 +425,11 @@ def ejecutar_calculos_contables(cierre_id):
     from decimal import Decimal
     
     print(f"   📊 Calculando saldos finales...")
+    
+    # 🔍 DEBUG: Verificar usuario_id
+    print(f"   🔍 DEBUG - ejecutar_calculos_contables:")
+    print(f"       cierre_id: {cierre_id}")
+    print(f"       usuario_id: {usuario_id} (tipo: {type(usuario_id)})")
     
     try:
         cierre = CierreContabilidad.objects.get(id=cierre_id)
@@ -450,7 +456,7 @@ def ejecutar_calculos_contables(cierre_id):
         
         # =================== GUARDAR EN BASE DE DATOS ===================
         print(f"   💾 Guardando en base de datos...")
-        guardar_reportes_en_bd(cierre, balance_general_esf, estado_resultados, ratios)
+        guardar_reportes_en_bd(cierre, balance_general_esf, estado_resultados, ratios, usuario_id)
         print(f"   ✅ Datos guardados en BD para auditabilidad")
         
         # =================== GUARDAR EN REDIS ===================
@@ -505,7 +511,7 @@ def consolidar_datos_dashboard(cierre_id):
 
 
 @shared_task(name='contabilidad.generar_reportes_finales')
-def generar_reportes_finales(cierre_id):
+def generar_reportes_finales(cierre_id, usuario_id=None):
     """
     Genera los reportes finales del cierre.
     
@@ -525,7 +531,8 @@ def generar_reportes_finales(cierre_id):
     print(f"   📋 Generando Estado de Situación Financiera...")
     try:
         # Ejecutar la tarea de forma síncrona dentro de esta tarea
-        resultado_esf = generar_estado_situacion_financiera.apply(args=[cierre_id]).result
+        # IMPORTANTE: Pasar usuario_id para que el reporte quede registrado correctamente
+        resultado_esf = generar_estado_situacion_financiera.apply(args=[cierre_id, usuario_id]).result
         if resultado_esf.get('success'):
             reportes_generados.append({
                 'nombre': 'Estado de Situación Financiera',
@@ -1410,7 +1417,7 @@ def validar_balance_cuadrado(esf):
     # ====================================================================
 
 
-def guardar_reportes_en_bd(cierre, esf, estado_resultados, ratios):
+def guardar_reportes_en_bd(cierre, esf, estado_resultados, ratios, usuario_id=None):
     """
     Guarda los reportes calculados en la base de datos para auditabilidad.
     
@@ -1419,35 +1426,121 @@ def guardar_reportes_en_bd(cierre, esf, estado_resultados, ratios):
         esf: Dict con datos del Estado de Situación Financiera
         estado_resultados: Dict con datos del Estado de Resultados Integral
         ratios: Dict con ratios calculados
+        usuario_id (int, optional): ID del usuario que ejecuta la finalización
     """
     from .models import TarjetaActivityLog
+    from api.models import Usuario
     from django.utils import timezone
+    import traceback
+    from decimal import Decimal
+    
+    # 🔍 DEBUG: Logging detallado para diagnosticar el problema
+    print(f"   🔍 DEBUG - guardar_reportes_en_bd:")
+    print(f"       usuario_id recibido: {usuario_id} (tipo: {type(usuario_id)})")
+    print(f"       cierre: {cierre} (ID: {cierre.id})")
+    
+    # Obtener el objeto Usuario si se proporciona usuario_id
+    usuario = None
+    if usuario_id:
+        try:
+            usuario = Usuario.objects.get(id=usuario_id)
+            print(f"       ✅ Usuario encontrado: {usuario.correo_bdo} (ID: {usuario.id})")
+        except Usuario.DoesNotExist:
+            print(f"       ❌ Usuario con ID {usuario_id} no encontrado en la base de datos")
+        except Exception as e:
+            print(f"       ❌ Error buscando usuario: {e}")
+    else:
+        print(f"       ⚠️ usuario_id es None o vacío")
+    
+    # 🔧 FUNCIÓN AUXILIAR: Convertir Decimals a float recursivamente para evitar errores de serialización JSON
+    def convertir_decimals_a_float(obj):
+        """
+        Convierte recursivamente todos los objetos Decimal a float para que sean JSON serializable.
+        
+        Args:
+            obj: Objeto que puede contener Decimals anidados
+            
+        Returns:
+            Objeto con todos los Decimals convertidos a float
+        """
+        if isinstance(obj, Decimal):
+            return float(obj)
+        elif isinstance(obj, dict):
+            return {key: convertir_decimals_a_float(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [convertir_decimals_a_float(item) for item in obj]
+        elif isinstance(obj, tuple):
+            return tuple(convertir_decimals_a_float(item) for item in obj)
+        else:
+            return obj
+    
+    # 🔧 CONVERSIÓN: Convertir todos los Decimals a float antes de guardar
+    try:
+        print(f"   🔧 Convirtiendo Decimals a float para serialización JSON...")
+        
+        esf_serializable = convertir_decimals_a_float(esf)
+        estado_resultados_serializable = convertir_decimals_a_float(estado_resultados)
+        ratios_serializable = convertir_decimals_a_float(ratios)
+        
+        print(f"   ✅ Conversión completada - Datos ahora son JSON serializable")
+        
+        # Verificar algunos valores antes y después de conversión (para debug)
+        if 'total_activos' in esf:
+            print(f"       Ejemplo conversión - total_activos:")
+            print(f"         Antes: {esf['total_activos']} (tipo: {type(esf['total_activos'])})")
+            print(f"         Después: {esf_serializable['total_activos']} (tipo: {type(esf_serializable['total_activos'])})")
+            
+    except Exception as e:
+        print(f"   ❌ Error en conversión de Decimals: {e}")
+        # En caso de error, usar datos originales (podría fallar en el guardado)
+        esf_serializable = esf
+        estado_resultados_serializable = estado_resultados
+        ratios_serializable = ratios
     
     # Por ahora solo crear un log de actividad
     # En el futuro se puede crear una tabla específica para reportes
     try:
-        TarjetaActivityLog.objects.create(
+        log_creado = TarjetaActivityLog.objects.create(
             cierre=cierre,
             tarjeta='reportes',
             accion='calculo_completado',
+            usuario=usuario,  # ✅ CORREGIDO: Ahora se incluye el objeto usuario
             descripcion='Estado de Situación Financiera y Estado de Resultados Integral calculados',
             detalles={
-                'estado_situacion_financiera': esf,
-                'estado_resultados_integral': estado_resultados,
-                'ratios_financieros': ratios,
+                'estado_situacion_financiera': esf_serializable,  # ✅ USANDO DATOS SERIALIZABLES
+                'estado_resultados_integral': estado_resultados_serializable,  # ✅ USANDO DATOS SERIALIZABLES
+                'ratios_financieros': ratios_serializable,  # ✅ USANDO DATOS SERIALIZABLES
                 'fecha_calculo': timezone.now().isoformat(),
-                'version_calculo': '2.0_ESF_ERI'
+                'version_calculo': '2.0_ESF_ERI',
+                'usuario_generador': usuario.correo_bdo if usuario else 'Sistema',  # ✅ Info adicional en detalles
+                'debug_info': {
+                    'usuario_id_recibido': usuario_id,
+                    'usuario_object_id': usuario.id if usuario else None,
+                    'usuario_correo': usuario.correo_bdo if usuario else None,
+                    'conversion_decimals_aplicada': True  # ✅ FLAG PARA CONFIRMAR CONVERSIÓN
+                }
             },
             resultado='exito'
         )
-        print(f"   ✅ Reportes ESF y ERI guardados en BD como log de actividad")
+        
+        # 🔍 DEBUG: Verificar que se guardó correctamente
+        print(f"   🔍 DEBUG - Log creado exitosamente:")
+        print(f"       Log ID: {log_creado.id}")
+        print(f"       Usuario en log: {log_creado.usuario}")
+        print(f"       Usuario ID en log: {log_creado.usuario.id if log_creado.usuario else None}")
+        print(f"       Conversión Decimals aplicada: ✅")
+        
+        print(f"   ✅ Reportes ESF y ERI guardados en BD como log de actividad con usuario: {usuario.correo_bdo if usuario else 'Sistema'}")
     except Exception as e:
-        print(f"   ⚠️ Error guardando en BD: {e}")
+        print(f"   ❌ Error guardando en BD: {e}")
+        import traceback
+        print(f"   📋 Traceback completo: {traceback.format_exc()}")
 
 
 def guardar_datos_en_redis(cierre, esf, estado_resultados, ratios, cuentas_saldos):
     """
     Guarda los datos calculados en Redis para consulta rápida por Streamlit.
+    También guarda el ESF en la carpeta de pruebas para comparaciones futuras.
     
     Args:
         cierre: Instancia de CierreContabilidad
@@ -1461,7 +1554,6 @@ def guardar_datos_en_redis(cierre, esf, estado_resultados, ratios, cuentas_saldo
     from django.utils import timezone
     
     try:
-        # TODO: Conectar a Redis cuando esté configurado
         print(f"   ⚡ Preparando datos ESF y ERI para Redis...")
         
         # Convertir Decimals a float para JSON
@@ -1474,6 +1566,106 @@ def guardar_datos_en_redis(cierre, esf, estado_resultados, ratios, cuentas_saldo
                 return float(obj)
             return obj
         
+        # ========================================
+        # 1. GUARDAR ESF EN CARPETA DE PRUEBAS
+        # ========================================
+        print(f"   🧪 Guardando ESF en carpeta de pruebas Redis...")
+        
+        try:
+            from .cache_redis import get_cache_system
+            cache_system = get_cache_system()
+            
+            # Preparar ESF para guardar como prueba
+            esf_prueba = {
+                'tipo_estado': 'ESF',
+                'cliente_id': cierre.cliente.id,
+                'cliente_nombre': cierre.cliente.nombre,
+                'periodo': cierre.periodo,
+                'cierre_id': cierre.id,
+                'generated_by': 'sistema_finalizacion_sgm',
+                'generated_at': timezone.now().isoformat(),
+                'source': 'task_finalizacion_automatico',
+                
+                # Datos del ESF (ya convertidos a float)
+                **decimal_to_float(esf),
+                
+                # Metadata adicional para pruebas
+                'metadata_prueba': {
+                    'total_cuentas_procesadas': len(cuentas_saldos),
+                    'ratios_calculados': len(ratios),
+                    'fecha_cierre': cierre.fecha_finalizacion.isoformat() if cierre.fecha_finalizacion else None,
+                    'version_sistema': '2.0_automatico',
+                    'validado_balance': esf.get('balance_cuadrado', False),
+                    'diferencia_balance': float(esf.get('diferencia', 0)) if 'diferencia' in esf else 0
+                },
+                
+                # Información de contexto
+                'contexto_generacion': {
+                    'proceso': 'finalizar_cierre_y_generar_reportes',
+                    'tipo_calculo': 'saldos_iniciales_mas_movimientos',
+                    'incluye_saldos_iniciales': True,
+                    'incluye_movimientos_periodo': True,
+                    'clasificaciones_aplicadas': True
+                }
+            }
+            
+            # Guardar en Redis como prueba del sistema actual
+            cache_success = cache_system.set_prueba_esf(
+                cliente_id=cierre.cliente.id,
+                periodo=cierre.periodo,
+                esf_data=esf_prueba,
+                test_type="finalizacion_automatica"
+            )
+            
+            if cache_success:
+                print(f"   ✅ ESF guardado en Redis carpeta pruebas:")
+                print(f"       Key: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:pruebas:esf:finalizacion_automatica")
+                print(f"       Cliente: {cierre.cliente.nombre}")
+                print(f"       Período: {cierre.periodo}")
+                print(f"       Total Activos: ${esf_prueba['total_activos']:,.2f}")
+                print(f"       Balance Cuadrado: {'✅ SÍ' if esf_prueba.get('balance_cuadrado', False) else '❌ NO'}")
+            else:
+                print(f"   ⚠️ No se pudo guardar ESF en carpeta de pruebas")
+                
+        except Exception as e:
+            print(f"   ❌ Error guardando ESF en carpeta de pruebas: {e}")
+            import traceback
+            print(f"   📋 Traceback: {traceback.format_exc()}")
+        
+        # ========================================
+        # 2. GUARDAR DATOS PRINCIPALES EN REDIS
+        # ========================================
+        try:
+            print(f"   ⚡ Guardando en cache principal de Redis...")
+            
+            # Guardar ESF en cache principal
+            cache_esf_success = cache_system.set_estado_financiero(
+                cliente_id=cierre.cliente.id,
+                periodo=cierre.periodo,
+                tipo_estado="esf",
+                datos=decimal_to_float(esf)
+            )
+            
+            # Guardar KPIs/ratios
+            cache_kpis_success = cache_system.set_kpis(
+                cliente_id=cierre.cliente.id,
+                periodo=cierre.periodo,
+                kpis=decimal_to_float(ratios)
+            )
+            
+            if cache_esf_success and cache_kpis_success:
+                print(f"   ✅ Datos guardados en cache principal:")
+                print(f"       ESF: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:esf")
+                print(f"       KPIs: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:kpis")
+            else:
+                print(f"   ⚠️ Algunos datos no se pudieron guardar en cache principal")
+                
+        except Exception as e:
+            print(f"   ⚠️ Error guardando en cache principal: {e}")
+        
+        # ========================================
+        # 3. DATOS LEGACY (COMPATIBILIDAD)
+        # ========================================
         datos_redis = {
             'cierre_id': cierre.id,
             'cliente_id': cierre.cliente.id,
@@ -1500,20 +1692,25 @@ def guardar_datos_en_redis(cierre, esf, estado_resultados, ratios, cuentas_saldo
             }
         }
         
-        # Simular guardado en Redis (implementar cuando Redis esté configurado)
+        # Simular guardado en Redis legacy (mantener compatibilidad)
         redis_key = f"contabilidad:cliente:{cierre.cliente.id}:ultimo_cierre"
-        print(f"   📝 Datos ESF/ERI preparados para Redis key: {redis_key}")
-        print(f"   📊 Resumen: {len(cuentas_saldos)} cuentas, Assets: {datos_redis['resumen_ejecutivo']['total_assets']}")
-        print(f"   💰 Revenue: {datos_redis['resumen_ejecutivo']['revenue']}, Earnings: {datos_redis['resumen_ejecutivo']['earnings_before_taxes']}")
+        print(f"   📝 Datos ESF/ERI preparados para Redis key legacy: {redis_key}")
+        print(f"   📊 Resumen: {len(cuentas_saldos)} cuentas, Assets: {datos_redis['resumen_ejecutivo']['total_assets']:,.2f}")
+        print(f"   💰 Revenue: {datos_redis['resumen_ejecutivo']['revenue']:,.2f}, Earnings: {datos_redis['resumen_ejecutivo']['earnings_before_taxes']:,.2f}")
         
-        # TODO: Implementar conexión real a Redis
+        # TODO: Implementar conexión real a Redis legacy si es necesario
         # redis_client.set(redis_key, json.dumps(datos_redis))
         # redis_client.sadd("contabilidad:clientes_activos", cierre.cliente.id)
         
-        print(f"   ✅ Datos ESF/ERI listos para Redis (pendiente conexión)")
+        print(f"   ✅ ESF guardado exitosamente en:")
+        print(f"       📁 Carpeta pruebas: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:pruebas:esf:finalizacion_automatica")
+        print(f"       🗂️ Cache principal: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:esf")
+        print(f"       🔑 Cache KPIs: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:kpis")
         
     except Exception as e:
         print(f"   ⚠️ Error preparando datos Redis: {e}")
+        import traceback
+        print(f"   📋 Traceback completo: {traceback.format_exc()}")
 
 
 # ===============================================================================

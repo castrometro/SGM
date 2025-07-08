@@ -727,6 +727,9 @@ def generar_estado_situacion_financiera(cierre_id, usuario_id=None):
         if reporte_existente:
             logger.info(f"Ya existe un reporte ESF para el cierre {cierre_id}, actualizando...")
             reporte = reporte_existente
+            # IMPORTANTE: Actualizar el usuario generador cuando se regenera
+            if usuario:
+                reporte.usuario_generador = usuario
         else:
             # Crear nuevo reporte
             reporte = ReporteFinanciero.objects.create(
@@ -739,7 +742,7 @@ def generar_estado_situacion_financiera(cierre_id, usuario_id=None):
         # Actualizar estado a generando
         reporte.estado = 'generando'
         reporte.fecha_generacion = inicio
-        reporte.save(update_fields=['estado', 'fecha_generacion'])
+        reporte.save(update_fields=['estado', 'fecha_generacion', 'usuario_generador'])
         
         # Obtener todas las cuentas con movimientos en el cierre
         movimientos = MovimientoContable.objects.filter(cierre=cierre).select_related('cuenta')

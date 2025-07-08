@@ -1,0 +1,92 @@
+{
+  "cliente_rut": "76895432-1",
+  "cliente_nombre": "EMPRESA XYZ LTDA",
+  "periodo": "2025-03",
+  "generado_por": "pablo.castro",
+  "generado_fecha": "2025-04-05T11:00:00Z",
+
+  "resumen_dotacion": {
+    "dotacion_inicial": 47,
+    "ingresos_mes": 1,
+    "finiquitos_mes": 0,
+    "dotacion_final": 48,
+    "tasa_ingreso_pct": 2.1,
+    "tasa_finiquitos_pct": 0.0,
+    "rotacion_pct": 0.0
+  },
+
+  "resumen_costos": {
+    "total_haberes_imponibles": 38500000,
+    "total_haberes_no_imponibles": 2400000,
+    "total_haberes": 40900000,
+    "total_descuentos_legales": 4750000,
+    "total_otros_descuentos": 380000,
+    "total_aportes_patronales": 1700000,
+    "costo_empresa": 42600000,
+    "variacion_remuneraciones_pct": null
+  },
+
+  "resumen_afiliaciones": {
+    "total_trabajadores": 48,
+    "afp": {
+      "AFP Modelo": 26,
+      "AFP Habitat": 12,
+      "AFP Provida": 10
+    },
+    "salud": {
+      "Fonasa": 28,
+      "Isapre": 20
+    }
+  },
+
+  "horas_extras": {
+    "total_horas_50": 40,
+    "total_monto_50": 260000,
+    "total_horas_100": 10,
+    "total_monto_100": 140000
+  },
+
+  "remuneracion_promedio": {
+    "global": 852083,
+    "por_centro_costo": [
+      {
+        "centro_costo": "Administración",
+        "promedio": 940000
+      },
+      {
+        "centro_costo": "Producción",
+        "promedio": 790000
+      }
+    ]
+  },
+
+  "conceptos_resumidos": [
+    {
+      "concepto": "Sueldo Base",
+      "categoria": "Haberes Imponibles",
+      "total_monto": 30500000
+    },
+    {
+      "concepto": "Gratificación Mensual",
+      "categoria": "Haberes Imponibles",
+      "total_monto": 3500000
+    },
+    {
+      "concepto": "Bono por Inventario",
+      "categoria": "Haberes Imponibles",
+      "total_monto": 2000000
+    },
+    {
+      "concepto": "Viáticos",
+      "categoria": "Haberes No Imponibles",
+      "total_monto": 1300000
+    },
+    {
+      "concepto": "Movilización",
+      "categoria": "Haberes No Imponibles",
+      "total_monto": 1100000
+    }
+  ],
+
+  "incidencias_fase_1_5": []
+}

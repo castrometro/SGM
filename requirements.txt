@@ -2,6 +2,8 @@ streamlit
 pandas
 plotly
 requests
-redis
+redis>=4.5.0
 psycopg2-binary
 openpyxl>=3.1.0
+kaleido>=0.2.1
+numpy>=1.24.0

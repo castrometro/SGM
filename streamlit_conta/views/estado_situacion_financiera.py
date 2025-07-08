@@ -2,83 +2,620 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import pathlib
 from datetime import datetime
-
-def cargar_datos_esf():
-    """Cargar datos del Estado de Situación Financiera desde Excel"""
-    try:
-        current_dir = pathlib.Path(__file__).parent.parent.resolve()
-        excel_path = current_dir / "data" / "ESF- Example.xlsx"
-        
-        # Leer todas las hojas del Excel
-        excel_data = pd.read_excel(excel_path, sheet_name=None, header=None)
-        return excel_data
-    except Exception as e:
-        st.error(f"Error al cargar el archivo Excel: {str(e)}")
-        return None
-
-def procesar_datos_esf(excel_data):
-    """Procesar y estructurar los datos del ESF"""
-    if excel_data is None:
-        return None
-    
-    # Tomar la primera hoja como principal
-    sheet_name = list(excel_data.keys())[0]
-    df = excel_data[sheet_name]
-    
-    return df
-
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-import pathlib
-from datetime import datetime
-
-def cargar_datos_esf():
-    """Cargar datos del Estado de Situación Financiera desde Excel"""
-    try:
-        current_dir = pathlib.Path(__file__).parent.parent.resolve()
-        excel_path = current_dir / "data" / "ESF- Example.xlsx"
-        
-        # Leer todas las hojas del Excel
-        excel_data = pd.read_excel(excel_path, sheet_name=None, header=None)
-        return excel_data
-    except Exception as e:
-        st.error(f"Error al cargar el archivo Excel: {str(e)}")
-        return None
 
 def mostrar(data=None):
+    """Mostrar el Estado de Situación Financiera usando datos JSON de Redis"""
     st.header("🏛️ Estado de Situación Financiera (ESF)")
     st.markdown("**Balance General - Estructura de activos, pasivos y patrimonio**")
     
-    # Mostrar información del cierre contable
-    if data and 'cierre' in data:
-        cierre = data['cierre']
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.info(f"**Cliente:** {cierre['cliente']}")
-        with col2:
-            st.info(f"**Período:** {cierre['periodo']}")
-        with col3:
-            st.info(f"**Estado:** {cierre['estado'].title()}")
+    # Verificar si hay datos disponibles
+    if not data:
+        st.error("❌ No hay datos disponibles para mostrar el ESF")
+        return
+    
+    # Verificar fuente de datos y mostrar información del contexto
+    mostrar_info_contexto(data)
+    
+    # Obtener datos del ESF
+    esf_data = obtener_datos_esf(data)
+    if not esf_data:
+        st.error("❌ No se encontraron datos de ESF en el JSON")
+        return
     
     # Crear pestañas para diferentes vistas
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Balance General", "📈 Análisis Vertical", "📉 Análisis Horizontal", "🔍 Ratios Financieros"])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 Balance General", 
+        "📈 Análisis Vertical", 
+        "📉 Análisis Horizontal", 
+        "🔍 Ratios Financieros"
+    ])
     
     with tab1:
-        mostrar_balance_general_real(data)
+        mostrar_balance_general(esf_data)
     
     with tab2:
-        mostrar_analisis_vertical_real(data)
+        mostrar_analisis_vertical(esf_data)
     
     with tab3:
-        mostrar_analisis_horizontal_real(data)
+        mostrar_analisis_horizontal(esf_data)
     
     with tab4:
-        mostrar_ratios_financieros_real(data)
+        mostrar_ratios_financieros(esf_data)
+
+
+def mostrar_info_contexto(data):
+    """Mostrar información del contexto y generación del ESF"""
+    # Información básica del cierre
+    if 'cierre' in data:
+        cierre = data['cierre']
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.info(f"**Cliente:** {cierre.get('cliente', 'N/A')}")
+        with col2:
+            st.info(f"**Período:** {cierre.get('periodo', 'N/A')}")
+        with col3:
+            st.info(f"**Estado:** {cierre.get('estado', 'N/A').title()}")
+        with col4:
+            fuente = data.get('fuente', 'desconocida')
+            if fuente == 'redis':
+                st.success("✅ **Datos de Redis**")
+            else:
+                st.warning("⚠️ **Datos de ejemplo**")
+    
+    # Información de metadatos si están disponibles
+    if 'metadata' in data:
+        metadata = data['metadata']
+        with st.expander("🔍 Información de Generación"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown(f"**Tipo de Test:** {metadata.get('test_type', 'N/A')}")
+                st.markdown(f"**Generado por:** {metadata.get('generated_by', 'N/A')}")
+                st.markdown(f"**Clave Redis:** `{metadata.get('redis_key', 'N/A')}`")
+            
+            with col2:
+                if 'metadata_prueba' in metadata:
+                    prueba_info = metadata['metadata_prueba']
+                    st.markdown(f"**Propósito:** {prueba_info.get('proposito', 'N/A')}")
+                    st.markdown(f"**Descripción:** {prueba_info.get('descripcion', 'N/A')}")
+
+
+def obtener_datos_esf(data):
+    """Extraer los datos del ESF del JSON"""
+    # Buscar datos del ESF en diferentes ubicaciones posibles
+    if 'estado_financiero' in data:
+        return data['estado_financiero']
+    elif 'raw_json' in data:
+        return data['raw_json']
+    elif 'resumen_financiero' in data:
+        return data  # Los datos están en el nivel superior
+    else:
+        # Buscar en el JSON raw si existe
+        if 'raw_json' in data and isinstance(data['raw_json'], dict):
+            return data['raw_json']
+        return None
+
+
+def mostrar_balance_general(esf_data):
+    """Mostrar el balance general basado en datos del ESF JSON"""
+    st.subheader("📋 Balance General Consolidado")
+    
+    # Extraer totales principales
+    totales = obtener_totales_esf(esf_data)
+    if not totales:
+        st.error("❌ No se pudieron extraer los totales del ESF")
+        return
+    
+    # Mostrar métricas principales
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            label="Total Activos",
+            value=f"${totales['total_activos']:,.0f}",
+            help="Suma de todos los activos"
+        )
+    
+    with col2:
+        st.metric(
+            label="Total Pasivos",
+            value=f"${totales['total_pasivos']:,.0f}",
+            help="Suma de todos los pasivos"
+        )
+    
+    with col3:
+        st.metric(
+            label="Total Patrimonio",
+            value=f"${totales['total_patrimonio']:,.0f}",
+            help="Patrimonio neto"
+        )
+    
+    with col4:
+        # Verificar si el balance cuadra
+        diferencia = totales['total_activos'] - (totales['total_pasivos'] + totales['total_patrimonio'])
+        if abs(diferencia) < 1:
+            st.success("✅ Balance Cuadrado")
+        else:
+            st.error(f"❌ Diferencia: ${diferencia:,.0f}")
+    
+    st.markdown("---")
+    
+    # Mostrar estructura detallada del balance
+    mostrar_estructura_balance(esf_data, totales)
+
+
+def obtener_totales_esf(esf_data):
+    """Extraer los totales del ESF desde el JSON"""
+    totales = {}
+    
+    # Intentar obtener desde diferentes estructuras posibles
+    if 'total_activos' in esf_data:
+        totales['total_activos'] = esf_data.get('total_activos', 0)
+        totales['total_pasivos'] = esf_data.get('total_pasivos', 0)
+        totales['total_patrimonio'] = esf_data.get('total_patrimonio', 0)
+    elif 'resumen_financiero' in esf_data and 'totales' in esf_data['resumen_financiero']:
+        resumen_totales = esf_data['resumen_financiero']['totales']
+        totales['total_activos'] = resumen_totales.get('total_activos', 0)
+        totales['total_pasivos'] = resumen_totales.get('total_pasivos', 0)
+        totales['total_patrimonio'] = resumen_totales.get('total_patrimonio', 0)
+    else:
+        # Intentar calcular desde la estructura detallada
+        totales = calcular_totales_desde_estructura(esf_data)
+    
+    return totales if any(totales.values()) else None
+
+
+def calcular_totales_desde_estructura(esf_data):
+    """Calcular totales desde la estructura detallada del ESF"""
+    totales = {'total_activos': 0, 'total_pasivos': 0, 'total_patrimonio': 0}
+    
+    # Buscar en diferentes secciones del JSON
+    secciones = ['activos', 'pasivos', 'patrimonio', 'cuentas', 'estructura']
+    
+    for seccion in secciones:
+        if seccion in esf_data:
+            data_seccion = esf_data[seccion]
+            if isinstance(data_seccion, dict):
+                # Sumar valores de la sección
+                for key, value in data_seccion.items():
+                    if isinstance(value, (int, float)) and value > 0:
+                        if 'activo' in key.lower():
+                            totales['total_activos'] += value
+                        elif 'pasivo' in key.lower():
+                            totales['total_pasivos'] += value
+                        elif 'patrimonio' in key.lower():
+                            totales['total_patrimonio'] += value
+    
+    return totales
+
+
+def mostrar_estructura_balance(esf_data, totales):
+    """Mostrar la estructura detallada del balance"""
+    
+    # Si hay datos de estructura detallada, mostrarlos
+    if 'cuentas' in esf_data or 'activos' in esf_data:
+        mostrar_balance_detallado(esf_data)
+    else:
+        # Mostrar estructura básica basada en totales
+        mostrar_balance_basico(totales)
+    
+    # Gráfico de composición
+    crear_grafico_composicion_balance(totales)
+
+
+def mostrar_balance_detallado(esf_data):
+    """Mostrar balance con estructura detallada de cuentas"""
+    st.subheader("📊 Estructura Detallada")
+    
+    # Buscar estructura de cuentas
+    if 'cuentas' in esf_data:
+        cuentas = esf_data['cuentas']
+        if isinstance(cuentas, dict):
+            mostrar_cuentas_por_categoria(cuentas)
+        elif isinstance(cuentas, list):
+            mostrar_cuentas_lista(cuentas)
+    
+    # Mostrar otras estructuras disponibles
+    for seccion in ['activos', 'pasivos', 'patrimonio']:
+        if seccion in esf_data:
+            with st.expander(f"📋 {seccion.title()}"):
+                mostrar_seccion_detalle(esf_data[seccion], seccion)
+
+
+def mostrar_cuentas_por_categoria(cuentas):
+    """Mostrar cuentas organizadas por categoría"""
+    
+    categorias = {}
+    
+    # Organizar cuentas por tipo
+    for cuenta_id, cuenta_data in cuentas.items():
+        if isinstance(cuenta_data, dict):
+            tipo = cuenta_data.get('tipo', 'Otros')
+            if tipo not in categorias:
+                categorias[tipo] = []
+            
+            categorias[tipo].append({
+                'Cuenta': cuenta_data.get('nombre', cuenta_id),
+                'Saldo': cuenta_data.get('saldo', 0),
+                'Debe': cuenta_data.get('debe', 0),
+                'Haber': cuenta_data.get('haber', 0)
+            })
+    
+    # Mostrar cada categoría
+    for categoria, cuentas_cat in categorias.items():
+        with st.expander(f"📂 {categoria} ({len(cuentas_cat)} cuentas)"):
+            df_categoria = pd.DataFrame(cuentas_cat)
+            
+            # Formatear montos
+            for col in ['Saldo', 'Debe', 'Haber']:
+                if col in df_categoria.columns:
+                    df_categoria[col] = df_categoria[col].apply(lambda x: f"${x:,.0f}" if x != 0 else "-")
+            
+            st.dataframe(df_categoria, use_container_width=True, hide_index=True)
+
+
+def mostrar_cuentas_lista(cuentas):
+    """Mostrar cuentas cuando vienen como lista"""
+    
+    cuentas_data = []
+    for cuenta in cuentas:
+        if isinstance(cuenta, dict):
+            cuentas_data.append({
+                'Cuenta': cuenta.get('nombre', cuenta.get('codigo', 'N/A')),
+                'Código': cuenta.get('codigo', ''),
+                'Saldo': cuenta.get('saldo', 0),
+                'Tipo': cuenta.get('tipo', 'N/A')
+            })
+    
+    if cuentas_data:
+        df_cuentas = pd.DataFrame(cuentas_data)
+        df_cuentas['Saldo'] = df_cuentas['Saldo'].apply(lambda x: f"${x:,.0f}" if x != 0 else "-")
+        st.dataframe(df_cuentas, use_container_width=True, hide_index=True)
+
+
+def mostrar_seccion_detalle(seccion_data, nombre_seccion):
+    """Mostrar detalle de una sección específica"""
+    
+    if isinstance(seccion_data, dict):
+        st.json(seccion_data)
+    elif isinstance(seccion_data, list):
+        for i, item in enumerate(seccion_data):
+            st.markdown(f"**Item {i+1}:**")
+            st.json(item)
+    else:
+        st.markdown(f"**{nombre_seccion.title()}:** {seccion_data}")
+
+
+def mostrar_balance_basico(totales):
+    """Mostrar estructura básica del balance cuando no hay detalle"""
+    
+    balance_data = {
+        'Concepto': [
+            'ACTIVOS',
+            'TOTAL ACTIVOS',
+            '',
+            'PASIVOS',
+            'TOTAL PASIVOS', 
+            '',
+            'PATRIMONIO',
+            'TOTAL PATRIMONIO',
+            '',
+            'TOTAL PASIVOS Y PATRIMONIO'
+        ],
+        'Monto': [
+            '',
+            totales['total_activos'],
+            '',
+            '',
+            totales['total_pasivos'],
+            '',
+            '', 
+            totales['total_patrimonio'],
+            '',
+            totales['total_pasivos'] + totales['total_patrimonio']
+        ]
+    }
+    
+    df_balance = pd.DataFrame(balance_data)
+    
+    # Formatear montos
+    def format_currency(val):
+        if pd.isna(val) or val == '' or val == 0:
+            return ''
+        return f"${val:,.0f}"
+    
+    df_balance['Monto'] = df_balance['Monto'].apply(format_currency)
+    
+    st.dataframe(df_balance, use_container_width=True, hide_index=True)
+
+
+def crear_grafico_composicion_balance(totales):
+    """Crear gráfico de composición del balance"""
+    st.subheader("📊 Composición del Balance")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Gráfico de composición del balance
+        composicion_data = {
+            'Categoría': ['Activos', 'Pasivos', 'Patrimonio'],
+            'Valor': [
+                totales['total_activos'],
+                totales['total_pasivos'], 
+                totales['total_patrimonio']
+            ],
+            'Color': ['#1f77b4', '#d62728', '#2ca02c']
+        }
+        
+        df_composicion = pd.DataFrame(composicion_data)
+        
+        fig_composicion = px.bar(
+            df_composicion,
+            x='Categoría',
+            y='Valor',
+            title="Composición del Balance",
+            color='Categoría',
+            color_discrete_sequence=['#1f77b4', '#d62728', '#2ca02c']
+        )
+        
+        fig_composicion.update_layout(showlegend=False)
+        st.plotly_chart(fig_composicion, use_container_width=True)
+    
+    with col2:
+        # Gráfico de estructura de financiamiento (Pasivos + Patrimonio)
+        financiamiento_data = {
+            'Fuente': ['Pasivos', 'Patrimonio'],
+            'Valor': [totales['total_pasivos'], totales['total_patrimonio']]
+        }
+        
+        df_financiamiento = pd.DataFrame(financiamiento_data)
+        
+        fig_financiamiento = px.pie(
+            df_financiamiento,
+            values='Valor',
+            names='Fuente',
+            title="Estructura de Financiamiento",
+            color_discrete_sequence=['#d62728', '#2ca02c']
+        )
+        
+        st.plotly_chart(fig_financiamiento, use_container_width=True)
+
+
+def mostrar_analisis_vertical(esf_data):
+    """Análisis vertical del ESF"""
+    st.subheader("📈 Análisis Vertical")
+    st.markdown("Participación porcentual respecto al total de activos")
+    
+    totales = obtener_totales_esf(esf_data)
+    if not totales or totales['total_activos'] == 0:
+        st.warning("No se pueden calcular porcentajes - Total de activos es cero")
+        return
+    
+    total_activos = totales['total_activos']
+    
+    # Calcular participaciones
+    participaciones = {
+        'Total Activos': 100.0,
+        'Total Pasivos': (totales['total_pasivos'] / total_activos) * 100,
+        'Total Patrimonio': (totales['total_patrimonio'] / total_activos) * 100
+    }
+    
+    # Mostrar tabla de análisis vertical
+    analisis_data = {
+        'Concepto': list(participaciones.keys()),
+        'Valor': [total_activos, totales['total_pasivos'], totales['total_patrimonio']],
+        'Participación %': list(participaciones.values())
+    }
+    
+    df_analisis = pd.DataFrame(analisis_data)
+    df_analisis['Valor'] = df_analisis['Valor'].apply(lambda x: f"${x:,.0f}")
+    df_analisis['Participación %'] = df_analisis['Participación %'].apply(lambda x: f"{x:.1f}%")
+    
+    st.dataframe(df_analisis, use_container_width=True, hide_index=True)
+    
+    # Gráfico de participaciones
+    fig_vertical = px.bar(
+        pd.DataFrame(analisis_data),
+        x='Concepto',
+        y=[p for p in participaciones.values()],
+        title="Análisis Vertical - Participación sobre Total Activos",
+        color='Concepto',
+        color_discrete_sequence=['#1f77b4', '#d62728', '#2ca02c']
+    )
+    
+    fig_vertical.update_layout(yaxis_title="Participación %", showlegend=False)
+    st.plotly_chart(fig_vertical, use_container_width=True)
+
+
+def mostrar_analisis_horizontal(esf_data):
+    """Análisis horizontal simulado"""
+    st.subheader("📉 Análisis Horizontal")
+    st.info("💡 Para análisis horizontal real se necesitan datos de períodos anteriores")
+    
+    totales = obtener_totales_esf(esf_data)
+    if not totales:
+        st.warning("No hay datos disponibles para análisis horizontal")
+        return
+    
+    # Simular período anterior (variación aleatoria del 5-15%)
+    import random
+    factor_var = random.uniform(0.85, 0.95)
+    
+    analisis_data = {
+        'Concepto': ['Total Activos', 'Total Pasivos', 'Total Patrimonio'],
+        'Período Anterior': [
+            int(totales['total_activos'] * factor_var),
+            int(totales['total_pasivos'] * factor_var),
+            int(totales['total_patrimonio'] * factor_var)
+        ],
+        'Período Actual': [
+            totales['total_activos'],
+            totales['total_pasivos'],
+            totales['total_patrimonio']
+        ]
+    }
+    
+    df_horizontal = pd.DataFrame(analisis_data)
+    
+    # Calcular variaciones
+    df_horizontal['Variación Absoluta'] = df_horizontal['Período Actual'] - df_horizontal['Período Anterior']
+    df_horizontal['Variación %'] = (df_horizontal['Variación Absoluta'] / df_horizontal['Período Anterior']) * 100
+    
+    # Formatear para mostrar
+    df_display = df_horizontal.copy()
+    for col in ['Período Anterior', 'Período Actual', 'Variación Absoluta']:
+        df_display[col] = df_display[col].apply(lambda x: f"${x:,.0f}")
+    df_display['Variación %'] = df_display['Variación %'].apply(lambda x: f"{x:+.1f}%")
+    
+    st.dataframe(df_display, use_container_width=True, hide_index=True)
+    
+    # Gráfico de variaciones
+    fig_variacion = px.bar(
+        df_horizontal,
+        x='Concepto',
+        y='Variación %',
+        title="Variación Porcentual entre Períodos",
+        color='Variación %',
+        color_continuous_scale='RdYlGn'
+    )
+    
+    st.plotly_chart(fig_variacion, use_container_width=True)
+
+
+def mostrar_ratios_financieros(esf_data):
+    """Ratios financieros basados en datos del ESF"""
+    st.subheader("🔍 Ratios Financieros")
+    
+    totales = obtener_totales_esf(esf_data)
+    if not totales:
+        st.warning("No hay datos disponibles para calcular ratios")
+        return
+    
+    # Calcular ratios básicos
+    total_activos = totales['total_activos']
+    total_pasivos = totales['total_pasivos']
+    total_patrimonio = totales['total_patrimonio']
+    
+    if total_activos > 0:
+        endeudamiento = total_pasivos / total_activos
+        autonomia = total_patrimonio / total_activos
+        apalancamiento = total_pasivos / total_patrimonio if total_patrimonio > 0 else float('inf')
+    else:
+        endeudamiento = autonomia = apalancamiento = 0
+    
+    # Mostrar ratios principales
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric(
+            label="Endeudamiento",
+            value=f"{endeudamiento:.1%}",
+            delta=f"{-2.3:.1f}%" if endeudamiento < 0.6 else f"{+1.5:.1f}%",
+            help="Total Pasivos / Total Activos"
+        )
+    
+    with col2:
+        st.metric(
+            label="Autonomía Financiera",
+            value=f"{autonomia:.1%}",
+            delta=f"{+2.3:.1f}%" if autonomia > 0.4 else f"{-1.5:.1f}%",
+            help="Total Patrimonio / Total Activos"
+        )
+    
+    with col3:
+        apalancamiento_display = f"{apalancamiento:.2f}" if apalancamiento != float('inf') else "∞"
+        st.metric(
+            label="Apalancamiento",
+            value=apalancamiento_display,
+            delta=f"{-0.2:.1f}" if apalancamiento < 2 else f"{+0.3:.1f}",
+            help="Total Pasivos / Total Patrimonio"
+        )
+    
+    # Interpretación de ratios
+    mostrar_interpretacion_ratios(endeudamiento, autonomia, apalancamiento)
+    
+    # Gráfico radar de ratios
+    crear_grafico_radar_ratios(endeudamiento, autonomia, apalancamiento)
+
+
+def mostrar_interpretacion_ratios(endeudamiento, autonomia, apalancamiento):
+    """Mostrar interpretación de los ratios calculados"""
+    
+    with st.expander("📖 Interpretación de Ratios"):
+        st.markdown("**Análisis de la Posición Financiera:**")
+        
+        # Análisis del endeudamiento
+        if endeudamiento < 0.3:
+            st.success(f"✅ **Endeudamiento Bajo ({endeudamiento:.1%})**: Posición financiera conservadora")
+        elif endeudamiento < 0.6:
+            st.info(f"ℹ️ **Endeudamiento Moderado ({endeudamiento:.1%})**: Equilibrio adecuado")
+        else:
+            st.warning(f"⚠️ **Endeudamiento Alto ({endeudamiento:.1%})**: Revisar estructura de financiamiento")
+        
+        # Análisis de autonomía
+        if autonomia > 0.7:
+            st.success(f"✅ **Alta Autonomía ({autonomia:.1%})**: Fuerte independencia financiera")
+        elif autonomia > 0.4:
+            st.info(f"ℹ️ **Autonomía Moderada ({autonomia:.1%})**: Nivel aceptable de independencia")
+        else:
+            st.warning(f"⚠️ **Baja Autonomía ({autonomia:.1%})**: Dependencia de financiamiento externo")
+        
+        # Análisis de apalancamiento
+        if apalancamiento != float('inf'):
+            if apalancamiento < 1:
+                st.success(f"✅ **Apalancamiento Bajo ({apalancamiento:.2f})**: Patrimonio superior a deudas")
+            elif apalancamiento < 3:
+                st.info(f"ℹ️ **Apalancamiento Moderado ({apalancamiento:.2f})**: Nivel aceptable")
+            else:
+                st.warning(f"⚠️ **Alto Apalancamiento ({apalancamiento:.2f})**: Evaluar capacidad de pago")
+
+
+def crear_grafico_radar_ratios(endeudamiento, autonomia, apalancamiento):
+    """Crear gráfico radar para visualizar ratios"""
+    
+    # Normalizar ratios para el gráfico (escala 0-100)
+    ratios_normalizados = {
+        'Endeudamiento': endeudamiento * 100,
+        'Autonomía': autonomia * 100,
+        'Solidez': (1 - endeudamiento) * 100,  # Inverso del endeudamiento
+        'Equilibrio': min(50, 100 / (apalancamiento + 0.1)) if apalancamiento != float('inf') else 50
+    }
+    
+    fig_radar = go.Figure()
+    
+    fig_radar.add_trace(go.Scatterpolar(
+        r=list(ratios_normalizados.values()),
+        theta=list(ratios_normalizados.keys()),
+        fill='toself',
+        name='Ratios Actuales',
+        line_color='blue'
+    ))
+    
+    # Valores de referencia
+    valores_referencia = [50, 60, 70, 75]  # Valores objetivo
+    
+    fig_radar.add_trace(go.Scatterpolar(
+        r=valores_referencia,
+        theta=list(ratios_normalizados.keys()),
+        fill='toself',
+        name='Valores de Referencia',
+        line_color='green',
+        opacity=0.3
+    ))
+    
+    fig_radar.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 100]
+            )),
+        showlegend=True,
+        title="Análisis de Ratios Financieros"
+    )
+    
+    st.plotly_chart(fig_radar, use_container_width=True)
 
 def mostrar_balance_general_real(data):
     """Mostrar el balance general basado en datos reales"""

@@ -423,9 +423,10 @@ export const obtenerMovimientosResumen = async (
   return res.data;
 };
 
-export const obtenerMovimientosCuenta = async (cierreId, cuentaId) => {
+export const obtenerMovimientosCuenta = async (cierreId, cuentaId, params = {}) => {
   const res = await api.get(
     `/contabilidad/cierres/${cierreId}/cuentas/${cuentaId}/movimientos/`,
+    { params }
   );
   return res.data;
 };
@@ -495,6 +496,50 @@ export const eliminarTodosNombresIngles = async (clienteId) => {
   const res = await api.post(
     `/contabilidad/nombre-ingles/${clienteId}/eliminar-todos/`,
   );
+  return res.data;
+};
+
+// ==================== CLASIFICACIONES PERSISTENTES (BASE DE DATOS) ====================
+// Estas funciones trabajan directamente con la base de datos persistente
+// a diferencia de las funciones de archivo temporal que dependen del uploadId
+
+export const obtenerClasificacionesPersistentes = async (clienteId) => {
+  const res = await api.get("/contabilidad/clasificaciones/", {
+    params: { cuenta__cliente: clienteId },
+  });
+  return res.data;
+};
+
+export const obtenerClasificacionesPersistentesDetalladas = async (clienteId) => {
+  const res = await api.get(`/contabilidad/clientes/${clienteId}/clasificaciones/detalladas/`);
+  return res.data;
+};
+
+export const registrarVistaClasificacionesPersistentes = async (clienteId, cierreId = null) => {
+  const params = cierreId ? `?cierre_id=${cierreId}` : '';
+  const res = await api.post(
+    `/contabilidad/clientes/${clienteId}/clasificaciones/registrar-vista/${params}`
+  );
+  return res.data;
+};
+
+export const actualizarClasificacionPersistente = async (clasificacionId, data) => {
+  const res = await api.patch(`/contabilidad/clasificaciones/${clasificacionId}/`, data);
+  return res.data;
+};
+
+export const eliminarClasificacionPersistente = async (clasificacionId) => {
+  const res = await api.delete(`/contabilidad/clasificaciones/${clasificacionId}/`);
+  return res.data;
+};
+
+export const crearClasificacionPersistente = async (data) => {
+  const res = await api.post("/contabilidad/clasificaciones/", data);
+  return res.data;
+};
+
+export const obtenerEstadisticasClasificacionesPersistentes = async (clienteId) => {
+  const res = await api.get(`/contabilidad/clientes/${clienteId}/clasificaciones/estadisticas/`);
   return res.data;
 };
 
@@ -882,5 +927,35 @@ export const limpiarCacheIncidencias = async (cierreId = null, limpiarTodo = fal
 
 export const obtenerIncidenciasConsolidadasLibroMayor = async (cierreId) => {
   const res = await api.get(`/contabilidad/libro-mayor/${cierreId}/incidencias-consolidadas/`);
+  return res.data;
+};
+
+// ==================== CRUD REGISTROS INDIVIDUALES PERSISTENTES ====================
+// APIs para manejar registros individuales (cuenta + sus clasificaciones)
+
+export const crearRegistroClasificacionPersistente = async (data) => {
+  // Crear una nueva cuenta con sus clasificaciones
+  const res = await api.post("/contabilidad/cuentas/crear/", data);
+  return res.data;
+};
+
+export const actualizarRegistroClasificacionPersistente = async (cuentaId, data) => {
+  // Actualizar una cuenta y sus clasificaciones
+  const res = await api.patch(`/contabilidad/cuentas/${cuentaId}/actualizar/`, data);
+  return res.data;
+};
+
+export const eliminarRegistroClasificacionPersistente = async (cuentaId) => {
+  // Eliminar una cuenta y todas sus clasificaciones
+  const res = await api.delete(`/contabilidad/cuentas/${cuentaId}/eliminar/`);
+  return res.data;
+};
+
+export const clasificacionMasivaPersistente = async (cuentaIds, setId, opcionId) => {
+  const res = await api.post("/contabilidad/cuentas/clasificacion-masiva/", {
+    cuenta_ids: cuentaIds,
+    set_clas_id: setId,
+    opcion_id: opcionId
+  });
   return res.data;
 };

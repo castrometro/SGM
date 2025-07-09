@@ -33,6 +33,8 @@ from .models import (
     ClasificacionCuentaArchivo, 
     ClasificacionSet,
     ClasificacionOption,
+    CuentaContable,
+    AccountClassification,
     UploadLog
 )
 from .utils.activity_logger import registrar_actividad_tarjeta
@@ -281,8 +283,12 @@ def procesar_datos_clasificacion_task(upload_log_id):
         model_fields = [f.name for f in ClasificacionCuentaArchivo._meta.get_fields()]
         logger.info(f"[DEBUG] ClasificacionCuentaArchivo model fields: {model_fields}")
 
-        # Limpiar registros anteriores del mismo upload_log
-        ClasificacionCuentaArchivo.objects.filter(upload_log=upload_log).delete()
+        # Marcar registros anteriores como obsoletos en lugar de eliminarlos
+        # para mantener histórico completo
+        ClasificacionCuentaArchivo.objects.filter(upload_log=upload_log).update(
+            activo=False,
+            fecha_obsolescencia=timezone.now()
+        )
 
         errores = []
         registros = 0
@@ -318,6 +324,7 @@ def procesar_datos_clasificacion_task(upload_log_id):
                     numero_cuenta=numero_cuenta,  # String, no FK
                     clasificaciones=clasif,       # JSON con set_name -> valor
                     fila_excel=index + 2,
+                    activo=True  # Marcar como activo
                 )
                 registro.save()
                 registros += 1
@@ -347,6 +354,95 @@ def procesar_datos_clasificacion_task(upload_log_id):
             
         upload_log.tiempo_procesamiento = timezone.now() - inicio
         upload_log.save(update_fields=['resumen', 'tiempo_procesamiento'])
+        
+        # =================== NUEVA LÓGICA: POBLAR CLASIFICACIONES PERSISTENTES ===================
+        logger.info(f"Iniciando población de clasificaciones persistentes para upload_log {upload_log_id}")
+        
+        try:
+            clasificaciones_persistentes_creadas = 0
+            clasificaciones_persistentes_actualizadas = 0
+            
+            # Obtener todos los registros RAW creados
+            registros_raw = ClasificacionCuentaArchivo.objects.filter(upload_log=upload_log)
+            
+            for registro_raw in registros_raw:
+                # Buscar o crear la cuenta
+                cuenta, cuenta_creada = CuentaContable.objects.get_or_create(
+                    cliente=upload_log.cliente,
+                    codigo=registro_raw.numero_cuenta,
+                    defaults={
+                        'nombre': registro_raw.numero_cuenta,  # Por defecto usar código como nombre
+                        'nombre_en': registro_raw.numero_cuenta
+                    }
+                )
+                
+                if cuenta_creada:
+                    logger.debug(f"Cuenta creada: {cuenta.codigo}")
+                
+                # Procesar cada clasificación en el registro
+                for set_nombre, opcion_valor in registro_raw.clasificaciones.items():
+                    try:
+                        # Buscar o crear el set
+                        set_clas, set_creado = ClasificacionSet.objects.get_or_create(
+                            cliente=upload_log.cliente,
+                            nombre=set_nombre,
+                            defaults={'descripcion': f'Set creado automáticamente desde archivo: {set_nombre}'}
+                        )
+                        
+                        if set_creado:
+                            logger.debug(f"Set creado: {set_nombre}")
+                        
+                        # Buscar o crear la opción
+                        opcion, opcion_creada = ClasificacionOption.objects.get_or_create(
+                            set_clas=set_clas,
+                            valor=opcion_valor,
+                            defaults={'descripcion': f'Opción creada automáticamente: {opcion_valor}'}
+                        )
+                        
+                        if opcion_creada:
+                            logger.debug(f"Opción creada: {opcion_valor} para set {set_nombre}")
+                        
+                        # Crear o actualizar la clasificación persistente
+                        clasificacion, clasificacion_creada = AccountClassification.objects.update_or_create(
+                            cuenta=cuenta,
+                            set_clas=set_clas,
+                            defaults={'opcion': opcion}
+                        )
+                        
+                        if clasificacion_creada:
+                            clasificaciones_persistentes_creadas += 1
+                            logger.debug(f"Clasificación persistente creada: {cuenta.codigo} -> {set_nombre} -> {opcion_valor}")
+                        else:
+                            clasificaciones_persistentes_actualizadas += 1
+                            logger.debug(f"Clasificación persistente actualizada: {cuenta.codigo} -> {set_nombre} -> {opcion_valor}")
+                            
+                    except Exception as e:
+                        logger.error(f"Error procesando clasificación {set_nombre}={opcion_valor} para cuenta {cuenta.codigo}: {e}")
+                        continue
+            
+            # Actualizar resumen con información de clasificaciones persistentes
+            resumen_procesamiento.update({
+                "clasificaciones_persistentes_creadas": clasificaciones_persistentes_creadas,
+                "clasificaciones_persistentes_actualizadas": clasificaciones_persistentes_actualizadas,
+                "poblacion_persistente_exitosa": True
+            })
+            
+            upload_log.resumen = resumen_procesamiento
+            upload_log.save(update_fields=['resumen'])
+            
+            logger.info(f"Clasificaciones persistentes pobladas exitosamente: {clasificaciones_persistentes_creadas} creadas, {clasificaciones_persistentes_actualizadas} actualizadas")
+            
+        except Exception as e:
+            logger.error(f"Error poblando clasificaciones persistentes: {e}")
+            # Actualizar resumen con error pero no fallar la task principal
+            resumen_procesamiento.update({
+                "error_poblacion_persistente": str(e),
+                "poblacion_persistente_exitosa": False
+            })
+            upload_log.resumen = resumen_procesamiento
+            upload_log.save(update_fields=['resumen'])
+        
+        # =================== FIN NUEVA LÓGICA ===================
         
         logger.info(f"Datos RAW procesados para upload_log {upload_log_id}: {registros} registros almacenados")
         return upload_log_id
@@ -1008,9 +1104,9 @@ def crear_sets_predefinidos_clasificacion(cliente_id, omit_sets=None):
             'Estado de Resultados Integral': {
                 'descripcion': 'Clasificación para informe ERI',
                 'opciones': [
-                    {'valor': 'Gross Earnings', 'descripcion': 'Gross Earnings', 'valor_en': 'Gross Earnings', 'descripcion_en': 'Gross earnings'},
-                    {'valor': 'Earnings (Loss)', 'descripcion': 'Earnings (Loss)', 'valor_en': 'Earnings (Loss)', 'descripcion_en': 'Earnings (Loss)'},
-                    {'valor': 'Earnings (Loss) Before Taxes', 'descripcion': 'Earnings (Loss) Before Taxes', 'valor_en': 'Earnings (Loss) Before Taxes', 'descripcion_en': 'Earnings (Loss) before taxes'},
+                    {'valor': 'Ganancias Brutas', 'descripcion': 'Ganancias Brutas', 'valor_en': 'Gross Earnings', 'descripcion_en': 'Gross earnings'},
+                    {'valor': 'Ganancia (perdida)', 'descripcion': 'Ganancia (pérdida)', 'valor_en': 'Earnings (Loss)', 'descripcion_en': 'Earnings (Loss)'},
+                    {'valor': 'Ganancia (perdida) antes de Impuestos', 'descripcion': 'Ganancia (pérdida) antes de Impuestos', 'valor_en': 'Earnings (Loss) Before Taxes', 'descripcion_en': 'Earnings (Loss) before taxes'},
 
                 ]
             },

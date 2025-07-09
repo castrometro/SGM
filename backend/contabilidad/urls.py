@@ -48,6 +48,12 @@ from .views.excepciones import (
     eliminar_excepcion,
     eliminar_excepcion_clasificacion,
 )
+from .views.cuenta_clasificaciones import (
+    crear_cuenta_con_clasificaciones,
+    actualizar_cuenta_con_clasificaciones,
+    eliminar_cuenta_con_clasificaciones,
+    clasificacion_masiva_cuentas,
+)
 from .views.reprocesamiento import (
     reprocesar_libro_mayor_con_excepciones,
     obtener_historial_reprocesamiento,
@@ -99,11 +105,16 @@ from .views import (
     registrar_vista_nombres_ingles,
     registrar_vista_clasificaciones,
     cuentas_pendientes_set,
+    estado_clasificaciones,
+    # Funciones de clasificación persistente (ya incluidas desde __init__.py)
+    obtener_clasificaciones_persistentes_detalladas,
+    registrar_vista_clasificaciones_persistentes,
+    clasificacion_masiva_persistente,
+    obtener_estadisticas_clasificaciones_persistentes,
     # Utilidades
     test_celery,
     limpiar_archivos_temporales,
     estado_upload_log,
-    estado_clasificaciones,
 )
 
 # Ya no necesitamos importar desde views_legacy
@@ -199,6 +210,20 @@ urlpatterns = [
     # Clasificaciones
     path("clasificacion/<int:cliente_id>/estado/", estado_clasificaciones, name="estado_clasificaciones"),
     path("clasificacion/<int:cliente_id>/registrar-vista/", registrar_vista_clasificaciones),
+    
+    # Clasificaciones persistentes (base de datos)
+    path("clientes/<int:cliente_id>/clasificaciones/detalladas/", 
+         obtener_clasificaciones_persistentes_detalladas, 
+         name="clasificaciones_persistentes_detalladas"),
+    path("clientes/<int:cliente_id>/clasificaciones/registrar-vista/", 
+         registrar_vista_clasificaciones_persistentes, 
+         name="registrar_vista_clasificaciones_persistentes"),
+    path("clasificaciones/bulk-classify/", 
+         clasificacion_masiva_persistente, 
+         name="clasificacion_masiva_persistente"),
+    path("clientes/<int:cliente_id>/clasificaciones/estadisticas/", 
+         obtener_estadisticas_clasificaciones_persistentes, 
+         name="estadisticas_clasificaciones_persistentes"),
     
     # Nombres en inglés
     path("nombre-ingles/<int:cliente_id>/estado/", estado_nombres_ingles),
@@ -322,4 +347,10 @@ urlpatterns = [
     path("cache/pruebas/capture-esf/<int:cliente_id>/<str:periodo>/", 
          capture_current_esf, 
          name="cache_capture_current_esf"),
+    
+    # CRUD de cuentas con clasificaciones
+    path("cuentas/crear/", crear_cuenta_con_clasificaciones, name="crear_cuenta_clasificaciones"),
+    path("cuentas/<int:cuenta_id>/actualizar/", actualizar_cuenta_con_clasificaciones, name="actualizar_cuenta_clasificaciones"),
+    path("cuentas/<int:cuenta_id>/eliminar/", eliminar_cuenta_con_clasificaciones, name="eliminar_cuenta_clasificaciones"),
+    path("cuentas/clasificacion-masiva/", clasificacion_masiva_cuentas, name="clasificacion_masiva_cuentas"),
 ]

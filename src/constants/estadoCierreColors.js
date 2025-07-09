@@ -19,6 +19,7 @@ const estadoCierreColors = {
   subido:             { texto: "Subido", color: "bg-green-400" },
   procesado:          { texto: "Procesado", color: "bg-green-600" },
   con_error:          { texto: "Error", color: "bg-red-500" },
+  subido:             { texto: "Subido", color: "bg-green-400" },
   
   // Estados específicos de libros y clasificaciones
   analizando_hdrs:    { texto: "Analizando Headers", color: "bg-blue-400" },

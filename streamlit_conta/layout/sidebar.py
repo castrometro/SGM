@@ -46,11 +46,8 @@ def mostrar_sidebar():
     st.sidebar.markdown("### 📊 Reportes Disponibles")
     selected_tab = st.sidebar.radio("Selecciona un reporte:", [
         "📊 Dashboard General",
-        "🧾 Movimientos",
         "🏛️ Estado de Situación Financiera (ESF)",
-        "📈 Estado de Resultados (ESR)",
-        "📊 Estado de Resultados Integral (ERI)",
-        "💰 Estado de Cambio de Patrimonio (ECP)"
+        "📊 Estado de Resultados Integral (ERI)"
     ], index=0)
     
     # Información del sistema

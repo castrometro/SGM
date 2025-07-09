@@ -1,11 +1,6 @@
 import { useState, useEffect } from 'react';
 import { X, Check, AlertTriangle, Clock, FileText, Plus, Edit2, Trash2, Save, XCircle, Settings, Database, FolderPlus, Globe, CheckSquare } from 'lucide-react';
 import { 
-  obtenerClasificacionesArchivo,
-  registrarVistaClasificaciones,
-  crearClasificacionArchivo,
-  actualizarClasificacionArchivo,
-  eliminarClasificacionArchivo,
   obtenerSetsCliente,
   crearSet,
   actualizarSet,
@@ -14,10 +9,25 @@ import {
   crearOpcion,
   actualizarOpcion,
   eliminarOpcion,
-  registrarActividadTarjeta
+  registrarActividadTarjeta,
+  // APIs para datos de archivo (fuente única de verdad)
+  obtenerClasificacionesArchivo,
+  obtenerCuentasCliente,
+  // APIs para CRUD directo en ClasificacionCuentaArchivo
+  crearClasificacionArchivo,
+  actualizarClasificacionArchivo,
+  eliminarClasificacionArchivo
 } from '../api/contabilidad';
 
-const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, cierreId, cliente, onDataChanged }) => {
+const ModalClasificacionRegistrosRaw = ({ 
+  isOpen, 
+  onClose, 
+  uploadId = null, // Usar el uploadId real si está disponible
+  clienteId, 
+  cierreId, 
+  cliente, 
+  onDataChanged
+}) => {
   console.log('🏗️ Modal props recibidos:', { 
     isOpen, 
     uploadId, 
@@ -25,7 +35,7 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
     cierreId,
     clienteExiste: !!cliente,
     clienteBilingue: cliente?.bilingue,
-    onDataChanged: !!onDataChanged 
+    onDataChanged: !!onDataChanged
   });
 
   // Función auxiliar para registrar actividades CRUD
@@ -36,6 +46,9 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
         return;
       }
 
+      // Usar el cierreId si existe, de lo contrario usar null para que el backend use cualquier cierre existente
+      const cierreParaLog = cierreId || null;
+
       await registrarActividadTarjeta(
         clienteId,
         tipo, 
@@ -43,16 +56,53 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
         descripcion,
         {
           upload_id: uploadId,
-          cierre_id: cierreId,
-          accion_origen: "modal_clasificaciones",
+          cierre_id: cierreParaLog,
+          accion_origen: "modal_clasificaciones_persistentes",
+          source_type: "persistent_db",
           ...detalles
         },
-        cierreId
+        cierreParaLog
       );
     } catch (error) {
       console.warn('Error registrando actividad:', error);
       // No fallar la operación principal por un error de logging
     }
+  };
+
+  // Función para adaptar datos de archivo al formato del modal
+  const adaptarDatosArchivo = (registrosArchivo, cuentasCliente) => {
+    console.log('🔄 Adaptando datos de archivo:', { 
+      registros: registrosArchivo.length, 
+      cuentas: cuentasCliente.length 
+    });
+
+    // Crear un mapa de cuentas por código para lookup rápido
+    const cuentasMap = {};
+    cuentasCliente.forEach(cuenta => {
+      cuentasMap[cuenta.codigo] = cuenta;
+    });
+
+    // Adaptar registros de archivo al formato esperado por el modal
+    const registrosAdaptados = registrosArchivo.map(registro => {
+      const cuenta = cuentasMap[registro.numero_cuenta];
+      
+      return {
+        id: registro.id,
+        numero_cuenta: registro.numero_cuenta,
+        cuenta_nombre: cuenta?.nombre || '',
+        cuenta_nombre_en: cuenta?.nombre_en || '',
+        clasificaciones: registro.clasificaciones || {},
+        // Campos adicionales
+        fila_excel: registro.fila_excel,
+        upload_log: registro.upload_log,
+        fecha_creacion: registro.fecha_creacion,
+        source_type: 'archivo',
+        cuenta_existe: !!cuenta
+      };
+    });
+
+    console.log('✅ Datos adaptados:', registrosAdaptados.length, 'registros');
+    return registrosAdaptados;
   };
 
   const [registros, setRegistros] = useState([]);
@@ -120,6 +170,7 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
   const [registrosSeleccionados, setRegistrosSeleccionados] = useState(new Set());
   const [setMasivo, setSetMasivo] = useState('');
   const [opcionMasiva, setOpcionMasiva] = useState('');
+  const [aplicandoClasificacionMasiva, setAplicandoClasificacionMasiva] = useState(false);
 
   useEffect(() => {
     console.log('🎯 useEffect ejecutado:', { 
@@ -131,52 +182,41 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
       clienteCompleto: cliente ? { id: cliente.id, nombre: cliente.nombre, bilingue: cliente.bilingue } : null
     });
     
-    if (isOpen && uploadId && clienteId) {
-      console.log('✅ Condiciones cumplidas - iniciando carga');
+    if (isOpen && clienteId) {
+      console.log('✅ Condiciones cumplidas - iniciando carga de datos de archivo');
       
-      // Registrar timestamp de apertura para calcular tiempo de sesión
-      window.modalClasificacionesOpenTime = Date.now();
-      
-      // Registrar que se abrió el modal manualmente
-      registrarVistaClasificaciones(clienteId, uploadId, cierreId)
-        .then(() => {
-          console.log('📋 Vista registrada - cargando datos');
-          
-          // Registrar actividad de vista del modal
-          registrarActividad(
-            "clasificacion",
-            "view_data",
-            `Abrió modal de clasificaciones para upload ${uploadId}`,
-            {
-              upload_id: uploadId
-            }
-          ).catch(logErr => console.warn("Error registrando vista del modal:", logErr));
-          
-          // Después de registrar, cargar los datos
-          cargarRegistros();
-          // Cargar sets también
-          cargarSets();
-        })
-        .catch((err) => {
-          console.error("Error al registrar vista del modal:", err);
-          // Aunque falle el registro, cargar los datos igual
-          console.log('📋 Error en registro - cargando datos de todos modos');
-          cargarRegistros();
-          cargarSets();
-        });
+      // Cargar los datos de archivo
+      cargarRegistros();
+      cargarSets();
     } else {
-      console.log('❌ Condiciones no cumplidas para carga');
+      console.log('❌ Condiciones no cumplidas para carga', { 
+        isOpen, 
+        clienteId
+      });
     }
-  }, [isOpen, uploadId, clienteId]);
+  }, [isOpen, clienteId, uploadId]);
 
   const cargarRegistros = async () => {
     setLoading(true);
     try {
-      const data = await obtenerClasificacionesArchivo(uploadId);
+      console.log('� Cargando datos de archivo...');
+      
+      // Cargar datos de ClasificacionCuentaArchivo y cuentas del cliente
+      const [registrosArchivo, cuentasCliente] = await Promise.all([
+        obtenerClasificacionesArchivo(uploadId || clienteId), // Usar uploadId si está disponible, sino clienteId
+        obtenerCuentasCliente(clienteId)
+      ]);
+      
+      // Adaptar datos al formato esperado por el modal
+      const data = adaptarDatosArchivo(registrosArchivo, cuentasCliente);
+      
       setRegistros(data);
       calcularEstadisticas(data);
+      console.log('✅ Registros de archivo cargados:', data.length);
     } catch (error) {
-      console.error("Error cargando registros:", error);
+      console.error("Error cargando registros de archivo:", error);
+      setRegistros([]);
+      calcularEstadisticas([]);
     } finally {
       setLoading(false);
     }
@@ -332,8 +372,8 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
     try {
       await registrarActividad(
         "clasificacion",
-        "view_data",
-        `Cerró modal de clasificaciones para upload ${uploadId}`,
+        "close_persistent_modal",
+        `Cerró modal de clasificaciones persistentes`,
         {
           tiempo_sesion: Date.now() - (window.modalClasificacionesOpenTime || Date.now()),
           pestana_activa: pestanaActiva,
@@ -897,33 +937,24 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
       return;
     }
 
-    // Validar que el número de cuenta no exista ya en este upload
+    // Validar que el número de cuenta no exista ya
     const numeroCuentaExiste = registros.some(r => r.numero_cuenta === nuevoRegistro.numero_cuenta.trim());
     if (numeroCuentaExiste) {
-      alert(`El número de cuenta "${nuevoRegistro.numero_cuenta}" ya existe en este archivo. Por favor usa un número diferente o edita el registro existente.`);
+      alert(`El número de cuenta "${nuevoRegistro.numero_cuenta}" ya existe. Por favor usa un número diferente o edita el registro existente.`);
       return;
     }
 
     try {
-      // Calcular la siguiente fila disponible basándose en las filas existentes
-      const filasExistentes = registros.map(r => r.fila_excel || 0);
-      const maxFila = filasExistentes.length > 0 ? Math.max(...filasExistentes) : 1;
-      const siguienteFila = maxFila + 1;
-      
       const datosAEnviar = {
-        upload_log: uploadId,
         cliente: clienteId,
         numero_cuenta: nuevoRegistro.numero_cuenta.trim(),
-        clasificaciones: nuevoRegistro.clasificaciones,
-        fila_excel: siguienteFila
+        cuenta_nombre: nuevoRegistro.numero_cuenta.trim(), // Por defecto usar el código como nombre
+        clasificaciones: nuevoRegistro.clasificaciones
       };
       
-      console.log('=== CREANDO NUEVO REGISTRO ===');
-      console.log('Upload ID:', uploadId);
+      console.log('=== CREANDO NUEVO REGISTRO PERSISTENTE ===');
       console.log('Cliente ID:', clienteId);
       console.log('Datos completos a enviar:', JSON.stringify(datosAEnviar, null, 2));
-      console.log('Tipo de clasificaciones:', typeof nuevoRegistro.clasificaciones);
-      console.log('¿Clasificaciones es object?:', nuevoRegistro.clasificaciones && typeof nuevoRegistro.clasificaciones === 'object');
 
       const registroCreado = await crearClasificacionArchivo(datosAEnviar);
       
@@ -932,20 +963,20 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
         await registrarActividad(
           "clasificacion",
           "individual_create",
-          `Creó registro de clasificación desde modal: ${nuevoRegistro.numero_cuenta.trim()}`,
+          `Creó registro persistente desde modal: ${nuevoRegistro.numero_cuenta.trim()}`,
           {
             registro_id: registroCreado.id,
             numero_cuenta: nuevoRegistro.numero_cuenta.trim(),
             cantidad_clasificaciones: Object.keys(nuevoRegistro.clasificaciones).length,
             clasificaciones: nuevoRegistro.clasificaciones,
-            fila_excel: siguienteFila
+            source_type: "persistent_db"
           }
         );
       } catch (logErr) {
         console.warn("Error registrando actividad de creación de registro:", logErr);
       }
       
-      console.log('✅ Registro creado exitosamente');
+      console.log('✅ Registro persistente creado exitosamente');
       await cargarRegistros();
       handleCancelarCreacion();
       if (onDataChanged) onDataChanged();
@@ -1015,14 +1046,18 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
         clasificaciones_anteriores: registroActual.clasificaciones
       } : {};
       
-      await actualizarClasificacionArchivo(editandoId, registroEditando);
+      await actualizarClasificacionArchivo(editandoId, {
+        numero_cuenta: registroEditando.numero_cuenta.trim(),
+        cuenta_nombre: registroEditando.numero_cuenta.trim(),
+        clasificaciones: registroEditando.clasificaciones
+      });
       
       // Registrar actividad detallada de edición de registro
       try {
         await registrarActividad(
           "clasificacion",
           "individual_edit",
-          `Editó registro de clasificación desde modal: ${registroEditando.numero_cuenta.trim()}`,
+          `Editó registro persistente desde modal: ${registroEditando.numero_cuenta.trim()}`,
           {
             registro_id: editandoId,
             numero_cuenta_nuevo: registroEditando.numero_cuenta.trim(),
@@ -1113,6 +1148,13 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
   };
 
   const aplicarClasificacionMasiva = async () => {
+    console.log('🚀 Iniciando aplicación de clasificación masiva:', {
+      setMasivo,
+      opcionMasiva,
+      registrosSeleccionados: Array.from(registrosSeleccionados),
+      cantidadRegistros: registrosSeleccionados.size
+    });
+
     if (!setMasivo || !opcionMasiva) {
       alert("Debe seleccionar un set y una opción para la clasificación masiva");
       return;
@@ -1130,23 +1172,58 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
       return;
     }
 
+    console.log('✅ Validaciones pasadas, aplicando clasificación:', {
+      setNombre: setEncontrado.nombre,
+      opcionValor: opcionMasiva,
+      registrosAfectados: registrosSeleccionados.size
+    });
+
+    setAplicandoClasificacionMasiva(true);
+
     try {
-      const promesas = Array.from(registrosSeleccionados).map(async (registroId) => {
-        const registro = registros.find(r => r.id === registroId);
-        if (!registro) return;
-
-        const nuevasClasificaciones = {
-          ...registro.clasificaciones,
-          [setEncontrado.nombre]: opcionMasiva
-        };
-
-        return actualizarClasificacionArchivo(registroId, {
-          numero_cuenta: registro.numero_cuenta,
-          clasificaciones: nuevasClasificaciones
-        });
+      // Como no existe endpoint de bulk para archivo, actualizamos individualmente
+      const registroIds = Array.from(registrosSeleccionados);
+      console.log('🔄 Aplicando clasificación individual a cada registro...');
+      
+      let registrosActualizados = 0;
+      let errores = [];
+      
+      for (const registroId of registroIds) {
+        try {
+          // Encontrar el registro actual
+          const registroActual = registros.find(r => r.id === registroId);
+          if (!registroActual) {
+            errores.push(`Registro ${registroId} no encontrado`);
+            continue;
+          }
+          
+          // Crear nuevas clasificaciones agregando la clasificación masiva
+          const nuevasClasificaciones = {
+            ...registroActual.clasificaciones,
+            [setEncontrado.nombre]: opcionMasiva
+          };
+          
+          // Actualizar el registro individual
+          await actualizarClasificacionArchivo(registroId, {
+            numero_cuenta: registroActual.numero_cuenta,
+            clasificaciones: nuevasClasificaciones
+          });
+          
+          registrosActualizados++;
+          console.log(`✅ Registro ${registroActual.numero_cuenta} actualizado`);
+          
+        } catch (errorRegistro) {
+          console.error(`❌ Error actualizando registro ${registroId}:`, errorRegistro);
+          errores.push(`Error en registro ${registroId}: ${errorRegistro.message}`);
+        }
+      }
+      
+      console.log('✅ Clasificación masiva completada:', {
+        registros_actualizados: registrosActualizados,
+        errores: errores.length,
+        set_nombre: setEncontrado.nombre,
+        valor_aplicado: opcionMasiva
       });
-
-      await Promise.all(promesas);
       
       // Registrar actividad detallada de clasificación masiva
       try {
@@ -1157,15 +1234,20 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
         
         await registrarActividad(
           "clasificacion",
-          "manual_edit",
-          `Aplicó clasificación masiva desde modal: ${setEncontrado.nombre} = ${opcionMasiva} a ${registrosSeleccionados.size} registros`,
+          "bulk_classify",
+          `Aplicó clasificación masiva en archivo (individual) desde modal: ${setEncontrado.nombre} = ${opcionMasiva} a ${registrosActualizados} registros`,
           {
             set_nombre: setEncontrado.nombre,
             set_id: setEncontrado.id,
             opcion_aplicada: opcionMasiva,
-            cantidad_registros: registrosSeleccionados.size,
+            cantidad_registros_solicitados: registrosSeleccionados.size,
+            cantidad_registros_actualizados: registrosActualizados,
+            cantidad_errores: errores.length,
             registros_afectados: registrosAfectados,
-            registros_ids: Array.from(registrosSeleccionados)
+            registros_ids: Array.from(registrosSeleccionados),
+            errores_detalle: errores,
+            source_type: "archivo",
+            metodo: "individual_updates"
           }
         );
       } catch (logErr) {
@@ -1181,10 +1263,32 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
       
       if (onDataChanged) onDataChanged();
       
-      alert(`Clasificación aplicada exitosamente a ${registrosSeleccionados.size} registros`);
+      // Mostrar mensaje con resultados
+      if (errores.length === 0) {
+        alert(`Clasificación aplicada exitosamente a ${registrosActualizados} registros`);
+      } else {
+        alert(`Clasificación aplicada a ${registrosActualizados} registros. ${errores.length} errores encontrados. Ver consola para detalles.`);
+        console.warn('Errores en clasificación masiva:', errores);
+      }
     } catch (error) {
-      console.error("Error aplicando clasificación masiva:", error);
-      alert("Error al aplicar la clasificación masiva");
+      console.error("❌ Error aplicando clasificación masiva:", error);
+      console.error("Error details:", {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        endpoint: error.config?.url
+      });
+      
+      let errorMessage = "Error al aplicar la clasificación masiva";
+      if (error.response?.data?.error) {
+        errorMessage += `: ${error.response.data.error}`;
+      } else if (error.response?.data?.detail) {
+        errorMessage += `: ${error.response.data.detail}`;
+      }
+      
+      alert(errorMessage);
+    } finally {
+      setAplicandoClasificacionMasiva(false);
     }
   };
 
@@ -1216,6 +1320,11 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
               <Database size={20} />
               Gestión de Clasificaciones
             </h2>
+            
+            {/* Indicador de fuente de datos */}
+            <div className="px-3 py-1 rounded-full text-xs font-medium bg-blue-900 text-blue-300 border border-blue-600">
+              � Archivo Excel
+            </div>
             
             {/* Switch global de idioma - Solo para clientes con sets bilingües */}
             {(() => {
@@ -1549,10 +1658,10 @@ const ModalClasificacionRegistrosRaw = ({ isOpen, onClose, uploadId, clienteId, 
                     <div>
                       <button
                         onClick={aplicarClasificacionMasiva}
-                        disabled={!setMasivo || !opcionMasiva || registrosSeleccionados.size === 0}
+                        disabled={!setMasivo || !opcionMasiva || registrosSeleccionados.size === 0 || aplicandoClasificacionMasiva}
                         className="w-full bg-green-600 hover:bg-green-500 disabled:bg-gray-600 disabled:opacity-50 text-white px-4 py-2 rounded font-medium transition"
                       >
-                        Aplicar ({registrosSeleccionados.size})
+                        {aplicandoClasificacionMasiva ? 'Aplicando...' : `Aplicar (${registrosSeleccionados.size})`}
                       </button>
                     </div>
                   </div>

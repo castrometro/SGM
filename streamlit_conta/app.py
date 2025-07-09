@@ -3,9 +3,69 @@ import json
 from layout.sidebar import mostrar_sidebar
 from layout.header import mostrar_header
 from data.loader_contabilidad import cargar_datos, cargar_datos_redis, listar_esf_disponibles
-from views import dashboard_general, movimientos, estado_situacion_financiera, estado_resultados, estado_resultados_integral, estado_cambio_patrimonio
+from views import dashboard_general, estado_situacion_financiera, estado_resultados_integral
 
 st.set_page_config(layout="wide", page_title="SGM - Dashboard Contable", page_icon="📊")
+
+# CSS para diseño formal y plano
+st.markdown("""
+<style>
+    /* Tema oscuro y minimalista */
+    .stApp {
+        background-color: #0E1117;
+        color: #FAFAFA;
+    }
+    
+    /* Sidebar con diseño plano */
+    .css-1d391kg {
+        background-color: #262730;
+        border-right: 1px solid #464858;
+    }
+    
+    /* Métricas con diseño plano */
+    [data-testid="metric-container"] {
+        background-color: #1E1E1E;
+        border: 1px solid #464858;
+        padding: 1rem;
+        border-radius: 4px;
+        box-shadow: none;
+    }
+    
+    /* Tablas con diseño minimalista */
+    .dataframe {
+        background-color: #1E1E1E;
+        border: 1px solid #464858;
+    }
+    
+    /* Headers sin efectos */
+    h1, h2, h3 {
+        color: #FAFAFA;
+        border-bottom: 1px solid #464858;
+        padding-bottom: 0.5rem;
+    }
+    
+    /* Botones planos */
+    .stButton > button {
+        background-color: #262730;
+        border: 1px solid #464858;
+        color: #FAFAFA;
+        border-radius: 4px;
+    }
+    
+    /* Tabs con diseño formal */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2px;
+        background-color: #1E1E1E;
+        border-radius: 4px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background-color: #262730;
+        border: 1px solid #464858;
+        color: #FAFAFA;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Sidebar para selección de fuente de datos y vista de JSON raw
 mostrar_header()
@@ -46,13 +106,7 @@ if sidebar_result["mostrar_json"]:
 # Mostrar las vistas según la pestaña seleccionada
 if selected_tab == "📊 Dashboard General":
     dashboard_general.mostrar(data)
-elif selected_tab == "🧾 Movimientos":
-    movimientos.mostrar(data)
 elif selected_tab == "🏛️ Estado de Situación Financiera (ESF)":
     estado_situacion_financiera.mostrar(data)
-elif selected_tab == "📈 Estado de Resultados (ESR)":
-    estado_resultados.mostrar(data)
 elif selected_tab == "📊 Estado de Resultados Integral (ERI)":
     estado_resultados_integral.mostrar(data)
-elif selected_tab == "💰 Estado de Cambio de Patrimonio (ECP)":
-    estado_cambio_patrimonio.mostrar(data)

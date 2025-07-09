@@ -521,6 +521,10 @@ class ClasificacionOption(models.Model):
 
 
 class AccountClassification(models.Model):
+    """
+    Tabla maestra para clasificaciones procesadas y enlazadas a cuentas reales.
+    Se regenera desde ClasificacionCuentaArchivo cuando es necesario.
+    """
     id = models.BigAutoField(primary_key=True)
     cuenta = models.ForeignKey(
         CuentaContable, on_delete=models.CASCADE, related_name="clasificaciones"
@@ -529,12 +533,77 @@ class AccountClassification(models.Model):
     opcion = models.ForeignKey(ClasificacionOption, on_delete=models.CASCADE)
     asignado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True)
     fecha = models.DateTimeField(auto_now_add=True)
+    
+    # Referencia al origen en ClasificacionCuentaArchivo
+    archivo_origen = models.ForeignKey(
+        "ClasificacionCuentaArchivo",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Registro origen en ClasificacionCuentaArchivo"
+    )
 
     class Meta:
         unique_together = ("cuenta", "set_clas")
 
     def __str__(self):
         return f"{self.cuenta.codigo} - {self.set_clas.nombre} - {self.opcion.valor}"
+    
+    @classmethod
+    def regenerar_desde_archivo(cls, cliente):
+        """
+        Regenera toda la tabla maestra desde ClasificacionCuentaArchivo para un cliente.
+        Usado cuando se procesan cuentas del libro mayor o se actualizan clasificaciones.
+        """
+        from django.db import transaction
+        
+        with transaction.atomic():
+            # Eliminar clasificaciones existentes del cliente
+            cls.objects.filter(cuenta__cliente=cliente).delete()
+            
+            # Obtener registros de archivo activos para el cliente
+            registros_archivo = ClasificacionCuentaArchivo.objects.filter(
+                cliente=cliente, 
+                activo=True
+            )
+            
+            # Obtener cuentas existentes del cliente
+            cuentas_dict = {
+                c.codigo: c for c in CuentaContable.objects.filter(cliente=cliente)
+            }
+            
+            clasificaciones_creadas = 0
+            for registro in registros_archivo:
+                cuenta = cuentas_dict.get(registro.numero_cuenta)
+                if not cuenta:
+                    # La cuenta aún no existe, saltar
+                    continue
+                
+                # Procesar cada clasificación del registro
+                for set_nombre, opcion_valor in registro.clasificaciones.items():
+                    try:
+                        clasificacion_set = ClasificacionSet.objects.get(
+                            cliente=cliente, nombre=set_nombre
+                        )
+                        opcion = ClasificacionOption.objects.get(
+                            set_clas=clasificacion_set, valor=opcion_valor
+                        )
+                        
+                        # Crear AccountClassification
+                        cls.objects.create(
+                            cuenta=cuenta,
+                            set_clas=clasificacion_set,
+                            opcion=opcion,
+                            archivo_origen=registro,
+                            asignado_por=None  # Viene de archivo
+                        )
+                        clasificaciones_creadas += 1
+                        
+                    except (ClasificacionSet.DoesNotExist, ClasificacionOption.DoesNotExist):
+                        # Set u opción no existe, saltar
+                        continue
+            
+            return clasificaciones_creadas
 
 class AnalisisCuentaCierre(models.Model):
     cierre = models.ForeignKey(
@@ -658,8 +727,8 @@ class TarjetaActivityLog(models.Model):
 
 class ClasificacionCuentaArchivo(models.Model):
     """
-    Modelo para guardar las clasificaciones tal como vienen del archivo Excel,
-    sin hacer mapeo inmediato a cuentas existentes (similar a TipoDocumento)
+    Modelo persistente para guardar las clasificaciones tal como vienen del archivo Excel.
+    NUNCA se eliminan estos registros - se mantienen para histórico y auditoría.
     """
 
     id = models.BigAutoField(primary_key=True)
@@ -686,16 +755,29 @@ class ClasificacionCuentaArchivo(models.Model):
     # Metadatos
     fila_excel = models.IntegerField(null=True, blank=True)  # Para tracking de errores
     fecha_creacion = models.DateTimeField(auto_now_add=True)
+    
+    # Control de versiones para mantener histórico
+    activo = models.BooleanField(
+        default=True,
+        help_text="False si este registro fue reemplazado por una nueva versión"
+    )
+    fecha_obsolescencia = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Fecha cuando este registro se marcó como obsoleto"
+    )
 
     class Meta:
-        unique_together = ("upload_log", "numero_cuenta")
         indexes = [
             models.Index(fields=["cliente"]),
             models.Index(fields=["upload_log"]),
+            models.Index(fields=["activo"]),
+            models.Index(fields=["cliente", "activo"]),
         ]
 
     def __str__(self):
-        return f"{self.numero_cuenta} - {self.cliente.nombre}"
+        estado = "activo" if self.activo else "obsoleto"
+        return f"{self.numero_cuenta} - {self.cliente.nombre} ({estado})"
 
 
 # ======================================

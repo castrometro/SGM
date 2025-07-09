@@ -60,4 +60,3 @@ def mostrar(data=None):
         st.metric("Total Debe", f"${df_filtered['debe'].sum():,.0f}")
     with col3:
         st.metric("Total Haber", f"${df_filtered['haber'].sum():,.0f}")
-

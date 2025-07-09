@@ -20,6 +20,8 @@ import {
   reprocesarBulkClasificacionUpload,
   obtenerClasificacionesArchivo,
   obtenerEstadoUploadLog,
+  // API para clasificaciones persistentes
+  obtenerClasificacionesPersistentesDetalladas,
 } from "../../api/contabilidad";
 
 const ClasificacionBulkCard = ({
@@ -79,14 +81,42 @@ const ClasificacionBulkCard = ({
         setEstado(data.estado);
         setArchivoNombre(data.archivo_nombre || "");
         
-        // Si hay archivo subido, también notificar como completado
-        if (onCompletado) onCompletado(data.estado === "subido");
+        // Verificar si hay clasificaciones persistentes en la base de datos
+        let tieneClasificacionesPersistentes = false;
+        try {
+          const clasificacionesPersistentes = await obtenerClasificacionesPersistentesDetalladas(clienteId);
+          tieneClasificacionesPersistentes = clasificacionesPersistentes && clasificacionesPersistentes.length > 0;
+          console.log(`📊 Clasificaciones persistentes encontradas: ${clasificacionesPersistentes.length}`);
+        } catch (persistentErr) {
+          console.warn("Error verificando clasificaciones persistentes:", persistentErr);
+        }
+        
+        // Si hay clasificaciones persistentes pero no archivo subido, marcar como "subido"
+        const estadoFinal = (data.estado === "pendiente" && tieneClasificacionesPersistentes) ? "subido" : data.estado;
+        setEstado(estadoFinal);
+        
+        // Marcar como completado si hay archivo subido O si hay clasificaciones persistentes
+        const estaCompletado = estadoFinal === "subido";
+        console.log(`✅ Estado de clasificaciones: archivo=${data.estado}, persistentes=${tieneClasificacionesPersistentes}, estadoFinal=${estadoFinal}, completado=${estaCompletado}`);
+        
+        if (onCompletado) onCompletado(estaCompletado);
         
         // Siempre cargar datos detallados para verificar uploads existentes
         await cargar();
       } catch (err) {
-        setEstado("pendiente");
-        if (onCompletado) onCompletado(false);
+        // Si hay error, verificar solo clasificaciones persistentes como fallback
+        let tieneClasificacionesPersistentes = false;
+        try {
+          const clasificacionesPersistentes = await obtenerClasificacionesPersistentesDetalladas(clienteId);
+          tieneClasificacionesPersistentes = clasificacionesPersistentes && clasificacionesPersistentes.length > 0;
+          console.log(`📊 Fallback - Clasificaciones persistentes: ${clasificacionesPersistentes.length}`);
+        } catch (persistentErr) {
+          console.warn("Error en fallback de clasificaciones persistentes:", persistentErr);
+        }
+        
+        setEstado(tieneClasificacionesPersistentes ? "subido" : "pendiente");
+        if (onCompletado) onCompletado(tieneClasificacionesPersistentes);
+        
         // Intentar cargar datos de uploads de todos modos
         try {
           await cargar();
@@ -355,97 +385,123 @@ const ClasificacionBulkCard = ({
         </div>
       )}
 
-      {/* Botones de acciones */}
-      <div className="flex gap-2 mt-2">
+      {/* Botón único para gestionar clasificaciones */}
+      <div className="flex gap-2 mt-2 flex-wrap">
         <button
-          onClick={() => {
-            console.log("🔘 Botón 'Ver clasificaciones' clickeado");
-            console.log("📋 ultimoUpload:", ultimoUpload);
-            console.log("🆔 ultimoUpload?.id:", ultimoUpload?.id);
-            console.log("✅ Botón habilitado:", !!ultimoUpload?.id);
-            
-            if (!ultimoUpload?.id) {
-              alert("⚠️ No hay datos de archivo para mostrar. Asegúrese de que el archivo se haya subido correctamente.");
-              return;
-            }
-            
-            setModalRegistrosRaw(true);
-          }}
-          className={`px-3 py-1 rounded text-sm font-medium transition flex items-center gap-2 ${
-            !ultimoUpload?.id 
-              ? 'bg-gray-600 text-gray-300 cursor-not-allowed' 
-              : 'bg-blue-700 hover:bg-blue-600 text-white'
-          }`}
-          title={!ultimoUpload?.id ? "No hay datos de archivo disponibles" : "Ver y gestionar clasificaciones"}
+          onClick={() => setModalRegistrosRaw(true)}
+          className="px-3 py-1 rounded text-sm font-medium transition flex items-center gap-2 bg-blue-700 hover:bg-blue-600 text-white"
+          title="Ver y gestionar clasificaciones"
         >
-          <Settings size={16} />
-          Ver clasificaciones
-          {!ultimoUpload?.id && <span className="text-xs ml-1">(No disponible)</span>}
+          <Database size={16} />
+          Gestionar clasificaciones
         </button>
-      </div>
-
-      {/* Información del estado y resumen */}
-      <div className="text-xs text-gray-400 italic mt-2">
-        {estado === "subido" ? (
-          <div className="space-y-2">
-            <div className="text-green-400">
-              ✔ Archivo subido correctamente
-            </div>
-            {archivoNombre && (
-              <div className="text-gray-300">
-                📄 Archivo: {archivoNombre}
-              </div>
-            )}
-            
-            {/* Mostrar información de registros raw si están disponibles */}
-            {registrosRaw.length > 0 && (
-              <div className="text-blue-300">
-                📋 {registrosRaw.length} registros disponibles para mapeo
-              </div>
-            )}
-            
-            {/* Mostrar resumen del procesamiento si está disponible */}
-            {ultimoUpload?.resumen && (
-              <div className="space-y-1">
-                <div>
-                  📊 {ultimoUpload.resumen.registros_guardados || 0} registros
-                  guardados de {ultimoUpload.resumen.total_filas || 0} filas
-                  {ultimoUpload.resumen.filas_vacias > 0 && (
-                    <span className="text-gray-500">
-                      {" "}
-                      • {ultimoUpload.resumen.filas_vacias} filas vacías omitidas
-                    </span>
+      </div>            {/* Información del estado y resumen */}
+            <div className="text-xs text-gray-400 italic mt-2">
+              {estado === "subido" ? (
+                <div className="space-y-2">
+                  {archivoNombre ? (
+                    <>
+                      <div className="text-green-400">
+                        ✔ Archivo subido correctamente
+                      </div>
+                      <div className="text-gray-300">
+                        📄 Archivo: {archivoNombre}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-green-400">
+                      ✔ Clasificaciones persistentes disponibles
+                    </div>
+                  )}
+                  
+                  {/* Información sobre los dos tipos de gestión */}
+                  <div className="bg-blue-900/20 border border-blue-500/30 rounded p-2 mt-2">
+                    <div className="text-blue-300 font-medium mb-1">💡 Dos formas de gestionar clasificaciones:</div>
+                    <div className="space-y-1 text-xs">
+                      <div className="flex items-center gap-2">
+                        <FileText size={12} className="text-blue-400" />
+                        <span><strong>Ver archivo:</strong> Datos temporales del archivo subido (se borran después de un tiempo)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Database size={12} className="text-green-400" />
+                        <span><strong>Gestionar clasificaciones:</strong> Base de datos persistente (nunca se borran, siempre editables)</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Mostrar información de registros raw si están disponibles */}
+                  {registrosRaw.length > 0 && (
+                    <div className="text-blue-300">
+                      📋 {registrosRaw.length} registros disponibles para mapeo
+                    </div>
+                  )}
+                  
+                  {/* Mostrar resumen del procesamiento si está disponible */}
+                  {ultimoUpload?.resumen && (
+                    <div className="space-y-1">
+                      <div>
+                        📊 {ultimoUpload.resumen.registros_guardados || 0} registros
+                        guardados de {ultimoUpload.resumen.total_filas || 0} filas
+                        {ultimoUpload.resumen.filas_vacias > 0 && (
+                          <span className="text-gray-500">
+                            {" "}
+                            • {ultimoUpload.resumen.filas_vacias} filas vacías omitidas
+                          </span>
+                        )}
+                      </div>
+                      {ultimoUpload.resumen.sets_encontrados?.length > 0 && (
+                        <div>
+                          📋 Sets encontrados:{" "}
+                          {ultimoUpload.resumen.sets_encontrados.join(", ")}
+                        </div>
+                      )}
+                      {ultimoUpload.resumen.errores_count > 0 && (
+                        <div className="text-yellow-400">
+                          ⚠ {ultimoUpload.resumen.errores_count} errores encontrados en
+                          el procesamiento
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
-                {ultimoUpload.resumen.sets_encontrados?.length > 0 && (
-                  <div>
-                    📋 Sets encontrados:{" "}
-                    {ultimoUpload.resumen.sets_encontrados.join(", ")}
+              ) : estado === "procesando" ? (
+                <div className="text-blue-400">🔄 Procesando archivo…</div>
+              ) : estado === "error" ? (
+                <div className="text-red-400">❌ Error en el procesamiento</div>
+              ) : estado === "persistente" ? (
+                <div className="space-y-2">
+                  <div className="text-green-400">
+                    ✔ Clasificaciones disponibles en la base de datos
                   </div>
-                )}
-                {ultimoUpload.resumen.errores_count > 0 && (
-                  <div className="text-yellow-400">
-                    ⚠ {ultimoUpload.resumen.errores_count} errores encontrados en
-                    el procesamiento
+                  <div className="bg-green-900/20 border border-green-500/30 rounded p-2">
+                    <div className="text-green-300 font-medium mb-1">📊 Datos persistentes:</div>
+                    <div className="text-xs space-y-1">
+                      <div>• Las clasificaciones están guardadas permanentemente en la base de datos</div>
+                      <div>• Puede gestionar, editar y agregar más clasificaciones en cualquier momento</div>
+                      <div>• No necesita subir archivo para tener clasificaciones funcionales</div>
+                    </div>
                   </div>
-                )}
-              </div>
-            )}
-          </div>
-        ) : estado === "procesando" ? (
-          <div className="text-blue-400">🔄 Procesando archivo…</div>
-        ) : estado === "error" ? (
-          <div className="text-red-400">❌ Error en el procesamiento</div>
-        ) : (
-          <div>Aún no se ha subido el archivo.</div>
-        )}
-      </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="mb-2">Aún no se ha subido el archivo.</div>
+                  <div className="bg-yellow-900/20 border border-yellow-500/30 rounded p-2">
+                    <div className="text-yellow-300 font-medium mb-1">💡 Sobre la gestión de clasificaciones:</div>
+                    <div className="text-xs space-y-1">
+                      <div>• <strong>Opción 1:</strong> Subir archivo Excel para mapeo masivo inicial</div>
+                      <div>• <strong>Opción 2:</strong> Gestionar clasificaciones directamente (botón verde)</div>
+                      <div>• Las clasificaciones persistentes siempre están disponibles para edición</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
 
-      {/* Modal de registros raw */}
+      {/* Modal para gestión de clasificaciones - datos de archivo */}
       <ModalClasificacionRegistrosRaw
         isOpen={modalRegistrosRaw}
         onClose={() => setModalRegistrosRaw(false)}
-        uploadId={ultimoUpload?.id}
+        uploadId={ultimoUpload?.id} // Usar el ID del último upload para obtener datos del archivo
         clienteId={clienteId}
         cierreId={cierreId}
         cliente={cliente}

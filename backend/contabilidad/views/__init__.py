@@ -12,6 +12,12 @@ from .clasificacion import (
     ClasificacionOptionViewSet,
     AccountClassificationViewSet,
 )
+from .clasificacion_persistente import (
+    obtener_clasificaciones_persistentes_detalladas,
+    registrar_vista_clasificaciones_persistentes,
+    clasificacion_masiva_persistente,
+    obtener_estadisticas_clasificaciones_persistentes,
+)
 from .cuentas import (
     CuentaContableViewSet,
     AperturaCuentaViewSet,
@@ -67,7 +73,7 @@ from .utilidades import (
 )
 
 __all__ = [
-    "LibroMayorUploadViewSet",
+    "LibroMayorArchivoViewSet",  # Corregido el nombre
     "cargar_libro_mayor",
     "TipoDocumentoViewSet",
     "cargar_tipo_documento",
@@ -114,6 +120,11 @@ __all__ = [
     "registrar_vista_nombres_ingles",
     "registrar_vista_clasificaciones",
     "cuentas_pendientes_set",
+    # Nuevas funciones para clasificaciones persistentes
+    "obtener_clasificaciones_persistentes_detalladas",
+    "registrar_vista_clasificaciones_persistentes", 
+    "clasificacion_masiva_persistente",
+    "obtener_estadisticas_clasificaciones_persistentes",
     # Utilidades
     "test_celery",
     "limpiar_archivos_temporales", 

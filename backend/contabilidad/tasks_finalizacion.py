@@ -564,14 +564,43 @@ def generar_reportes_finales(cierre_id, usuario_id=None):
         })
         reportes_fallidos += 1
     
-    # 2. TODO: Generar Estado de Resultado Integral
-    print(f"   📋 Estado de Resultado Integral (próximamente)...")
-    reportes_generados.append({
-        'nombre': 'Estado de Resultado Integral',
-        'tipo': 'eri',
-        'estado': 'pendiente',
-        'nota': 'Implementación pendiente'
-    })
+    # 2. Generar Estado de Resultado Integral
+    print(f"   📋 Generando Estado de Resultado Integral...")
+    try:
+        # Ejecutar la tarea de forma síncrona dentro de esta tarea
+        # IMPORTANTE: Pasar usuario_id para que el reporte quede registrado correctamente
+        from .tasks_reportes import generar_estado_resultados_integral
+        resultado_eri = generar_estado_resultados_integral.apply(args=[cierre_id, usuario_id]).result
+        if resultado_eri.get('success'):
+            reportes_generados.append({
+                'nombre': 'Estado de Resultado Integral',
+                'tipo': 'eri',
+                'formato': 'JSON',
+                'estado': 'generado',
+                'reporte_id': resultado_eri.get('reporte_id'),
+                'total_cuentas': resultado_eri.get('total_cuentas'),
+                'tiempo_generacion': resultado_eri.get('tiempo_generacion')
+            })
+            reportes_exitosos += 1
+            print(f"   ✅ Estado de Resultado Integral generado exitosamente")
+        else:
+            reportes_generados.append({
+                'nombre': 'Estado de Resultado Integral',
+                'tipo': 'eri',
+                'estado': 'error',
+                'error': resultado_eri.get('error')
+            })
+            reportes_fallidos += 1
+            print(f"   ❌ Error generando Estado de Resultado Integral: {resultado_eri.get('error')}")
+    except Exception as e:
+        print(f"   ❌ Excepción generando Estado de Resultado Integral: {str(e)}")
+        reportes_generados.append({
+            'nombre': 'Estado de Resultado Integral',
+            'tipo': 'eri',
+            'estado': 'error',
+            'error': str(e)
+        })
+        reportes_fallidos += 1
     
     # 3. TODO: Generar Estado de Cambios en el Patrimonio
     print(f"   📋 Estado de Cambios en el Patrimonio (próximamente)...")

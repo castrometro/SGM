@@ -51,15 +51,25 @@ def crear_chain_libro_mayor(upload_log_id, user_correo_bdo):
     )
 # ─── Utilidades ───────────────────────────────────────────────────────────────
 
-def _parse_fecha(value):
+def _parse_fecha(value, fecha_cierre=None):
+    """
+    Parsea una fecha desde el Excel.
+    Si no se puede parsear, usa fecha_cierre como fallback, o fecha actual.
+    """
     if isinstance(value, datetime.date):
         return value
-    if isinstance(value, str):
+    if isinstance(value, str) and value.strip():
         for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
             try:
-                return datetime.datetime.strptime(value, fmt).date()
+                return datetime.datetime.strptime(value.strip(), fmt).date()
             except ValueError:
                 continue
+    
+    # Si no se pudo parsear y hay fecha_cierre, usarla
+    if fecha_cierre:
+        return fecha_cierre
+    
+    # Fallback a fecha actual
     return timezone.now().date()
 
 
@@ -265,17 +275,22 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
     cuentas_con_tipo_doc_null = set()
     cuentas_con_tipo_doc_no_reconocido = {}  # dict para guardar también el código no reconocido
     
-    # NUEVO: Totales ESF/ERI calculados durante el procesamiento
+    # NUEVO: Contador de movimientos por cuenta para debugging
+    movimientos_por_cuenta = {}  # {cuenta_codigo: cantidad_movimientos}
+    
+    # NUEVO: Totales ESF/ERI calculados durante el procesamiento + CATEGORÍA PARA CUENTAS NO CLASIFICADAS
     totales_esf_eri = {
         'ESF': {'saldo_ant': Decimal('0'), 'debe': Decimal('0'), 'haber': Decimal('0')},
         'ERI': {'saldo_ant': Decimal('0'), 'debe': Decimal('0'), 'haber': Decimal('0')},
+        'NO_CLASIFICADAS': {'saldo_ant': Decimal('0'), 'debe': Decimal('0'), 'haber': Decimal('0')},
     }
     
     # NUEVO: Contadores para debugging
     contadores_clasificacion = {
         'ESF': 0,
         'ERI': 0,
-        'Sin_clasificacion': 0
+        'NO_CLASIFICADAS': 0,
+        'Sin_clasificacion': 0  # Mantenemos para retrocompatibilidad
     }
     
     stats = {"cuentas_nuevas": 0, "aperturas": 0, "movimientos": 0, "incidencias_detectadas": 0}
@@ -403,15 +418,18 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
             aperturas.append(apertura)
             stats["aperturas"] += 1
             
-            # NUEVO: Acumular en totales ESF/ERI si corresponde
+            # NUEVO: Acumular en totales ESF/ERI si corresponde, o en NO_CLASIFICADAS
             clasificacion_esf_eri = identificar_clasificacion_esf_eri(cuenta_obj)
             if clasificacion_esf_eri in ['ESF', 'ERI']:
                 totales_esf_eri[clasificacion_esf_eri]['saldo_ant'] += saldo
                 contadores_clasificacion[clasificacion_esf_eri] += 1
                 logger.info(f"🔍 SALDO ANTERIOR {clasificacion_esf_eri}: Cuenta {code} = ${saldo:,.2f} | Total acumulado: ${totales_esf_eri[clasificacion_esf_eri]['saldo_ant']:,.2f}")
             else:
-                contadores_clasificacion['Sin_clasificacion'] += 1
-                logger.info(f"⚠️  CUENTA SIN CLASIFICACIÓN ESF/ERI: {code} = ${saldo:,.2f} | Clasificación: {clasificacion_esf_eri}")
+                # Incluir cuentas no clasificadas en la categoría NO_CLASIFICADAS
+                totales_esf_eri['NO_CLASIFICADAS']['saldo_ant'] += saldo
+                contadores_clasificacion['NO_CLASIFICADAS'] += 1
+                contadores_clasificacion['Sin_clasificacion'] += 1  # Mantener para retrocompatibilidad
+                logger.warning(f"⚠️  CUENTA NO CLASIFICADA (incluida en totales): {code} = ${saldo:,.2f} | Clasificación: {clasificacion_esf_eri} | Total NO_CLASIFICADAS: ${totales_esf_eri['NO_CLASIFICADAS']['saldo_ant']:,.2f}")
             
             logger.debug(f"Saldo anterior procesado para cuenta {code}: {saldo}")
         except Exception as e:
@@ -430,6 +448,13 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
             debe = Decimal(row[D] or 0)
             haber = Decimal(row[H] or 0)
             
+            # NUEVO: Contador de movimientos por cuenta
+            if cuenta_obj.codigo not in movimientos_por_cuenta:
+                movimientos_por_cuenta[cuenta_obj.codigo] = 0
+            movimientos_por_cuenta[cuenta_obj.codigo] += 1
+            
+            logger.debug(f"📝 PROCESANDO MOVIMIENTO #{movimientos_por_cuenta[cuenta_obj.codigo]} para cuenta {cuenta_obj.codigo}: Debe=${debe:,.2f} | Haber=${haber:,.2f}")
+            
             # Validar tipo documento con el helper optimizado
             tipo_doc_obj, generar_inc_null, generar_inc_no_reconocido = get_tipo_doc(codigo_td, cuenta_obj.codigo)
             
@@ -442,18 +467,23 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                 cuentas_con_tipo_doc_no_reconocido[cuenta_obj.codigo] = codigo_td
                 logger.debug(f"Cuenta {cuenta_obj.codigo} marcada para incidencia tipo doc no reconocido: '{codigo_td}'")
             
-            # NUEVO: Acumular en totales ESF/ERI si corresponde
+            # NUEVO: Acumular en totales ESF/ERI si corresponde, o en NO_CLASIFICADAS
             clasificacion_esf_eri = identificar_clasificacion_esf_eri(cuenta_obj)
             if clasificacion_esf_eri in ['ESF', 'ERI']:
                 totales_esf_eri[clasificacion_esf_eri]['debe'] += debe
                 totales_esf_eri[clasificacion_esf_eri]['haber'] += haber
                 logger.debug(f"Movimiento {clasificacion_esf_eri} acumulado para cuenta {cuenta_obj.codigo}: Debe={debe}, Haber={haber}")
+            else:
+                # Incluir movimientos de cuentas no clasificadas en la categoría NO_CLASIFICADAS
+                totales_esf_eri['NO_CLASIFICADAS']['debe'] += debe
+                totales_esf_eri['NO_CLASIFICADAS']['haber'] += haber
+                logger.debug(f"Movimiento NO_CLASIFICADO acumulado para cuenta {cuenta_obj.codigo}: Debe={debe}, Haber={haber} | Total acumulado: Debe=${totales_esf_eri['NO_CLASIFICADAS']['debe']:,.2f}, Haber=${totales_esf_eri['NO_CLASIFICADAS']['haber']:,.2f}")
             
             # Crear el movimiento contable con TODOS los datos disponibles
             mov = MovimientoContable(
                 cierre=cierre,
                 cuenta=cuenta_obj,
-                fecha=_parse_fecha(row[F]),
+                fecha=_parse_fecha(row[F], cierre.fecha_cierre),
                 debe=debe,
                 haber=haber,
                 descripcion=str(row[DS] or "")[:500] if (DS is not None and row[DS]) else "",
@@ -484,7 +514,7 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                 mov_minimo = MovimientoContable(
                     cierre=cierre,
                     cuenta=cuenta_obj,
-                    fecha=_parse_fecha(row[F]),
+                    fecha=_parse_fecha(row[F], cierre.fecha_cierre),
                     debe=Decimal(row[D] or 0),
                     haber=Decimal(row[H] or 0),
                     descripcion="Error procesando campos adicionales",
@@ -497,9 +527,11 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
 
     # 3. BUCLE PRINCIPAL
     current_code = None
+    fila_numero = 10  # Empezamos en fila 11 del Excel (10 + 1)
     
     with transaction.atomic():
         for row in ws.iter_rows(min_row=11, values_only=True):
+            fila_numero += 1
             cell = row[C]
             
             # SALDO ANTERIOR → nuevo bloque de cuenta
@@ -514,6 +546,10 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                 nombre_real = partes[1].strip() if len(partes) > 1 else f"Cuenta {code}"
                 
                 current_code = code
+                logger.info(f"🆕 NUEVA CUENTA DETECTADA en fila {fila_numero}: {code} - {nombre_real}")
+                
+                # Reiniciar contador para esta cuenta
+                movimientos_por_cuenta[code] = 0
                 
                 # Si code no está en processed_accounts
                 if code not in processed_accounts:
@@ -604,14 +640,36 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                 procesar_saldo_anterior(row, cierre, code, aperturas, stats, totales_esf_eri, identificar_clasificacion_esf_eri)
                 continue
             
-            # Si current_code definido y row[F] no es None
-            if current_code and row[F] is not None:
-                # Recuperar cuenta_obj = processed_accounts[current_code]
-                cuenta_obj = processed_accounts[current_code]
-                # Llamar a procesar_movimiento con validación completa
-                indices_cols = (ND, TP, NC, NI, CC, AUX, DG, DS, TD, D, H, F)
-                procesar_movimiento(row, cierre, cuenta_obj, get_tipo_doc, movimientos, stats, indices_cols, totales_esf_eri, identificar_clasificacion_esf_eri)
+            # Si current_code definido y hay datos de movimiento (debe o haber)
+            if current_code and (row[D] is not None or row[H] is not None):
+                # Verificar si hay al menos debe o haber con valores > 0
+                debe_val = Decimal(row[D] or 0) if row[D] is not None else Decimal('0')
+                haber_val = Decimal(row[H] or 0) if row[H] is not None else Decimal('0')
+                
+                logger.debug(f"🔍 EVALUANDO FILA {fila_numero} para cuenta {current_code}: Debe={debe_val}, Haber={haber_val}")
+                
+                # Solo procesar si hay movimiento real (debe > 0 o haber > 0)
+                if debe_val > 0 or haber_val > 0:
+                    # Recuperar cuenta_obj = processed_accounts[current_code]
+                    cuenta_obj = processed_accounts[current_code]
+                    
+                    # LOGGING para detectar movimientos sin fecha
+                    if row[F] is None or row[F] == "":
+                        logger.warning(f"⚠️  MOVIMIENTO SIN FECHA en fila {fila_numero}: Cuenta {current_code} | Debe=${debe_val:,.2f} | Haber=${haber_val:,.2f} | Usando fecha de cierre como default")
+                    
+                    # Llamar a procesar_movimiento con validación completa
+                    indices_cols = (ND, TP, NC, NI, CC, AUX, DG, DS, TD, D, H, F)
+                    procesar_movimiento(row, cierre, cuenta_obj, get_tipo_doc, movimientos, stats, indices_cols, totales_esf_eri, identificar_clasificacion_esf_eri)
+                    logger.debug(f"✅ MOVIMIENTO PROCESADO en fila {fila_numero} para cuenta {current_code}")
+                else:
+                    logger.debug(f"⏭️  FILA {fila_numero} IGNORADA para cuenta {current_code}: debe={debe_val}, haber={haber_val} (sin movimiento real)")
                 continue
+            
+            # Loggear filas que se ignoran completamente
+            elif current_code:
+                logger.debug(f"⏭️  FILA {fila_numero} IGNORADA para cuenta {current_code}: sin datos de debe/haber válidos")
+            else:
+                logger.debug(f"⏭️  FILA {fila_numero} IGNORADA: sin cuenta activa definida")
             
             # Ignorar el resto de filas
 
@@ -621,6 +679,19 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
             AperturaCuenta.objects.bulk_create(aperturas, batch_size=500)
         if movimientos:
             MovimientoContable.objects.bulk_create(movimientos, batch_size=500)
+        
+        # NUEVO: Resumen de movimientos por cuenta
+        logger.info("="*80)
+        logger.info("📊 RESUMEN DE MOVIMIENTOS PROCESADOS POR CUENTA")
+        logger.info("="*80)
+        
+        for cuenta_codigo, cantidad in sorted(movimientos_por_cuenta.items()):
+            cuenta_obj = processed_accounts.get(cuenta_codigo)
+            nombre_cuenta = cuenta_obj.nombre if cuenta_obj else "N/A"
+            logger.info(f"  {cuenta_codigo} | {nombre_cuenta} | {cantidad} movimientos procesados")
+        
+        logger.info(f"TOTAL: {len(movimientos_por_cuenta)} cuentas con movimientos | {sum(movimientos_por_cuenta.values())} movimientos totales")
+        logger.info("="*80)
 
     # 5. CONVERTIR SETS AGRUPADOS A INCIDENCIAS INDIVIDUALES
     # Convertir cuentas sin clasificación por set específico
@@ -668,19 +739,21 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
         "tipo_doc_no_reconocido": len(excepciones_tipo_doc_no_reconocido)
     }
 
-    # Calcular balances ESF/ERI
+    # Calcular balances ESF/ERI + NO_CLASIFICADAS
     balance_esf = float(totales_esf_eri['ESF']['saldo_ant'] + totales_esf_eri['ESF']['debe'] - totales_esf_eri['ESF']['haber'])
     balance_eri = float(totales_esf_eri['ERI']['saldo_ant'] + totales_esf_eri['ERI']['debe'] - totales_esf_eri['ERI']['haber'])
-    balance_total = balance_esf + balance_eri
+    balance_no_clasificadas = float(totales_esf_eri['NO_CLASIFICADAS']['saldo_ant'] + totales_esf_eri['NO_CLASIFICADAS']['debe'] - totales_esf_eri['NO_CLASIFICADAS']['haber'])
+    balance_total = balance_esf + balance_eri + balance_no_clasificadas
 
     # LOGGING DETALLADO DE TOTALES FINALES
     logger.info("="*80)
-    logger.info("📊 RESUMEN FINAL DE TOTALES ESF/ERI")
+    logger.info("📊 RESUMEN FINAL DE TOTALES ESF/ERI + NO_CLASIFICADAS")
     logger.info("="*80)
     logger.info(f"CONTADORES DE CUENTAS:")
     logger.info(f"  ESF: {contadores_clasificacion['ESF']} cuentas")
     logger.info(f"  ERI: {contadores_clasificacion['ERI']} cuentas")
-    logger.info(f"  Sin clasificación: {contadores_clasificacion['Sin_clasificacion']} cuentas")
+    logger.info(f"  NO_CLASIFICADAS: {contadores_clasificacion['NO_CLASIFICADAS']} cuentas")
+    logger.info(f"  Sin clasificación (legacy): {contadores_clasificacion['Sin_clasificacion']} cuentas")
     logger.info("")
     logger.info(f"ESF TOTALES:")
     logger.info(f"  Saldo Anterior: ${totales_esf_eri['ESF']['saldo_ant']:,.2f}")
@@ -694,7 +767,13 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
     logger.info(f"  Haber:          ${totales_esf_eri['ERI']['haber']:,.2f}")
     logger.info(f"  Balance:        ${balance_eri:,.2f}")
     logger.info("")
-    logger.info(f"BALANCE TOTAL: ${balance_total:,.2f}")
+    logger.info(f"NO_CLASIFICADAS TOTALES:")
+    logger.info(f"  Saldo Anterior: ${totales_esf_eri['NO_CLASIFICADAS']['saldo_ant']:,.2f}")
+    logger.info(f"  Debe:           ${totales_esf_eri['NO_CLASIFICADAS']['debe']:,.2f}")
+    logger.info(f"  Haber:          ${totales_esf_eri['NO_CLASIFICADAS']['haber']:,.2f}")
+    logger.info(f"  Balance:        ${balance_no_clasificadas:,.2f}")
+    logger.info("")
+    logger.info(f"BALANCE TOTAL (ESF + ERI + NO_CLASIFICADAS): ${balance_total:,.2f}")
     logger.info("="*80)
     
     # NUEVO: DETALLAR TODAS LAS CUENTAS ESF Y ERI PROCESADAS
@@ -744,7 +823,7 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
     resumen["procesamiento"] = stats
     resumen["incidencias_pendientes"] = incidencias_pendientes  # Guardar para el siguiente task
     
-    # NUEVO: Guardar totales ESF/ERI calculados durante el procesamiento
+    # NUEVO: Guardar totales ESF/ERI + NO_CLASIFICADAS calculados durante el procesamiento
     resumen['totales_esf_eri'] = {
         'totales': {
             'ESF': {
@@ -756,10 +835,16 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                 'saldo_ant': float(totales_esf_eri['ERI']['saldo_ant']),
                 'debe': float(totales_esf_eri['ERI']['debe']),
                 'haber': float(totales_esf_eri['ERI']['haber'])
+            },
+            'NO_CLASIFICADAS': {
+                'saldo_ant': float(totales_esf_eri['NO_CLASIFICADAS']['saldo_ant']),
+                'debe': float(totales_esf_eri['NO_CLASIFICADAS']['debe']),
+                'haber': float(totales_esf_eri['NO_CLASIFICADAS']['haber'])
             }
         },
         'balance_esf': balance_esf,
         'balance_eri': balance_eri,
+        'balance_no_clasificadas': balance_no_clasificadas,
         'balance_total': balance_total,
         'balance_validado': abs(balance_total) <= 1000.00,
         'diferencia_balance': abs(balance_total),
@@ -772,7 +857,7 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
 
     logger.info(f"Procesamiento completado: {stats}")
     logger.info(f"Incidencias detectadas en línea: {len(incidencias_pendientes)}")
-    logger.info(f"Totales ESF/ERI calculados - ESF: {balance_esf:,.2f}, ERI: {balance_eri:,.2f}, Total: {balance_total:,.2f}")
+    logger.info(f"Totales calculados - ESF: {balance_esf:,.2f}, ERI: {balance_eri:,.2f}, NO_CLASIFICADAS: {balance_no_clasificadas:,.2f}, Total: {balance_total:,.2f}")
     logger.info(f"Excepciones aplicadas - Sets clasificación: {stats['excepciones_aplicadas']['clasificacion_sets']}, "
                f"Nombres inglés: {stats['excepciones_aplicadas']['nombres_ingles']}, "
                f"Tipo doc null: {stats['excepciones_aplicadas']['tipo_doc_null']}, "

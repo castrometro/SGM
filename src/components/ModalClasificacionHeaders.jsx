@@ -211,9 +211,9 @@ const ModalClasificacionHeaders = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
-      <div className="bg-gray-900 rounded-lg shadow-xl w-full max-w-7xl max-h-[90vh] flex flex-col">
+      <div className="bg-gray-900 rounded-lg shadow-xl w-full max-w-7xl h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="flex justify-between items-center p-6 border-b border-gray-700">
+        <div className="flex justify-between items-center p-6 border-b border-gray-700 flex-shrink-0">
           <div className="flex items-center gap-4">
             <h2 className="text-xl font-semibold text-white">
               Clasificación de Conceptos
@@ -271,6 +271,7 @@ const ModalClasificacionHeaders = ({
               onEliminarClasificacion={eliminarClasificacionConcepto}
               soloLectura={soloLectura}
               nombresCategorias={nombresCategorias}
+              iconosCategorias={iconosCategorias}
             />
           ) : (
             <VistaCategorias 
@@ -285,7 +286,7 @@ const ModalClasificacionHeaders = ({
         </div>
 
         {/* Footer */}
-        <div className="border-t border-gray-700 p-6">
+        <div className="border-t border-gray-700 p-6 flex-shrink-0">
           <div className="flex justify-end gap-3">
             <button
               onClick={onClose}
@@ -326,7 +327,7 @@ const ModalClasificacionHeaders = ({
 };
 
 // Componente para la vista de lista
-const VistaLista = ({ conceptos, onAbrirModalConcepto, onEliminarClasificacion, soloLectura, nombresCategorias }) => {
+const VistaLista = ({ conceptos, onAbrirModalConcepto, onEliminarClasificacion, soloLectura, nombresCategorias, iconosCategorias }) => {
   const [filtro, setFiltro] = useState("");
   const [soloSinClasificar, setSoloSinClasificar] = useState(false);
 

@@ -4,9 +4,11 @@ import {
   subirArchivoAnalista,
   obtenerEstadoArchivoAnalista,
   reprocesarArchivoAnalista,
+  eliminarArchivoAnalista,
   subirArchivoNovedades,
   obtenerEstadoArchivoNovedades,
   reprocesarArchivoNovedades,
+  eliminarArchivoNovedades,
 } from "../../../api/nomina";
 
 // Importar componentes atomizados
@@ -289,6 +291,42 @@ const ArchivosAnalistaContainer = ({
     }
   };
 
+  // Handler para eliminar archivos
+  const handleEliminarArchivo = async (tipo) => {
+    const archivo = archivos[tipo].archivo;
+    if (!archivo?.id) return;
+    
+    try {
+      if (tipo === 'novedades') {
+        await eliminarArchivoNovedades(archivo.id);
+      } else {
+        await eliminarArchivoAnalista(archivo.id);
+      }
+      
+      // Resetear estado del archivo
+      setArchivos(prev => ({
+        ...prev,
+        [tipo]: {
+          estado: "no_subido",
+          archivo: null,
+          error: ""
+        }
+      }));
+      
+      console.log(`✅ Archivo ${tipo} eliminado correctamente`);
+      
+    } catch (error) {
+      console.error(`Error eliminando ${tipo}:`, error);
+      setArchivos(prev => ({
+        ...prev,
+        [tipo]: { 
+          ...prev[tipo], 
+          error: "Error al eliminar el archivo" 
+        }
+      }));
+    }
+  };
+
   return (
     <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-4 ${disabled ? "opacity-60 pointer-events-none" : ""}`}>
       <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
@@ -305,6 +343,7 @@ const ArchivosAnalistaContainer = ({
           disabled={disabled}
           onSubirArchivo={(archivo) => handleSubirArchivo('finiquitos', archivo)}
           onReprocesar={() => handleReprocesar('finiquitos')}
+          onEliminarArchivo={() => handleEliminarArchivo('finiquitos')}
         />
         
         <IncidenciasCard
@@ -315,6 +354,7 @@ const ArchivosAnalistaContainer = ({
           disabled={disabled}
           onSubirArchivo={(archivo) => handleSubirArchivo('incidencias', archivo)}
           onReprocesar={() => handleReprocesar('incidencias')}
+          onEliminarArchivo={() => handleEliminarArchivo('incidencias')}
         />
         
         <IngresosCard
@@ -325,6 +365,7 @@ const ArchivosAnalistaContainer = ({
           disabled={disabled}
           onSubirArchivo={(archivo) => handleSubirArchivo('ingresos', archivo)}
           onReprocesar={() => handleReprocesar('ingresos')}
+          onEliminarArchivo={() => handleEliminarArchivo('ingresos')}
         />
         
         <NovedadesCard
@@ -335,6 +376,7 @@ const ArchivosAnalistaContainer = ({
           disabled={disabled}
           onSubirArchivo={(archivo) => handleSubirArchivo('novedades', archivo)}
           onReprocesar={() => handleReprocesar('novedades')}
+          onEliminarArchivo={() => handleEliminarArchivo('novedades')}
           onActualizarEstado={() => actualizarEstadoArchivo('novedades')}
           cierreId={cierreId}
           cliente={cliente}

@@ -1,6 +1,7 @@
 from django.db import models
 from api.models import Cliente
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from datetime import datetime
 
 # Importar modelos de logging
@@ -50,6 +51,9 @@ class CierreNomina(models.Model):
             ('reportes_generados', 'Reportes Generados'),
             ('validacion_senior', 'Validación Senior'),
             ('completado', 'Completado'),
+            ('analisis_generado', 'Análisis Generado'),
+            ('incidencias_abiertas', 'Incidencias Abiertas'),
+            ('sin_incidencias', 'Sin Incidencias'),
         ],
         default='pendiente'
     )
@@ -61,11 +65,11 @@ class CierreNomina(models.Model):
         choices=[
             ('analisis_pendiente', 'Análisis de Incidencias Pendiente'),
             ('incidencias_generadas', 'Incidencias Detectadas'),
-            ('resolucion_analista', 'En Resolución por Analista'),
-            ('revision_supervisor', 'En Revisión por Supervisor'),
-            ('devuelto_analista', 'Devuelto al Analista'),
-            ('aprobado', 'Incidencias Aprobadas'),
-            ('cierre_completado', 'Cierre Completado'),
+            ('archivos_consolidados', 'Archivos Consolidados'),
+            ('analisis_generado', 'Análisis Generado'),
+            ('incidencias_abiertas', 'Incidencias Abiertas'),
+            ('sin_incidencias', 'Sin Incidencias'),
+            ('cerrado', 'Cerrado'),
         ],
         default='analisis_pendiente'
     )
@@ -78,6 +82,132 @@ class CierreNomina(models.Model):
 
     def __str__(self):
         return f"{self.cliente.nombre} - {self.periodo}"
+    
+    def actualizar_estado_automatico(self):
+        """
+        Actualiza el estado del cierre basado en el estado de los archivos
+        y las incidencias pendientes automáticamente.
+        """
+        from django.utils import timezone
+        
+        # Si ya está completado, no cambiar
+        if self.estado == 'completado':
+            return self.estado
+            
+        # Verificar el estado de todos los archivos necesarios
+        archivos_listos = self._verificar_archivos_listos()
+        
+        if not archivos_listos['todos_listos']:
+            # Aún no están todos los archivos procesados
+            if self.estado != 'en_proceso':
+                self.estado = 'en_proceso'
+                self.save(update_fields=['estado'])
+            return self.estado
+        
+        # Todos los archivos están listos, cambiar a "datos_consolidados"
+        if self.estado != 'datos_consolidados':
+            self.estado = 'datos_consolidados'
+            self.estado_incidencias = 'analisis_pendiente'
+            self.save(update_fields=['estado', 'estado_incidencias'])
+        
+        return self.estado
+    
+    def _verificar_archivos_listos(self):
+        """
+        Verifica que todos los archivos necesarios estén en estado 'procesado'
+        """
+        resultado = {
+            'todos_listos': False,
+            'detalles': {},
+            'archivos_faltantes': []
+        }
+        
+        # 1. Verificar Libro de Remuneraciones (OBLIGATORIO)
+        libro = self.libros_remuneraciones.first()
+        if not libro or libro.estado != 'procesado':
+            resultado['detalles']['libro_remuneraciones'] = {
+                'estado': libro.estado if libro else 'no_subido',
+                'requerido': True,
+                'listo': False
+            }
+            resultado['archivos_faltantes'].append('Libro de Remuneraciones')
+        else:
+            resultado['detalles']['libro_remuneraciones'] = {
+                'estado': 'procesado',
+                'requerido': True,
+                'listo': True
+            }
+        
+        # 2. Verificar Movimientos del Mes (OBLIGATORIO)
+        movimientos = self.movimientos_mes.first()
+        if not movimientos or movimientos.estado != 'procesado':
+            resultado['detalles']['movimientos_mes'] = {
+                'estado': movimientos.estado if movimientos else 'no_subido',
+                'requerido': True,
+                'listo': False
+            }
+            resultado['archivos_faltantes'].append('Movimientos del Mes')
+        else:
+            resultado['detalles']['movimientos_mes'] = {
+                'estado': 'procesado',
+                'requerido': True,
+                'listo': True
+            }
+        
+        # 3. Verificar Archivos del Analista (AL MENOS UNO DEBE ESTAR PROCESADO)
+        archivos_analista = self.archivos_analista.filter(estado='procesado')
+        if archivos_analista.count() == 0:
+            resultado['detalles']['archivos_analista'] = {
+                'estado': 'ninguno_procesado',
+                'requerido': True,
+                'listo': False
+            }
+            resultado['archivos_faltantes'].append('Al menos un Archivo del Analista')
+        else:
+            resultado['detalles']['archivos_analista'] = {
+                'estado': f'{archivos_analista.count()}_procesados',
+                'requerido': True,
+                'listo': True
+            }
+        
+        # 4. Verificar Novedades (OPCIONAL - puede estar procesado o no subido)
+        novedades = self.archivos_novedades.first()
+        if novedades:
+            if novedades.estado == 'procesado':
+                resultado['detalles']['novedades'] = {
+                    'estado': 'procesado',
+                    'requerido': False,
+                    'listo': True
+                }
+            else:
+                # Si hay archivo de novedades pero no está procesado, debe procesarse
+                resultado['detalles']['novedades'] = {
+                    'estado': novedades.estado,
+                    'requerido': False,
+                    'listo': False
+                }
+                resultado['archivos_faltantes'].append('Novedades (pendiente de procesar)')
+        else:
+            # No hay archivo de novedades, está OK
+            resultado['detalles']['novedades'] = {
+                'estado': 'no_subido',
+                'requerido': False,
+                'listo': True
+            }
+        
+        # Determinar si todos los archivos requeridos están listos
+        archivos_requeridos_listos = (
+            resultado['detalles']['libro_remuneraciones']['listo'] and
+            resultado['detalles']['movimientos_mes']['listo'] and
+            resultado['detalles']['archivos_analista']['listo']
+        )
+        
+        # Si hay novedades subidas, también deben estar procesadas
+        novedades_ok = resultado['detalles']['novedades']['listo']
+        
+        resultado['todos_listos'] = archivos_requeridos_listos and novedades_ok
+        
+        return resultado
 
 
 class EmpleadoCierre(models.Model):
@@ -707,3 +837,173 @@ class ResolucionIncidencia(models.Model):
     
     def __str__(self):
         return f"{self.get_tipo_resolucion_display()} por {self.usuario.correo_bdo} - {self.incidencia}"
+
+
+# ======== MODELOS PARA ANÁLISIS DE DATOS ========
+
+class AnalisisDatosCierre(models.Model):
+    """Análisis estadístico de datos del cierre actual vs mes anterior"""
+    cierre = models.OneToOneField(CierreNomina, on_delete=models.CASCADE, related_name='analisis_datos')
+    
+    # Datos del cierre actual
+    cantidad_empleados_actual = models.IntegerField(default=0)
+    cantidad_ingresos_actual = models.IntegerField(default=0)
+    cantidad_finiquitos_actual = models.IntegerField(default=0)
+    cantidad_ausentismos_actual = models.IntegerField(default=0)
+    
+    # Datos del mes anterior (para comparación)
+    cantidad_empleados_anterior = models.IntegerField(default=0)
+    cantidad_ingresos_anterior = models.IntegerField(default=0)
+    cantidad_finiquitos_anterior = models.IntegerField(default=0)
+    cantidad_ausentismos_anterior = models.IntegerField(default=0)
+    
+    # Ausentismos por tipo (JSON con conteos)
+    ausentismos_por_tipo_actual = models.JSONField(default=dict)
+    ausentismos_por_tipo_anterior = models.JSONField(default=dict)
+    
+    # Configuración de tolerancia usada
+    tolerancia_variacion_salarial = models.DecimalField(max_digits=5, decimal_places=2, default=30.00)
+    
+    # Estado del análisis
+    estado = models.CharField(max_length=20, choices=[
+        ('pendiente', 'Pendiente'),
+        ('procesando', 'Procesando'),
+        ('completado', 'Completado'),
+        ('error', 'Error'),
+    ], default='pendiente')
+    
+    # Fechas
+    fecha_analisis = models.DateTimeField(auto_now_add=True)
+    fecha_completado = models.DateTimeField(null=True, blank=True)
+    
+    # Usuario que inició el análisis
+    analista = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    # Notas adicionales
+    notas = models.TextField(blank=True)
+    
+    class Meta:
+        verbose_name = "Análisis de Datos del Cierre"
+        verbose_name_plural = "Análisis de Datos de Cierres"
+        ordering = ['-fecha_analisis']
+    
+    def __str__(self):
+        return f"Análisis {self.cierre.periodo} - {self.cierre.cliente.nombre}"
+    
+    def calcular_variaciones(self):
+        """Calcula las variaciones porcentuales entre mes actual y anterior"""
+        return {
+            'empleados': self._calcular_variacion_porcentual(self.cantidad_empleados_actual, self.cantidad_empleados_anterior),
+            'ingresos': self._calcular_variacion_porcentual(self.cantidad_ingresos_actual, self.cantidad_ingresos_anterior),
+            'finiquitos': self._calcular_variacion_porcentual(self.cantidad_finiquitos_actual, self.cantidad_finiquitos_anterior),
+            'ausentismos': self._calcular_variacion_porcentual(self.cantidad_ausentismos_actual, self.cantidad_ausentismos_anterior),
+        }
+    
+    def _calcular_variacion_porcentual(self, actual, anterior):
+        """Calcula variación porcentual entre dos valores"""
+        if anterior == 0:
+            return 100.0 if actual > 0 else 0.0
+        return ((actual - anterior) / anterior) * 100
+
+
+class IncidenciaVariacionSalarial(models.Model):
+    """Incidencias específicas de variaciones salariales significativas"""
+    analisis = models.ForeignKey(AnalisisDatosCierre, on_delete=models.CASCADE, related_name='incidencias_variacion')
+    cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE)
+    
+    # Datos del empleado
+    rut_empleado = models.CharField(max_length=12)
+    nombre_empleado = models.CharField(max_length=200)
+    
+    # Datos salariales
+    sueldo_base_actual = models.DecimalField(max_digits=15, decimal_places=2)
+    sueldo_base_anterior = models.DecimalField(max_digits=15, decimal_places=2)
+    porcentaje_variacion = models.DecimalField(max_digits=5, decimal_places=2)
+    
+    # Tipo de variación
+    tipo_variacion = models.CharField(max_length=20, choices=[
+        ('aumento', 'Aumento'),
+        ('disminucion', 'Disminución'),
+    ])
+    
+    # Estado de resolución
+    estado = models.CharField(max_length=20, choices=[
+        ('pendiente', 'Pendiente'),
+        ('en_analisis', 'En Análisis'),
+        ('justificado', 'Justificado'),
+        ('aprobado', 'Aprobado'),
+        ('rechazado', 'Rechazado'),
+    ], default='pendiente')
+    
+    # Usuarios involucrados
+    analista_asignado = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='incidencias_variacion_asignadas')
+    supervisor_revisor = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='incidencias_variacion_supervisadas')
+    
+    # Justificación del analista
+    justificacion_analista = models.TextField(blank=True)
+    fecha_justificacion = models.DateTimeField(null=True, blank=True)
+    
+    # Resolución del supervisor
+    comentario_supervisor = models.TextField(blank=True)
+    fecha_resolucion_supervisor = models.DateTimeField(null=True, blank=True)
+    
+    # Metadatos
+    fecha_deteccion = models.DateTimeField(auto_now_add=True)
+    fecha_ultima_accion = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Incidencia de Variación Salarial"
+        verbose_name_plural = "Incidencias de Variación Salarial"
+        ordering = ['-fecha_deteccion']
+        indexes = [
+            models.Index(fields=['cierre', 'estado']),
+            models.Index(fields=['analista_asignado', 'estado']),
+            models.Index(fields=['supervisor_revisor', 'estado']),
+            models.Index(fields=['rut_empleado', 'cierre']),
+        ]
+    
+    def __str__(self):
+        return f"Variación salarial {self.rut_empleado} - {self.porcentaje_variacion}%"
+    
+    def puede_justificar(self, usuario):
+        """Verifica si el usuario puede justificar la incidencia"""
+        return (self.analista_asignado == usuario or 
+                usuario.has_perm('nomina.change_incidenciavariacionsalarial')) and \
+               self.estado in ['pendiente', 'rechazado']
+    
+    def puede_resolver(self, usuario):
+        """Verifica si el usuario puede resolver la incidencia"""
+        return usuario.has_perm('nomina.approve_incidenciavariacionsalarial') and \
+               self.estado == 'en_analisis'
+    
+    def marcar_como_justificada(self, usuario, justificacion):
+        """Marca la incidencia como justificada por el analista"""
+        if self.puede_justificar(usuario):
+            self.estado = 'en_analisis'
+            self.justificacion_analista = justificacion
+            self.fecha_justificacion = timezone.now()
+            self.save()
+            return True
+        return False
+    
+    def aprobar(self, supervisor, comentario=""):
+        """Aprueba la incidencia"""
+        if self.puede_resolver(supervisor):
+            self.estado = 'aprobado'
+            self.supervisor_revisor = supervisor
+            self.comentario_supervisor = comentario
+            self.fecha_resolucion_supervisor = timezone.now()
+            self.save()
+            return True
+        return False
+    
+    def rechazar(self, supervisor, comentario):
+        """Rechaza la incidencia"""
+        if self.puede_resolver(supervisor):
+            self.estado = 'rechazado'
+            self.supervisor_revisor = supervisor
+            self.comentario_supervisor = comentario
+            self.fecha_resolucion_supervisor = timezone.now()
+            self.save()
+            return True
+        return False

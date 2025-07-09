@@ -17,6 +17,7 @@ const NovedadesCard = ({
   disabled, 
   onSubirArchivo, 
   onReprocesar,
+  onEliminarArchivo,
   onActualizarEstado,
   cierreId,
   cliente
@@ -164,6 +165,7 @@ const NovedadesCard = ({
         disabled={disabled}
         onSubirArchivo={onSubirArchivo}
         onReprocesar={onReprocesar}
+        onEliminarArchivo={onEliminarArchivo}
       >
         {renderBotonesEspeciales()}
       </ArchivoAnalistaBase>

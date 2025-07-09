@@ -9,7 +9,8 @@ const FiniquitosCard = ({
   subiendo, 
   disabled, 
   onSubirArchivo, 
-  onReprocesar 
+  onReprocesar,
+  onEliminarArchivo
 }) => {
   return (
     <ArchivoAnalistaBase
@@ -25,6 +26,7 @@ const FiniquitosCard = ({
       disabled={disabled}
       onSubirArchivo={onSubirArchivo}
       onReprocesar={onReprocesar}
+      onEliminarArchivo={onEliminarArchivo}
     />
   );
 };

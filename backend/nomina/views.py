@@ -185,6 +185,49 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
                 "estado_cierre_actual": None,
             })
 
+    @action(detail=True, methods=['post'], url_path='actualizar-estado')
+    def actualizar_estado(self, request, pk=None):
+        """
+        Actualiza automáticamente el estado del cierre basado en el estado de los archivos
+        """
+        from .models_logging import registrar_actividad_tarjeta_nomina
+        from .utils.clientes import get_client_ip
+        
+        cierre = self.get_object()
+        estado_anterior = cierre.estado
+        
+        # Verificar el estado de los archivos y actualizar
+        estado_nuevo = cierre.actualizar_estado_automatico()
+        detalles_archivos = cierre._verificar_archivos_listos()
+        
+        # Registrar la actividad
+        registrar_actividad_tarjeta_nomina(
+            cierre_id=cierre.id,
+            tarjeta="cierre_general",
+            accion="actualizar_estado",
+            descripcion=f"Estado actualizado de '{estado_anterior}' a '{estado_nuevo}'",
+            usuario=request.user,
+            detalles={
+                "estado_anterior": estado_anterior,
+                "estado_nuevo": estado_nuevo,
+                "archivos_verificados": detalles_archivos['detalles'],
+                "archivos_faltantes": detalles_archivos['archivos_faltantes'],
+                "todos_listos": detalles_archivos['todos_listos']
+            },
+            ip_address=get_client_ip(request)
+        )
+        
+        # Serializar el cierre actualizado
+        serializer = self.get_serializer(cierre)
+        
+        return Response({
+            "success": True,
+            "mensaje": f"Estado actualizado de '{estado_anterior}' a '{estado_nuevo}'",
+            "cierre": serializer.data,
+            "detalles_archivos": detalles_archivos,
+            "cambio_estado": estado_anterior != estado_nuevo
+        })
+
 class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
     queryset = LibroRemuneracionesUpload.objects.all()
     serializer_class = LibroRemuneracionesUploadSerializer
@@ -665,6 +708,55 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
             'task_id': result.id if hasattr(result, 'id') else str(result), 
             'mensaje': 'Procesamiento iniciado'
         }, status=status.HTTP_202_ACCEPTED)
+    
+    def perform_destroy(self, instance):
+        """
+        Eliminar libro de remuneraciones y todos sus datos relacionados
+        """
+        from .models_logging import registrar_actividad_tarjeta_nomina
+        from .utils.clientes import get_client_ip
+        from django.db import transaction
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        cierre = instance.cierre
+        
+        # Registrar actividad antes de eliminar
+        registrar_actividad_tarjeta_nomina(
+            cierre_id=cierre.id,
+            tarjeta="libro_remuneraciones",
+            accion="delete_archivo",
+            descripcion=f"Libro de remuneraciones eliminado para resubida",
+            usuario=self.request.user,
+            detalles={
+                "libro_id": instance.id,
+                "archivo_nombre": instance.archivo.name if instance.archivo else "N/A",
+                "estado_anterior": instance.estado
+            },
+            ip_address=get_client_ip(self.request)
+        )
+        
+        with transaction.atomic():
+            # 1. Eliminar todos los registros de conceptos de empleados del cierre
+            # (estos están vinculados a EmpleadoCierre, que está vinculado al cierre)
+            empleados_cierre = cierre.empleados.all()
+            for empleado in empleados_cierre:
+                empleado.registroconceptoempleado_set.all().delete()
+                logger.info(f"Eliminados registros de conceptos para empleado {empleado.rut}")
+            
+            # 2. Eliminar todos los empleados del cierre
+            count_empleados = empleados_cierre.count()
+            empleados_cierre.delete()
+            logger.info(f"Eliminados {count_empleados} empleados del cierre {cierre.id}")
+            
+            # 3. Resetear estado del cierre a pendiente
+            cierre.estado = 'pendiente'
+            cierre.estado_incidencias = 'analisis_pendiente'
+            cierre.save(update_fields=['estado', 'estado_incidencias'])
+            
+            # 4. Eliminar el libro de remuneraciones
+            instance.delete()
+            logger.info(f"Libro de remuneraciones {instance.id} eliminado completamente")
 
 # Nuevos ViewSets para Movimientos_Mes
 
@@ -915,6 +1007,47 @@ class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
             "mensaje": "Archivo subido correctamente y enviado a procesamiento"
         }, status=201)
 
+    def perform_destroy(self, instance):
+        """
+        Eliminar archivo de movimientos del mes y todos sus datos relacionados
+        """
+        from .models_logging import registrar_actividad_tarjeta_nomina
+        from .utils.clientes import get_client_ip
+        from django.db import transaction
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        cierre = instance.cierre
+        
+        # Registrar actividad antes de eliminar
+        registrar_actividad_tarjeta_nomina(
+            cierre_id=cierre.id,
+            tarjeta="movimientos_mes",
+            accion="delete_archivo",
+            descripcion=f"Archivo de movimientos del mes eliminado para resubida",
+            usuario=self.request.user,
+            detalles={
+                "movimiento_id": instance.id,
+                "archivo_nombre": instance.archivo.name if instance.archivo else "N/A",
+                "estado_anterior": instance.estado
+            },
+            ip_address=get_client_ip(self.request)
+        )
+        
+        with transaction.atomic():
+            # Eliminar todos los movimientos relacionados con este cierre
+            cierre.movimientoaltabaja_set.all().delete()
+            cierre.movimientoausentismo_set.all().delete()
+            cierre.movimientovacaciones_set.all().delete()
+            cierre.movimientovariacionsueldo_set.all().delete()
+            cierre.movimientovariacioncontrato_set.all().delete()
+            
+            logger.info(f"Eliminados todos los movimientos del cierre {cierre.id}")
+            
+            # Eliminar el archivo de movimientos
+            instance.delete()
+            logger.info(f"Archivo de movimientos {instance.id} eliminado completamente")
+
 class ArchivoAnalistaUploadViewSet(viewsets.ModelViewSet):
     queryset = ArchivoAnalistaUpload.objects.all()
     serializer_class = ArchivoAnalistaUploadSerializer
@@ -987,6 +1120,52 @@ class ArchivoAnalistaUploadViewSet(viewsets.ModelViewSet):
             "mensaje": "Archivo enviado a reprocesamiento",
             "estado": archivo.estado
         })
+
+    def perform_destroy(self, instance):
+        """
+        Eliminar archivo del analista y todos sus datos relacionados
+        """
+        from .models_logging import registrar_actividad_tarjeta_nomina
+        from .utils.clientes import get_client_ip
+        from django.db import transaction
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        cierre = instance.cierre
+        tipo = instance.tipo_archivo
+        
+        # Registrar actividad antes de eliminar
+        registrar_actividad_tarjeta_nomina(
+            cierre_id=cierre.id,
+            tarjeta=f"archivo_analista_{tipo}",
+            accion="delete_archivo",
+            descripcion=f"Archivo del analista ({tipo}) eliminado para resubida",
+            usuario=self.request.user,
+            detalles={
+                "archivo_id": instance.id,
+                "tipo_archivo": tipo,
+                "archivo_nombre": instance.archivo.name if instance.archivo else "N/A",
+                "estado_anterior": instance.estado
+            },
+            ip_address=get_client_ip(self.request)
+        )
+        
+        with transaction.atomic():
+            # Contar registros antes de eliminar para logging
+            if tipo == 'finiquitos':
+                count = instance.analistafiniquito_set.count()
+                logger.info(f"Eliminando {count} registros de finiquitos")
+            elif tipo == 'incidencias':
+                count = instance.analistaincidencia_set.count()
+                logger.info(f"Eliminando {count} registros de incidencias")
+            elif tipo == 'ingresos':
+                count = instance.analistaingreso_set.count()
+                logger.info(f"Eliminando {count} registros de ingresos")
+            
+            # El CASCADE automáticamente eliminará los registros relacionados
+            # pero lo hacemos explícito para claridad
+            instance.delete()
+            logger.info(f"Archivo del analista {instance.id} ({tipo}) eliminado completamente")
 
 class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
     queryset = ArchivoNovedadesUpload.objects.all()
@@ -1174,7 +1353,7 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
                 header_novedades = mapeo.get('header_novedades')
                 concepto_libro_id = mapeo.get('concepto_libro_id')
 
-                if header_novedades in headers_sin_clasificar:
+                if header_novedas in headers_sin_clasificar:
                     if concepto_libro_id:
                         try:
                             concepto_libro = ConceptoRemuneracion.objects.get(
@@ -1190,7 +1369,7 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
                     # Crear o actualizar mapeo
                     mapeo_concepto, created = ConceptoRemuneracionNovedades.objects.get_or_create(
                         cliente=archivo.cierre.cliente,
-                        nombre_concepto_novedades=header_novedades,
+                        nombre_concepto_novedas=header_novedas,
                         defaults={
                             'concepto_libro': concepto_libro,
                             'usuario_mapea': request.user,
@@ -1205,8 +1384,8 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
                         mapeo_concepto.save()
 
                     # Mover de sin clasificar a clasificados
-                    headers_sin_clasificar.remove(header_novedades)
-                    headers_clasificados.append(header_novedades)
+                    headers_sin_clasificar.remove(header_novedas)
+                    headers_clasificados.append(header_novedas)
             
             # Actualizar archivo
             archivo.header_json = {
@@ -1449,6 +1628,74 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
             incidencia.save(update_fields=['asignado_a'])
             return Response({"message": "Asignación removida"})
     
+    @action(detail=False, methods=['post'], url_path='dev-clear/(?P<cierre_id>[^/.]+)')
+    def dev_clear_incidencias(self, request, cierre_id=None):
+        """
+        ⚠️ ENDPOINT DE DESARROLLO ÚNICAMENTE ⚠️
+        Elimina todas las incidencias de un cierre para testing del flujo de consolidación.
+        ¡¡¡REMOVER ANTES DE PRODUCCIÓN!!!
+        """
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        # Eliminar todas las incidencias del cierre
+        deleted_count = IncidenciaCierre.objects.filter(cierre=cierre).delete()[0]
+        
+        # Actualizar el estado de incidencias del cierre
+        cierre.estado_incidencias = 'archivos_consolidados'
+        cierre.estado = 'completado'
+        cierre.save(update_fields=['estado_incidencias', 'estado'])
+        
+        logger.info(f"DEV: Eliminadas {deleted_count} incidencias del cierre {cierre_id}")
+        
+        return Response({
+            "message": f"⚠️ DEV: Eliminadas {deleted_count} incidencias. Estado: {cierre.estado}, Incidencias: {cierre.estado_incidencias}",
+            "incidencias_eliminadas": deleted_count,
+            "nuevo_estado": cierre.estado,
+            "estado_incidencias": cierre.estado_incidencias
+        })
+
+    @action(detail=False, methods=['post'], url_path='analizar-datos/(?P<cierre_id>[^/.]+)')
+    def analizar_datos(self, request, cierre_id=None):
+        """Endpoint para iniciar análisis de datos del cierre"""
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        # Verificar que el cierre esté en estado completado y archivos consolidados
+        if cierre.estado != 'completado':
+            return Response({
+                "error": "El cierre debe estar en estado 'completado' para iniciar análisis"
+            }, status=400)
+        
+        if cierre.estado_incidencias != 'archivos_consolidados':
+            return Response({
+                "error": "El cierre debe tener archivos consolidados (0 incidencias) para iniciar análisis"
+            }, status=400)
+        
+        # Obtener tolerancia de variación (por defecto 30%)
+        tolerancia_variacion = float(request.data.get('tolerancia_variacion', 30.0))
+        
+        # Validar tolerancia
+        if tolerancia_variacion < 0 or tolerancia_variacion > 100:
+            return Response({
+                "error": "La tolerancia de variación debe estar entre 0 y 100"
+            }, status=400)
+        
+        # Lanzar tarea de análisis
+        from .tasks import analizar_datos_cierre_task
+        task = analizar_datos_cierre_task.delay(cierre_id, tolerancia_variacion)
+        
+        return Response({
+            "message": "Análisis de datos iniciado",
+            "task_id": task.id,
+            "cierre_id": cierre_id,
+            "tolerancia_variacion": tolerancia_variacion
+        }, status=202)
+
     @action(detail=False, methods=['get'], url_path='preview/(?P<cierre_id>[^/.]+)')
     def preview_incidencias(self, request, cierre_id=None):
         """Endpoint para previsualizar qué incidencias se generarían sin crearlas"""
@@ -1588,11 +1835,23 @@ class CierreNominaIncidenciasViewSet(viewsets.ViewSet):
         except CierreNomina.DoesNotExist:
             return Response({"error": "Cierre no encontrado"}, status=404)
         
+        total_incidencias = cierre.incidencias.count()
+        
+        # Actualizar estado automáticamente según las incidencias
+        if total_incidencias == 0:
+            if cierre.estado_incidencias != 'archivos_consolidados':
+                cierre.estado_incidencias = 'archivos_consolidados'
+                cierre.save(update_fields=['estado_incidencias'])
+        else:
+            if cierre.estado_incidencias != 'incidencias_generadas':
+                cierre.estado_incidencias = 'incidencias_generadas'
+                cierre.save(update_fields=['estado_incidencias'])
+        
         return Response({
             "cierre_id": cierre.id,
             "estado_incidencias": cierre.estado_incidencias,
-            "tiene_incidencias": cierre.incidencias.exists(),
-            "total_incidencias": cierre.incidencias.count(),
+            "tiene_incidencias": total_incidencias > 0,
+            "total_incidencias": total_incidencias,
             "incidencias_pendientes": cierre.incidencias.filter(estado='pendiente').count(),
             "incidencias_resueltas": cierre.incidencias.filter(
                 estado__in=['aprobada_supervisor', 'resuelta_analista']
@@ -1621,5 +1880,147 @@ class CierreNominaIncidenciasViewSet(viewsets.ViewSet):
             "task_id": task.id,
             "cierre_id": pk
         }, status=202)
+
+# ======== VIEWSETS PARA ANÁLISIS DE DATOS ========
+
+class AnalisisDatosCierreViewSet(viewsets.ModelViewSet):
+    """ViewSet para gestionar análisis de datos de cierre"""
+    from .models import AnalisisDatosCierre
+    from .serializers import AnalisisDatosCierreSerializer
+    
+    queryset = AnalisisDatosCierre.objects.all()
+    serializer_class = AnalisisDatosCierreSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cierre_id = self.request.query_params.get('cierre')
+        if cierre_id:
+            queryset = queryset.filter(cierre_id=cierre_id)
+        return queryset.select_related('cierre', 'analista')
+
+
+class IncidenciaVariacionSalarialViewSet(viewsets.ModelViewSet):
+    """ViewSet para gestionar incidencias de variación salarial"""
+    from .models import IncidenciaVariacionSalarial
+    from .serializers import IncidenciaVariacionSalarialSerializer
+    
+    queryset = IncidenciaVariacionSalarial.objects.all()
+    serializer_class = IncidenciaVariacionSalarialSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cierre_id = self.request.query_params.get('cierre')
+        estado = self.request.query_params.get('estado')
+        analista_id = self.request.query_params.get('analista')
+        supervisor_id = self.request.query_params.get('supervisor')
+        
+        if cierre_id:
+            queryset = queryset.filter(cierre_id=cierre_id)
+        if estado:
+            queryset = queryset.filter(estado=estado)
+        if analista_id:
+            queryset = queryset.filter(analista_asignado_id=analista_id)
+        if supervisor_id:
+            queryset = queryset.filter(supervisor_revisor_id=supervisor_id)
+            
+        return queryset.select_related('cierre', 'analista_asignado', 'supervisor_revisor')
+    
+    @action(detail=True, methods=['post'])
+    def justificar(self, request, pk=None):
+        """Justificar una incidencia de variación salarial"""
+        incidencia = self.get_object()
+        justificacion = request.data.get('justificacion', '').strip()
+        
+        if not justificacion:
+            return Response({"error": "La justificación es requerida"}, status=400)
+        
+        if not incidencia.puede_justificar(request.user):
+            return Response({"error": "No tiene permisos para justificar esta incidencia"}, status=403)
+        
+        # Justificar la incidencia
+        success = incidencia.marcar_como_justificada(request.user, justificacion)
+        
+        if success:
+            return Response({
+                "message": "Incidencia justificada correctamente",
+                "estado": incidencia.estado,
+                "fecha_justificacion": incidencia.fecha_justificacion
+            })
+        else:
+            return Response({"error": "No se pudo justificar la incidencia"}, status=400)
+    
+    @action(detail=True, methods=['post'])
+    def aprobar(self, request, pk=None):
+        """Aprobar una incidencia de variación salarial"""
+        incidencia = self.get_object()
+        comentario = request.data.get('comentario', '').strip()
+        
+        if not incidencia.puede_resolver(request.user):
+            return Response({"error": "No tiene permisos para aprobar esta incidencia"}, status=403)
+        
+        # Aprobar la incidencia
+        success = incidencia.aprobar(request.user, comentario)
+        
+        if success:
+            return Response({
+                "message": "Incidencia aprobada correctamente",
+                "estado": incidencia.estado,
+                "fecha_resolucion": incidencia.fecha_resolucion_supervisor
+            })
+        else:
+            return Response({"error": "No se pudo aprobar la incidencia"}, status=400)
+    
+    @action(detail=True, methods=['post'])
+    def rechazar(self, request, pk=None):
+        """Rechazar una incidencia de variación salarial"""
+        incidencia = self.get_object()
+        comentario = request.data.get('comentario', '').strip()
+        
+        if not comentario:
+            return Response({"error": "El comentario es requerido para rechazar"}, status=400)
+        
+        if not incidencia.puede_resolver(request.user):
+            return Response({"error": "No tiene permisos para rechazar esta incidencia"}, status=403)
+        
+        # Rechazar la incidencia
+        success = incidencia.rechazar(request.user, comentario)
+        
+        if success:
+            return Response({
+                "message": "Incidencia rechazada correctamente",
+                "estado": incidencia.estado,
+                "fecha_resolucion": incidencia.fecha_resolucion_supervisor
+            })
+        else:
+            return Response({"error": "No se pudo rechazar la incidencia"}, status=400)
+    
+    @action(detail=False, methods=['get'], url_path='resumen/(?P<cierre_id>[^/.]+)')
+    def resumen_variaciones(self, request, cierre_id=None):
+        """Obtiene un resumen de las incidencias de variación salarial"""
+        try:
+            from .models import CierreNomina
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        # Contar incidencias por estado
+        incidencias = self.get_queryset().filter(cierre=cierre)
+        
+        resumen = {
+            "total": incidencias.count(),
+            "por_estado": {
+                "pendiente": incidencias.filter(estado='pendiente').count(),
+                "en_analisis": incidencias.filter(estado='en_analisis').count(),
+                "justificado": incidencias.filter(estado='justificado').count(),
+                "aprobado": incidencias.filter(estado='aprobado').count(),
+                "rechazado": incidencias.filter(estado='rechazado').count(),
+            },
+            "por_tipo": {
+                "aumento": incidencias.filter(tipo_variacion='aumento').count(),
+                "disminucion": incidencias.filter(tipo_variacion='disminucion').count(),
+            }
+        }
+        
+        return Response(resumen)
 
 

@@ -2,8 +2,9 @@ import EstadoBadge from "../EstadoBadge";
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { finalizarCierre, actualizarEstadoCierre, obtenerProgresoTarea } from '../../api/contabilidad';
+import { actualizarEstadoCierreNomina } from '../../api/nomina';
 
-const CierreInfoBar = ({ cierre, cliente, onCierreActualizado }) => {
+const CierreInfoBar = ({ cierre, cliente, onCierreActualizado, tipoModulo = "contabilidad" }) => {
   const navigate = useNavigate();
   const [actualizandoEstado, setActualizandoEstado] = useState(false);
   const [finalizando, setFinalizando] = useState(false);
@@ -14,7 +15,13 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado }) => {
   const manejarActualizarEstado = async () => {
     setActualizandoEstado(true);
     try {
-      const data = await actualizarEstadoCierre(cierre.id);
+      let data;
+      if (tipoModulo === "nomina") {
+        data = await actualizarEstadoCierreNomina(cierre.id);
+      } else {
+        data = await actualizarEstadoCierre(cierre.id);
+      }
+      
       if (onCierreActualizado) {
         onCierreActualizado(data.cierre);
       }
@@ -167,8 +174,8 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado }) => {
           )}
         </button>
 
-        {/* Botones para estados permitidos del libro */}
-        {['sin_incidencias', 'generando_reportes', 'finalizado'].includes(cierre?.estado) && (
+        {/* Botones para estados permitidos del libro - Solo para contabilidad */}
+        {tipoModulo === "contabilidad" && ['sin_incidencias', 'generando_reportes', 'finalizado'].includes(cierre?.estado) && (
           <>
             {/* Botón Ver Libro */}
             <button
@@ -183,8 +190,8 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado }) => {
           </>
         )}
 
-        {/* Botón Finalizar Cierre solo para sin_incidencias */}
-        {cierre?.estado === 'sin_incidencias' && (
+        {/* Botón Finalizar Cierre solo para sin_incidencias en contabilidad */}
+        {tipoModulo === "contabilidad" && cierre?.estado === 'sin_incidencias' && (
           <>
             {/* Botón Finalizar Cierre */}
             <button
@@ -212,8 +219,8 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado }) => {
           </>
         )}
 
-        {/* Indicador de estado generando reportes con progreso */}
-        {(cierre?.estado === 'generando_reportes' || finalizando) && (
+        {/* Indicador de estado generando reportes con progreso - Solo para contabilidad */}
+        {tipoModulo === "contabilidad" && (cierre?.estado === 'generando_reportes' || finalizando) && (
           <div className="bg-yellow-600 text-white px-4 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 min-w-[300px]">
             <svg className="animate-spin h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -251,8 +258,8 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado }) => {
           </div>
         )}
 
-        {/* Indicador de cierre finalizado */}
-        {cierre?.estado === 'finalizado' && (
+        {/* Indicador de cierre finalizado - Solo para contabilidad */}
+        {tipoModulo === "contabilidad" && cierre?.estado === 'finalizado' && (
           <div className="bg-green-600 text-white px-4 py-2 rounded-lg font-semibold text-sm flex items-center gap-2">
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />

@@ -189,14 +189,15 @@ const LibroRemuneracionesCard = ({
           {archivoNombre || "Ningún archivo seleccionado"}
         </span>
         
-        {/* ✅ BOTÓN DE ELIMINAR SOLO SI ESTÁ PROCESADO */}
+        {/* ✅ BOTÓN DE ELIMINAR/RESUBIR SOLO SI ESTÁ PROCESADO */}
         {isProcessed && onEliminarArchivo && (
           <button
             onClick={handleEliminarArchivo}
             disabled={eliminando || isDisabled}
-            className="text-xs px-2 py-1 rounded bg-red-600 hover:bg-red-700 text-white ml-2"
+            className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white ml-2"
+            title="Eliminar archivo actual para permitir subir uno nuevo"
           >
-            {eliminando ? "Eliminando..." : "Eliminar"}
+            {eliminando ? "Eliminando..." : "Resubir archivo"}
           </button>
         )}
       </div>

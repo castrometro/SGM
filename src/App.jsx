@@ -17,6 +17,7 @@ import InformesAnalistas from "./pages/InformesAnalistas";
 import Dashboard from "./pages/Dashboard";
 import GestionAnalistas from "./pages/GestionAnalistas";
 import DashboardGerente from "./pages/DashboardGerente";
+import VistaGerencial from "./pages/VistaGerencial";
 import Tools from "./pages/Tools";
 import MisAnalistas from "./pages/MisAnalistas";
 
@@ -65,6 +66,9 @@ function App() {
 
           {/* ----------- ÁREA: DASHBOARD GERENTE ------------- */}
           <Route path="dashboard-gerente" element={<DashboardGerente />} />
+          
+          {/* ----------- ÁREA: VISTA GERENCIAL ------------- */}
+          <Route path="vista-gerencial" element={<VistaGerencial />} />
 
           {/* ----------- ÁREA: ANALYTICS DE PERFORMANCE ------------- */}
           <Route path="analytics" element={<Dashboard />} />

@@ -7,8 +7,10 @@ import {
   obtenerEstadoLibroRemuneraciones,
   subirLibroRemuneraciones,
   procesarLibroRemuneraciones,
+  eliminarLibroRemuneraciones,
   obtenerEstadoMovimientosMes,
   subirMovimientosMes,
+  eliminarMovimientosMes,
   guardarConceptosRemuneracion,
   eliminarConceptoRemuneracion,
 } from "../../api/nomina";
@@ -159,21 +161,10 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
 
   const handleActualizarEstadoMovimientos = async () => {
     try {
-      console.log('📡 Consultando estado actual de movimientos...');
-      const estadoActual = await obtenerEstadoMovimientosMes(cierre.id);
-      console.log('📊 Estado movimientos recibido del servidor:', estadoActual);
-      console.log('📊 Estado movimientos anterior:', movimientos?.estado);
-      console.log('📊 Estado movimientos nuevo:', estadoActual?.estado);
-      
-      setMovimientos(estadoActual);
-      
-      // Log adicional para verificar el cambio
-      if (estadoActual?.estado !== movimientos?.estado) {
-        console.log(`🔄 Estado movimientos cambió de "${movimientos?.estado}" a "${estadoActual?.estado}"`);
-      }
-      
+      const estado = await obtenerEstadoMovimientosMes(cierre.id);
+      setMovimientos(estado);
     } catch (error) {
-      console.error('❌ Error actualizando estado movimientos:', error);
+      console.error("Error al actualizar estado de movimientos:", error);
     }
   };
 
@@ -203,6 +194,32 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
     
     setModalAbierto(true);
     setModoSoloLectura(esSoloLectura);
+  };
+
+  const handleEliminarLibro = async () => {
+    if (!libro?.id) return;
+    
+    try {
+      await eliminarLibroRemuneraciones(libro.id);
+      // Resetear estado del libro
+      setLibro(null);
+      setLibroId(null);
+      setLibroListo(false);
+    } catch (error) {
+      console.error("Error al eliminar libro:", error);
+    }
+  };
+
+  const handleEliminarMovimientos = async () => {
+    if (!movimientos?.id) return;
+    
+    try {
+      await eliminarMovimientosMes(movimientos.id);
+      // Resetear estado de movimientos
+      setMovimientos(null);
+    } catch (error) {
+      console.error("Error al eliminar movimientos:", error);
+    }
   };
 
   const headersSinClasificar = Array.isArray(libro?.header_json?.headers_sin_clasificar)
@@ -239,6 +256,8 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
         subiendoMov={subiendoMov}
         onSubirMovimientos={handleSubirMovimientos}
         onActualizarEstadoMovimientos={handleActualizarEstadoMovimientos}
+        onEliminarLibro={handleEliminarLibro}
+        onEliminarMovimientos={handleEliminarMovimientos}
       />
       
       {/* Sección 2: Archivos del Analista */}

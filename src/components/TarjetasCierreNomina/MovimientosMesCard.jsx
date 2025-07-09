@@ -8,12 +8,27 @@ const MovimientosMesCard = ({
   archivoNombre,
   onSubirArchivo,
   onActualizarEstado,
+  onEliminarArchivo,
   subiendo = false,
   disabled = false,
 }) => {
   const fileInputRef = useRef();
   const pollingRef = useRef(null);
   const [error, setError] = useState("");
+  const [eliminando, setEliminando] = useState(false);
+
+  // Definir variables de estado inmediatamente después de las declaraciones de estado
+  const isProcesando = estado === "en_proceso" || estado === "procesando";
+  const isDisabled = disabled || subiendo || isProcesando;
+  const isProcessed = estado === "procesado" || estado === "procesado_parcial";
+  const puedeSubirArchivo = !isDisabled && 
+    (estado === "no_subido" || estado === "pendiente" || estado === "con_error");
+  const estadosConArchivoBloqueado = [
+    "en_proceso",
+    "procesado", 
+    "con_errores_parciales"
+  ];
+  const archivoEsBloqueado = estadosConArchivoBloqueado.includes(estado);
 
   // Limpiar polling al desmontar
   useEffect(() => {
@@ -61,24 +76,19 @@ const MovimientosMesCard = ({
     }
   };
 
-  // Determinar si la tarjeta está deshabilitada
-  const isDisabled = disabled || subiendo || estado === "en_proceso";
-  
-  // Determinar si está procesando
-  const isProcesando = estado === "en_proceso";
-
-  // ✅ NUEVA LÓGICA: Determinar si se puede subir archivo
-  const puedeSubirArchivo = !isDisabled && 
-    (estado === "no_subido" || estado === "pendiente" || estado === "con_error");
-  
-  // Estados donde NO se puede cambiar el archivo
-  const estadosConArchivoBloqueado = [
-    "en_proceso",
-    "procesado",
-    "con_errores_parciales"
-  ];
-  
-  const archivoEsBloqueado = estadosConArchivoBloqueado.includes(estado);
+  const handleEliminarArchivo = async () => {
+    if (!onEliminarArchivo) return;
+    
+    setEliminando(true);
+    try {
+      await onEliminarArchivo();
+    } catch (error) {
+      console.error("Error al eliminar archivo:", error);
+      setError("Error al eliminar archivo");
+    } finally {
+      setEliminando(false);
+    }
+  };
 
   return (
     <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${isDisabled ? "opacity-60 pointer-events-none" : ""}`}>
@@ -132,6 +142,18 @@ const MovimientosMesCard = ({
         )}
         
         <span className="text-gray-300 text-xs italic truncate max-w-xs">{archivoNombre || "Ningún archivo seleccionado"}</span>
+        
+        {/* Botón de eliminar/resubir solo si está procesado */}
+        {isProcessed && onEliminarArchivo && (
+          <button
+            onClick={handleEliminarArchivo}
+            disabled={eliminando || isDisabled}
+            className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white ml-2"
+            title="Eliminar archivo actual para permitir subir uno nuevo"
+          >
+            {eliminando ? "Eliminando..." : "Resubir archivo"}
+          </button>
+        )}
       </div>
       
       {/* ✅ INPUT DE ARCHIVO CONDICIONAL */}

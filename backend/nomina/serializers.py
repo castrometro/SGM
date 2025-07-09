@@ -9,7 +9,9 @@ from .models import (
     # Nuevos modelos para novedades
     EmpleadoCierreNovedades, ConceptoRemuneracionNovedades, RegistroConceptoEmpleadoNovedades,
     # Modelos para el sistema de incidencias
-    IncidenciaCierre, ResolucionIncidencia
+    IncidenciaCierre, ResolucionIncidencia,
+    # Modelos para análisis de datos
+    AnalisisDatosCierre, IncidenciaVariacionSalarial
 )
 
 class ChecklistItemSerializer(serializers.ModelSerializer):
@@ -314,3 +316,78 @@ class ResumenIncidenciasSerializer(serializers.Serializer):
     pendientes_criticas = serializers.IntegerField(required=False)
     tiempo_promedio_resolucion = serializers.FloatField(required=False)
     porcentaje_resueltas = serializers.FloatField(required=False)
+
+
+# ======== SERIALIZERS PARA ANÁLISIS DE DATOS ========
+
+class AnalisisDatosCierreSerializer(serializers.ModelSerializer):
+    variaciones = serializers.SerializerMethodField()
+    # Campos con nombres compatibles con el frontend
+    empleados_actual = serializers.IntegerField(source='cantidad_empleados_actual', read_only=True)
+    empleados_anterior = serializers.IntegerField(source='cantidad_empleados_anterior', read_only=True)
+    ingresos_actual = serializers.IntegerField(source='cantidad_ingresos_actual', read_only=True)
+    ingresos_anterior = serializers.IntegerField(source='cantidad_ingresos_anterior', read_only=True)
+    finiquitos_actual = serializers.IntegerField(source='cantidad_finiquitos_actual', read_only=True)
+    finiquitos_anterior = serializers.IntegerField(source='cantidad_finiquitos_anterior', read_only=True)
+    ausentismos_actual = serializers.IntegerField(source='cantidad_ausentismos_actual', read_only=True)
+    ausentismos_anterior = serializers.IntegerField(source='cantidad_ausentismos_anterior', read_only=True)
+    tolerancia_variacion = serializers.DecimalField(source='tolerancia_variacion_salarial', max_digits=5, decimal_places=2, read_only=True)
+    periodo_actual = serializers.CharField(source='cierre.periodo', read_only=True)
+    periodo_anterior = serializers.SerializerMethodField()
+    incidencias_generadas = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = AnalisisDatosCierre
+        fields = [
+            'id', 'cierre', 'empleados_actual', 'empleados_anterior',
+            'ingresos_actual', 'ingresos_anterior', 'finiquitos_actual', 'finiquitos_anterior',
+            'ausentismos_actual', 'ausentismos_anterior', 'tolerancia_variacion',
+            'periodo_actual', 'periodo_anterior', 'incidencias_generadas',
+            'estado', 'fecha_analisis', 'fecha_completado', 'analista', 'notas', 'variaciones'
+        ]
+    
+    def get_variaciones(self, obj):
+        """Calcula las variaciones porcentuales"""
+        return obj.calcular_variaciones()
+    
+    def get_periodo_anterior(self, obj):
+        """Calcula el periodo anterior basado en el periodo actual"""
+        try:
+            from datetime import datetime
+            periodo_actual = datetime.strptime(obj.cierre.periodo, '%Y-%m')
+            if periodo_actual.month == 1:
+                periodo_anterior = periodo_actual.replace(year=periodo_actual.year - 1, month=12)
+            else:
+                periodo_anterior = periodo_actual.replace(month=periodo_actual.month - 1)
+            return periodo_anterior.strftime('%Y-%m')
+        except:
+            return None
+    
+    def get_incidencias_generadas(self, obj):
+        """Cuenta las incidencias de variación salarial generadas"""
+        return obj.incidencias_variacion.count()
+
+class IncidenciaVariacionSalarialSerializer(serializers.ModelSerializer):
+    analista_asignado_nombre = serializers.SerializerMethodField()
+    supervisor_revisor_nombre = serializers.SerializerMethodField()
+    diferencia_salarial = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = IncidenciaVariacionSalarial
+        fields = [
+            'id', 'analisis', 'cierre', 'rut_empleado', 'nombre_empleado',
+            'sueldo_base_actual', 'sueldo_base_anterior', 'porcentaje_variacion',
+            'tipo_variacion', 'estado', 'analista_asignado', 'supervisor_revisor',
+            'justificacion_analista', 'fecha_justificacion', 'comentario_supervisor',
+            'fecha_resolucion_supervisor', 'fecha_deteccion', 'fecha_ultima_accion',
+            'analista_asignado_nombre', 'supervisor_revisor_nombre', 'diferencia_salarial'
+        ]
+    
+    def get_analista_asignado_nombre(self, obj):
+        return obj.analista_asignado.get_full_name() if obj.analista_asignado else None
+    
+    def get_supervisor_revisor_nombre(self, obj):
+        return obj.supervisor_revisor.get_full_name() if obj.supervisor_revisor else None
+    
+    def get_diferencia_salarial(self, obj):
+        return obj.sueldo_base_actual - obj.sueldo_base_anterior

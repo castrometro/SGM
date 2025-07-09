@@ -15,11 +15,15 @@ const ArchivoAnalistaBase = ({
   disabled = false,
   onSubirArchivo,
   onReprocesar,
+  onEliminarArchivo,
   children, // Para botones personalizados
 }) => {
   const fileInputRef = useRef();
+  const [eliminando, setEliminando] = useState(false);
+  
   const isProcesando = estado === "en_proceso" || estado === "procesando";
   const isDisabled = disabled || subiendo || isProcesando;
+  const isProcessed = estado === "procesado" || estado === "procesado_parcial";
   
   const puedeSubirArchivo = !isDisabled && 
     (estado === "no_subido" || estado === "pendiente" || estado === "con_error");
@@ -35,6 +39,19 @@ const ArchivoAnalistaBase = ({
     
     // Limpiar el input para permitir seleccionar el mismo archivo nuevamente
     e.target.value = '';
+  };
+
+  const handleEliminarArchivo = async () => {
+    if (!onEliminarArchivo) return;
+    
+    setEliminando(true);
+    try {
+      await onEliminarArchivo();
+    } catch (error) {
+      console.error("Error al eliminar archivo:", error);
+    } finally {
+      setEliminando(false);
+    }
   };
 
   return (
@@ -98,6 +115,17 @@ const ArchivoAnalistaBase = ({
                 className="bg-yellow-600 hover:bg-yellow-500 px-3 py-1 rounded text-sm font-medium transition"
               >
                 Reprocesar
+              </button>
+            )}
+            {isProcessed && archivo?.id && onEliminarArchivo && (
+              <button
+                type="button"
+                onClick={handleEliminarArchivo}
+                disabled={eliminando}
+                className="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm font-medium transition"
+                title="Eliminar archivo actual para permitir subir uno nuevo"
+              >
+                {eliminando ? "Eliminando..." : "Resubir"}
               </button>
             )}
           </div>

@@ -680,3 +680,200 @@ def clasificar_headers_libro_remuneraciones_con_logging(result):
             pass
             
         raise
+
+
+# ======== TAREAS DE ANÁLISIS DE DATOS ========
+
+@shared_task
+def analizar_datos_cierre_task(cierre_id, tolerancia_variacion=30.0):
+    """
+    Tarea para analizar datos del cierre actual vs mes anterior
+    y generar incidencias de variación salarial
+    """
+    from .models import CierreNomina, AnalisisDatosCierre, IncidenciaVariacionSalarial
+    from .models import EmpleadoCierre, AnalistaIngreso, AnalistaFiniquito, AnalistaIncidencia
+    from django.utils import timezone
+    from decimal import Decimal
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"Iniciando análisis de datos para cierre {cierre_id}")
+    
+    try:
+        # Obtener cierre actual
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        # Crear o actualizar análisis
+        analisis, created = AnalisisDatosCierre.objects.get_or_create(
+            cierre=cierre,
+            defaults={
+                'tolerancia_variacion_salarial': Decimal(str(tolerancia_variacion)),
+                'estado': 'procesando',
+                'analista': cierre.analista_asignado if hasattr(cierre, 'analista_asignado') else None
+            }
+        )
+        
+        if not created:
+            analisis.estado = 'procesando'
+            analisis.tolerancia_variacion_salarial = Decimal(str(tolerancia_variacion))
+            analisis.save()
+        
+        # 1. ANÁLISIS DE DATOS ACTUALES
+        logger.info(f"Analizando datos actuales del cierre {cierre_id}")
+        
+        # Contar empleados actuales
+        empleados_actuales = EmpleadoCierre.objects.filter(cierre=cierre).count()
+        
+        # Contar ingresos actuales
+        ingresos_actuales = AnalistaIngreso.objects.filter(cierre=cierre).count()
+        
+        # Contar finiquitos actuales
+        finiquitos_actuales = AnalistaFiniquito.objects.filter(cierre=cierre).count()
+        
+        # Contar ausentismos actuales por tipo
+        ausentismos_actuales = AnalistaIncidencia.objects.filter(cierre=cierre)
+        ausentismos_por_tipo_actual = {}
+        ausentismos_total_actual = 0
+        
+        for ausentismo in ausentismos_actuales:
+            tipo = ausentismo.tipo_ausentismo or 'Sin especificar'
+            ausentismos_por_tipo_actual[tipo] = ausentismos_por_tipo_actual.get(tipo, 0) + 1
+            ausentismos_total_actual += 1
+        
+        # 2. ANÁLISIS DE DATOS MES ANTERIOR
+        logger.info(f"Analizando datos del mes anterior para cliente {cierre.cliente.id}")
+        
+        # Obtener cierre del mes anterior
+        cierre_anterior = CierreNomina.objects.filter(
+            cliente=cierre.cliente,
+            periodo__lt=cierre.periodo
+        ).order_by('-periodo').first()
+        
+        empleados_anterior = 0
+        ingresos_anterior = 0
+        finiquitos_anterior = 0
+        ausentismos_por_tipo_anterior = {}
+        ausentismos_total_anterior = 0
+        
+        if cierre_anterior:
+            empleados_anterior = EmpleadoCierre.objects.filter(cierre=cierre_anterior).count()
+            ingresos_anterior = AnalistaIngreso.objects.filter(cierre=cierre_anterior).count()
+            finiquitos_anterior = AnalistaFiniquito.objects.filter(cierre=cierre_anterior).count()
+            
+            ausentismos_anteriores = AnalistaIncidencia.objects.filter(cierre=cierre_anterior)
+            for ausentismo in ausentismos_anteriores:
+                tipo = ausentismo.tipo_ausentismo or 'Sin especificar'
+                ausentismos_por_tipo_anterior[tipo] = ausentismos_por_tipo_anterior.get(tipo, 0) + 1
+                ausentismos_total_anterior += 1
+        
+        # 3. ACTUALIZAR ANÁLISIS CON DATOS RECOPILADOS
+        analisis.cantidad_empleados_actual = empleados_actuales
+        analisis.cantidad_ingresos_actual = ingresos_actuales
+        analisis.cantidad_finiquitos_actual = finiquitos_actuales
+        analisis.cantidad_ausentismos_actual = ausentismos_total_actual
+        
+        analisis.cantidad_empleados_anterior = empleados_anterior
+        analisis.cantidad_ingresos_anterior = ingresos_anterior
+        analisis.cantidad_finiquitos_anterior = finiquitos_anterior
+        analisis.cantidad_ausentismos_anterior = ausentismos_total_anterior
+        
+        analisis.ausentismos_por_tipo_actual = ausentismos_por_tipo_actual
+        analisis.ausentismos_por_tipo_anterior = ausentismos_por_tipo_anterior
+        
+        analisis.save()
+        
+        logger.info(f"Datos recopilados - Empleados: {empleados_actuales}, "
+                   f"Ingresos: {ingresos_actuales}, Finiquitos: {finiquitos_actuales}, "
+                   f"Ausentismos: {ausentismos_total_actual}")
+        
+        # 4. GENERAR INCIDENCIAS DE VARIACIÓN SALARIAL
+        logger.info(f"Generando incidencias de variación salarial con tolerancia {tolerancia_variacion}%")
+        
+        # Limpiar incidencias existentes
+        IncidenciaVariacionSalarial.objects.filter(cierre=cierre).delete()
+        
+        if cierre_anterior:
+            # Obtener empleados de ambos meses
+            empleados_actual = EmpleadoCierre.objects.filter(cierre=cierre).select_related('empleado')
+            empleados_anterior = EmpleadoCierre.objects.filter(cierre=cierre_anterior).select_related('empleado')
+            
+            # Crear mapas por RUT
+            empleados_actual_map = {emp.rut: emp for emp in empleados_actual}
+            empleados_anterior_map = {emp.rut: emp for emp in empleados_anterior}
+            
+            incidencias_creadas = 0
+            
+            # Comparar empleados que existen en ambos meses
+            for rut, empleado_actual in empleados_actual_map.items():
+                if rut in empleados_anterior_map:
+                    empleado_anterior = empleados_anterior_map[rut]
+                    
+                    sueldo_actual = empleado_actual.sueldo_base or 0
+                    sueldo_anterior = empleado_anterior.sueldo_base or 0
+                    
+                    if sueldo_anterior > 0:  # Evitar división por cero
+                        variacion = ((sueldo_actual - sueldo_anterior) / sueldo_anterior) * 100
+                        
+                        if abs(variacion) > tolerancia_variacion:
+                            # Crear incidencia
+                            IncidenciaVariacionSalarial.objects.create(
+                                analisis=analisis,
+                                cierre=cierre,
+                                rut_empleado=rut,
+                                nombre_empleado=empleado_actual.nombre_completo,
+                                sueldo_base_actual=sueldo_actual,
+                                sueldo_base_anterior=sueldo_anterior,
+                                porcentaje_variacion=Decimal(str(round(variacion, 2))),
+                                tipo_variacion='aumento' if variacion > 0 else 'disminucion',
+                                estado='pendiente'
+                            )
+                            incidencias_creadas += 1
+            
+            logger.info(f"Creadas {incidencias_creadas} incidencias de variación salarial")
+        
+        # 5. FINALIZAR ANÁLISIS
+        analisis.estado = 'completado'
+        analisis.fecha_completado = timezone.now()
+        analisis.save()
+        
+        # 6. ACTUALIZAR ESTADO DEL CIERRE
+        incidencias_variacion_count = IncidenciaVariacionSalarial.objects.filter(cierre=cierre).count()
+        
+        if incidencias_variacion_count > 0:
+            # Hay incidencias de variación salarial que resolver
+            cierre.estado = 'incidencias_abiertas'
+            cierre.estado_incidencias = 'incidencias_abiertas'
+        else:
+            # No hay incidencias de variación salarial
+            cierre.estado = 'sin_incidencias'
+            cierre.estado_incidencias = 'sin_incidencias'
+        
+        cierre.save(update_fields=['estado', 'estado_incidencias'])
+        
+        logger.info(f"Análisis completado para cierre {cierre_id}. Estado: {cierre.estado}, Estado incidencias: {cierre.estado_incidencias}")
+        
+        return {
+            "cierre_id": cierre_id,
+            "analisis_id": analisis.id,
+            "empleados_actual": empleados_actuales,
+            "empleados_anterior": empleados_anterior,
+            "ingresos_actual": ingresos_actuales,
+            "finiquitos_actual": finiquitos_actuales,
+            "ausentismos_actual": ausentismos_total_actual,
+            "incidencias_variacion_creadas": incidencias_variacion_count,
+            "estado": "completado",
+            "estado_incidencias": cierre.estado_incidencias
+        }
+        
+    except Exception as e:
+        logger.error(f"Error en análisis de datos para cierre {cierre_id}: {e}")
+        
+        # Marcar análisis como error
+        try:
+            analisis = AnalisisDatosCierre.objects.get(cierre_id=cierre_id)
+            analisis.estado = 'error'
+            analisis.save()
+        except:
+            pass
+            
+        raise

@@ -145,11 +145,11 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
           </div>
           <div>
             <h2 className="text-xl font-semibold text-white">
-              Sistema de Incidencias Colaborativo
+              Sistema de Incidencias
             </h2>
             <div className="flex items-center gap-2 text-sm">
               <p className="text-gray-400">
-                Detección y resolución de incidencias entre archivos
+                Detección y resolución analista de incidencias entre archivos
               </p>
               {estadoIncidencias && (
                 <span className={`${obtenerColorEstado(estadoIncidencias.estado_incidencias)} font-medium`}>
@@ -205,11 +205,12 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
                   <div className="flex items-start gap-2">
                     <AlertTriangle className="w-4 h-4 text-blue-400 mt-0.5" />
                     <div className="text-sm text-blue-300">
-                      <strong>Lógica de Comparación:</strong>
+                      <strong>Flujo de Resolución de Incidencias:</strong>
                       <ul className="mt-1 space-y-1 list-disc list-inside">
-                        <li>✅ <strong>Normal:</strong> Empleados/conceptos en Libro sin novedades</li>
-                        <li>⚠️ <strong>Incidencia:</strong> Empleados/conceptos en Novedades sin registro en Libro</li>
-                        <li>🔍 <strong>Comparación:</strong> Diferencias en montos, fechas y datos entre archivos coincidentes</li>
+                        <li>🔍 <strong>Detectar:</strong> Generar incidencias para identificar diferencias entre archivos</li>
+                        <li>📝 <strong>Resolver:</strong> Marcar incidencias como resueltas una vez corregidas</li>
+                        <li>� <strong>Resubir:</strong> Si es necesario, resubir archivos y regenerar incidencias</li>
+                        <li>✅ <strong>Meta:</strong> Llegar a 0 incidencias para completar el cierre</li>
                       </ul>
                     </div>
                   </div>
@@ -291,53 +292,81 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
 
           {/* Resumen de incidencias */}
           {resumen && (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-400">Total Incidencias</p>
-                    <p className="text-2xl font-bold text-white">{resumen.total}</p>
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-400">Total Incidencias</p>
+                      <p className="text-2xl font-bold text-white">{resumen.total}</p>
+                    </div>
+                    <AlertOctagon className="w-8 h-8 text-red-500" />
                   </div>
-                  <AlertOctagon className="w-8 h-8 text-red-500" />
+                </div>
+                
+                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-400">Críticas</p>
+                      <p className="text-2xl font-bold text-red-400">
+                        {resumen.por_prioridad?.critica || 0}
+                      </p>
+                    </div>
+                    <AlertTriangle className="w-8 h-8 text-red-500" />
+                  </div>
+                </div>
+                
+                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-400">Pendientes</p>
+                      <p className="text-2xl font-bold text-yellow-400">
+                        {resumen.por_estado?.pendiente || 0}
+                      </p>
+                    </div>
+                    <Loader2 className="w-8 h-8 text-yellow-500" />
+                  </div>
+                </div>
+                
+                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-400">Impacto Total</p>
+                      <p className="text-lg font-bold text-white">
+                        ${Number(resumen.impacto_monetario_total || 0).toLocaleString('es-CL')}
+                      </p>
+                    </div>
+                    <span className="text-green-400 text-xl">$</span>
+                  </div>
                 </div>
               </div>
-              
-              <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-400">Críticas</p>
-                    <p className="text-2xl font-bold text-red-400">
-                      {resumen.por_prioridad?.critica || 0}
-                    </p>
+
+              {/* Mensaje sobre cómo resolver incidencias */}
+              {resumen.total > 0 && (
+                <div className="bg-yellow-900/20 border border-yellow-500/30 rounded-lg p-4">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-5 h-5 text-yellow-400 mt-0.5" />
+                    <div className="text-sm text-yellow-300">
+                      <strong>¿Cómo resolver las incidencias?</strong>
+                      <p className="mt-1">
+                        Para resolver las incidencias detectadas, puedes seguir este flujo:
+                      </p>
+                      <ol className="mt-2 space-y-1 list-decimal list-inside">
+                        <li><strong>Revisar incidencias:</strong> Examina las diferencias detectadas en la tabla inferior.</li>
+                        <li><strong>Opción A - Marcar como resueltas:</strong> Si las diferencias son correctas o aceptables, marca las incidencias individuales como resueltas.</li>
+                        <li><strong>Opción B - Corregir y resubir:</strong> Si hay errores en los datos:</li>
+                        <ul className="ml-6 mt-1 space-y-1 list-disc list-inside text-xs">
+                          <li>Usa el botón "Resubir archivo" en las tarjetas de archivos correspondientes</li>
+                          <li>Sube los archivos corregidos</li>
+                          <li>Regresa aquí y presiona "Generar Incidencias" nuevamente</li>
+                          <li>Repite hasta llegar a 0 incidencias</li>
+                        </ul>
+                      </ol>
+                    </div>
                   </div>
-                  <AlertTriangle className="w-8 h-8 text-red-500" />
                 </div>
-              </div>
-              
-              <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-400">Pendientes</p>
-                    <p className="text-2xl font-bold text-yellow-400">
-                      {resumen.por_estado?.pendiente || 0}
-                    </p>
-                  </div>
-                  <Loader2 className="w-8 h-8 text-yellow-500" />
-                </div>
-              </div>
-              
-              <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-400">Impacto Total</p>
-                    <p className="text-lg font-bold text-white">
-                      ${Number(resumen.impacto_monetario_total || 0).toLocaleString('es-CL')}
-                    </p>
-                  </div>
-                  <span className="text-green-400 text-xl">$</span>
-                </div>
-              </div>
-            </div>
+              )}
+            </>
           )}
 
           {/* Filtros */}
@@ -356,9 +385,7 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
                 >
                   <option value="">Todos los estados</option>
                   <option value="pendiente">Pendientes</option>
-                  <option value="resuelta_analista">Resueltas por Analista</option>
-                  <option value="aprobada_supervisor">Aprobadas</option>
-                  <option value="rechazada_supervisor">Rechazadas</option>
+                  <option value="resuelta_analista">Resueltas</option>
                 </select>
                 
                 <select
@@ -431,7 +458,7 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
                   </h3>
                   <div className="flex items-center gap-2 text-sm text-gray-400">
                     <Users className="w-4 h-4" />
-                    <span>Sistema Colaborativo</span>
+                    <span>Resolución por Analista</span>
                   </div>
                 </div>
               </div>

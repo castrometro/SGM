@@ -11,6 +11,7 @@ const ArchivosTalanaSection = ({
   onVerClasificacion,
   onProcesarLibro,
   onActualizarEstado,
+  onEliminarLibro,
   headersSinClasificar,
   mensajeLibro,
   libroListo,
@@ -20,6 +21,7 @@ const ArchivosTalanaSection = ({
   subiendoMov,
   onSubirMovimientos,
   onActualizarEstadoMovimientos,
+  onEliminarMovimientos,
 }) => {
   const [expandido, setExpandido] = useState(true);
   
@@ -81,6 +83,7 @@ const ArchivosTalanaSection = ({
             onVerClasificacion={onVerClasificacion}
             onProcesar={onProcesarLibro}
             onActualizarEstado={onActualizarEstado}
+            onEliminarArchivo={onEliminarLibro}
             libroId={libro?.id}
             headersSinClasificar={headersSinClasificar}
             headerClasificados={libro?.header_json?.headers_clasificados || []}
@@ -94,6 +97,7 @@ const ArchivosTalanaSection = ({
             subiendo={subiendoMov}
             onSubirArchivo={onSubirMovimientos}
             onActualizarEstado={onActualizarEstadoMovimientos}
+            onEliminarArchivo={onEliminarMovimientos}
             disabled={false}
           />
         </div>

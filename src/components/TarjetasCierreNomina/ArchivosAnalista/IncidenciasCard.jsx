@@ -9,7 +9,8 @@ const IncidenciasCard = ({
   subiendo, 
   disabled, 
   onSubirArchivo, 
-  onReprocesar 
+  onReprocesar,
+  onEliminarArchivo
 }) => {
   return (
     <ArchivoAnalistaBase
@@ -25,6 +26,7 @@ const IncidenciasCard = ({
       disabled={disabled}
       onSubirArchivo={onSubirArchivo}
       onReprocesar={onReprocesar}
+      onEliminarArchivo={onEliminarArchivo}
     />
   );
 };

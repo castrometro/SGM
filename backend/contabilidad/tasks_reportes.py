@@ -549,19 +549,24 @@ def _obtener_cuentas_con_datos(cierre):
             'tipo_documento': mov['tipo_doc_codigo']
         })
     
-    # Calcular totales y asignar movimientos
+    # Calcular totales y asignar movimientos para cuentas con movimientos
     for mov in movimientos:
         cuenta_id = mov['cuenta_id']
         if cuenta_id in cuentas_data:
             cuentas_data[cuenta_id]['total_debe'] = float(mov['total_debe'] or 0)
             cuentas_data[cuenta_id]['total_haber'] = float(mov['total_haber'] or 0)
             cuentas_data[cuenta_id]['movimientos'] = movimientos_por_cuenta.get(cuenta_id, [])
-            
-            # Calcular saldo final
-            saldo_anterior = cuentas_data[cuenta_id]['saldo_anterior']
-            total_debe = cuentas_data[cuenta_id]['total_debe']
-            total_haber = cuentas_data[cuenta_id]['total_haber']
-            cuentas_data[cuenta_id]['saldo_final'] = saldo_anterior + total_debe - total_haber
+    
+    # ✅ CORREGIDO: Calcular saldo final para TODAS las cuentas (con y sin movimientos)
+    for cuenta_id, datos_cuenta in cuentas_data.items():
+        saldo_anterior = datos_cuenta['saldo_anterior']
+        total_debe = datos_cuenta['total_debe']
+        total_haber = datos_cuenta['total_haber']
+        datos_cuenta['saldo_final'] = saldo_anterior + total_debe - total_haber
+        
+        # Asegurar que las cuentas sin movimientos tengan lista vacía
+        if 'movimientos' not in datos_cuenta:
+            datos_cuenta['movimientos'] = []
     
     return cuentas_data
 
@@ -593,7 +598,7 @@ def _estructurar_datos_esf(cuentas_data, clasificaciones, cierre):
     Estructura los datos en el formato del Estado de Situación Financiera
     usando el set predefinido ESF como molde y los sets del cliente para agrupación detallada
     """
-    # Obtener el set ESF para usar sus opciones como molde principal
+    # Obtener el set ESF para usar sus opciones como molde
     set_esf = _obtener_set_esf_del_cierre(cierre)
     
     # Obtener todos los sets de clasificación del cliente (excluyendo ESF y ERI)
@@ -983,10 +988,16 @@ def _obtener_clasificaciones_eri(set_eri, cuenta_ids):
 def _estructurar_datos_eri(cuentas_data, clasificaciones, cierre):
     """
     Estructura los datos en el formato del Estado de Resultados Integral
-    usando el set predefinido como molde y aprovechando valores bilingües
+    usando el set predefinido como molde y los sets del cliente para agrupación detallada
     """
     # Obtener el set ERI para usar sus opciones como molde
     set_eri = _obtener_set_eri_del_cierre(cierre)
+    
+    # Obtener todos los sets de clasificación del cliente (excluyendo ESF y ERI)
+    sets_cliente = _obtener_sets_cliente_para_agrupacion(cierre.cliente, set_eri)
+    
+    # Obtener todas las clasificaciones de las cuentas para todos los sets
+    clasificaciones_completas = _obtener_clasificaciones_completas_eri(cuentas_data.keys(), cierre.cliente, set_eri, sets_cliente)
     
     # Estructura base del ERI con inicialización completa usando el molde predefinido
     eri_data = {
@@ -998,7 +1009,8 @@ def _estructurar_datos_eri(cuentas_data, clasificaciones, cierre):
             'fecha_generacion': timezone.now().isoformat(),
             'moneda': 'CLP',
             'es_bilingue': cierre.cliente.bilingue,
-            'set_clasificacion_usado': set_eri.nombre if set_eri else 'No encontrado'
+            'set_clasificacion_usado': set_eri.nombre if set_eri else 'No encontrado',
+            'sets_agrupacion_cliente': [s.nombre for s in sets_cliente] if sets_cliente else []
         },
         'ganancias_brutas': {
             'nombre_es': 'Ganancias Brutas',
@@ -1025,17 +1037,19 @@ def _estructurar_datos_eri(cuentas_data, clasificaciones, cierre):
         }
     }
     
-    # Agrupar cuentas por clasificación usando el molde predefinido
+    # Agrupar cuentas por clasificación usando ERI como estructura principal y sets del cliente para agrupación detallada
     for cuenta_id, datos_cuenta in cuentas_data.items():
-        clasificacion = clasificaciones.get(cuenta_id)
+        clasificacion_cuenta = clasificaciones_completas.get(cuenta_id)
         
-        if not clasificacion:
+        if not clasificacion_cuenta or not clasificacion_cuenta['eri']:
             continue  # Saltar cuentas sin clasificación ERI
         
-        opcion_valor = clasificacion['opcion_valor']
+        # Obtener clasificación ERI principal
+        clasificacion_eri = clasificacion_cuenta['eri']
+        opcion_valor_eri = clasificacion_eri['opcion_valor']
         
         # Determinar la categoría usando el valor exacto del set
-        categoria, nombres_bilingues = _determinar_categoria_eri_con_molde(opcion_valor, set_eri, cierre.cliente.bilingue)
+        categoria, nombres_bilingues = _determinar_categoria_eri_con_molde(opcion_valor_eri, set_eri, cierre.cliente.bilingue)
         
         if categoria:
             # Asegurar que la estructura existe
@@ -1051,15 +1065,17 @@ def _estructurar_datos_eri(cuentas_data, clasificaciones, cierre):
             if 'grupos' not in eri_data[categoria]:
                 eri_data[categoria]['grupos'] = {}
             
-            # Agrupar por el valor de la opción (usar nombres bilingües si están disponibles)
-            grupo_nombre_es = clasificacion['opcion_valor']
-            grupo_nombre_en = nombres_bilingues.get('valor_en', grupo_nombre_es)
+            # Determinar el nombre del grupo usando sets del cliente
+            grupo_nombre = _determinar_nombre_grupo_detallado(clasificacion_cuenta, sets_cliente, opcion_valor_eri)
+            grupo_nombre_es = grupo_nombre['nombre_es']
+            grupo_nombre_en = grupo_nombre['nombre_en']
             
-            # Crear la clave del grupo usando el nombre en español como referencia
+            # Crear la clave del grupo usando el nombre detallado
             if grupo_nombre_es not in eri_data[categoria]['grupos']:
                 eri_data[categoria]['grupos'][grupo_nombre_es] = {
                     'nombre_es': grupo_nombre_es,
                     'nombre_en': grupo_nombre_en,
+                    'clasificacion_origen': grupo_nombre['origen'],  # Para auditabilidad
                     'total': 0,
                     'cuentas': []
                 }
@@ -1073,7 +1089,11 @@ def _estructurar_datos_eri(cuentas_data, clasificaciones, cierre):
                 'total_debe': datos_cuenta['total_debe'],
                 'total_haber': datos_cuenta['total_haber'],
                 'saldo_final': datos_cuenta['saldo_final'],
-                'movimientos': datos_cuenta['movimientos']
+                'movimientos': datos_cuenta['movimientos'],
+                'clasificaciones_cliente': {
+                    set_nombre: cls_data['opcion_valor'] 
+                    for set_nombre, cls_data in clasificacion_cuenta['cliente_sets'].items()
+                }  # Para referencia
             })
             
             # Actualizar totales
@@ -1208,70 +1228,150 @@ def _obtener_clasificaciones_completas(cuenta_ids, cliente, set_esf, sets_client
     
     # Obtener clasificaciones ESF
     if set_esf:
-        clasificaciones_esf = AccountClassification.objects.filter(
+        esf_clasificaciones = AccountClassification.objects.filter(
             set_clas=set_esf,
             cuenta_id__in=cuenta_ids
         ).select_related('opcion').values(
             'cuenta_id', 'opcion__valor', 'opcion__id'
         )
-        
-        for cls in clasificaciones_esf:
+        for cls in esf_clasificaciones:
             cuenta_id = cls['cuenta_id']
+            # ✅ CORREGIDO: Solo procesar si la cuenta está en cuentas_data
             if cuenta_id in clasificaciones_completas:
                 clasificaciones_completas[cuenta_id]['esf'] = {
                     'opcion_id': cls['opcion__id'],
                     'opcion_valor': cls['opcion__valor']
                 }
     
-    # Obtener clasificaciones de sets del cliente
-    if sets_cliente:
-        for set_cliente in sets_cliente:
-            clasificaciones_set = AccountClassification.objects.filter(
-                set_clas=set_cliente,
-                cuenta_id__in=cuenta_ids
-            ).select_related('opcion').values(
-                'cuenta_id', 'opcion__valor', 'opcion__id'
-            )
-            
-            for cls in clasificaciones_set:
-                cuenta_id = cls['cuenta_id']
-                if cuenta_id in clasificaciones_completas:
-                    clasificaciones_completas[cuenta_id]['cliente_sets'][set_cliente.nombre] = {
-                        'opcion_id': cls['opcion__id'],
-                        'opcion_valor': cls['opcion__valor']
-                    }
+    # Obtener clasificaciones para cada set del cliente
+    for set_cliente in sets_cliente:
+        set_nombre = set_cliente.nombre
+        set_clasificaciones = AccountClassification.objects.filter(
+            set_clas=set_cliente,
+            cuenta_id__in=cuenta_ids
+        ).select_related('opcion').values(
+            'cuenta_id', 'opcion__valor', 'opcion__id'
+        )
+        for cls in set_clasificaciones:
+            cuenta_id = cls['cuenta_id']
+            # ✅ CORREGIDO: Solo procesar si la cuenta está en clasificaciones_completas
+            if cuenta_id in clasificaciones_completas:
+                clasificaciones_completas[cuenta_id]['cliente_sets'][set_nombre] = {
+                    'opcion_id': cls['opcion__id'],
+                    'opcion_valor': cls['opcion__valor']
+                }
     
     return clasificaciones_completas
 
 
-def _determinar_nombre_grupo_detallado(clasificacion_cuenta, sets_cliente, opcion_valor_esf_fallback):
+def _obtener_clasificaciones_completas_eri(cuenta_ids, cliente, set_eri, sets_cliente):
     """
-    Determina el nombre detallado del grupo usando las clasificaciones del cliente.
-    Prioriza el primer set del cliente que tenga clasificación para esta cuenta.
+    Obtiene todas las clasificaciones de las cuentas para ERI y sets del cliente
     
-    Args:
-        clasificacion_cuenta: Clasificaciones completas de la cuenta
-        sets_cliente: Lista de sets del cliente
-        opcion_valor_esf_fallback: Valor ESF como fallback
-        
     Returns:
-        dict: {'nombre_es': str, 'nombre_en': str, 'origen': str}
+        dict: {
+            cuenta_id: {
+                'eri': {'opcion_valor': '...', 'opcion_id': ...},
+                'cliente_sets': {
+                    'set_nombre': {'opcion_valor': '...', 'opcion_id': ...}
+                }
+            }
+        }
     """
-    # Intentar usar clasificaciones de sets del cliente en orden de prioridad
-    if sets_cliente and clasificacion_cuenta['cliente_sets']:
-        for set_cliente in sets_cliente:
-            set_nombre = set_cliente.nombre
-            if set_nombre in clasificacion_cuenta['cliente_sets']:
-                valor_cliente = clasificacion_cuenta['cliente_sets'][set_nombre]['opcion_valor']
-                return {
-                    'nombre_es': valor_cliente,
-                    'nombre_en': valor_cliente,  # Por ahora usar el mismo, se puede mejorar con bilingüe
-                    'origen': f'Set cliente: {set_nombre}'
+    clasificaciones_completas = {}
+    
+    # Inicializar estructura para todas las cuentas
+    for cuenta_id in cuenta_ids:
+        clasificaciones_completas[cuenta_id] = {
+            'eri': None,
+            'cliente_sets': {}
+        }
+    
+    # Obtener clasificaciones ERI
+    if set_eri:
+        eri_clasificaciones = AccountClassification.objects.filter(
+            set_clas=set_eri,
+            cuenta_id__in=cuenta_ids
+        ).select_related('opcion').values(
+            'cuenta_id', 'opcion__valor', 'opcion__id'
+        )
+        for cls in eri_clasificaciones:
+            cuenta_id = cls['cuenta_id']
+            # ✅ CORREGIDO: Solo procesar si la cuenta está en clasificaciones_completas
+            if cuenta_id in clasificaciones_completas:
+                clasificaciones_completas[cuenta_id]['eri'] = {
+                    'opcion_id': cls['opcion__id'],
+                    'opcion_valor': cls['opcion__valor']
                 }
     
-    # Fallback: usar el valor ESF
+    # Obtener clasificaciones para cada set del cliente
+    for set_cliente in sets_cliente:
+        set_nombre = set_cliente.nombre
+        set_clasificaciones = AccountClassification.objects.filter(
+            set_clas=set_cliente,
+            cuenta_id__in=cuenta_ids
+        ).select_related('opcion').values(
+            'cuenta_id', 'opcion__valor', 'opcion__id'
+        )
+        for cls in set_clasificaciones:
+            cuenta_id = cls['cuenta_id']
+            # ✅ CORREGIDO: Solo procesar si la cuenta está en clasificaciones_completas
+            if cuenta_id in clasificaciones_completas:
+                clasificaciones_completas[cuenta_id]['cliente_sets'][set_nombre] = {
+                    'opcion_id': cls['opcion__id'],
+                    'opcion_valor': cls['opcion__valor']
+                }
+    
+    return clasificaciones_completas
+
+
+def _determinar_nombre_grupo_detallado(clasificacion_cuenta, sets_cliente, opcion_valor_principal):
+    """
+    Determina el nombre detallado del grupo usando las clasificaciones de los sets del cliente
+    
+    Args:
+        clasificacion_cuenta: Dict con clasificaciones de la cuenta
+        sets_cliente: Lista de ClasificacionSet del cliente
+        opcion_valor_principal: Valor de la opción principal (ESF/ERI)
+        
+    Returns:
+        dict: {
+            'nombre_es': str,
+            'nombre_en': str,
+            'origen': str  # Para auditabilidad
+        }
+    """
+    # Priorizar sets específicos para agrupación
+    sets_priorizados = [
+        'AGRUPACION INFORME',
+        'AGRUPACION',
+        'GRUPO',
+        'CATEGORIA',
+        'TIPO'
+    ]
+    
+    # Buscar en sets del cliente por orden de prioridad
+    for nombre_set_priorizado in sets_priorizados:
+        if nombre_set_priorizado in clasificacion_cuenta['cliente_sets']:
+            opcion_valor = clasificacion_cuenta['cliente_sets'][nombre_set_priorizado]['opcion_valor']
+            return {
+                'nombre_es': opcion_valor,
+                'nombre_en': opcion_valor,  # Por ahora usar el mismo valor
+                'origen': nombre_set_priorizado
+            }
+    
+    # Si no hay sets específicos, usar cualquier set del cliente
+    for set_nombre, cls_data in clasificacion_cuenta['cliente_sets'].items():
+        return {
+            'nombre_es': cls_data['opcion_valor'],
+            'nombre_en': cls_data['opcion_valor'],
+            'origen': set_nombre
+        }
+    
+    # Fallback: usar la opción principal
     return {
-        'nombre_es': opcion_valor_esf_fallback,
-        'nombre_en': opcion_valor_esf_fallback,
-        'origen': 'Set ESF (fallback)'
+        'nombre_es': opcion_valor_principal,
+        'nombre_en': opcion_valor_principal,
+        'origen': 'principal'
     }
+   

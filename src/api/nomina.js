@@ -39,6 +39,12 @@ export const eliminarCierreNomina = async (cierreId) => {
   return res.data;
 };
 
+// Actualizar estado automático del cierre
+export const actualizarEstadoCierreNomina = async (cierreId) => {
+  const res = await api.post(`/nomina/cierres/${cierreId}/actualizar-estado/`);
+  return res.data;
+};
+
 // ========== SISTEMA DE INCIDENCIAS ==========
 
 // Obtener incidencias de un cierre
@@ -85,6 +91,73 @@ export const obtenerIncidencia = async (incidenciaId) => {
 // Vista previa de incidencias (sin guardar)
 export const previewIncidenciasCierre = async (cierreId) => {
   const response = await api.get(`/nomina/incidencias/preview/${cierreId}/`);
+  return response.data;
+};
+
+// ⚠️ DESARROLLO ÚNICAMENTE - Limpiar incidencias para testing
+export const devLimpiarIncidencias = async (cierreId) => {
+  const response = await api.post(`/nomina/incidencias/dev-clear/${cierreId}/`);
+  return response.data;
+};
+
+// ========== ANÁLISIS DE DATOS ==========
+
+// Iniciar análisis de datos del cierre
+export const iniciarAnalisisDatos = async (cierreId, toleranciaVariacion = 30) => {
+  const response = await api.post(`/nomina/incidencias/analizar-datos/${cierreId}/`, {
+    tolerancia_variacion: toleranciaVariacion
+  });
+  return response.data;
+};
+
+// Obtener análisis de datos de un cierre
+export const obtenerAnalisisDatos = async (cierreId) => {
+  const response = await api.get(`/nomina/analisis-datos/`, {
+    params: { cierre: cierreId }
+  });
+  return response.data;
+};
+
+// Obtener incidencias de variación salarial
+export const obtenerIncidenciasVariacion = async (cierreId, filtros = {}) => {
+  const params = { cierre: cierreId, ...filtros };
+  const response = await api.get('/nomina/incidencias-variacion/', { params });
+  return response.data;
+};
+
+// Justificar incidencia de variación salarial
+export const justificarIncidenciaVariacion = async (incidenciaId, justificacion) => {
+  const response = await api.post(`/nomina/incidencias-variacion/${incidenciaId}/justificar/`, {
+    justificacion
+  });
+  return response.data;
+};
+
+// Aprobar incidencia de variación salarial
+export const aprobarIncidenciaVariacion = async (incidenciaId, comentario = '') => {
+  const response = await api.post(`/nomina/incidencias-variacion/${incidenciaId}/aprobar/`, {
+    comentario
+  });
+  return response.data;
+};
+
+// Rechazar incidencia de variación salarial
+export const rechazarIncidenciaVariacion = async (incidenciaId, comentario) => {
+  const response = await api.post(`/nomina/incidencias-variacion/${incidenciaId}/rechazar/`, {
+    comentario
+  });
+  return response.data;
+};
+
+// Obtener resumen de incidencias de variación salarial
+export const obtenerResumenIncidenciasVariacion = async (cierreId) => {
+  const response = await api.get(`/nomina/incidencias-variacion/resumen/${cierreId}/`);
+  return response.data;
+};
+
+// Obtener resumen de incidencias de variación salarial
+export const obtenerResumenVariaciones = async (cierreId) => {
+  const response = await api.get(`/nomina/incidencias-variacion/resumen/${cierreId}/`);
   return response.data;
 };
 
@@ -336,7 +409,39 @@ export const obtenerConceptosRemuneracionNovedades = async (clienteId) => {
   return response.data;
 };
 
+// ========== ELIMINACIÓN DE ARCHIVOS ==========
+
+// Eliminar libro de remuneraciones
+export const eliminarLibroRemuneraciones = async (libroId) => {
+  const response = await api.delete(`/nomina/libros-remuneraciones/${libroId}/`);
+  return response.data;
+};
+
+// Eliminar movimientos del mes  
+export const eliminarMovimientosMes = async (movimientoId) => {
+  const response = await api.delete(`/nomina/movimientos-mes/${movimientoId}/`);
+  return response.data;
+};
+
+// Eliminar archivo del analista
+export const eliminarArchivoAnalista = async (archivoId) => {
+  const response = await api.delete(`/nomina/archivos-analista/${archivoId}/`);
+  return response.data;
+};
+
+// Eliminar archivo de novedades
+export const eliminarArchivoNovedades = async (archivoId) => {
+  const response = await api.delete(`/nomina/archivos-novedades/${archivoId}/`);
+  return response.data;
+};
+
 export const obtenerCategoriasIncidencias = async () => {
   const response = await api.get('/nomina/incidencias/categorias/');
   return response.data;
+};
+
+// Obtener todos los cierres de nómina (para vista gerencial)
+export const obtenerCierresNomina = async () => {
+  const res = await api.get('/nomina/cierres/');
+  return res.data;
 };

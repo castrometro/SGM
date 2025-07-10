@@ -1328,6 +1328,16 @@ class ReporteFinancieroAdmin(admin.ModelAdmin):
         """Enlaces de acciones para el reporte"""
         acciones = []
         
+        # Reenviar al caché (solo para reportes completados)
+        if obj.estado == 'completado' and obj.datos_reporte:
+            acciones.append(
+                f'<a href="/admin/contabilidad/reportefinanciero/{obj.id}/reenviar-cache/" '
+                f'style="color: #dc3545; text-decoration: none; font-weight: bold;" '
+                f'title="Reenviar reporte al caché" '
+                f'onclick="return confirm(\'¿Estás seguro de que quieres reenviar este reporte al caché?\');">'
+                f'🔄 Reenviar a Caché</a>'
+            )
+        
         # Descargar JSON del reporte
         if obj.datos_reporte and obj.estado == 'completado':
             acciones.append(
@@ -1459,6 +1469,59 @@ class ReporteFinancieroAdmin(admin.ModelAdmin):
             'usuario_generador'
         )
     
+    # Acciones personalizadas
+    actions = ['reenviar_reportes_a_cache']
+    
+    def reenviar_reportes_a_cache(self, request, queryset):
+        """Acción para reenviar reportes seleccionados al caché"""
+        from .tasks import enviar_reporte_a_cache  # Importar la tarea de Celery
+        
+        reportes_enviados = 0
+        reportes_error = 0
+        mensajes_error = []
+        
+        for reporte in queryset:
+            try:
+                # Validar que el reporte esté completado y tenga datos
+                if reporte.estado != 'completado':
+                    mensajes_error.append(f"Reporte #{reporte.id}: No está completado")
+                    reportes_error += 1
+                    continue
+                
+                if not reporte.datos_reporte:
+                    mensajes_error.append(f"Reporte #{reporte.id}: No tiene datos")
+                    reportes_error += 1
+                    continue
+                
+                # Enviar al caché usando la tarea de Celery
+                enviar_reporte_a_cache.delay(reporte.id)
+                reportes_enviados += 1
+                
+            except Exception as e:
+                mensajes_error.append(f"Reporte #{reporte.id}: Error - {str(e)}")
+                reportes_error += 1
+        
+        # Mostrar mensajes de resultado
+        if reportes_enviados > 0:
+            self.message_user(
+                request,
+                f"Se enviaron {reportes_enviados} reporte(s) al caché para procesamiento.",
+                level='SUCCESS'
+            )
+        
+        if reportes_error > 0:
+            mensaje_errores = "\n".join(mensajes_error[:5])  # Mostrar máximo 5 errores
+            if len(mensajes_error) > 5:
+                mensaje_errores += f"\n... y {len(mensajes_error) - 5} errores más"
+            
+            self.message_user(
+                request,
+                f"Errores en {reportes_error} reporte(s):\n{mensaje_errores}",
+                level='ERROR'
+            )
+    
+    reenviar_reportes_a_cache.short_description = "Reenviar reportes seleccionados al caché"
+    
     def get_urls(self):
         """URLs personalizadas para el admin"""
         urls = super().get_urls()
@@ -1472,6 +1535,11 @@ class ReporteFinancieroAdmin(admin.ModelAdmin):
                 '<path:object_id>/ver-json/',
                 self.admin_site.admin_view(self.ver_json),
                 name='contabilidad_reportefinanciero_ver_json'
+            ),
+            path(
+                '<path:object_id>/reenviar-cache/',
+                self.admin_site.admin_view(self.reenviar_cache_individual),
+                name='contabilidad_reportefinanciero_reenviar_cache'
             ),
         ]
         return custom_urls + urls
@@ -1553,3 +1621,39 @@ class ReporteFinancieroAdmin(admin.ModelAdmin):
             
         except Exception as e:
             return HttpResponse(f"Error al mostrar el JSON: {str(e)}", status=500)
+    
+    def reenviar_cache_individual(self, request, object_id):
+        """Vista para reenviar un reporte individual al caché"""
+        from django.shortcuts import redirect
+        from django.contrib import messages
+        from .tasks import enviar_reporte_a_cache
+        
+        try:
+            reporte = self.get_object(request, object_id)
+            if not reporte:
+                messages.error(request, "Reporte no encontrado")
+                return redirect('admin:contabilidad_reportefinanciero_changelist')
+            
+            # Validar que el reporte esté completado
+            if reporte.estado != 'completado':
+                messages.error(request, f"El reporte #{reporte.id} no está completado y no se puede reenviar al caché")
+                return redirect('admin:contabilidad_reportefinanciero_changelist')
+            
+            if not reporte.datos_reporte:
+                messages.error(request, f"El reporte #{reporte.id} no tiene datos y no se puede reenviar al caché")
+                return redirect('admin:contabilidad_reportefinanciero_changelist')
+            
+            # Enviar al caché
+            enviar_reporte_a_cache.delay(reporte.id)
+            
+            messages.success(
+                request, 
+                f"Reporte #{reporte.id} ({reporte.get_tipo_reporte_display()}) enviado al caché para procesamiento. "
+                f"Cliente: {reporte.cierre.cliente.nombre}, Período: {reporte.cierre.periodo}"
+            )
+            
+            return redirect('admin:contabilidad_reportefinanciero_changelist')
+            
+        except Exception as e:
+            messages.error(request, f"Error al reenviar el reporte al caché: {str(e)}")
+            return redirect('admin:contabilidad_reportefinanciero_changelist')

@@ -925,3 +925,166 @@ def generar_estado_situacion_financiera(cierre_id, usuario_id=None):
             'cierre_id': cierre_id
         }
 
+@shared_task
+def enviar_reporte_a_cache(reporte_id):
+    """
+    Envía un reporte financiero al caché Redis
+    
+    Args:
+        reporte_id: ID del reporte financiero a enviar al caché
+        
+    Returns:
+        dict: Resultado de la operación
+    """
+    try:
+        from contabilidad.cache_redis import get_cache_system
+        
+        logger.info(f"Iniciando envío al caché del reporte ID: {reporte_id}")
+        
+        # Obtener el reporte
+        try:
+            reporte = ReporteFinanciero.objects.select_related(
+                'cierre', 'cierre__cliente'
+            ).get(id=reporte_id)
+        except ReporteFinanciero.DoesNotExist:
+            error_msg = f"Reporte con ID {reporte_id} no encontrado"
+            logger.error(error_msg)
+            return {'error': error_msg, 'reporte_id': reporte_id}
+        
+        # Validar que el reporte esté completado
+        if reporte.estado != 'completado':
+            error_msg = f"Reporte {reporte_id} no está completado. Estado actual: {reporte.estado}"
+            logger.error(error_msg)
+            return {'error': error_msg, 'reporte_id': reporte_id}
+        
+        # Validar que tenga datos
+        if not reporte.datos_reporte:
+            error_msg = f"Reporte {reporte_id} no tiene datos para enviar al caché"
+            logger.error(error_msg)
+            return {'error': error_msg, 'reporte_id': reporte_id}
+        
+        # Obtener sistema de caché
+        cache_system = get_cache_system()
+        
+        # Mapear tipo de reporte a clave de caché
+        tipo_cache_map = {
+            'esf': 'esf',  # Estado de Situación Financiera
+            'eri': 'eri',  # Estado de Resultado Integral
+            'ecp': 'ecp'   # Estado de Cambios en el Patrimonio
+        }
+        
+        tipo_cache = tipo_cache_map.get(reporte.tipo_reporte)
+        if not tipo_cache:
+            error_msg = f"Tipo de reporte no soportado para caché: {reporte.tipo_reporte}"
+            logger.error(error_msg)
+            return {'error': error_msg, 'reporte_id': reporte_id}
+        
+        # Preparar datos para el caché
+        # Obtener información del usuario de forma segura
+        usuario_info = None
+        if reporte.usuario_generador:
+            try:
+                # El modelo Usuario usa correo_bdo como USERNAME_FIELD
+                if hasattr(reporte.usuario_generador, 'correo_bdo'):
+                    usuario_info = reporte.usuario_generador.correo_bdo
+                elif hasattr(reporte.usuario_generador, 'nombre'):
+                    usuario_info = f"{reporte.usuario_generador.nombre} {getattr(reporte.usuario_generador, 'apellido', '')}"
+                else:
+                    usuario_info = str(reporte.usuario_generador)
+            except Exception as e:
+                logger.warning(f"Error obteniendo información del usuario: {e}")
+                usuario_info = "Usuario desconocido"
+        
+        datos_cache = {
+            **reporte.datos_reporte,
+            '_reporte_metadata': {
+                'reporte_id': reporte.id,
+                'fecha_generacion': reporte.fecha_generacion.isoformat(),
+                'usuario_generador': usuario_info,
+                'tipo_reporte': reporte.tipo_reporte,
+                'enviado_cache_at': timezone.now().isoformat()
+            }
+        }
+        
+        # Enviar al caché con TTL extendido (4 horas para reportes)
+        resultado = cache_system.set_estado_financiero(
+            cliente_id=reporte.cierre.cliente.id,
+            periodo=reporte.cierre.periodo,
+            tipo_estado=tipo_cache,
+            datos=datos_cache,
+            ttl=14400  # 4 horas
+        )
+        
+        if resultado:
+            logger.info(
+                f"Reporte {reporte_id} ({reporte.get_tipo_reporte_display()}) "
+                f"enviado exitosamente al caché. Cliente: {reporte.cierre.cliente.nombre}, "
+                f"Período: {reporte.cierre.periodo}"
+            )
+            
+            return {
+                'success': True,
+                'reporte_id': reporte_id,
+                'tipo_reporte': reporte.tipo_reporte,
+                'cliente': reporte.cierre.cliente.nombre,
+                'periodo': reporte.cierre.periodo,
+                'mensaje': 'Reporte enviado al caché exitosamente'
+            }
+        else:
+            error_msg = f"Error enviando reporte {reporte_id} al caché"
+            logger.error(error_msg)
+            return {'error': error_msg, 'reporte_id': reporte_id}
+            
+    except Exception as e:
+        error_msg = f"Error inesperado enviando reporte {reporte_id} al caché: {str(e)}"
+        logger.error(error_msg)
+        return {'error': error_msg, 'reporte_id': reporte_id}
+
+
+@shared_task
+def enviar_multiples_reportes_a_cache(reporte_ids):
+    """
+    Envía múltiples reportes financieros al caché Redis
+    
+    Args:
+        reporte_ids: Lista de IDs de reportes financieros
+        
+    Returns:
+        dict: Resultado consolidado de la operación
+    """
+    resultados = {
+        'exitosos': [],
+        'errores': [],
+        'total_procesados': len(reporte_ids),
+        'total_exitosos': 0,
+        'total_errores': 0
+    }
+    
+    logger.info(f"Iniciando envío masivo al caché de {len(reporte_ids)} reportes")
+    
+    for reporte_id in reporte_ids:
+        try:
+            resultado = enviar_reporte_a_cache(reporte_id)
+            
+            if resultado.get('success'):
+                resultados['exitosos'].append(resultado)
+                resultados['total_exitosos'] += 1
+            else:
+                resultados['errores'].append(resultado)
+                resultados['total_errores'] += 1
+                
+        except Exception as e:
+            error_resultado = {
+                'error': f"Error procesando reporte {reporte_id}: {str(e)}",
+                'reporte_id': reporte_id
+            }
+            resultados['errores'].append(error_resultado)
+            resultados['total_errores'] += 1
+    
+    logger.info(
+        f"Envío masivo completado. Exitosos: {resultados['total_exitosos']}, "
+        f"Errores: {resultados['total_errores']}"
+    )
+    
+    return resultados
+

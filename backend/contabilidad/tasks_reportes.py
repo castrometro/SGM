@@ -19,8 +19,76 @@ from .models import (
     ClasificacionSet,
     ClasificacionOption
 )
+from .cache_redis import get_cache_system
 
 logger = logging.getLogger(__name__)
+
+
+def _guardar_reportes_con_retencion(cierre, datos_esf=None, datos_eri=None, ttl_hours=24*30):
+    """
+    Guarda ESF y/o ERI en Redis con retención automática de solo los 2 cierres más recientes.
+    
+    Args:
+        cierre: Instancia de CierreContabilidad
+        datos_esf: Datos del ESF (opcional)
+        datos_eri: Datos del ERI (opcional)
+        ttl_hours: TTL en horas (default: 30 días)
+    
+    Returns:
+        dict: Resultado de la operación
+    """
+    try:
+        cache_system = get_cache_system()
+        
+        # Si solo tenemos uno de los dos, obtener el otro del cache si existe
+        if datos_esf and not datos_eri:
+            datos_eri = cache_system.get_estado_financiero(
+                cierre.cliente.id, 
+                cierre.periodo, 
+                'eri'
+            ) or {}
+            
+        elif datos_eri and not datos_esf:
+            datos_esf = cache_system.get_estado_financiero(
+                cierre.cliente.id, 
+                cierre.periodo, 
+                'esf'
+            ) or {}
+        
+        # Si tenemos ambos, usar retención automática
+        if datos_esf and datos_eri:
+            resultado = cache_system.set_estado_financiero_with_retention(
+                cliente_id=cierre.cliente.id,
+                periodo=cierre.periodo,
+                datos_esf=datos_esf,
+                datos_eri=datos_eri,
+                max_cierres_por_cliente=2,
+                ttl_hours=ttl_hours
+            )
+            
+            logger.info(f"🔄 Retención aplicada para cliente {cierre.cliente.id}:")
+            logger.info(f"   📁 Cierres mantenidos: {len(resultado.get('cierres_mantenidos', []))}")
+            logger.info(f"   🗑️ Cierres eliminados: {len(resultado.get('cierres_eliminados', []))}")
+            
+            return resultado
+        else:
+            # Fallback: guardar individualmente sin retención
+            logger.warning("No se tienen ambos reportes (ESF + ERI), guardando individualmente")
+            
+            if datos_esf:
+                cache_system.set_estado_financiero(
+                    cierre.cliente.id, cierre.periodo, 'esf', datos_esf, ttl_hours * 3600
+                )
+            if datos_eri:
+                cache_system.set_estado_financiero(
+                    cierre.cliente.id, cierre.periodo, 'eri', datos_eri, ttl_hours * 3600
+                )
+                
+            return {'success': True, 'metodo': 'individual'}
+            
+    except Exception as e:
+        logger.error(f"Error en retención de cierres: {e}")
+        return {'success': False, 'error': str(e)}
 
 @shared_task(bind=True)
 def generar_estado_situacion_financiera(self, cierre_id, usuario_id=None, regenerar=False):
@@ -166,67 +234,44 @@ def generar_estado_situacion_financiera(self, cierre_id, usuario_id=None, regene
         reporte.metadata = metadata
         reporte.save()
         
-        # INMEDIATAMENTE después de crear el JSON, guardarlo en Redis para pruebas
+        # Guardar en Redis con retención automática de cierres
         self.update_state(
             state='PROGRESS',
-            meta={'step': 'Guardando en cache Redis', 'progress': 95}
+            meta={'step': 'Guardando en cache Redis con retención', 'progress': 95}
         )
         
         try:
-            import redis as redis_lib
-            
-            # Conexión directa a Redis DB 1 (contabilidad) con configuración correcta
-            redis_client = redis_lib.Redis(
-                host='redis',  # Usar el nombre del servicio Docker
-                port=6379, 
-                db=1,  # DB 1 para contabilidad (igual que Streamlit)
-                password='Redis_Password_2025!',  # Autenticación
-                decode_responses=True,
-                socket_connect_timeout=10,
-                socket_timeout=10,
-                retry_on_timeout=True
+            # Usar función de retención automática (30 días TTL por defecto)
+            resultado_cache = _guardar_reportes_con_retencion(
+                cierre=cierre,
+                datos_esf=datos_esf,
+                ttl_hours=24*30  # 30 días
             )
             
-            # Verificar conexión
-            redis_client.ping()
-            
-            # Guardar bajo la clave de pruebas que usa Streamlit
-            clave_pruebas = f"sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:pruebas:esf:finalizacion_automatica"
-            
-            # Convertir datos a JSON y guardar
-            json_data = json.dumps(datos_esf, ensure_ascii=False, indent=2)
-            redis_client.set(clave_pruebas, json_data, ex=14400)  # 4 horas TTL
-            
-            logger.info(f"✅ JSON del reporte financiero guardado en Redis bajo clave de pruebas: {clave_pruebas}")
-            logger.info(f"   Tamaño del JSON: {len(json_data)} caracteres")
-            
-            # Verificar que se guardó correctamente
-            verificacion = redis_client.get(clave_pruebas)
-            if verificacion:
-                logger.info(f"✅ Verificación exitosa: datos recuperados de Redis")
+            if resultado_cache.get('success'):
+                logger.info(f"✅ ESF guardado en Redis con retención automática")
+                if resultado_cache.get('cierres_eliminados'):
+                    logger.info(f"🗑️ Cierres antiguos eliminados automáticamente: {len(resultado_cache['cierres_eliminados'])}")
             else:
-                logger.error(f"❌ Error en verificación: no se pudieron recuperar los datos de Redis")
-            
-            # También guardar en el cache system original (mantener compatibilidad)
-            try:
-                from .cache_redis import get_cache_system
-                cache_system = get_cache_system()
+                logger.warning(f"⚠️ Problema guardando ESF con retención: {resultado_cache.get('error', 'Error desconocido')}")
                 
-                cache_guardado = cache_system.set_estado_financiero(
-                    cliente_id=cierre.cliente.id,
-                    periodo=cierre.periodo,
-                    tipo_estado='esf',
-                    datos=datos_esf,
-                    ttl=14400  # 4 horas
+            # Mantener guardado de pruebas para compatibilidad
+            try:
+                import redis as redis_lib
+                redis_client = redis_lib.Redis(
+                    host='redis', port=6379, db=1,
+                    password='Redis_Password_2025!',
+                    decode_responses=True, socket_connect_timeout=10
                 )
                 
-                if cache_guardado:
-                    logger.info(f"ESF también guardado en Redis cache original para cliente {cierre.cliente.id}, período {cierre.periodo}")
-                else:
-                    logger.warning(f"No se pudo guardar ESF en Redis cache original")
-                    
-            except Exception as cache_system_error:
-                logger.error(f"Error guardando ESF en cache system original: {cache_system_error}")
+                clave_pruebas = f"sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:pruebas:esf:finalizacion_automatica"
+                json_data = json.dumps(datos_esf, ensure_ascii=False, indent=2)
+                redis_client.set(clave_pruebas, json_data, ex=14400)  # 4 horas TTL
+                
+                logger.info(f"📋 ESF también guardado en clave de pruebas: {clave_pruebas}")
+                
+            except Exception as pruebas_error:
+                logger.warning(f"No se pudo guardar ESF en clave de pruebas: {pruebas_error}")
                 
         except Exception as cache_error:
             logger.error(f"Error guardando ESF en Redis: {cache_error}")
@@ -369,67 +414,44 @@ def generar_estado_resultados_integral(self, cierre_id, usuario_id=None, regener
         reporte.metadata = metadata
         reporte.save()
         
-        # INMEDIATAMENTE después de crear el JSON, guardarlo en Redis para pruebas
+        # Guardar en Redis con retención automática de cierres
         self.update_state(
             state='PROGRESS',
-            meta={'step': 'Guardando en cache Redis', 'progress': 95}
+            meta={'step': 'Guardando en cache Redis con retención', 'progress': 95}
         )
         
         try:
-            import redis as redis_lib
-            
-            # Conexión directa a Redis DB 1 (contabilidad) con configuración correcta
-            redis_client = redis_lib.Redis(
-                host='redis',  # Usar el nombre del servicio Docker
-                port=6379, 
-                db=1,  # DB 1 para contabilidad (igual que Streamlit)
-                password='Redis_Password_2025!',  # Autenticación
-                decode_responses=True,
-                socket_connect_timeout=10,
-                socket_timeout=10,
-                retry_on_timeout=True
+            # Usar función de retención automática (30 días TTL por defecto)
+            resultado_cache = _guardar_reportes_con_retencion(
+                cierre=cierre,
+                datos_eri=datos_eri,
+                ttl_hours=24*30  # 30 días
             )
             
-            # Verificar conexión
-            redis_client.ping()
-            
-            # Guardar bajo la clave de pruebas que usa Streamlit
-            clave_pruebas = f"sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:pruebas:eri:finalizacion_automatica"
-            
-            # Convertir datos a JSON y guardar
-            json_data = json.dumps(datos_eri, ensure_ascii=False, indent=2)
-            redis_client.set(clave_pruebas, json_data, ex=14400)  # 4 horas TTL
-            
-            logger.info(f"✅ JSON del Estado de Resultados Integral guardado en Redis bajo clave de pruebas: {clave_pruebas}")
-            logger.info(f"   Tamaño del JSON: {len(json_data)} caracteres")
-            
-            # Verificar que se guardó correctamente
-            verificacion = redis_client.get(clave_pruebas)
-            if verificacion:
-                logger.info(f"✅ Verificación exitosa: datos recuperados de Redis")
+            if resultado_cache.get('success'):
+                logger.info(f"✅ ERI guardado en Redis con retención automática")
+                if resultado_cache.get('cierres_eliminados'):
+                    logger.info(f"🗑️ Cierres antiguos eliminados automáticamente: {len(resultado_cache['cierres_eliminados'])}")
             else:
-                logger.error(f"❌ Error en verificación: no se pudieron recuperar los datos de Redis")
-            
-            # También guardar en el cache system original (mantener compatibilidad)
-            try:
-                from .cache_redis import get_cache_system
-                cache_system = get_cache_system()
+                logger.warning(f"⚠️ Problema guardando ERI con retención: {resultado_cache.get('error', 'Error desconocido')}")
                 
-                cache_guardado = cache_system.set_estado_financiero(
-                    cliente_id=cierre.cliente.id,
-                    periodo=cierre.periodo,
-                    tipo_estado='eri',
-                    datos=datos_eri,
-                    ttl=14400  # 4 horas
+            # Mantener guardado de pruebas para compatibilidad
+            try:
+                import redis as redis_lib
+                redis_client = redis_lib.Redis(
+                    host='redis', port=6379, db=1,
+                    password='Redis_Password_2025!',
+                    decode_responses=True, socket_connect_timeout=10
                 )
                 
-                if cache_guardado:
-                    logger.info(f"ERI también guardado en Redis cache original para cliente {cierre.cliente.id}, período {cierre.periodo}")
-                else:
-                    logger.warning(f"No se pudo guardar ERI en Redis cache original")
-                    
-            except Exception as cache_system_error:
-                logger.error(f"Error guardando ERI en cache system original: {cache_system_error}")
+                clave_pruebas = f"sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:pruebas:eri:finalizacion_automatica"
+                json_data = json.dumps(datos_eri, ensure_ascii=False, indent=2)
+                redis_client.set(clave_pruebas, json_data, ex=14400)  # 4 horas TTL
+                
+                logger.info(f"📋 ERI también guardado en clave de pruebas: {clave_pruebas}")
+                
+            except Exception as pruebas_error:
+                logger.warning(f"No se pudo guardar ERI en clave de pruebas: {pruebas_error}")
                 
         except Exception as cache_error:
             logger.error(f"Error guardando ERI en Redis: {cache_error}")
@@ -1225,153 +1247,4 @@ def _obtener_clasificaciones_completas(cuenta_ids, cliente, set_esf, sets_client
             'esf': None,
             'cliente_sets': {}
         }
-    
-    # Obtener clasificaciones ESF
-    if set_esf:
-        esf_clasificaciones = AccountClassification.objects.filter(
-            set_clas=set_esf,
-            cuenta_id__in=cuenta_ids
-        ).select_related('opcion').values(
-            'cuenta_id', 'opcion__valor', 'opcion__id'
-        )
-        for cls in esf_clasificaciones:
-            cuenta_id = cls['cuenta_id']
-            # ✅ CORREGIDO: Solo procesar si la cuenta está en cuentas_data
-            if cuenta_id in clasificaciones_completas:
-                clasificaciones_completas[cuenta_id]['esf'] = {
-                    'opcion_id': cls['opcion__id'],
-                    'opcion_valor': cls['opcion__valor']
-                }
-    
-    # Obtener clasificaciones para cada set del cliente
-    for set_cliente in sets_cliente:
-        set_nombre = set_cliente.nombre
-        set_clasificaciones = AccountClassification.objects.filter(
-            set_clas=set_cliente,
-            cuenta_id__in=cuenta_ids
-        ).select_related('opcion').values(
-            'cuenta_id', 'opcion__valor', 'opcion__id'
-        )
-        for cls in set_clasificaciones:
-            cuenta_id = cls['cuenta_id']
-            # ✅ CORREGIDO: Solo procesar si la cuenta está en clasificaciones_completas
-            if cuenta_id in clasificaciones_completas:
-                clasificaciones_completas[cuenta_id]['cliente_sets'][set_nombre] = {
-                    'opcion_id': cls['opcion__id'],
-                    'opcion_valor': cls['opcion__valor']
-                }
-    
-    return clasificaciones_completas
-
-
-def _obtener_clasificaciones_completas_eri(cuenta_ids, cliente, set_eri, sets_cliente):
-    """
-    Obtiene todas las clasificaciones de las cuentas para ERI y sets del cliente
-    
-    Returns:
-        dict: {
-            cuenta_id: {
-                'eri': {'opcion_valor': '...', 'opcion_id': ...},
-                'cliente_sets': {
-                    'set_nombre': {'opcion_valor': '...', 'opcion_id': ...}
-                }
-            }
-        }
-    """
-    clasificaciones_completas = {}
-    
-    # Inicializar estructura para todas las cuentas
-    for cuenta_id in cuenta_ids:
-        clasificaciones_completas[cuenta_id] = {
-            'eri': None,
-            'cliente_sets': {}
-        }
-    
-    # Obtener clasificaciones ERI
-    if set_eri:
-        eri_clasificaciones = AccountClassification.objects.filter(
-            set_clas=set_eri,
-            cuenta_id__in=cuenta_ids
-        ).select_related('opcion').values(
-            'cuenta_id', 'opcion__valor', 'opcion__id'
-        )
-        for cls in eri_clasificaciones:
-            cuenta_id = cls['cuenta_id']
-            # ✅ CORREGIDO: Solo procesar si la cuenta está en clasificaciones_completas
-            if cuenta_id in clasificaciones_completas:
-                clasificaciones_completas[cuenta_id]['eri'] = {
-                    'opcion_id': cls['opcion__id'],
-                    'opcion_valor': cls['opcion__valor']
-                }
-    
-    # Obtener clasificaciones para cada set del cliente
-    for set_cliente in sets_cliente:
-        set_nombre = set_cliente.nombre
-        set_clasificaciones = AccountClassification.objects.filter(
-            set_clas=set_cliente,
-            cuenta_id__in=cuenta_ids
-        ).select_related('opcion').values(
-            'cuenta_id', 'opcion__valor', 'opcion__id'
-        )
-        for cls in set_clasificaciones:
-            cuenta_id = cls['cuenta_id']
-            # ✅ CORREGIDO: Solo procesar si la cuenta está en clasificaciones_completas
-            if cuenta_id in clasificaciones_completas:
-                clasificaciones_completas[cuenta_id]['cliente_sets'][set_nombre] = {
-                    'opcion_id': cls['opcion__id'],
-                    'opcion_valor': cls['opcion__valor']
-                }
-    
-    return clasificaciones_completas
-
-
-def _determinar_nombre_grupo_detallado(clasificacion_cuenta, sets_cliente, opcion_valor_principal):
-    """
-    Determina el nombre detallado del grupo usando las clasificaciones de los sets del cliente
-    
-    Args:
-        clasificacion_cuenta: Dict con clasificaciones de la cuenta
-        sets_cliente: Lista de ClasificacionSet del cliente
-        opcion_valor_principal: Valor de la opción principal (ESF/ERI)
-        
-    Returns:
-        dict: {
-            'nombre_es': str,
-            'nombre_en': str,
-            'origen': str  # Para auditabilidad
-        }
-    """
-    # Priorizar sets específicos para agrupación
-    sets_priorizados = [
-        'AGRUPACION INFORME',
-        'AGRUPACION',
-        'GRUPO',
-        'CATEGORIA',
-        'TIPO'
-    ]
-    
-    # Buscar en sets del cliente por orden de prioridad
-    for nombre_set_priorizado in sets_priorizados:
-        if nombre_set_priorizado in clasificacion_cuenta['cliente_sets']:
-            opcion_valor = clasificacion_cuenta['cliente_sets'][nombre_set_priorizado]['opcion_valor']
-            return {
-                'nombre_es': opcion_valor,
-                'nombre_en': opcion_valor,  # Por ahora usar el mismo valor
-                'origen': nombre_set_priorizado
-            }
-    
-    # Si no hay sets específicos, usar cualquier set del cliente
-    for set_nombre, cls_data in clasificacion_cuenta['cliente_sets'].items():
-        return {
-            'nombre_es': cls_data['opcion_valor'],
-            'nombre_en': cls_data['opcion_valor'],
-            'origen': set_nombre
-        }
-    
-    # Fallback: usar la opción principal
-    return {
-        'nombre_es': opcion_valor_principal,
-        'nombre_en': opcion_valor_principal,
-        'origen': 'principal'
-    }
    

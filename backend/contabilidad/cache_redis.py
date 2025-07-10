@@ -986,6 +986,246 @@ class SGMCacheSystem:
                 'error': str(e),
                 'timestamp': datetime.now().isoformat()
             }
+    
+    # ========== Retención de Cierres con TTL ==========
+    def set_estado_financiero_with_retention(self, cliente_id: int, periodo: str, 
+                                           datos_esf: Dict[str, Any], datos_eri: Dict[str, Any],
+                                           max_cierres_por_cliente: int = 2, 
+                                           ttl_hours: int = 24*30) -> Dict[str, Any]:
+        """
+        Guardar ESF y ERI con retención automática de solo los N cierres más recientes por cliente.
+        
+        Funcionalidad:
+        1. Guarda ESF y ERI para el período especificado con TTL
+        2. Mantiene solo los max_cierres_por_cliente más recientes por cliente en Redis
+        3. Elimina automáticamente cierres antiguos cuando se excede el límite
+        4. Los datos eliminados de Redis permanecen en la base de datos
+        
+        Args:
+            cliente_id: ID del cliente
+            periodo: Período del cierre (formato YYYY-MM)
+            datos_esf: Datos del Estado de Situación Financiera
+            datos_eri: Datos del Estado de Resultados Integral
+            max_cierres_por_cliente: Máximo de cierres a mantener en Redis por cliente (default: 2)
+            ttl_hours: Tiempo de vida en horas para cada cierre (default: 30 días)
+            
+        Returns:
+            Dict con información del resultado de la operación
+        """
+        try:
+            ttl_seconds = ttl_hours * 3600
+            resultado = {
+                'success': True,
+                'cliente_id': cliente_id,
+                'periodo': periodo,
+                'cierres_eliminados': [],
+                'cierres_mantenidos': [],
+                'error': None
+            }
+            
+            logger.info(f"🔄 Iniciando retención de cierres para cliente {cliente_id}, período {periodo}")
+            
+            # 1. Obtener todos los cierres existentes para este cliente
+            pattern = f"sgm:contabilidad:{cliente_id}:*:esf"
+            claves_existentes = self.redis_client.keys(pattern)
+            
+            # Extraer períodos y fechas de creación de las claves existentes
+            cierres_existentes = []
+            for clave in claves_existentes:
+                try:
+                    # Formato: sgm:contabilidad:{cliente_id}:{periodo}:esf
+                    parts = clave.split(':')
+                    if len(parts) >= 4:
+                        periodo_existente = parts[3]
+                        
+                        # Obtener metadata para la fecha de creación
+                        datos_existentes = self.redis_client.get(clave)
+                        if datos_existentes:
+                            datos_parsed = json.loads(datos_existentes)
+                            fecha_creacion = datos_parsed.get('_metadata', {}).get('created_at')
+                            
+                            if fecha_creacion:
+                                cierres_existentes.append({
+                                    'periodo': periodo_existente,
+                                    'fecha_creacion': fecha_creacion,
+                                    'clave_esf': clave,
+                                    'clave_eri': clave.replace(':esf', ':eri')
+                                })
+                            else:
+                                # Fallback: usar timestamp actual para claves sin metadata
+                                cierres_existentes.append({
+                                    'periodo': periodo_existente,
+                                    'fecha_creacion': datetime.now().isoformat(),
+                                    'clave_esf': clave,
+                                    'clave_eri': clave.replace(':esf', ':eri')
+                                })
+                except Exception as e:
+                    logger.warning(f"Error procesando clave existente {clave}: {e}")
+                    continue
+            
+            # 2. Guardar el nuevo cierre (ESF y ERI)
+            logger.info(f"💾 Guardando nuevo cierre: cliente {cliente_id}, período {periodo}")
+            
+            # Guardar ESF con TTL
+            esf_guardado = self.set_estado_financiero(
+                cliente_id=cliente_id,
+                periodo=periodo,
+                tipo_estado='esf',
+                datos=datos_esf,
+                ttl=ttl_seconds
+            )
+            
+            # Guardar ERI con TTL
+            eri_guardado = self.set_estado_financiero(
+                cliente_id=cliente_id,
+                periodo=periodo,
+                tipo_estado='eri',
+                datos=datos_eri,
+                ttl=ttl_seconds
+            )
+            
+            if not (esf_guardado and eri_guardado):
+                resultado['success'] = False
+                resultado['error'] = 'Error guardando ESF o ERI'
+                return resultado
+            
+            # 3. Agregar el nuevo cierre a la lista
+            nuevo_cierre = {
+                'periodo': periodo,
+                'fecha_creacion': datetime.now().isoformat(),
+                'clave_esf': f"sgm:contabilidad:{cliente_id}:{periodo}:esf",
+                'clave_eri': f"sgm:contabilidad:{cliente_id}:{periodo}:eri"
+            }
+            cierres_existentes.append(nuevo_cierre)
+            
+            # 4. Ordenar por fecha de creación (más reciente primero)
+            cierres_existentes.sort(key=lambda x: x['fecha_creacion'], reverse=True)
+            
+            logger.info(f"📊 Total de cierres para cliente {cliente_id}: {len(cierres_existentes)}")
+            logger.info(f"📊 Límite máximo configurado: {max_cierres_por_cliente}")
+            
+            # 5. Identificar cierres a mantener y eliminar
+            cierres_a_mantener = cierres_existentes[:max_cierres_por_cliente]
+            cierres_a_eliminar = cierres_existentes[max_cierres_por_cliente:]
+            
+            # 6. Eliminar cierres antiguos de Redis
+            for cierre in cierres_a_eliminar:
+                try:
+                    claves_a_eliminar = [cierre['clave_esf'], cierre['clave_eri']]
+                    
+                    # También eliminar KPIs asociados si existen
+                    clave_kpis = f"sgm:contabilidad:{cliente_id}:{cierre['periodo']}:kpis"
+                    claves_a_eliminar.append(clave_kpis)
+                    
+                    eliminadas = self.redis_client.delete(*claves_a_eliminar)
+                    
+                    resultado['cierres_eliminados'].append({
+                        'periodo': cierre['periodo'],
+                        'fecha_creacion': cierre['fecha_creacion'],
+                        'claves_eliminadas': eliminadas
+                    })
+                    
+                    logger.info(f"🗑️ Cierre eliminado de Redis: cliente {cliente_id}, período {cierre['periodo']}")
+                    
+                except Exception as e:
+                    logger.error(f"Error eliminando cierre {cierre['periodo']}: {e}")
+            
+            # 7. Registrar cierres mantenidos
+            for cierre in cierres_a_mantener:
+                resultado['cierres_mantenidos'].append({
+                    'periodo': cierre['periodo'],
+                    'fecha_creacion': cierre['fecha_creacion']
+                })
+            
+            # 8. Incrementar estadísticas
+            self._increment_stat("retention_operations")
+            
+            # Incrementar contadores individuales para cierres eliminados y mantenidos
+            for _ in range(len(cierres_a_eliminar)):
+                self._increment_stat("cierres_eliminados")
+            for _ in range(len(cierres_a_mantener)):
+                self._increment_stat("cierres_mantenidos")
+            
+            logger.info(f"✅ Retención completada para cliente {cliente_id}:")
+            logger.info(f"   📁 Cierres mantenidos: {len(cierres_a_mantener)}")
+            logger.info(f"   🗑️ Cierres eliminados: {len(cierres_a_eliminar)}")
+            logger.info(f"   ⏰ TTL configurado: {ttl_hours} horas")
+            
+            return resultado
+            
+        except Exception as e:
+            logger.error(f"Error en retención de cierres para cliente {cliente_id}: {e}")
+            return {
+                'success': False,
+                'cliente_id': cliente_id,
+                'periodo': periodo,
+                'error': str(e),
+                'cierres_eliminados': [],
+                'cierres_mantenidos': []
+            }
+    
+    def get_cierres_disponibles_cliente(self, cliente_id: int) -> List[Dict[str, Any]]:
+        """
+        Obtener lista de cierres disponibles en Redis para un cliente específico.
+        
+        Args:
+            cliente_id: ID del cliente
+            
+        Returns:
+            Lista de cierres disponibles con metadata
+        """
+        try:
+            pattern = f"sgm:contabilidad:{cliente_id}:*:esf"
+            claves_esf = self.redis_client.keys(pattern)
+            
+            cierres = []
+            for clave in claves_esf:
+                try:
+                    # Extraer período de la clave
+                    parts = clave.split(':')
+                    if len(parts) >= 4:
+                        periodo = parts[3]
+                        
+                        # Verificar que también existe ERI
+                        clave_eri = clave.replace(':esf', ':eri')
+                        existe_eri = self.redis_client.exists(clave_eri)
+                        
+                        if existe_eri:
+                            # Obtener metadata
+                            datos_esf = self.redis_client.get(clave)
+                            if datos_esf:
+                                datos_parsed = json.loads(datos_esf)
+                                metadata = datos_parsed.get('_metadata', {})
+                                
+                                # Obtener TTL restante
+                                ttl_restante = self.redis_client.ttl(clave)
+                                
+                                cierre_info = {
+                                    'periodo': periodo,
+                                    'fecha_creacion': metadata.get('created_at'),
+                                    'ttl_restante_segundos': ttl_restante,
+                                    'ttl_restante_horas': round(ttl_restante / 3600, 1) if ttl_restante > 0 else 0,
+                                    'tiene_esf': True,
+                                    'tiene_eri': True,
+                                    'clave_esf': clave,
+                                    'clave_eri': clave_eri
+                                }
+                                
+                                cierres.append(cierre_info)
+                
+                except Exception as e:
+                    logger.warning(f"Error procesando cierre {clave}: {e}")
+                    continue
+            
+            # Ordenar por fecha de creación (más reciente primero)
+            cierres.sort(key=lambda x: x.get('fecha_creacion', ''), reverse=True)
+            
+            logger.debug(f"Cierres disponibles para cliente {cliente_id}: {len(cierres)}")
+            return cierres
+            
+        except Exception as e:
+            logger.error(f"Error obteniendo cierres del cliente {cliente_id}: {e}")
+            return []
 
 
 # Instancia global del sistema de cache

@@ -17,6 +17,48 @@ def main():
             unsafe_allow_html=True
         )
 
+    # Obtener información de Redis y cierres disponibles
+    try:
+        from data.loader_contabilidad import obtener_info_redis_completa
+        info_redis = obtener_info_redis_completa()
+    except:
+        info_redis = {
+            'ruta_redis': 'redis:6379/DB1',
+            'cliente_id': 2,
+            'cierres_disponibles': [],
+            'error': 'Error conectando'
+        }
+
+    # Información del sistema y selector
+    col1_info, col2_info, col3_info, col4_selector = st.columns([2, 2, 3, 3])
+    
+    with col1_info:
+        st.info(f"🔗 **Ruta Redis:**\n{info_redis.get('ruta_redis', 'N/A')}")
+    
+    with col2_info:
+        st.info(f"👤 **Cliente ID:**\n{info_redis.get('cliente_id', 'N/A')}")
+    
+    with col3_info:
+        cierres = info_redis.get('cierres_disponibles', [])
+        if cierres:
+            cierres_str = "\n".join([f"• {c}" for c in cierres[:3]])
+            if len(cierres) > 3:
+                cierres_str += f"\n... y {len(cierres)-3} más"
+            st.success(f"📊 **Cierres disponibles:**\n{cierres_str}")
+        else:
+            st.warning("📊 **Sin cierres disponibles**")
+    
+    with col4_selector:
+        if cierres:
+            periodo_seleccionado = st.selectbox(
+                "🎯 **Seleccionar cierre:**",
+                options=cierres,
+                index=0
+            )
+        else:
+            periodo_seleccionado = "2025-03"  # fallback
+            st.warning("🎯 **Sin cierres para seleccionar**")
+
     st.markdown("---")
 
     # Sidebar - Logo
@@ -47,8 +89,8 @@ def main():
         ["Resumen General", "ESF", "ERI", "Movimientos", "Análisis"]
     )
 
-    # Cargar datos de Redis o archivo de ejemplo
-    data = cargar_datos_redis(cliente_id=2, periodo="2025-03")
+    # Cargar datos de Redis usando el período seleccionado
+    data = cargar_datos_redis(cliente_id=info_redis.get('cliente_id', 2), periodo=periodo_seleccionado)
 
     metadata = {
         "cliente_nombre": data.get("cliente", {}).get("nombre"),

@@ -4,14 +4,30 @@ import redis
 import logging
 import os
 from typing import Optional, Dict, Any
+from functools import lru_cache
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Cache global para reutilizar conexión Redis
+_redis_client = None
+
 
 def conectar_redis():
-    """Conectar a Redis DB 1 (contabilidad)"""
+    """Conectar a Redis DB 1 (contabilidad) con reutilización de conexión"""
+    global _redis_client
+    
+    # Reutilizar conexión existente si está activa
+    if _redis_client is not None:
+        try:
+            _redis_client.ping()
+            logger.debug("🔄 Reutilizando conexión Redis existente")
+            return _redis_client
+        except:
+            logger.info("🔄 Conexión Redis caducada, reconectando...")
+            _redis_client = None
+    
     try:
         # Obtener configuración de Redis desde variables de entorno
         redis_host = os.getenv('REDIS_HOST', 'redis')
@@ -19,9 +35,9 @@ def conectar_redis():
         redis_password = os.getenv('REDIS_PASSWORD', 'Redis_Password_2025!')
         redis_db = int(os.getenv('REDIS_DB_CONTABILIDAD', '1'))
         
-        logger.info(f"🔗 Intentando conectar a Redis: {redis_host}:{redis_port} DB:{redis_db}")
+        logger.info(f"🔗 Conectando a Redis: {redis_host}:{redis_port} DB:{redis_db}")
         
-        redis_client = redis.Redis(
+        _redis_client = redis.Redis(
             host=redis_host,
             port=redis_port,
             db=redis_db,  # DB 1 para contabilidad
@@ -33,26 +49,78 @@ def conectar_redis():
         )
         
         # Verificar conexión
-        if redis_client.ping():
+        if _redis_client.ping():
             logger.info("✅ Conectado a Redis DB 1 (contabilidad)")
-            return redis_client
+            return _redis_client
         else:
             logger.error("❌ No se pudo conectar a Redis")
+            _redis_client = None
             return None
             
     except Exception as e:
         logger.error(f"❌ Error conectando a Redis: {e}")
+        _redis_client = None
         return None
 
 
-def cargar_esf_desde_redis(cliente_id: int = 2, periodo: str = "2025-08", test_type: str = "finalizacion_automatica") -> Optional[Dict[str, Any]]:
+def obtener_datos_batch_redis(cliente_id: int, periodo: str, redis_client) -> Dict[str, Any]:
     """
-    Cargar ESF desde Redis carpeta de pruebas
+    🚀 OPTIMIZACIÓN: Obtener ESF y ERI de Redis en una sola consulta batch
+    Simplificado para obtener solo los datos que realmente existen
     
     Args:
         cliente_id: ID del cliente
         periodo: Período contable
-        test_type: Tipo de test ("finalizacion_automatica", "current_system", etc.)
+        redis_client: Cliente Redis conectado
+        
+    Returns:
+        Dict con ESF y ERI disponibles
+    """
+    # Solo consultar los datos que realmente necesitamos: ESF y ERI
+    claves_consulta = {
+        'esf': f"sgm:contabilidad:{cliente_id}:{periodo}:esf",
+        'eri': f"sgm:contabilidad:{cliente_id}:{periodo}:eri"
+    }
+    
+    datos_encontrados = {}
+    
+    try:
+        # 🚀 USAR PIPELINE para consulta batch
+        pipe = redis_client.pipeline()
+        for clave in claves_consulta.values():
+            pipe.get(clave)
+        
+        # Ejecutar las 2 consultas de una vez
+        resultados = pipe.execute()
+        
+        # Procesar resultados
+        for i, (nombre_dato, clave) in enumerate(claves_consulta.items()):
+            if resultados[i]:
+                try:
+                    datos_encontrados[nombre_dato] = json.loads(resultados[i])
+                    logger.info(f"✅ {nombre_dato.upper()} encontrado ({len(resultados[i])} bytes)")
+                except json.JSONDecodeError as e:
+                    logger.warning(f"⚠️ Error parsing JSON para {nombre_dato}: {e}")
+            else:
+                logger.debug(f"❌ No encontrado: {nombre_dato}")
+                
+        logger.info(f"🚀 Consulta batch completada: {len(datos_encontrados)}/2 datasets encontrados")
+        
+    except Exception as e:
+        logger.error(f"❌ Error en consulta batch Redis: {e}")
+    
+    return datos_encontrados
+
+
+def cargar_esf_desde_redis(cliente_id: int = 2, periodo: str = "2025-08", test_type: str = "finalizacion_automatica") -> Optional[Dict[str, Any]]:
+    """
+    🚀 SIMPLIFICADO: Cargar solo ESF desde Redis 
+    Wrapper para compatibilidad con código existente
+    
+    Args:
+        cliente_id: ID del cliente
+        periodo: Período contable
+        test_type: Tipo de test (ignorado, mantenido por compatibilidad)
         
     Returns:
         Dict con ESF o None si no se encuentra
@@ -62,11 +130,10 @@ def cargar_esf_desde_redis(cliente_id: int = 2, periodo: str = "2025-08", test_t
         return None
     
     try:
-        # Construir la clave Redis para finalizacion_automatica
-        key = f"sgm:contabilidad:{cliente_id}:{periodo}:pruebas:esf:{test_type}"
-        
-        # Obtener datos
+        # Usar la clave directa simplificada
+        key = f"sgm:contabilidad:{cliente_id}:{periodo}:esf"
         data = redis_client.get(key)
+        
         if data:
             esf_data = json.loads(data)
             logger.info(f"✅ ESF cargado desde Redis: {key}")
@@ -82,7 +149,8 @@ def cargar_esf_desde_redis(cliente_id: int = 2, periodo: str = "2025-08", test_t
 
 def listar_esf_disponibles(cliente_id: int = 1) -> Dict[str, Any]:
     """
-    Listar todos los ESF disponibles en Redis para un cliente
+    🚀 SIMPLIFICADO: Listar ESF disponibles en Redis
+    Busca directamente en las claves simplificadas
     
     Args:
         cliente_id: ID del cliente
@@ -95,36 +163,38 @@ def listar_esf_disponibles(cliente_id: int = 1) -> Dict[str, Any]:
         return {"error": "No se pudo conectar a Redis", "esf_disponibles": []}
     
     try:
-        # Buscar todas las claves de ESF de prueba para el cliente (finalizacion_automatica)
-        pattern = f"sgm:contabilidad:{cliente_id}:*:pruebas:esf:*"
+        # Buscar claves ESF directas para el cliente
+        pattern = f"sgm:contabilidad:{cliente_id}:*:esf"
         keys = redis_client.keys(pattern)
         
         esf_disponibles = []
-        for key in keys:
-            parts = key.split(':')
-            if len(parts) >= 7:
-                periodo = parts[3]
-                test_type = parts[6]
-                
-                # Obtener metadata básica
-                try:
-                    data = redis_client.get(key)
-                    if data:
-                        esf_data = json.loads(data)
-                        esf_info = {
-                            'cliente_id': cliente_id,
-                            'periodo': periodo,
-                            'test_type': test_type,
-                            'redis_key': key,
-                            'generated_at': esf_data.get('generated_at', 'N/A'),
-                            'generated_by': esf_data.get('generated_by', 'N/A'),
-                            'source': esf_data.get('source', 'N/A'),
-                            'total_activos': esf_data.get('total_activos', 0),
-                            'balance_cuadrado': esf_data.get('balance_cuadrado', False)
-                        }
-                        esf_disponibles.append(esf_info)
-                except Exception as e:
-                    logger.warning(f"⚠️ Error procesando clave {key}: {e}")
+        
+        if keys:
+            # Usar pipeline para obtener metadata eficientemente
+            pipe = redis_client.pipeline()
+            for key in keys:
+                pipe.get(key)
+            
+            resultados = pipe.execute()
+            
+            for i, key in enumerate(keys):
+                if resultados[i]:
+                    try:
+                        parts = key.split(':')
+                        if len(parts) >= 4:
+                            periodo = parts[3]
+                            
+                            esf_data = json.loads(resultados[i])
+                            esf_info = {
+                                'cliente_id': cliente_id,
+                                'periodo': periodo,
+                                'redis_key': key,
+                                'size_kb': round(len(resultados[i]) / 1024, 1),
+                                'metadata': esf_data.get('metadata', {})
+                            }
+                            esf_disponibles.append(esf_info)
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error procesando clave {key}: {e}")
         
         logger.info(f"✅ Encontrados {len(esf_disponibles)} ESF para cliente {cliente_id}")
         return {
@@ -172,196 +242,209 @@ def cargar_datos():
 
 def cargar_datos_sistema_cierre(cliente_id: int = 2, periodo: str = "2025-08") -> Optional[Dict[str, Any]]:
     """
-    Cargar datos completos del sistema de cierre desde Redis (datos finales del sistema)
+    🚀 SIMPLIFICADO: Cargar ESF y ERI desde Redis
+    Solo busca los datos que realmente existen
     
     Args:
         cliente_id: ID del cliente
         periodo: Período contable
         
     Returns:
-        Dict con datos completos del cierre o None si no se encuentra
+        Dict con ESF y ERI o None si no se encuentra
     """
     redis_client = conectar_redis()
     if not redis_client:
         return None
     
     try:
-        # Buscar datos del cierre finalizado
-        datos_cierre = {}
+        # 🚀 Obtener solo ESF y ERI
+        datos_disponibles = obtener_datos_batch_redis(cliente_id, periodo, redis_client)
         
-        # 1. KPIs del cierre
-        key_kpis = f"sgm:contabilidad:{cliente_id}:{periodo}:kpis"
-        kpis_data = redis_client.get(key_kpis)
-        if kpis_data:
-            datos_cierre['kpis'] = json.loads(kpis_data)
-            logger.info(f"✅ KPIs cargados desde {key_kpis}")
-        
-        # 2. Estado de Situación Financiera (ESF) desde finalizacion_automatica
-        key_esf = f"sgm:contabilidad:{cliente_id}:{periodo}:pruebas:esf:finalizacion_automatica"
-        esf_data = redis_client.get(key_esf)
-        if esf_data:
-            datos_cierre['esf'] = json.loads(esf_data)
-            logger.info(f"✅ ESF cargado desde {key_esf}")
-        else:
-            # Fallback: intentar la clave directa
-            key_esf_directo = f"sgm:contabilidad:{cliente_id}:{periodo}:esf"
-            esf_data_directo = redis_client.get(key_esf_directo)
-            if esf_data_directo:
-                datos_cierre['esf'] = json.loads(esf_data_directo)
-                logger.info(f"✅ ESF cargado desde {key_esf_directo}")
-        
-        # 3. Estado de Resultados (ESR)
-        key_esr = f"sgm:contabilidad:{cliente_id}:{periodo}:esr"
-        esr_data = redis_client.get(key_esr)
-        if esr_data:
-            datos_cierre['esr'] = json.loads(esr_data)
-            logger.info(f"✅ ESR cargado desde {key_esr}")
-        
-        # 4. Estado de Resultados Integral (ERI)
-        key_eri = f"sgm:contabilidad:{cliente_id}:{periodo}:eri"
-        eri_data = redis_client.get(key_eri)
-        if eri_data:
-            datos_cierre['eri'] = json.loads(eri_data)
-            logger.info(f"✅ ERI cargado desde {key_eri}")
-        
-        # 5. Estado de Cambios en el Patrimonio (ECP)
-        key_ecp = f"sgm:contabilidad:{cliente_id}:{periodo}:ecp"
-        ecp_data = redis_client.get(key_ecp)
-        if ecp_data:
-            datos_cierre['ecp'] = json.loads(ecp_data)
-            logger.info(f"✅ ECP cargado desde {key_ecp}")
-        
-        # 6. Alertas del cierre
-        key_alertas = f"sgm:contabilidad:{cliente_id}:{periodo}:alertas"
-        alertas_data = redis_client.get(key_alertas)
-        if alertas_data:
-            datos_cierre['alertas'] = json.loads(alertas_data)
-            logger.info(f"✅ Alertas cargadas desde {key_alertas}")
-        
-        # 7. Estado de procesamiento
-        key_procesamiento = f"sgm:contabilidad:{cliente_id}:{periodo}:procesamiento"
-        procesamiento_data = redis_client.get(key_procesamiento)
-        if procesamiento_data:
-            datos_cierre['procesamiento'] = json.loads(procesamiento_data)
-            logger.info(f"✅ Estado de procesamiento cargado desde {key_procesamiento}")
-        
-        # 8. Movimientos
-        key_movimientos = f"sgm:contabilidad:{cliente_id}:{periodo}:movimientos"
-        movimientos_data = redis_client.get(key_movimientos)
-        if movimientos_data:
-            datos_cierre['movimientos'] = json.loads(movimientos_data)
-            logger.info(f"✅ Movimientos cargados desde {key_movimientos}")
-        
-        # 9. Catálogo de cuentas
-        key_cuentas = f"sgm:contabilidad:{cliente_id}:{periodo}:cuentas"
-        cuentas_data = redis_client.get(key_cuentas)
-        if cuentas_data:
-            datos_cierre['cuentas'] = json.loads(cuentas_data)
-            logger.info(f"✅ Cuentas cargadas desde {key_cuentas}")
-        
-        if datos_cierre:
-            logger.info(f"✅ Datos del sistema de cierre cargados para cliente {cliente_id}, período {periodo}")
-            return datos_cierre
-        else:
-            logger.warning(f"⚠️ No se encontraron datos del sistema de cierre")
+        if not datos_disponibles:
+            logger.warning(f"⚠️ No se encontraron datos en Redis")
             return None
+        
+        # Retornar datos encontrados
+        logger.info(f"✅ Datos cargados: {list(datos_disponibles.keys())}")
+        return datos_disponibles
             
     except Exception as e:
-        logger.error(f"❌ Error cargando datos del sistema de cierre: {e}")
+        logger.error(f"❌ Error cargando datos: {e}")
         return None
 
 
 def cargar_datos_redis(cliente_id: int = 2, periodo: str = "2025-08", test_type: str = "finalizacion_automatica") -> Dict[str, Any]:
     """
-    Cargar datos contables desde Redis (primero sistema de cierre, luego carpeta de pruebas)
+    🚀 SIMPLIFICADO: Cargar ESF y ERI desde Redis
+    Enfocado únicamente en los datos que realmente existen
     
     Args:
         cliente_id: ID del cliente
         periodo: Período contable  
-        test_type: Tipo de test
+        test_type: Tipo de test (mantenido por compatibilidad)
         
     Returns:
-        Dict con datos contables desde Redis o datos de ejemplo como fallback
+        Dict con ESF y ERI desde Redis o datos de ejemplo como fallback
     """
-    # 1. Intentar cargar desde el sistema de cierre completo
-    datos_sistema = cargar_datos_sistema_cierre(cliente_id, periodo)
+    redis_client = conectar_redis()
+    if not redis_client:
+        logger.warning(f"⚠️ No se pudo conectar a Redis, usando datos de ejemplo")
+        datos_ejemplo = cargar_datos()
+        datos_ejemplo["fuente"] = "archivo_ejemplo"
+        datos_ejemplo["metadata"] = {"source": "archivo_estatico"}
+        return datos_ejemplo
     
-    if datos_sistema:
-        logger.info(f"✅ Usando datos del sistema de cierre para cliente {cliente_id}, período {periodo}")
+    # 🚀 UNA SOLA CONSULTA BATCH para ESF y ERI
+    datos_redis = obtener_datos_batch_redis(cliente_id, periodo, redis_client)
+    
+    if datos_redis:
+        logger.info(f"✅ Datos Redis encontrados para cliente {cliente_id}, período {periodo}")
+        
+        # Construir respuesta para Streamlit
+        esf_data = datos_redis.get('esf', {})
+        eri_data = datos_redis.get('eri', {})
         
         # Estructurar datos para Streamlit
         return {
-            "fuente": "sistema_cierre",
+            "fuente": "redis",
             "cliente": {
                 "id": cliente_id,
-                "nombre": datos_sistema.get("esf", {}).get("metadata", {}).get("cliente_nombre", f"Cliente {cliente_id}")
+                "nombre": esf_data.get("metadata", {}).get("cliente_nombre", f"Cliente {cliente_id}")
             },
             "cierre": {
-                "id": datos_sistema.get("esf", {}).get("metadata", {}).get("cierre_id", None),
+                "id": esf_data.get("metadata", {}).get("cierre_id", None),
                 "cliente": cliente_id,
                 "periodo": periodo,
                 "estado": "finalizado",
-                "fecha_generacion": datos_sistema.get("esf", {}).get("metadata", {}).get("fecha_generacion"),
-                "source": "sistema_cierre"
+                "fecha_generacion": esf_data.get("metadata", {}).get("fecha_generacion"),
+                "source": "redis"
             },
-            "esf": datos_sistema.get("esf", {}),
-            "esr": datos_sistema.get("esr", {}),
-            "eri": datos_sistema.get("eri", {}),
-            "ecp": datos_sistema.get("ecp", {}),
-            "kpis": datos_sistema.get("kpis", {}),
-            "alertas": datos_sistema.get("alertas", []),
-            "procesamiento": datos_sistema.get("procesamiento", {}),
-            "movimientos": datos_sistema.get("movimientos", []),
-            "cuentas": datos_sistema.get("cuentas", {}),
+            "esf": esf_data,
+            "eri": eri_data,
             "metadata": {
-                "fuente": "sistema_cierre",
-                "completitud": len([k for k, v in datos_sistema.items() if v]),
-                "estados_disponibles": [k for k, v in datos_sistema.items() if v and k in ['esf', 'esr', 'eri', 'ecp']]
+                "fuente": "redis",
+                "datos_disponibles": list(datos_redis.keys()),
+                "total_datasets": len(datos_redis)
             },
-            "raw_json": datos_sistema  # JSON completo para mostrar en sidebar
+            "raw_json": datos_redis
         }
     
-    # 2. Fallback: Intentar cargar desde carpeta de pruebas
-    esf_redis = cargar_esf_desde_redis(cliente_id, periodo, test_type)
+    # Fallback: datos de ejemplo
+    logger.warning(f"⚠️ No se encontraron datos Redis, usando datos de ejemplo")
+    datos_ejemplo = cargar_datos()
+    datos_ejemplo["fuente"] = "archivo_ejemplo"
+    datos_ejemplo["metadata"] = {
+        "source": "archivo_estatico",
+        "datos_disponibles": ["ejemplo"]
+    }
+    return datos_ejemplo
+
+
+def verificar_estado_redis(cliente_id: int = 2, periodo: str = "2025-03") -> Dict[str, Any]:
+    """
+    Verificar el estado de la conexión Redis y disponibilidad de datos
     
-    if esf_redis:
-        logger.info(f"✅ Usando datos de pruebas Redis para cliente {cliente_id}, período {periodo}")
+    Returns:
+        Dict con el estado de cada componente del sistema
+    """
+    estado = {
+        'redis_conectado': False,
+        'cliente_encontrado': False,
+        'cierres_disponibles': 0,
+        'periodo_seleccionado': False,
+        'error_mensaje': None
+    }
+    
+    try:
+        # 1. Verificar conexión Redis
+        redis_client = conectar_redis()
+        if redis_client:
+            redis_client.ping()
+            estado['redis_conectado'] = True
+            logger.info("✅ Redis conectado correctamente")
         
-        # Construir estructura compatible con Streamlit
-        return {
-            "fuente": "redis_pruebas",
-            "cliente": {
-                "id": esf_redis.get("cliente_id", cliente_id),
-                "nombre": esf_redis.get("cliente_nombre", f"Cliente {cliente_id}")
-            },
-            "cierre": {
-                "id": esf_redis.get("cierre_id", None),
-                "cliente": cliente_id,
-                "periodo": periodo,
-                "estado": "finalizado" if esf_redis.get("balance_cuadrado", False) else "en_proceso",
-                "fecha_generacion": esf_redis.get("generated_at"),
-                "source": esf_redis.get("source", test_type)
-            },
-            "esf": esf_redis,
-            "estado_financiero": esf_redis,  # Backward compatibility
-            "metadata": {
-                "test_type": test_type,
-                "generated_by": esf_redis.get("generated_by"),
-                "redis_key": f"sgm:contabilidad:{cliente_id}:{periodo}:pruebas:esf:{test_type}",
-                "metadata_prueba": esf_redis.get("metadata_prueba", {}),
-                "contexto_generacion": esf_redis.get("contexto_generacion", {})
-            },
-            "raw_json": esf_redis  # JSON completo para mostrar en sidebar
-        }
-    else:
-        logger.warning(f"⚠️ No se encontraron datos Redis, usando datos de ejemplo")
-        # Fallback a datos de ejemplo
-        datos_ejemplo = cargar_datos()
-        datos_ejemplo["fuente"] = "archivo_ejemplo"
-        datos_ejemplo["metadata"] = {
-            "test_type": "ejemplo",
-            "generated_by": "archivo_estatico",
-            "redis_key": "N/A"
-        }
-        datos_ejemplo["raw_json"] = datos_ejemplo  # JSON completo para mostrar
-        return datos_ejemplo
+        # 2. Verificar si el cliente tiene datos
+        try:
+            pattern = f"sgm:contabilidad:{cliente_id}:*:esf"
+            claves_cliente = redis_client.keys(pattern)
+            
+            if claves_cliente:
+                estado['cliente_encontrado'] = True
+                estado['cierres_disponibles'] = len(claves_cliente)
+                logger.info(f"✅ Cliente {cliente_id} encontrado con {len(claves_cliente)} cierres")
+                
+                # 3. Verificar si el período específico existe
+                esf_key = f"sgm:contabilidad:{cliente_id}:{periodo}:esf"
+                eri_key = f"sgm:contabilidad:{cliente_id}:{periodo}:eri"
+                
+                if redis_client.exists(esf_key) and redis_client.exists(eri_key):
+                    estado['periodo_seleccionado'] = True
+                    logger.info(f"✅ Período {periodo} disponible para cliente {cliente_id}")
+                else:
+                    logger.warning(f"⚠️ Período {periodo} no encontrado para cliente {cliente_id}")
+            else:
+                logger.warning(f"⚠️ No se encontraron datos para cliente {cliente_id}")
+        
+        except Exception as e:
+            logger.error(f"❌ Error verificando datos del cliente: {e}")
+            estado['error_mensaje'] = f"Error verificando cliente: {str(e)}"
+    
+    except Exception as e:
+        logger.error(f"❌ Error conectando a Redis: {e}")
+        estado['error_mensaje'] = f"Error Redis: {str(e)}"
+    
+    return estado
+
+
+def obtener_info_redis_completa(cliente_id: int = 2) -> Dict[str, Any]:
+    """
+    Obtener información completa de Redis y cierres disponibles
+    
+    Returns:
+        Dict con información detallada del sistema Redis
+    """
+    info = {
+        'ruta_redis': 'redis:6379/DB1',
+        'cliente_id': cliente_id,
+        'cierres_disponibles': [],
+        'error': None
+    }
+    
+    try:
+        # Obtener información de conexión Redis
+        redis_client = conectar_redis()
+        redis_host = os.getenv('REDIS_HOST', 'redis')
+        redis_port = os.getenv('REDIS_PORT', '6379')
+        redis_db = os.getenv('REDIS_DB_CONTABILIDAD', '1')
+        
+        info['ruta_redis'] = f"{redis_host}:{redis_port}/DB{redis_db}"
+        
+        # Obtener cierres disponibles para el cliente
+        pattern = f"sgm:contabilidad:{cliente_id}:*:esf"
+        claves_esf = redis_client.keys(pattern)
+        
+        # Extraer períodos únicos
+        periodos = []
+        for clave in claves_esf:
+            parts = clave.split(':')
+            if len(parts) >= 4:
+                periodo = parts[3]  # sgm:contabilidad:{cliente_id}:{periodo}:esf
+                
+                # Verificar que también existe ERI
+                clave_eri = clave.replace(':esf', ':eri')
+                if redis_client.exists(clave_eri):
+                    periodos.append(periodo)
+        
+        # Ordenar períodos (más reciente primero)
+        periodos_unicos = sorted(list(set(periodos)), reverse=True)
+        info['cierres_disponibles'] = periodos_unicos
+        
+        logger.info(f"✅ Redis info obtenida: {len(periodos_unicos)} cierres para cliente {cliente_id}")
+        
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo info Redis: {e}")
+        info['error'] = str(e)
+        # Fallback con datos de ejemplo
+        info['cierres_disponibles'] = ['2025-03', '2025-02', '2025-01']
+    
+    return info

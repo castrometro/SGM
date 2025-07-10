@@ -1662,35 +1662,55 @@ def guardar_datos_en_redis(cierre, esf, estado_resultados, ratios, cuentas_saldo
             print(f"   📋 Traceback: {traceback.format_exc()}")
         
         # ========================================
-        # 2. GUARDAR DATOS PRINCIPALES EN REDIS
+        # 2. GUARDAR DATOS PRINCIPALES EN REDIS CON RETENCIÓN
         # ========================================
         try:
-            print(f"   ⚡ Guardando en cache principal de Redis...")
+            print(f"   ⚡ Guardando en cache principal de Redis con retención automática...")
             
-            # Guardar ESF en cache principal
-            cache_esf_success = cache_system.set_estado_financiero(
+            # Usar la nueva función de retención que mantiene solo los 2 cierres más recientes
+            resultado_retencion = cache_system.set_estado_financiero_with_retention(
                 cliente_id=cierre.cliente.id,
                 periodo=cierre.periodo,
-                tipo_estado="esf",
-                datos=decimal_to_float(esf)
+                datos_esf=decimal_to_float(esf),
+                datos_eri=decimal_to_float(estado_resultados),
+                max_cierres_por_cliente=2,  # Mantener solo 2 cierres por cliente
+                ttl_hours=24*90  # TTL de 90 días
             )
             
-            # Guardar KPIs/ratios
-            cache_kpis_success = cache_system.set_kpis(
-                cliente_id=cierre.cliente.id,
-                periodo=cierre.periodo,
-                kpis=decimal_to_float(ratios)
-            )
-            
-            if cache_esf_success and cache_kpis_success:
-                print(f"   ✅ Datos guardados en cache principal:")
+            if resultado_retencion['success']:
+                print(f"   ✅ Datos guardados con retención automática:")
                 print(f"       ESF: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:esf")
-                print(f"       KPIs: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:kpis")
+                print(f"       ERI: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:eri")
+                print(f"       📊 Cierres mantenidos: {len(resultado_retencion['cierres_mantenidos'])}")
+                print(f"       🗑️ Cierres eliminados: {len(resultado_retencion['cierres_eliminados'])}")
+                
+                # Mostrar detalles de cierres mantenidos
+                for cierre_mantenido in resultado_retencion['cierres_mantenidos']:
+                    print(f"       📁 Mantenido: {cierre_mantenido['periodo']} (creado: {cierre_mantenido['fecha_creacion'][:19]})")
+                
+                # Mostrar detalles de cierres eliminados
+                for cierre_eliminado in resultado_retencion['cierres_eliminados']:
+                    print(f"       🗑️ Eliminado: {cierre_eliminado['periodo']} (creado: {cierre_eliminado['fecha_creacion'][:19]})")
+                
+                # Guardar KPIs por separado (mantiene la funcionalidad existente)
+                cache_kpis_success = cache_system.set_kpis(
+                    cliente_id=cierre.cliente.id,
+                    periodo=cierre.periodo,
+                    kpis=decimal_to_float(ratios)
+                )
+                
+                if cache_kpis_success:
+                    print(f"       📈 KPIs: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:kpis")
+                else:
+                    print(f"       ⚠️ Error guardando KPIs")
+                    
             else:
-                print(f"   ⚠️ Algunos datos no se pudieron guardar en cache principal")
+                print(f"   ❌ Error en retención automática: {resultado_retencion.get('error', 'Error desconocido')}")
                 
         except Exception as e:
-            print(f"   ⚠️ Error guardando en cache principal: {e}")
+            print(f"   ❌ Error guardando en cache principal con retención: {e}")
+            import traceback
+            print(f"   📋 Traceback: {traceback.format_exc()}")
         
         # ========================================
         # 3. DATOS LEGACY (COMPATIBILIDAD)

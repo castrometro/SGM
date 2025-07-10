@@ -22,6 +22,8 @@ import {
   obtenerEstadoUploadLog,
   // API para clasificaciones persistentes
   obtenerClasificacionesPersistentesDetalladas,
+  crearClasificacionArchivo,
+  obtenerCuentasCliente,
 } from "../../api/contabilidad";
 
 const ClasificacionBulkCard = ({
@@ -62,6 +64,10 @@ const ClasificacionBulkCard = ({
   const [uploadEstado, setUploadEstado] = useState(null);
   const [uploadProgreso, setUploadProgreso] = useState("");
 
+  // NUEVO: Estados para sincronización de cuentas nuevas
+  const [sincronizandoCuentas, setSincronizandoCuentas] = useState(false);
+  const [cuentasNuevasDisponibles, setCuentasNuevasDisponibles] = useState(0);
+
   const mostrarNotificacion = (tipo, mensaje) => {
     setNotificacion({ visible: true, tipo, mensaje });
   };
@@ -76,8 +82,12 @@ const ClasificacionBulkCard = ({
   // Cargar estado inicial al montar el componente
   useEffect(() => {
     const fetchEstadoInicial = async () => {
+      console.log('🚀 INICIANDO CARGA DE ESTADO INICIAL - ClasificacionBulkCard');
+      console.log(`Props recibidas: clienteId=${clienteId}, cierreId=${cierreId}, disabled=${disabled}`);
+      
       try {
         const data = await obtenerEstadoClasificaciones(clienteId);
+        console.log('📊 Estado de clasificaciones obtenido:', data);
         setEstado(data.estado);
         setArchivoNombre(data.archivo_nombre || "");
         
@@ -103,7 +113,12 @@ const ClasificacionBulkCard = ({
         
         // Siempre cargar datos detallados para verificar uploads existentes
         await cargar();
+        
+        // NUEVO: Verificar cuentas nuevas del libro mayor
+        console.log('🔍 Verificando cuentas nuevas del libro mayor...');
+        await verificarCuentasNuevas();
       } catch (err) {
+        console.error('❌ Error en fetchEstadoInicial:', err);
         // Si hay error, verificar solo clasificaciones persistentes como fallback
         let tieneClasificacionesPersistentes = false;
         try {
@@ -124,6 +139,9 @@ const ClasificacionBulkCard = ({
           console.error("Error loading uploads:", loadErr);
         }
       }
+      
+      console.log('🏁 CARGA DE ESTADO INICIAL COMPLETADA');
+      console.log('─'.repeat(80));
     };
     
     if (clienteId && !disabled) fetchEstadoInicial();
@@ -194,6 +212,9 @@ const ClasificacionBulkCard = ({
         console.log("❌ No hay último upload válido");
         setRegistrosRaw([]);
       }
+      
+      // NUEVO: Verificar cuentas nuevas después de cargar datos
+      await verificarCuentasNuevas();
     } catch (e) {
       console.error("💥 Error al cargar uploads:", e);
       setRegistrosRaw([]);
@@ -305,6 +326,169 @@ const ClasificacionBulkCard = ({
     }
   };
 
+  // NUEVO: Función para verificar cuentas nuevas del libro mayor
+  const verificarCuentasNuevas = async () => {
+    if (!cierreId) return;
+    
+    try {
+      console.log('🔍 INICIANDO VERIFICACIÓN DE CUENTAS NUEVAS');
+      console.log(`Cliente ID: ${clienteId}, Cierre ID: ${cierreId}`);
+      
+      // Obtener cuentas del cliente
+      const cuentasCliente = await obtenerCuentasCliente(clienteId);
+      console.log(`📊 Total cuentas del cliente: ${cuentasCliente.length}`);
+      
+      // Log de todas las cuentas del cliente
+      console.log('📋 TODAS LAS CUENTAS DEL CLIENTE:');
+      cuentasCliente.forEach((cuenta, index) => {
+        console.log(`  ${index + 1}. ${cuenta.codigo} - ${cuenta.nombre}`);
+      });
+      
+      // Obtener clasificaciones existentes
+      const clasificacionesExistentes = await obtenerClasificacionesPersistentesDetalladas(clienteId);
+      console.log(`📊 Total clasificaciones existentes: ${clasificacionesExistentes.length}`);
+      
+      // Log de todas las clasificaciones existentes
+      console.log('📋 TODAS LAS CLASIFICACIONES EXISTENTES:');
+      clasificacionesExistentes.forEach((clasif, index) => {
+        console.log(`  ${index + 1}. ${clasif.numero_cuenta} - ${clasif.nombre_cuenta || 'Sin nombre'}`);
+      });
+      
+      // Crear set de cuentas que ya tienen clasificación
+      const cuentasClasificadas = new Set(
+        clasificacionesExistentes.map(c => c.numero_cuenta)
+      );
+      
+      console.log('🔗 SET DE CUENTAS CLASIFICADAS:', Array.from(cuentasClasificadas));
+      
+      // Filtrar cuentas sin clasificación
+      const cuentasSinClasificar = cuentasCliente.filter(
+        cuenta => !cuentasClasificadas.has(cuenta.codigo)
+      );
+      
+      console.log('🆕 CUENTAS SIN CLASIFICAR DETECTADAS:');
+      if (cuentasSinClasificar.length === 0) {
+        console.log('  ✅ No hay cuentas sin clasificar');
+      } else {
+        cuentasSinClasificar.forEach((cuenta, index) => {
+          console.log(`  ${index + 1}. CÓDIGO: ${cuenta.codigo} | NOMBRE: ${cuenta.nombre}`);
+          console.log(`     → Esta cuenta NO está en el set de clasificaciones`);
+        });
+      }
+      
+      setCuentasNuevasDisponibles(cuentasSinClasificar.length);
+      console.log(`🔍 RESULTADO FINAL: ${cuentasSinClasificar.length} cuentas nuevas detectadas`);
+      console.log('─'.repeat(80));
+    } catch (error) {
+      console.error('❌ Error verificando cuentas nuevas:', error);
+      setCuentasNuevasDisponibles(0);
+    }
+  };
+
+  // NUEVO: Función para sincronizar cuentas nuevas
+  const sincronizarCuentasNuevas = async () => {
+    if (!cierreId) {
+      mostrarNotificacion('error', 'No hay cierre activo para sincronizar cuentas');
+      return;
+    }
+    
+    setSincronizandoCuentas(true);
+    console.log('🔄 INICIANDO SINCRONIZACIÓN DE CUENTAS NUEVAS');
+    
+    try {
+      // Obtener cuentas del cliente
+      const cuentasCliente = await obtenerCuentasCliente(clienteId);
+      console.log(`📊 Total cuentas del cliente: ${cuentasCliente.length}`);
+      
+      // Obtener clasificaciones existentes
+      const clasificacionesExistentes = await obtenerClasificacionesPersistentesDetalladas(clienteId);
+      console.log(`📊 Total clasificaciones existentes: ${clasificacionesExistentes.length}`);
+      
+      // Crear set de cuentas que ya tienen clasificación
+      const cuentasClasificadas = new Set(
+        clasificacionesExistentes.map(c => c.numero_cuenta)
+      );
+      
+      // Filtrar cuentas sin clasificación
+      const cuentasSinClasificar = cuentasCliente.filter(
+        cuenta => !cuentasClasificadas.has(cuenta.codigo)
+      );
+      
+      console.log('🆕 CUENTAS A SINCRONIZAR:');
+      cuentasSinClasificar.forEach((cuenta, index) => {
+        console.log(`  ${index + 1}. ${cuenta.codigo} - ${cuenta.nombre}`);
+      });
+      
+      if (cuentasSinClasificar.length === 0) {
+        console.log('ℹ️ No hay cuentas nuevas para sincronizar');
+        mostrarNotificacion('info', 'No hay cuentas nuevas para sincronizar');
+        return;
+      }
+      
+      // Crear registros de clasificación vacíos para las cuentas nuevas
+      let cuentasAñadidas = 0;
+      
+      for (const cuenta of cuentasSinClasificar) {
+        try {
+          console.log(`➕ Añadiendo cuenta: ${cuenta.codigo} - ${cuenta.nombre}`);
+          
+          const datosAEnviar = {
+            cliente_id: clienteId,
+            numero_cuenta: cuenta.codigo,
+            nombre_cuenta: cuenta.nombre,
+            clasificaciones: {} // Sin clasificación inicial
+          };
+          
+          console.log(`📤 Datos a enviar:`, datosAEnviar);
+          
+          const resultado = await crearClasificacionArchivo(datosAEnviar);
+          console.log(`✅ Cuenta ${cuenta.codigo} añadida correctamente:`, resultado);
+          
+          cuentasAñadidas++;
+        } catch (error) {
+          console.error(`❌ Error añadiendo cuenta ${cuenta.codigo}:`, error);
+          
+          // Log adicional del error
+          if (error.response) {
+            console.error(`   Status: ${error.response.status}`);
+            console.error(`   Data:`, error.response.data);
+          }
+        }
+      }
+      
+      console.log(`📊 RESULTADO DE SINCRONIZACIÓN:`);
+      console.log(`   Total cuentas procesadas: ${cuentasSinClasificar.length}`);
+      console.log(`   Cuentas añadidas exitosamente: ${cuentasAñadidas}`);
+      console.log(`   Errores: ${cuentasSinClasificar.length - cuentasAñadidas}`);
+      
+      if (cuentasAñadidas > 0) {
+        mostrarNotificacion(
+          'success', 
+          `✅ ${cuentasAñadidas} cuentas nuevas añadidas al sistema de clasificaciones`
+        );
+        
+        // Actualizar estado
+        setCuentasNuevasDisponibles(0);
+        
+        // Recargar datos
+        await cargar();
+        
+        // Notificar al padre para actualizar el estado
+        if (onCompletado) onCompletado(true);
+      } else {
+        mostrarNotificacion('error', 'No se pudieron añadir las cuentas nuevas');
+      }
+      
+    } catch (error) {
+      console.error('❌ Error sincronizando cuentas:', error);
+      mostrarNotificacion('error', 'Error al sincronizar cuentas nuevas');
+    } finally {
+      setSincronizandoCuentas(false);
+      console.log('🏁 SINCRONIZACIÓN FINALIZADA');
+      console.log('─'.repeat(80));
+    }
+  };
+
   return (
     <div
       className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${disabled ? "opacity-60 pointer-events-none" : ""}`}
@@ -395,8 +579,42 @@ const ClasificacionBulkCard = ({
           <Database size={16} />
           Gestionar clasificaciones
         </button>
+        
+        {/* NUEVO: Botón para sincronizar cuentas nuevas */}
+        {cuentasNuevasDisponibles > 0 && (
+          <button
+            onClick={sincronizarCuentasNuevas}
+            disabled={sincronizandoCuentas}
+            className={`px-3 py-1 rounded text-sm font-medium transition flex items-center gap-2 ${
+              sincronizandoCuentas 
+                ? 'bg-gray-600 cursor-not-allowed' 
+                : 'bg-green-600 hover:bg-green-500'
+            } text-white`}
+            title={`Añadir ${cuentasNuevasDisponibles} cuentas nuevas del libro mayor al sistema de clasificaciones`}
+          >
+            <RefreshCw size={16} className={sincronizandoCuentas ? 'animate-spin' : ''} />
+            {sincronizandoCuentas 
+              ? 'Sincronizando...' 
+              : `Añadir ${cuentasNuevasDisponibles} cuentas nuevas`
+            }
+          </button>
+        )}
       </div>            {/* Información del estado y resumen */}
             <div className="text-xs text-gray-400 italic mt-2">
+              {/* NUEVO: Mostrar información de cuentas nuevas */}
+              {cuentasNuevasDisponibles > 0 && (
+                <div className="bg-yellow-900/20 border border-yellow-500/30 rounded p-2 mb-2">
+                  <div className="text-yellow-300 font-medium mb-1">
+                    🆕 {cuentasNuevasDisponibles} cuentas nuevas detectadas
+                  </div>
+                  <div className="text-xs space-y-1">
+                    <div>• Estas cuentas aparecieron en el último procesamiento del libro mayor</div>
+                    <div>• Use el botón "Añadir cuentas nuevas" para incluirlas en el sistema de clasificaciones</div>
+                    <div>• Podrá clasificarlas después usando el botón "Gestionar clasificaciones"</div>
+                  </div>
+                </div>
+              )}
+              
               {estado === "subido" ? (
                 <div className="space-y-2">
                   {archivoNombre ? (
@@ -505,8 +723,9 @@ const ClasificacionBulkCard = ({
         clienteId={clienteId}
         cierreId={cierreId}
         cliente={cliente}
-        onDataChanged={() => {
-          cargar(); // Recargar datos después de cambios CRUD
+        onDataChanged={async () => {
+          await cargar(); // Recargar datos después de cambios CRUD
+          await verificarCuentasNuevas(); // NUEVO: También verificar cuentas nuevas
         }}
       />
 

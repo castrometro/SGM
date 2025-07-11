@@ -504,9 +504,17 @@ export const eliminarTodosNombresIngles = async (clienteId) => {
 // a diferencia de las funciones de archivo temporal que dependen del uploadId
 
 export const obtenerClasificacionesPersistentes = async (clienteId) => {
+  console.log('🌐 API: obtenerClasificacionesPersistentes con clienteId:', clienteId);
   const res = await api.get("/contabilidad/clasificaciones/", {
     params: { cuenta__cliente: clienteId },
   });
+  console.log('✅ API: obtenerClasificacionesPersistentes respuesta:', res.data.length, 'registros');
+  
+  // Debug: Log de la primera clasificación para verificar estructura
+  if (res.data.length > 0) {
+    console.log('🔍 Primera clasificación persistente:', res.data[0]);
+  }
+  
   return res.data;
 };
 
@@ -523,18 +531,19 @@ export const registrarVistaClasificacionesPersistentes = async (clienteId, cierr
   return res.data;
 };
 
-export const actualizarClasificacionPersistente = async (clasificacionId, data) => {
-  const res = await api.patch(`/contabilidad/clasificaciones/${clasificacionId}/`, data);
+export const actualizarClasificacionPersistente = async (cuentaCodigo, data) => {
+  const clienteId = data.cliente || data.cliente_id;
+  const res = await api.patch(`/contabilidad/clasificaciones/registro-completo/${cuentaCodigo}/?cliente=${clienteId}`, data);
   return res.data;
 };
 
-export const eliminarClasificacionPersistente = async (clasificacionId) => {
-  const res = await api.delete(`/contabilidad/clasificaciones/${clasificacionId}/`);
+export const eliminarClasificacionPersistente = async (cuentaCodigo, clienteId) => {
+  const res = await api.delete(`/contabilidad/clasificaciones/registro-completo/${cuentaCodigo}/delete/?cliente=${clienteId}`);
   return res.data;
 };
 
 export const crearClasificacionPersistente = async (data) => {
-  const res = await api.post("/contabilidad/clasificaciones/", data);
+  const res = await api.post("/contabilidad/clasificaciones/registro-completo/", data);
   return res.data;
 };
 
@@ -588,77 +597,128 @@ export const reprocesarBulkClasificacionUpload = async (uploadId) => {
   return res.data;
 };
 
-// ==================== CLASIFICACIÓN ARCHIVO (RAW DATA) ====================
+// ==================== CLASIFICACIÓN ARCHIVO (RAW DATA) - OBSOLETO ====================
+// REDISEÑADO: Estas funciones son obsoletas porque ClasificacionCuentaArchivo fue eliminado
+// Usar las funciones de AccountClassification (clasificaciones persistentes) en su lugar
+
+/**
+ * @deprecated Usar obtenerClasificacionesPersistentesDetalladas en su lugar
+ */
 export const obtenerClasificacionesArchivo = async (uploadId) => {
-  const res = await api.get("/contabilidad/clasificacion-archivo/", {
+  console.warn('⚠️ obtenerClasificacionesArchivo es obsoleta. Usar obtenerClasificacionesPersistentesDetalladas');
+  // Redirigir a la nueva función que trabaja con AccountClassification
+  const res = await api.get("/contabilidad/clasificaciones/", {
     params: { upload_log: uploadId },
   });
   return res.data;
 };
 
+/**
+ * @deprecated Usar crearClasificacionPersistente en su lugar
+ */
 export const crearClasificacionArchivo = async (data) => {
-  const res = await api.post("/contabilidad/clasificacion-archivo/", data);
+  console.warn('⚠️ crearClasificacionArchivo es obsoleta. Usar crearClasificacionPersistente');
+  // Redirigir a AccountClassification
+  const res = await api.post("/contabilidad/clasificaciones/", data);
   return res.data;
 };
 
+/**
+ * @deprecated Usar actualizarClasificacionPersistente en su lugar
+ */
 export const actualizarClasificacionArchivo = async (id, data) => {
-  const res = await api.patch(
-    `/contabilidad/clasificacion-archivo/${id}/`,
-    data,
-  );
+  console.warn('⚠️ actualizarClasificacionArchivo es obsoleta. Usar actualizarClasificacionPersistente');
+  const res = await api.patch(`/contabilidad/clasificaciones/${id}/`, data);
   return res.data;
 };
 
+/**
+ * @deprecated Usar eliminarClasificacionPersistente en su lugar
+ */
 export const eliminarClasificacionArchivo = async (id) => {
-  const res = await api.delete(`/contabilidad/clasificacion-archivo/${id}/`);
+  console.warn('⚠️ eliminarClasificacionArchivo es obsoleta. Usar eliminarClasificacionPersistente');
+  const res = await api.delete(`/contabilidad/clasificaciones/${id}/`);
   return res.data;
 };
 
+/**
+ * @deprecated Esta función usaba el modelo obsoleto ClasificacionCuentaArchivo
+ */
 export const clasificacionBulkArchivo = async (registroIds, setNombre, valorClasificacion) => {
-  const res = await api.post("/contabilidad/clasificacion-archivo/bulk-classify/", {
-    registro_ids: registroIds,
-    set_nombre: setNombre,
-    valor_clasificacion: valorClasificacion
-  });
-  return res.data;
+  console.warn('⚠️ clasificacionBulkArchivo es obsoleta. El bulk se maneja automáticamente en el procesamiento');
+  throw new Error('Función obsoleta: clasificacionBulkArchivo ya no es necesaria con el nuevo flujo');
 };
 
+/**
+ * @deprecated Esta función es obsoleta, el mapeo se hace automáticamente
+ */
 export const procesarMapeoClasificaciones = async (uploadId) => {
-  const res = await api.post(
-    "/contabilidad/clasificacion-archivo/procesar_mapeo/",
-    {
-      upload_log_id: uploadId,
-    },
-  );
-  return res.data;
+  console.warn('⚠️ procesarMapeoClasificaciones es obsoleta. El mapeo es automático');
+  // En el nuevo flujo, esto se hace automáticamente cuando se sube el libro mayor
+  return { mensaje: 'El mapeo se hace automáticamente cuando se sube el libro mayor' };
 };
 
+/**
+ * @deprecated Usar obtenerClasificacionesPersistentes en su lugar
+ */
 export const obtenerClasificacionesArchivoCliente = async (
   clienteId,
   procesado = null,
 ) => {
-  const params = { cliente: clienteId };
-  if (procesado !== null) {
-    params.procesado = procesado;
-  }
-  const res = await api.get("/contabilidad/clasificacion-archivo/", { params });
+  console.warn('⚠️ obtenerClasificacionesArchivoCliente es obsoleta. Usar obtenerClasificacionesPersistentes');
+  return obtenerClasificacionesPersistentes(clienteId);
+};
+
+/**
+ * @deprecated Usar obtenerEstadisticasClasificacionesPersistentes en su lugar
+ */
+export const obtenerEstadisticasClasificacionArchivo = async (uploadId) => {
+  console.warn('⚠️ obtenerEstadisticasClasificacionArchivo es obsoleta. Usar obtenerEstadisticasClasificacionesPersistentes');
+  // Redirigir a estadísticas persistentes
+  // Nota: uploadId debe convertirse a clienteId para la nueva función
+  throw new Error('Esta función requiere adaptación: debe proporcionar clienteId en lugar de uploadId');
+};
+
+// ==================== NUEVAS FUNCIONES PARA REDISEÑO ====================
+
+/**
+ * Obtiene clasificaciones por upload_log (tanto temporales como con FK)
+ * Reemplaza la funcionalidad de obtenerClasificacionesArchivo
+ */
+export const obtenerClasificacionesPorUpload = async (uploadId) => {
+  console.log('🌐 API: obtenerClasificacionesPorUpload con uploadId:', uploadId);
+  const res = await api.get("/contabilidad/clasificaciones/", {
+    params: { upload_log: uploadId },
+  });
+  console.log('✅ API: obtenerClasificacionesPorUpload respuesta:', res.data.length, 'registros');
   return res.data;
 };
 
-export const obtenerEstadisticasClasificacionArchivo = async (uploadId) => {
-  const registros = await obtenerClasificacionesArchivo(uploadId);
-  const total = registros.length;
-  const procesados = registros.filter((r) => r.procesado).length;
-  const conErrores = registros.filter((r) => r.errores_mapeo).length;
-  const pendientes = total - procesados;
+/**
+ * Obtiene clasificaciones temporales (sin FK a cuenta) para un cliente
+ */
+export const obtenerClasificacionesTemporales = async (clienteId) => {
+  console.log('🌐 API: obtenerClasificacionesTemporales con clienteId:', clienteId);
+  const res = await api.get("/contabilidad/clasificaciones/", {
+    params: { 
+      cliente: clienteId,
+      cuenta__isnull: true  // Solo temporales
+    },
+  });
+  console.log('✅ API: obtenerClasificacionesTemporales respuesta:', res.data.length, 'registros');
+  return res.data;
+};
 
-  return {
-    total,
-    procesados,
-    pendientes,
-    conErrores,
-    registros,
-  };
+/**
+ * Migra clasificaciones temporales a FK después de subir libro mayor
+ */
+export const migrarClasificacionesTemporalesAFK = async (uploadLogId, cierreId = null) => {
+  const data = { upload_log_id: uploadLogId };
+  if (cierreId) {
+    data.cierre_id = cierreId;
+  }
+  const res = await api.post("/contabilidad/clasificaciones/migrar-temporales-fk/", data);
+  return res.data;
 };
 
 // ==================== NOMBRES EN INGLÉS UPLOADS ====================

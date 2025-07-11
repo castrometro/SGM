@@ -15,7 +15,7 @@ from django.contrib.auth.models import User
 from django.core.files.base import ContentFile
 from contabilidad.models import (
     AccountClassification,
-    ClasificacionCuentaArchivo,
+    # ClasificacionCuentaArchivo,  # OBSOLETO - ELIMINADO EN REDISEÑO
     ClasificacionOption,
     ClasificacionSet,
     CuentaContable,
@@ -182,15 +182,13 @@ def procesar_libro_mayor(upload_log_id):
             for ni in NombreIngles.objects.filter(cliente=upload_log.cliente)
         }
 
-        clasif_qs = (
-            ClasificacionCuentaArchivo.objects.filter(cliente=upload_log.cliente)
-            .select_related("upload_log")
-            .order_by("-upload_log__fecha_subida", "-upload_log__id")
-        )
+        # Obtener clasificaciones existentes desde AccountClassification (fuente única de verdad)
         clasificaciones_por_cuenta = {}
-        for reg in clasif_qs:
-            if reg.numero_cuenta not in clasificaciones_por_cuenta:
-                clasificaciones_por_cuenta[reg.numero_cuenta] = reg.clasificaciones
+        for ac in AccountClassification.objects.filter(cliente=upload_log.cliente).select_related('set_clas', 'opcion', 'cuenta'):
+            codigo_cuenta = ac.codigo_cuenta_display  # Usa el property que maneja tanto FK como código temporal
+            if codigo_cuenta not in clasificaciones_por_cuenta:
+                clasificaciones_por_cuenta[codigo_cuenta] = {}
+            clasificaciones_por_cuenta[codigo_cuenta][ac.set_clas.nombre] = ac.opcion.valor
 
         wb = load_workbook(ruta_completa, read_only=True, data_only=True)
         ws = wb.active

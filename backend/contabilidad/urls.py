@@ -63,7 +63,7 @@ from .views import (
     LibroMayorArchivoViewSet,  # ✅ Nuevo ViewSet
     TipoDocumentoViewSet,
     NombreInglesViewSet,
-    ClasificacionCuentaArchivoViewSet,
+    # ClasificacionCuentaArchivoViewSet,  # OBSOLETO - ELIMINADO EN REDISEÑO
     CuentaContableViewSet,
     AperturaCuentaViewSet,
     MovimientoContableViewSet,
@@ -111,6 +111,9 @@ from .views import (
     registrar_vista_clasificaciones_persistentes,
     clasificacion_masiva_persistente,
     obtener_estadisticas_clasificaciones_persistentes,
+    crear_registro_clasificacion_completo,
+    actualizar_registro_clasificacion_completo,
+    eliminar_registro_clasificacion_completo,
     # Utilidades
     test_celery,
     limpiar_archivos_temporales,
@@ -127,7 +130,7 @@ router.register(r"cierres", CierreContabilidadViewSet, basename="cierres")
 router.register(r"libromayor-archivo", LibroMayorArchivoViewSet, basename="libromayor-archivo")  # ✅ Nuevo endpoint
 router.register(r"aperturas", AperturaCuentaViewSet)
 router.register(r"movimientos", MovimientoContableViewSet)
-router.register(r"clasificacion-archivo", ClasificacionCuentaArchivoViewSet, basename="clasificacion-archivo")
+# router.register(r"clasificacion-archivo", ClasificacionCuentaArchivoViewSet, basename="clasificacion-archivo")  # OBSOLETO - ELIMINADO
 router.register(r"activity-logs", TarjetaActivityLogViewSet, basename="activity-logs")
 # ViewSets del archivo original
 router.register(r"clasificaciones-set", ClasificacionSetViewSet)
@@ -218,12 +221,15 @@ urlpatterns = [
     path("clientes/<int:cliente_id>/clasificaciones/registrar-vista/", 
          registrar_vista_clasificaciones_persistentes, 
          name="registrar_vista_clasificaciones_persistentes"),
-    path("clasificaciones/bulk-classify/", 
-         clasificacion_masiva_persistente, 
-         name="clasificacion_masiva_persistente"),
-    path("clientes/<int:cliente_id>/clasificaciones/estadisticas/", 
-         obtener_estadisticas_clasificaciones_persistentes, 
-         name="estadisticas_clasificaciones_persistentes"),
+    path("clasificaciones/registro-completo/", 
+         crear_registro_clasificacion_completo, 
+         name="crear_registro_clasificacion_completo"),
+    path("clasificaciones/registro-completo/<str:cuenta_codigo>/", 
+         actualizar_registro_clasificacion_completo, 
+         name="actualizar_registro_clasificacion_completo"),
+    path("clasificaciones/registro-completo/<str:cuenta_codigo>/delete/", 
+         eliminar_registro_clasificacion_completo, 
+         name="eliminar_registro_clasificacion_completo"),
     
     # Nombres en inglés
     path("nombre-ingles/<int:cliente_id>/estado/", estado_nombres_ingles),

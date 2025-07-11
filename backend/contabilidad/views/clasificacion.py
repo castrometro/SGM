@@ -8,10 +8,11 @@ import glob
 import logging
 import os
 from django.core.files.storage import default_storage
+from django.db.models import Q
 
 from api.models import Cliente
 from ..models import (
-    ClasificacionCuentaArchivo,
+    # ClasificacionCuentaArchivo,  # OBSOLETO - ELIMINADO EN REDISEÑO
     CuentaContable,
     CierreContabilidad,
     ClasificacionSet,
@@ -20,7 +21,7 @@ from ..models import (
     UploadLog,
 )
 from ..serializers import (
-    ClasificacionCuentaArchivoSerializer,
+    # ClasificacionCuentaArchivoSerializer,  # OBSOLETO - ELIMINADO
     ClasificacionSetSerializer,
     ClasificacionOptionSerializer,
     AccountClassificationSerializer,
@@ -28,29 +29,36 @@ from ..serializers import (
 from ..tasks_cuentas_bulk import iniciar_procesamiento_clasificacion_chain
 from ..utils.activity_logger import registrar_actividad_tarjeta
 
-
-class ClasificacionCuentaArchivoViewSet(viewsets.ModelViewSet):
-    serializer_class = ClasificacionCuentaArchivoSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        """
-        Filtra las clasificaciones RAW activas por cliente.
-        Solo muestra los registros activos (no obsoletos).
-        """
-        queryset = ClasificacionCuentaArchivo.objects.filter(activo=True)
-        
-        # Filtrar por cliente si se proporciona
-        cliente_id = self.request.query_params.get('cliente', None)
-        if cliente_id:
-            queryset = queryset.filter(cliente_id=cliente_id)
-        
-        # Mantener compatibilidad con filtro por upload_log si es necesario
-        upload_log_id = self.request.query_params.get('upload_log', None)
-        if upload_log_id:
-            queryset = queryset.filter(upload_log_id=upload_log_id)
-            
-        return queryset.select_related('cliente', 'upload_log').order_by('-fecha_creacion')
+# ============================================================
+# VIEWSET OBSOLETO - ELIMINADO EN REDISEÑO DE CLASIFICACIONES
+# ============================================================
+# 
+# class ClasificacionCuentaArchivoViewSet(viewsets.ModelViewSet):
+#     """
+#     OBSOLETO: Este ViewSet manejaba el modelo intermedio ClasificacionCuentaArchivo
+#     que fue eliminado en el rediseño. Ahora se usa directamente AccountClassification.
+#     """
+#     serializer_class = ClasificacionCuentaArchivoSerializer
+#     permission_classes = [IsAuthenticated]
+#
+#     def get_queryset(self):
+#         """
+#         Filtra las clasificaciones RAW activas por cliente.
+#         Solo muestra los registros activos (no obsoletos).
+#         """
+#         queryset = ClasificacionCuentaArchivo.objects.filter(activo=True)
+#         
+#         # Filtrar por cliente si se proporciona
+#         cliente_id = self.request.query_params.get('cliente', None)
+#         if cliente_id:
+#             queryset = queryset.filter(cliente_id=cliente_id)
+#         
+#         # Mantener compatibilidad con filtro por upload_log si es necesario
+#         upload_log_id = self.request.query_params.get('upload_log', None)
+#         if upload_log_id:
+#             queryset = queryset.filter(upload_log_id=upload_log_id)
+#             
+#         return queryset.select_related('cliente', 'upload_log').order_by('-fecha_creacion')
 
 
 @api_view(["POST"])
@@ -784,36 +792,61 @@ class AccountClassificationViewSet(viewsets.ModelViewSet):
 @permission_classes([IsAuthenticated])
 def obtener_clasificaciones_persistentes_detalladas(request, cliente_id):
     """
-    Obtiene las clasificaciones persistentes con detalles completos para el modal de gestión
+    Obtiene las clasificaciones persistentes con detalles completos para el modal de gestión.
+    Incluye tanto clasificaciones con FK a cuenta como clasificaciones temporales.
     """
     try:
         cliente = Cliente.objects.get(id=cliente_id)
     except Cliente.DoesNotExist:
         return Response({"error": "Cliente no encontrado"}, status=404)
 
-    # Obtener todas las clasificaciones del cliente con detalles
+    # Obtener TODAS las clasificaciones del cliente (con FK y temporales)
+    # Filtrar por cliente directamente para incluir clasificaciones temporales
     clasificaciones = AccountClassification.objects.filter(
-        cuenta__cliente=cliente
+        cliente=cliente
     ).select_related(
         'cuenta', 'set_clas', 'opcion'
-    ).order_by('cuenta__codigo')
+    ).order_by('cuenta_codigo')  # Ordenar por código de cuenta
     
     data = []
     for clasificacion in clasificaciones:
-        data.append({
-            'id': clasificacion.id,
-            'cuenta_id': clasificacion.cuenta.id,
-            'cuenta_codigo': clasificacion.cuenta.codigo,
-            'cuenta_nombre': clasificacion.cuenta.nombre,
-            'cuenta_nombre_en': clasificacion.cuenta.nombre_en,
-            'set_clas_id': clasificacion.set_clas.id,
-            'set_nombre': clasificacion.set_clas.nombre,
-            'opcion_id': clasificacion.opcion.id,
-            'opcion_valor': clasificacion.opcion.valor,
-            'opcion_valor_en': clasificacion.opcion.valor_en,
-            'fecha_creacion': clasificacion.fecha_creacion,
-            'fecha_actualizacion': clasificacion.fecha_actualizacion,
-        })
+        # Manejar tanto clasificaciones con FK como temporales
+        if clasificacion.cuenta:
+            # Clasificación con FK a cuenta existente
+            data.append({
+                'id': clasificacion.id,
+                'cuenta_id': clasificacion.cuenta.id,
+                'cuenta_codigo': clasificacion.cuenta.codigo,
+                'cuenta_nombre': clasificacion.cuenta.nombre,
+                'cuenta_nombre_en': clasificacion.cuenta.nombre_en,
+                'set_clas_id': clasificacion.set_clas.id,
+                'set_nombre': clasificacion.set_clas.nombre,
+                'opcion_id': clasificacion.opcion.id,
+                'opcion_valor': clasificacion.opcion.valor,
+                'opcion_valor_en': clasificacion.opcion.valor_en,
+                'fecha_creacion': clasificacion.fecha_creacion,
+                'fecha_actualizacion': clasificacion.fecha_actualizacion,
+                'es_temporal': False,
+                'origen': clasificacion.origen,
+            })
+        else:
+            # Clasificación temporal (sin FK a cuenta)
+            data.append({
+                'id': clasificacion.id,
+                'cuenta_id': None,
+                'cuenta_codigo': clasificacion.cuenta_codigo,
+                'cuenta_nombre': f"[TEMPORAL] Cuenta {clasificacion.cuenta_codigo}",
+                'cuenta_nombre_en': None,
+                'set_clas_id': clasificacion.set_clas.id,
+                'set_nombre': clasificacion.set_clas.nombre,
+                'opcion_id': clasificacion.opcion.id,
+                'opcion_valor': clasificacion.opcion.valor,
+                'opcion_valor_en': clasificacion.opcion.valor_en,
+                'fecha_creacion': clasificacion.fecha_creacion,
+                'fecha_actualizacion': clasificacion.fecha_actualizacion,
+                'es_temporal': True,
+                'origen': clasificacion.origen,
+            })
     
     return Response(data)
 
@@ -990,3 +1023,434 @@ def obtener_estadisticas_clasificaciones_persistentes(request, cliente_id):
 
 
 # ==================== FIN VISTAS CLASIFICACIONES PERSISTENTES ====================
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def crear_registro_clasificacion_completo(request):
+    """
+    Crea un registro completo con múltiples clasificaciones.
+    Maneja tanto cuentas existentes (con FK) como temporales (solo código).
+    
+    Payload esperado:
+    {
+        "cliente": 2,
+        "numero_cuenta": "1234",
+        "cuenta_nombre": "Nombre de cuenta",
+        "clasificaciones": {
+            "AGRUPACION INFORME": "ACTIVOS",
+            "Estado Situacion Financiera": "ACTIVOS CORRIENTES"
+        }
+    }
+    """
+    try:
+        cliente_id = request.data.get('cliente')
+        numero_cuenta = request.data.get('numero_cuenta')
+        cuenta_nombre = request.data.get('cuenta_nombre', numero_cuenta)
+        clasificaciones = request.data.get('clasificaciones', {})
+        
+        if not cliente_id or not numero_cuenta:
+            return Response({
+                "error": "cliente y numero_cuenta son requeridos"
+            }, status=400)
+        
+        # Verificar que el cliente existe
+        try:
+            cliente = Cliente.objects.get(id=cliente_id)
+        except Cliente.DoesNotExist:
+            return Response({"error": "Cliente no encontrado"}, status=404)
+        
+        # Verificar si existe una cuenta con ese código
+        cuenta_existente = CuentaContable.objects.filter(
+            cliente=cliente, 
+            codigo=numero_cuenta
+        ).first()
+        
+        clasificaciones_creadas = []
+        errores = []
+        
+        # Procesar cada clasificación
+        for set_nombre, opcion_valor in clasificaciones.items():
+            try:
+                # Buscar el set por nombre
+                set_clas = ClasificacionSet.objects.filter(
+                    cliente=cliente,
+                    nombre=set_nombre
+                ).first()
+                
+                if not set_clas:
+                    errores.append(f"Set '{set_nombre}' no encontrado")
+                    continue
+                
+                # Buscar la opción por valor en el set
+                opcion = ClasificacionOption.objects.filter(
+                    set_clas=set_clas,
+                    valor=opcion_valor
+                ).first()
+                
+                if not opcion:
+                    errores.append(f"Opción '{opcion_valor}' no encontrada en set '{set_nombre}'")
+                    continue
+                
+                # Crear la clasificación
+                if cuenta_existente:
+                    # Clasificación con FK a cuenta existente
+                    clasificacion, created = AccountClassification.objects.update_or_create(
+                        cuenta=cuenta_existente,
+                        set_clas=set_clas,
+                        defaults={
+                            'opcion': opcion,
+                            'origen': 'modal_manual',
+                            'cliente': cliente,
+                            'cuenta_codigo': numero_cuenta  # Mantener código para compatibilidad con modal
+                        }
+                    )
+                else:
+                    # Clasificación temporal (sin FK a cuenta)
+                    clasificacion, created = AccountClassification.objects.update_or_create(
+                        cuenta_codigo=numero_cuenta,
+                        set_clas=set_clas,
+                        cliente=cliente,
+                        defaults={
+                            'opcion': opcion,
+                            'origen': 'modal_manual'
+                        }
+                    )
+                
+                clasificaciones_creadas.append({
+                    'id': clasificacion.id,
+                    'set_nombre': set_nombre,
+                    'opcion_valor': opcion_valor,
+                    'created': created
+                })
+                
+            except Exception as e:
+                errores.append(f"Error en clasificación {set_nombre}: {str(e)}")
+        
+        # Registrar actividad
+        try:
+            cierre = CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+            ).order_by('-fecha_creacion').first()
+            
+            periodo = cierre.periodo if cierre else date.today().strftime("%Y-%m")
+            
+            registrar_actividad_tarjeta(
+                cliente_id=cliente_id,
+                periodo=periodo,
+                tarjeta="clasificacion",
+                accion="create_complete_record",
+                descripcion=f"Creó registro completo desde modal: {numero_cuenta} con {len(clasificaciones_creadas)} clasificaciones",
+                usuario=request.user,
+                detalles={
+                    "numero_cuenta": numero_cuenta,
+                    "cuenta_nombre": cuenta_nombre,
+                    "cuenta_existe": bool(cuenta_existente),
+                    "clasificaciones_creadas": len(clasificaciones_creadas),
+                    "errores_count": len(errores),
+                    "clasificaciones": clasificaciones,
+                    "tipo": "temporal" if not cuenta_existente else "con_fk"
+                },
+                resultado="exito" if not errores else "parcial",
+                ip_address=request.META.get("REMOTE_ADDR"),
+            )
+        except Exception as e:
+            # No fallar la operación principal por error de logging
+            pass
+        
+        # Respuesta
+        response_data = {
+            "mensaje": "Registro creado exitosamente",
+            "numero_cuenta": numero_cuenta,
+            "cuenta_existe": bool(cuenta_existente),
+            "clasificaciones_creadas": len(clasificaciones_creadas),
+            "clasificaciones_solicitadas": len(clasificaciones),
+            "detalles": clasificaciones_creadas
+        }
+        
+        if errores:
+            response_data["errores"] = errores
+            response_data["errores_count"] = len(errores)
+        
+        return Response(response_data)
+        
+    except Exception as e:
+        return Response({
+            "error": f"Error creando registro completo: {str(e)}"
+        }, status=500)
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def actualizar_registro_clasificacion_completo(request, cuenta_codigo):
+    """
+    Actualiza un registro completo de clasificaciones para una cuenta específica.
+    Permite modificar el código de cuenta y todas las clasificaciones asociadas.
+    
+    Payload esperado:
+    {
+        "nuevo_numero_cuenta": "1234", (opcional, para cambiar código de cuenta)
+        "cuenta_nombre": "Nuevo nombre",
+        "clasificaciones": {
+            "AGRUPACION INFORME": "ACTIVOS",
+            "Estado Situacion Financiera": "ACTIVOS CORRIENTES"
+        }
+    }
+    """
+    try:
+        # Obtener cliente del query parameter o del contexto
+        cliente_id = request.query_params.get('cliente')
+        if not cliente_id:
+            return Response({
+                "error": "Parámetro 'cliente' es requerido"
+            }, status=400)
+        
+        try:
+            cliente = Cliente.objects.get(id=cliente_id)
+        except Cliente.DoesNotExist:
+            return Response({"error": "Cliente no encontrado"}, status=404)
+        
+        nuevo_numero_cuenta = request.data.get('nuevo_numero_cuenta', cuenta_codigo)
+        cuenta_nombre = request.data.get('cuenta_nombre', cuenta_codigo)
+        clasificaciones = request.data.get('clasificaciones', {})
+        
+        # Buscar clasificaciones existentes para esta cuenta
+        # Buscar tanto por FK como por código temporal
+        clasificaciones_existentes = AccountClassification.objects.filter(
+            cliente=cliente
+        ).filter(
+            # Buscar por FK a cuenta O por código temporal
+            Q(cuenta__codigo=cuenta_codigo) | 
+            Q(cuenta_codigo=cuenta_codigo, cuenta__isnull=True)
+        )
+        
+        if not clasificaciones_existentes.exists():
+            return Response({
+                "error": f"No se encontraron clasificaciones para la cuenta {cuenta_codigo}"
+            }, status=404)
+        
+        # Eliminar clasificaciones existentes
+        clasificaciones_eliminadas = clasificaciones_existentes.count()
+        sets_eliminados = list(set(clasificaciones_existentes.values_list('set_clas__nombre', flat=True)))
+        clasificaciones_existentes.delete()
+        
+        # Verificar si la cuenta existe en la BD
+        cuenta_existente = None
+        if nuevo_numero_cuenta != cuenta_codigo:
+            # Si cambió el código, buscar la nueva cuenta
+            cuenta_existente = CuentaContable.objects.filter(
+                cliente=cliente, 
+                codigo=nuevo_numero_cuenta
+            ).first()
+        else:
+            # Buscar la cuenta original
+            cuenta_existente = CuentaContable.objects.filter(
+                cliente=cliente, 
+                codigo=cuenta_codigo
+            ).first()
+        
+        # Crear las nuevas clasificaciones
+        clasificaciones_creadas = []
+        errores = []
+        
+        for set_nombre, opcion_valor in clasificaciones.items():
+            try:
+                # Buscar el set por nombre
+                set_clas = ClasificacionSet.objects.filter(
+                    cliente=cliente,
+                    nombre=set_nombre
+                ).first()
+                
+                if not set_clas:
+                    errores.append(f"Set '{set_nombre}' no encontrado")
+                    continue
+                
+                # Buscar la opción por valor en el set
+                opcion = ClasificacionOption.objects.filter(
+                    set_clas=set_clas,
+                    valor=opcion_valor
+                ).first()
+                
+                if not opcion:
+                    errores.append(f"Opción '{opcion_valor}' no encontrada en set '{set_nombre}'")
+                    continue
+                
+                # Crear la nueva clasificación
+                if cuenta_existente:
+                    # Clasificación con FK a cuenta existente
+                    clasificacion = AccountClassification.objects.create(
+                        cuenta=cuenta_existente,
+                        set_clas=set_clas,
+                        opcion=opcion,
+                        origen='modal_edit',
+                        cliente=cliente,
+                        cuenta_codigo=nuevo_numero_cuenta  # Mantener código para compatibilidad con modal
+                    )
+                else:
+                    # Clasificación temporal (sin FK a cuenta)
+                    clasificacion = AccountClassification.objects.create(
+                        cuenta_codigo=nuevo_numero_cuenta,
+                        set_clas=set_clas,
+                        opcion=opcion,
+                        origen='modal_edit',
+                        cliente=cliente
+                    )
+                
+                clasificaciones_creadas.append({
+                    'id': clasificacion.id,
+                    'set_nombre': set_nombre,
+                    'opcion_valor': opcion_valor
+                })
+                
+            except Exception as e:
+                errores.append(f"Error en clasificación {set_nombre}: {str(e)}")
+        
+        # Registrar actividad
+        try:
+            cierre = CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+            ).order_by('-fecha_creacion').first()
+            
+            periodo = cierre.periodo if cierre else date.today().strftime("%Y-%m")
+            
+            registrar_actividad_tarjeta(
+                cliente_id=cliente_id,
+                periodo=periodo,
+                tarjeta="clasificacion",
+                accion="edit_complete_record",
+                descripcion=f"Editó registro completo desde modal: {cuenta_codigo} → {nuevo_numero_cuenta}",
+                usuario=request.user,
+                detalles={
+                    "cuenta_codigo_anterior": cuenta_codigo,
+                    "cuenta_codigo_nuevo": nuevo_numero_cuenta,
+                    "cuenta_nombre": cuenta_nombre,
+                    "cuenta_existe": bool(cuenta_existente),
+                    "clasificaciones_eliminadas": clasificaciones_eliminadas,
+                    "sets_eliminados": sets_eliminados,
+                    "clasificaciones_creadas": len(clasificaciones_creadas),
+                    "errores_count": len(errores),
+                    "clasificaciones_nuevas": clasificaciones,
+                    "tipo": "temporal" if not cuenta_existente else "con_fk"
+                },
+                resultado="exito" if not errores else "parcial",
+                ip_address=request.META.get("REMOTE_ADDR"),
+            )
+        except Exception as e:
+            # No fallar la operación principal por error de logging
+            pass
+        
+        # Respuesta
+        response_data = {
+            "mensaje": "Registro actualizado exitosamente",
+            "cuenta_codigo_anterior": cuenta_codigo,
+            "cuenta_codigo_nuevo": nuevo_numero_cuenta,
+            "cuenta_existe": bool(cuenta_existente),
+            "clasificaciones_eliminadas": clasificaciones_eliminadas,
+            "clasificaciones_creadas": len(clasificaciones_creadas),
+            "clasificaciones_solicitadas": len(clasificaciones),
+            "detalles": clasificaciones_creadas
+        }
+        
+        if errores:
+            response_data["errores"] = errores
+            response_data["errores_count"] = len(errores)
+        
+        return Response(response_data)
+        
+    except Exception as e:
+        return Response({
+            "error": f"Error actualizando registro completo: {str(e)}"
+        }, status=500)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def eliminar_registro_clasificacion_completo(request, cuenta_codigo):
+    """
+    Elimina todas las clasificaciones de una cuenta específica.
+    """
+    try:
+        # Obtener cliente del query parameter
+        cliente_id = request.query_params.get('cliente')
+        if not cliente_id:
+            return Response({
+                "error": "Parámetro 'cliente' es requerido"
+            }, status=400)
+        
+        try:
+            cliente = Cliente.objects.get(id=cliente_id)
+        except Cliente.DoesNotExist:
+            return Response({"error": "Cliente no encontrado"}, status=404)
+        
+        # Buscar clasificaciones existentes para esta cuenta
+        # Buscar tanto por FK como por código temporal
+        clasificaciones_existentes = AccountClassification.objects.filter(
+            cliente=cliente
+        ).filter(
+            # Buscar por FK a cuenta O por código temporal
+            Q(cuenta__codigo=cuenta_codigo) | 
+            Q(cuenta_codigo=cuenta_codigo, cuenta__isnull=True)
+        )
+        
+        if not clasificaciones_existentes.exists():
+            return Response({
+                "error": f"No se encontraron clasificaciones para la cuenta {cuenta_codigo}"
+            }, status=404)
+        
+        # Recopilar información antes de eliminar
+        clasificaciones_info = []
+        for clasificacion in clasificaciones_existentes:
+            clasificaciones_info.append({
+                'id': clasificacion.id,
+                'set_nombre': clasificacion.set_clas.nombre,
+                'opcion_valor': clasificacion.opcion.valor,
+                'es_temporal': not bool(clasificacion.cuenta)
+            })
+        
+        clasificaciones_eliminadas = clasificaciones_existentes.count()
+        sets_afectados = list(set(clasificaciones_existentes.values_list('set_clas__nombre', flat=True)))
+        
+        # Eliminar todas las clasificaciones
+        clasificaciones_existentes.delete()
+        
+        # Registrar actividad
+        try:
+            cierre = CierreContabilidad.objects.filter(
+                cliente=cliente,
+                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
+            ).order_by('-fecha_creacion').first()
+            
+            periodo = cierre.periodo if cierre else date.today().strftime("%Y-%m")
+            
+            registrar_actividad_tarjeta(
+                cliente_id=cliente_id,
+                periodo=periodo,
+                tarjeta="clasificacion",
+                accion="delete_complete_record",
+                descripcion=f"Eliminó registro completo desde modal: {cuenta_codigo} ({clasificaciones_eliminadas} clasificaciones)",
+                usuario=request.user,
+                detalles={
+                    "cuenta_codigo": cuenta_codigo,
+                    "clasificaciones_eliminadas": clasificaciones_eliminadas,
+                    "sets_afectados": sets_afectados,
+                    "clasificaciones_info": clasificaciones_info
+                },
+                resultado="exito",
+                ip_address=request.META.get("REMOTE_ADDR"),
+            )
+        except Exception as e:
+            # No fallar la operación principal por error de logging
+            pass
+        
+        return Response({
+            "mensaje": "Registro eliminado exitosamente",
+            "cuenta_codigo": cuenta_codigo,
+            "clasificaciones_eliminadas": clasificaciones_eliminadas,
+            "sets_afectados": sets_afectados,
+            "detalles": clasificaciones_info
+        })
+        
+    except Exception as e:
+        return Response({
+            "error": f"Error eliminando registro completo: {str(e)}"
+        }, status=500)

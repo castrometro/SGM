@@ -522,88 +522,150 @@ class ClasificacionOption(models.Model):
 
 class AccountClassification(models.Model):
     """
-    Tabla maestra para clasificaciones procesadas y enlazadas a cuentas reales.
-    Se regenera desde ClasificacionCuentaArchivo cuando es necesario.
+    Fuente única de verdad para clasificaciones de cuentas.
+    Soporta tanto cuentas existentes (FK) como temporales (código).
     """
     id = models.BigAutoField(primary_key=True)
+    
+    # FK a cuenta existente (preferido para performance)
     cuenta = models.ForeignKey(
-        CuentaContable, on_delete=models.CASCADE, related_name="clasificaciones"
+        CuentaContable, 
+        on_delete=models.CASCADE, 
+        related_name="clasificaciones",
+        null=True,
+        blank=True,
+        help_text="Cuenta existente (preferido). Si es NULL, usar cuenta_codigo"
     )
+    
+    # Código de cuenta temporal (para cuentas que aún no existen)
+    cuenta_codigo = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Código de cuenta temporal cuando la cuenta no existe aún"
+    )
+    
+    # Cliente (necesario para búsquedas cuando no hay FK a cuenta)
+    cliente = models.ForeignKey(
+        Cliente, 
+        on_delete=models.CASCADE,
+        help_text="Cliente de la clasificación (extraído de cuenta o explícito)"
+    )
+    
     set_clas = models.ForeignKey(ClasificacionSet, on_delete=models.CASCADE)
     opcion = models.ForeignKey(ClasificacionOption, on_delete=models.CASCADE)
     asignado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True)
     fecha = models.DateTimeField(auto_now_add=True)
     
-    # Referencia al origen en ClasificacionCuentaArchivo
-    archivo_origen = models.ForeignKey(
-        "ClasificacionCuentaArchivo",
+    # NUEVOS CAMPOS DE LOGGING Y AUDITORÍA
+    upload_log = models.ForeignKey(
+        "UploadLog",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        help_text="Registro origen en ClasificacionCuentaArchivo"
+        help_text="Upload que originó esta clasificación (si viene de Excel)"
+    )
+    origen = models.CharField(
+        max_length=20,
+        choices=[
+            ('excel', 'Archivo Excel'),
+            ('manual', 'Creación Manual'),
+            ('migracion', 'Migración de Temporal a FK'),
+            ('actualizacion', 'Actualización desde Excel')
+        ],
+        default='manual'
+    )
+    fecha_creacion = models.DateTimeField(
+        auto_now_add=True,
+        help_text="Fecha de creación del registro"
+    )
+    fecha_actualizacion = models.DateTimeField(
+        auto_now=True,
+        help_text="Última actualización del registro"
     )
 
     class Meta:
-        unique_together = ("cuenta", "set_clas")
+        # Constraints únicos considerando tanto FK como código
+        constraints = [
+            models.UniqueConstraint(
+                fields=['cuenta', 'set_clas'],
+                condition=models.Q(cuenta__isnull=False),
+                name='unique_cuenta_set_when_cuenta_exists'
+            ),
+            models.UniqueConstraint(
+                fields=['cliente', 'cuenta_codigo', 'set_clas'], 
+                condition=models.Q(cuenta__isnull=True),
+                name='unique_cliente_codigo_set_when_cuenta_null'
+            ),
+            models.CheckConstraint(
+                check=(
+                    # CORREGIDO: Permitir cuenta_codigo en clasificaciones con FK para compatibilidad con modal
+                    models.Q(cuenta__isnull=False) |  # Con FK puede tener cualquier cuenta_codigo
+                    models.Q(cuenta__isnull=True, cuenta_codigo__isnull=False)  # Sin FK debe tener cuenta_codigo
+                ),
+                name='cuenta_or_codigo_required'
+            )
+        ]
+        indexes = [
+            models.Index(fields=['cliente', 'cuenta_codigo']),
+            models.Index(fields=['cuenta']),
+            models.Index(fields=['upload_log']),
+            models.Index(fields=['origen', 'fecha_creacion']),
+        ]
 
     def __str__(self):
-        return f"{self.cuenta.codigo} - {self.set_clas.nombre} - {self.opcion.valor}"
-    
-    @classmethod
-    def regenerar_desde_archivo(cls, cliente):
+        if self.cuenta:
+            return f"{self.cuenta.codigo} - {self.set_clas.nombre} - {self.opcion.valor}"
+        else:
+            return f"[TEMP] {self.cuenta_codigo} - {self.set_clas.nombre} - {self.opcion.valor}"
+
+    @property
+    def es_temporal(self):
+        """True si es una clasificación temporal (sin FK a cuenta)"""
+        return self.cuenta is None
+
+    @property
+    def codigo_cuenta_display(self):
+        """Devuelve el código de cuenta, ya sea de FK o temporal"""
+        if self.cuenta:
+            return self.cuenta.codigo
+        return self.cuenta_codigo
+
+    def migrar_a_cuenta_definitiva(self, cuenta_nueva):
         """
-        Regenera toda la tabla maestra desde ClasificacionCuentaArchivo para un cliente.
-        Usado cuando se procesan cuentas del libro mayor o se actualizan clasificaciones.
-        """
-        from django.db import transaction
+        Migra una clasificación temporal a una cuenta definitiva.
         
-        with transaction.atomic():
-            # Eliminar clasificaciones existentes del cliente
-            cls.objects.filter(cuenta__cliente=cliente).delete()
+        Args:
+            cuenta_nueva (CuentaContable): La cuenta recién creada
             
-            # Obtener registros de archivo activos para el cliente
-            registros_archivo = ClasificacionCuentaArchivo.objects.filter(
-                cliente=cliente, 
-                activo=True
-            )
+        Returns:
+            bool: True si se migró correctamente
+        """
+        if not self.es_temporal:
+            return False  # Ya no es temporal
             
-            # Obtener cuentas existentes del cliente
-            cuentas_dict = {
-                c.codigo: c for c in CuentaContable.objects.filter(cliente=cliente)
-            }
+        if cuenta_nueva.codigo != self.cuenta_codigo:
+            return False  # Códigos no coinciden
             
-            clasificaciones_creadas = 0
-            for registro in registros_archivo:
-                cuenta = cuentas_dict.get(registro.numero_cuenta)
-                if not cuenta:
-                    # La cuenta aún no existe, saltar
-                    continue
-                
-                # Procesar cada clasificación del registro
-                for set_nombre, opcion_valor in registro.clasificaciones.items():
-                    try:
-                        clasificacion_set = ClasificacionSet.objects.get(
-                            cliente=cliente, nombre=set_nombre
-                        )
-                        opcion = ClasificacionOption.objects.get(
-                            set_clas=clasificacion_set, valor=opcion_valor
-                        )
-                        
-                        # Crear AccountClassification
-                        cls.objects.create(
-                            cuenta=cuenta,
-                            set_clas=clasificacion_set,
-                            opcion=opcion,
-                            archivo_origen=registro,
-                            asignado_por=None  # Viene de archivo
-                        )
-                        clasificaciones_creadas += 1
-                        
-                    except (ClasificacionSet.DoesNotExist, ClasificacionOption.DoesNotExist):
-                        # Set u opción no existe, saltar
-                        continue
+        # Verificar si ya existe una clasificación definitiva para este set
+        existe_definitiva = AccountClassification.objects.filter(
+            cuenta=cuenta_nueva,
+            set_clas=self.set_clas
+        ).exists()
+        
+        if existe_definitiva:
+            # Ya existe una definitiva, eliminar la temporal
+            self.delete()
+            return True
             
-            return clasificaciones_creadas
+        # Migrar de temporal a definitiva
+        self.cuenta = cuenta_nueva
+        # CORREGIDO: MANTENER cuenta_codigo para compatibilidad con modal CRUD
+        # self.cuenta_codigo = ''  # NO limpiar código temporal
+        self.cliente = cuenta_nueva.cliente
+        self.origen = 'migracion'
+        self.save()
+        
+        return True
 
 class AnalisisCuentaCierre(models.Model):
     cierre = models.ForeignKey(
@@ -725,60 +787,16 @@ class TarjetaActivityLog(models.Model):
 # ======================================
 
 
-class ClasificacionCuentaArchivo(models.Model):
-    """
-    Modelo persistente para guardar las clasificaciones tal como vienen del archivo Excel.
-    NUNCA se eliminan estos registros - se mantienen para histórico y auditoría.
-    """
+# ======================================
+#    MODELO OBSOLETO - SERÁ ELIMINADO
+# ======================================
 
-    id = models.BigAutoField(primary_key=True)
-    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
-    upload_log = models.ForeignKey(
-        "UploadLog",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        help_text="Referencia al log del upload que generó este archivo",
-        related_name="clasificaciones_archivo",
-    )
-
-    # Datos tal como vienen del archivo
-    numero_cuenta = models.CharField(
-        max_length=50
-    )  # Código de cuenta tal como está en el archivo
-
-    # Clasificaciones por sets (dinámico según los sets del cliente)
-    clasificaciones = (
-        models.JSONField()
-    )  # {"set_nombre_1": "opcion_valor_1", "set_nombre_2": "opcion_valor_2"}
-
-    # Metadatos
-    fila_excel = models.IntegerField(null=True, blank=True)  # Para tracking de errores
-    fecha_creacion = models.DateTimeField(auto_now_add=True)
-    
-    # Control de versiones para mantener histórico
-    activo = models.BooleanField(
-        default=True,
-        help_text="False si este registro fue reemplazado por una nueva versión"
-    )
-    fecha_obsolescencia = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="Fecha cuando este registro se marcó como obsoleto"
-    )
-
-    class Meta:
-        indexes = [
-            models.Index(fields=["cliente"]),
-            models.Index(fields=["upload_log"]),
-            models.Index(fields=["activo"]),
-            models.Index(fields=["cliente", "activo"]),
-        ]
-
-    def __str__(self):
-        estado = "activo" if self.activo else "obsoleto"
-        return f"{self.numero_cuenta} - {self.cliente.nombre} ({estado})"
-
+# class ClasificacionCuentaArchivo(models.Model):
+#     """
+#     OBSOLETO: Este modelo será eliminado.
+#     Ahora AccountClassification es la fuente única de verdad.
+#     """
+#     pass
 
 # ======================================
 #           UPLOAD LOG UNIFICADO

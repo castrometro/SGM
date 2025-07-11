@@ -10,13 +10,18 @@ import {
   actualizarOpcion,
   eliminarOpcion,
   registrarActividadTarjeta,
-  // APIs para datos de archivo (fuente única de verdad)
-  obtenerClasificacionesArchivo,
+  // APIs REDISEÑADAS - usar AccountClassification como fuente única
+  obtenerClasificacionesPorUpload,
+  obtenerClasificacionesTemporales,
+  obtenerClasificacionesPersistentes,
+  obtenerClasificacionesPersistentesDetalladas,
   obtenerCuentasCliente,
-  // APIs para CRUD directo en ClasificacionCuentaArchivo
-  crearClasificacionArchivo,
-  actualizarClasificacionArchivo,
-  eliminarClasificacionArchivo
+  // APIs para CRUD directo en AccountClassification
+  crearClasificacionPersistente,
+  actualizarClasificacionPersistente,
+  eliminarClasificacionPersistente,
+  // Migración de temporales a FK
+  migrarClasificacionesTemporalesAFK
 } from '../api/contabilidad';
 
 const ModalClasificacionRegistrosRaw = ({ 
@@ -69,12 +74,10 @@ const ModalClasificacionRegistrosRaw = ({
     }
   };
 
-  // Función para adaptar datos de archivo al formato del modal
-  const adaptarDatosArchivo = (registrosArchivo, cuentasCliente) => {
-    console.log('🔄 Adaptando datos de archivo:', { 
-      registros: registrosArchivo.length, 
-      cuentas: cuentasCliente.length 
-    });
+  // REDISEÑADO: Función para adaptar datos de AccountClassification al formato del modal
+  const adaptarDatosAccountClassification = (clasificaciones, cuentasCliente) => {
+    console.log('🔄 INICIANDO ADAPTACIÓN DE DATOS AccountClassification');
+    console.log(`   Input: ${clasificaciones.length} clasificaciones, ${cuentasCliente.length} cuentas`);
 
     // Crear un mapa de cuentas por código para lookup rápido
     const cuentasMap = {};
@@ -82,26 +85,125 @@ const ModalClasificacionRegistrosRaw = ({
       cuentasMap[cuenta.codigo] = cuenta;
     });
 
-    // Adaptar registros de archivo al formato esperado por el modal
-    const registrosAdaptados = registrosArchivo.map(registro => {
-      const cuenta = cuentasMap[registro.numero_cuenta];
+    // Agrupar clasificaciones por cuenta (código o FK)
+    const clasificacionesPorCuenta = {};
+    
+    clasificaciones.forEach((clasificacion, index) => {
+      // Log detallado para TODAS las clasificaciones para debug intensivo
+      console.log(`🔍 Procesando clasificación ${index + 1}/${clasificaciones.length}:`, {
+        id: clasificacion.id,
+        cuenta_codigo: clasificacion.cuenta_codigo,
+        cuenta_id: clasificacion.cuenta_id,
+        set_nombre: clasificacion.set_nombre,
+        opcion_valor: clasificacion.opcion_valor,
+        origen: clasificacion.origen,
+        es_temporal: clasificacion.es_temporal
+      });
       
-      return {
-        id: registro.id,
-        numero_cuenta: registro.numero_cuenta,
-        cuenta_nombre: cuenta?.nombre || '',
-        cuenta_nombre_en: cuenta?.nombre_en || '',
-        clasificaciones: registro.clasificaciones || {},
-        // Campos adicionales
-        fila_excel: registro.fila_excel,
-        upload_log: registro.upload_log,
-        fecha_creacion: registro.fecha_creacion,
-        source_type: 'archivo',
-        cuenta_existe: !!cuenta
-      };
+      // ACTUALIZADO: Usar los campos planos del serializer
+      // El serializer devuelve set_nombre y opcion_valor en lugar de objetos anidados
+      if (!clasificacion.set_nombre || !clasificacion.opcion_valor) {
+        console.warn('⚠️ Clasificación con datos incompletos:', {
+          id: clasificacion.id,
+          cuenta_codigo: clasificacion.cuenta_codigo,
+          cuenta_id: clasificacion.cuenta_id,
+          set_nombre: clasificacion.set_nombre,
+          opcion_valor: clasificacion.opcion_valor
+        });
+      }
+      
+      // CORREGIDO: Obtener código de cuenta según el tipo (FK o temporal)
+      let codigoCuenta;
+      if (clasificacion.cuenta_id) {
+        // Clasificación con FK a cuenta - usar cuenta_codigo del serializador
+        codigoCuenta = clasificacion.cuenta_codigo;
+        console.log(`   → Clasificación con FK: código=${codigoCuenta}`);
+      } else {
+        // Clasificación temporal - usar cuenta_codigo directo del modelo
+        codigoCuenta = clasificacion.cuenta_codigo;
+        console.log(`   → Clasificación temporal: código=${codigoCuenta}`);
+      }
+      
+      if (!codigoCuenta) {
+        console.error('❌ Clasificación sin código de cuenta válido:', clasificacion);
+        return;
+      }
+      
+      if (!clasificacionesPorCuenta[codigoCuenta]) {
+        // Obtener nombre de cuenta
+        let nombreCuenta;
+        if (clasificacion.cuenta_id && clasificacion.cuenta_nombre) {
+          nombreCuenta = clasificacion.cuenta_nombre;
+        } else if (cuentasMap[codigoCuenta]) {
+          nombreCuenta = cuentasMap[codigoCuenta].nombre;
+        } else {
+          nombreCuenta = `[TEMPORAL] Cuenta ${codigoCuenta}`;
+        }
+        
+        console.log(`   → Creando nueva agrupación para cuenta ${codigoCuenta}: ${nombreCuenta}`);
+        
+        clasificacionesPorCuenta[codigoCuenta] = {
+          numero_cuenta: codigoCuenta,
+          nombre_cuenta: nombreCuenta,
+          clasificaciones: {},
+          cuenta_existe: !!clasificacion.cuenta_id,
+          es_temporal: clasificacion.es_temporal || !clasificacion.cuenta_id,
+          upload_log: clasificacion.upload_log,
+          fecha_creacion: clasificacion.fecha_creacion,
+          origen: clasificacion.origen
+        };
+      }
+      
+      // ACTUALIZADO: Agregar la clasificación usando los campos planos del serializer
+      if (clasificacion.set_nombre && clasificacion.opcion_valor) {
+        console.log(`   → Agregando clasificación: ${clasificacion.set_nombre} = ${clasificacion.opcion_valor}`);
+        clasificacionesPorCuenta[codigoCuenta].clasificaciones[clasificacion.set_nombre] = 
+          clasificacion.opcion_valor;
+      } else {
+        // Log para debug en caso de datos incompletos
+        console.error('❌ Clasificación incompleta - NO SE AGREGARÁ:', {
+          cuenta: codigoCuenta,
+          set_nombre: clasificacion.set_nombre,
+          opcion_valor: clasificacion.opcion_valor,
+          clasificacion_id: clasificacion.id
+        });
+      }
     });
 
-    console.log('✅ Datos adaptados:', registrosAdaptados.length, 'registros');
+    console.log('📊 RESUMEN DE AGRUPACIÓN POR CUENTA:');
+    Object.entries(clasificacionesPorCuenta).forEach(([codigo, datos]) => {
+      console.log(`   ${codigo}: ${Object.keys(datos.clasificaciones).length} clasificaciones`);
+    });
+
+    // Convertir a array y agregar información de cuentas
+    const registrosAdaptados = Object.entries(clasificacionesPorCuenta).map(([codigoCuenta, datos], index) => {
+      const cuenta = cuentasMap[codigoCuenta];
+      
+      const registro = {
+        id: `account_${codigoCuenta}_${index}`, // ID único para el frontend
+        numero_cuenta: codigoCuenta,
+        cuenta_nombre: cuenta?.nombre || datos.nombre_cuenta || '',
+        cuenta_nombre_en: cuenta?.nombre_en || '',
+        clasificaciones: datos.clasificaciones,
+        // Campos adicionales del nuevo flujo
+        cuenta_existe: datos.cuenta_existe,
+        es_temporal: datos.es_temporal,
+        upload_log: datos.upload_log,
+        fecha_creacion: datos.fecha_creacion,
+        origen: datos.origen,
+        source_type: 'account_classification'
+      };
+      
+      console.log(`📋 Registro adaptado ${index + 1}: ${codigoCuenta} con ${Object.keys(datos.clasificaciones).length} clasificaciones`);
+      
+      return registro;
+    });
+
+    console.log('✅ ADAPTACIÓN COMPLETADA:');
+    console.log(`   Input: ${clasificaciones.length} clasificaciones individuales`);
+    console.log(`   Output: ${registrosAdaptados.length} registros agrupados por cuenta`);
+    console.log('🔍 Primer registro final:', registrosAdaptados[0]);
+    
     return registrosAdaptados;
   };
 
@@ -120,6 +222,11 @@ const ModalClasificacionRegistrosRaw = ({
     numero_cuenta: '',
     clasificaciones: {}
   });
+  
+  // Estados para creación masiva de cuentas
+  const [creandoMasivo, setCreandoMasivo] = useState(false);
+  const [cuentasMasivas, setCuentasMasivas] = useState([]);
+  const [aplicandoCreacionMasiva, setAplicandoCreacionMasiva] = useState(false);
   
   // Estados para selección de sets y opciones en creación/edición
   const [setSeleccionado, setSetSeleccionado] = useState('');
@@ -171,6 +278,9 @@ const ModalClasificacionRegistrosRaw = ({
   const [setMasivo, setSetMasivo] = useState('');
   const [opcionMasiva, setOpcionMasiva] = useState('');
   const [aplicandoClasificacionMasiva, setAplicandoClasificacionMasiva] = useState(false);
+  
+  // Estados para pegado masivo en clasificación masiva
+  const [textoBusquedaMasiva, setTextoBusquedaMasiva] = useState('');
 
   useEffect(() => {
     console.log('🎯 useEffect ejecutado:', { 
@@ -199,26 +309,62 @@ const ModalClasificacionRegistrosRaw = ({
   const cargarRegistros = async () => {
     setLoading(true);
     try {
-      console.log('� Cargando datos de archivo...');
+      console.log('🔄 INICIANDO CARGA DE REGISTROS EN MODAL');
+      console.log('🔍 Parámetros de carga:', { uploadId, clienteId });
       
-      // Cargar datos de ClasificacionCuentaArchivo y cuentas del cliente
-      const [registrosArchivo, cuentasCliente] = await Promise.all([
-        obtenerClasificacionesArchivo(uploadId || clienteId), // Usar uploadId si está disponible, sino clienteId
+      // REDISEÑADO: Siempre cargar todas las clasificaciones persistentes del cliente
+      console.log('📊 Cargando TODAS las clasificaciones persistentes del cliente (incluyendo temporales)...');
+      const [clasificacionesPersistentes, cuentasCliente] = await Promise.all([
+        obtenerClasificacionesPersistentesDetalladas(clienteId), // CORREGIDO: Usar función que incluye temporales
         obtenerCuentasCliente(clienteId)
       ]);
       
+      // DEBUG: Examinar datos crudos de la API
+      console.log('🔍 DATOS CRUDOS RECIBIDOS DE LA API:');
+      console.log('  - Clasificaciones count:', clasificacionesPersistentes.length);
+      console.log('  - Cuentas count:', cuentasCliente.length);
+      
+      if (clasificacionesPersistentes.length > 0) {
+        console.log('  - Primera clasificación completa:', clasificacionesPersistentes[0]);
+        console.log('  - Últimas 3 clasificaciones:', clasificacionesPersistentes.slice(-3));
+      } else {
+        console.log('  ❌ NO HAY CLASIFICACIONES PERSISTENTES RECIBIDAS');
+      }
+      
+      if (cuentasCliente.length > 0) {
+        console.log('  - Primera cuenta:', cuentasCliente[0]);
+        console.log('  - Total cuentas:', cuentasCliente.length);
+      } else {
+        console.log('  ❌ NO HAY CUENTAS DEL CLIENTE');
+      }
+      
       // Adaptar datos al formato esperado por el modal
-      const data = adaptarDatosArchivo(registrosArchivo, cuentasCliente);
+      console.log('🔄 Iniciando adaptación de datos...');
+      const data = adaptarDatosAccountClassification(clasificacionesPersistentes, cuentasCliente);
+      console.log('✅ Datos adaptados:', data.length, 'registros');
+      
+      if (data.length > 0) {
+        console.log('🔍 PRIMER REGISTRO ADAPTADO:', data[0]);
+        console.log('🔍 ESTRUCTURA DE CLASIFICACIONES DEL PRIMER REGISTRO:', data[0].clasificaciones);
+      } else {
+        console.log('❌ NO HAY REGISTROS ADAPTADOS - INVESTIGAR PROBLEMA EN adaptarDatosAccountClassification');
+      }
       
       setRegistros(data);
       calcularEstadisticas(data);
-      console.log('✅ Registros de archivo cargados:', data.length);
+      console.log('✅ Modal - Clasificaciones cargadas y establecidas en estado:', data.length);
     } catch (error) {
-      console.error("Error cargando registros de archivo:", error);
+      console.error("❌ ERROR CARGANDO CLASIFICACIONES EN MODAL:", error);
+      if (error.response) {
+        console.error("   Response status:", error.response.status);
+        console.error("   Response data:", error.response.data);
+      }
       setRegistros([]);
       calcularEstadisticas([]);
     } finally {
       setLoading(false);
+      console.log('🏁 CARGA DE REGISTROS EN MODAL COMPLETADA');
+      console.log('─'.repeat(80));
     }
   };
 
@@ -913,6 +1059,11 @@ const ModalClasificacionRegistrosRaw = ({
 
   // ==================== FUNCIONES CRUD PARA REGISTROS ====================
   const handleIniciarCreacion = () => {
+    // Cancelar modo masivo si está activo
+    if (creandoMasivo) {
+      handleCancelarCreacionMasiva();
+    }
+    
     setNuevoRegistro({
       numero_cuenta: '',
       clasificaciones: {}
@@ -929,6 +1080,245 @@ const ModalClasificacionRegistrosRaw = ({
     // Limpiar selecciones
     setSetSeleccionado('');
     setOpcionSeleccionada('');
+    
+    // También cancelar modo masivo si está activo
+    if (creandoMasivo) {
+      handleCancelarCreacionMasiva();
+    }
+  };
+
+  // ==================== FUNCIONES PARA CREACIÓN MASIVA ====================
+  const procesarTextoPegado = (texto) => {
+    console.log('🔄 Procesando texto pegado:', texto);
+    
+    // Dividir por líneas y limpiar
+    const lineas = texto.split(/[\r\n]+/).map(linea => linea.trim()).filter(linea => linea.length > 0);
+    
+    console.log('📋 Líneas detectadas:', lineas);
+    
+    // Si hay más de una línea, es creación masiva
+    if (lineas.length > 1) {
+      console.log('✅ Detectada creación masiva con', lineas.length, 'cuentas');
+      
+      // Validar que las cuentas no existan ya
+      const cuentasExistentes = [];
+      const cuentasNuevas = [];
+      
+      lineas.forEach(cuenta => {
+        const existe = registros.some(r => r.numero_cuenta === cuenta);
+        if (existe) {
+          cuentasExistentes.push(cuenta);
+        } else {
+          cuentasNuevas.push({
+            numero_cuenta: cuenta,
+            clasificaciones: {},
+            existe: false
+          });
+        }
+      });
+      
+      if (cuentasExistentes.length > 0) {
+        console.warn('⚠️ Cuentas que ya existen:', cuentasExistentes);
+      }
+      
+      console.log('📝 Cuentas nuevas a crear:', cuentasNuevas.length);
+      
+      return {
+        esMultiple: true,
+        cuentasNuevas,
+        cuentasExistentes,
+        totalLineas: lineas.length
+      };
+    }
+    
+    return {
+      esMultiple: false,
+      cuenta: lineas[0] || '',
+      totalLineas: lineas.length
+    };
+  };
+
+  const handleTextoPegado = (texto) => {
+    const resultado = procesarTextoPegado(texto);
+    
+    if (resultado.esMultiple) {
+      // Mostrar alerta si hay cuentas existentes
+      if (resultado.cuentasExistentes.length > 0) {
+        const mensaje = `⚠️ Detectadas ${resultado.totalLineas} cuentas. ${resultado.cuentasExistentes.length} ya existen y se omitirán:\n\n${resultado.cuentasExistentes.join('\n')}\n\n¿Continuar con las ${resultado.cuentasNuevas.length} cuentas nuevas?`;
+        
+        if (!confirm(mensaje)) {
+          return;
+        }
+      }
+      
+      // Iniciar creación masiva
+      setCuentasMasivas(resultado.cuentasNuevas);
+      setCreandoMasivo(true);
+      setCreandoNuevo(false); // Asegurar que no está en modo individual
+    } else {
+      // Creación individual normal
+      setNuevoRegistro(prev => ({ ...prev, numero_cuenta: resultado.cuenta }));
+    }
+  };
+
+  const handleCancelarCreacionMasiva = () => {
+    setCreandoMasivo(false);
+    setCuentasMasivas([]);
+  };
+
+  const aplicarClasificacionMasivaACuentas = () => {
+    if (!setMasivo || !opcionMasiva) {
+      alert('Debe seleccionar un set y una opción para aplicar a todas las cuentas');
+      return;
+    }
+
+    const setNombre = obtenerSetsDisponibles().find(s => s.id === setMasivo)?.nombre;
+    if (!setNombre) {
+      alert('Error: No se pudo encontrar el set seleccionado');
+      return;
+    }
+
+    // Aplicar la clasificación a todas las cuentas
+    setCuentasMasivas(cuentas => 
+      cuentas.map(cuenta => ({
+        ...cuenta,
+        clasificaciones: {
+          ...cuenta.clasificaciones,
+          [setNombre]: opcionMasiva
+        }
+      }))
+    );
+
+    // Limpiar selección
+    setSetMasivo('');
+    setOpcionMasiva('');
+  };
+
+  const removerClasificacionDeCuentaMasiva = (indiceCuenta, setNombre) => {
+    setCuentasMasivas(cuentas => 
+      cuentas.map((cuenta, index) => {
+        if (index === indiceCuenta) {
+          const nuevasClasificaciones = { ...cuenta.clasificaciones };
+          delete nuevasClasificaciones[setNombre];
+          return {
+            ...cuenta,
+            clasificaciones: nuevasClasificaciones
+          };
+        }
+        return cuenta;
+      })
+    );
+  };
+
+  const handleGuardarCreacionMasiva = async () => {
+    if (cuentasMasivas.length === 0) {
+      alert('No hay cuentas para crear');
+      return;
+    }
+
+    const cuentasSinClasificar = cuentasMasivas.filter(cuenta => Object.keys(cuenta.clasificaciones).length === 0);
+    
+    if (cuentasSinClasificar.length > 0) {
+      const mensaje = `${cuentasSinClasificar.length} cuentas no tienen clasificaciones asignadas:\n\n${cuentasSinClasificar.map(c => c.numero_cuenta).join('\n')}\n\n¿Continuar de todas formas?`;
+      
+      if (!confirm(mensaje)) {
+        return;
+      }
+    }
+
+    setAplicandoCreacionMasiva(true);
+    let errores = [];
+    let exitosos = 0;
+
+    try {
+      console.log('🚀 Iniciando creación masiva de', cuentasMasivas.length, 'cuentas');
+
+      for (const cuenta of cuentasMasivas) {
+        try {
+          const datosAEnviar = {
+            cliente: clienteId,
+            numero_cuenta: cuenta.numero_cuenta.trim(),
+            cuenta_nombre: cuenta.numero_cuenta.trim(),
+            clasificaciones: cuenta.clasificaciones
+          };
+
+          console.log('📝 Creando cuenta:', cuenta.numero_cuenta);
+          await crearClasificacionPersistente(datosAEnviar);
+          exitosos++;
+
+          // Registrar actividad individual
+          try {
+            await registrarActividad(
+              "clasificacion",
+              "bulk_create",
+              `Creó cuenta en creación masiva: ${cuenta.numero_cuenta}`,
+              {
+                numero_cuenta: cuenta.numero_cuenta,
+                cantidad_clasificaciones: Object.keys(cuenta.clasificaciones).length,
+                clasificaciones: cuenta.clasificaciones,
+                source_type: "persistent_db",
+                es_creacion_masiva: true
+              }
+            );
+          } catch (logErr) {
+            console.warn("Error registrando actividad individual:", logErr);
+          }
+
+        } catch (error) {
+          console.error('❌ Error creando cuenta', cuenta.numero_cuenta, ':', error);
+          
+          let errorMessage = `${cuenta.numero_cuenta}: `;
+          if (error.response?.data?.detail) {
+            errorMessage += error.response.data.detail;
+          } else if (error.response?.data) {
+            errorMessage += JSON.stringify(error.response.data);
+          } else {
+            errorMessage += error.message || 'Error desconocido';
+          }
+          
+          errores.push(errorMessage);
+        }
+      }
+
+      // Registrar actividad de resumen
+      try {
+        await registrarActividad(
+          "clasificacion",
+          "bulk_create_summary",
+          `Creación masiva completada: ${exitosos} exitosas, ${errores.length} errores`,
+          {
+            total_intentos: cuentasMasivas.length,
+            exitosos,
+            errores: errores.length,
+            source_type: "persistent_db",
+            cuentas_exitosas: cuentasMasivas.slice(0, exitosos).map(c => c.numero_cuenta)
+          }
+        );
+      } catch (logErr) {
+        console.warn("Error registrando actividad de resumen:", logErr);
+      }
+
+      // Mostrar resultado
+      let mensaje = `✅ Creación masiva completada:\n\n`;
+      mensaje += `• ${exitosos} cuentas creadas exitosamente\n`;
+      
+      if (errores.length > 0) {
+        mensaje += `• ${errores.length} errores:\n\n${errores.join('\n')}`;
+      }
+      
+      alert(mensaje);
+
+      // Recargar datos y limpiar
+      await cargarRegistros();
+      handleCancelarCreacionMasiva();
+      if (onDataChanged) onDataChanged();
+
+    } catch (error) {
+      console.error('❌ Error general en creación masiva:', error);
+      alert('Error general durante la creación masiva: ' + (error.message || 'Error desconocido'));
+    } finally {
+      setAplicandoCreacionMasiva(false);
+    }
   };
 
   const handleGuardarNuevo = async () => {
@@ -956,7 +1346,7 @@ const ModalClasificacionRegistrosRaw = ({
       console.log('Cliente ID:', clienteId);
       console.log('Datos completos a enviar:', JSON.stringify(datosAEnviar, null, 2));
 
-      const registroCreado = await crearClasificacionArchivo(datosAEnviar);
+      const registroCreado = await crearClasificacionPersistente(datosAEnviar);
       
       // Registrar actividad detallada de creación de registro
       try {
@@ -1046,8 +1436,13 @@ const ModalClasificacionRegistrosRaw = ({
         clasificaciones_anteriores: registroActual.clasificaciones
       } : {};
       
-      await actualizarClasificacionArchivo(editandoId, {
-        numero_cuenta: registroEditando.numero_cuenta.trim(),
+      if (!registroActual) {
+        throw new Error('No se encontró el registro a editar');
+      }
+      
+      await actualizarClasificacionPersistente(registroActual.numero_cuenta, {
+        cliente: clienteId,
+        nuevo_numero_cuenta: registroEditando.numero_cuenta.trim(),
         cuenta_nombre: registroEditando.numero_cuenta.trim(),
         clasificaciones: registroEditando.clasificaciones
       });
@@ -1094,7 +1489,11 @@ const ModalClasificacionRegistrosRaw = ({
           cantidad_clasificaciones: Object.keys(registroAEliminar.clasificaciones || {}).length
         } : {};
         
-        await eliminarClasificacionArchivo(id);
+        if (!registroAEliminar) {
+          throw new Error('No se encontró el registro a eliminar');
+        }
+        
+        await eliminarClasificacionPersistente(registroAEliminar.numero_cuenta, clienteId);
         
         // Registrar actividad detallada de eliminación de registro
         try {
@@ -1126,6 +1525,7 @@ const ModalClasificacionRegistrosRaw = ({
     setRegistrosSeleccionados(new Set());
     setSetMasivo('');
     setOpcionMasiva('');
+    setTextoBusquedaMasiva(''); // Limpiar búsqueda al cambiar modo
   };
 
   const alternarSeleccionRegistro = (registroId) => {
@@ -1203,9 +1603,11 @@ const ModalClasificacionRegistrosRaw = ({
             [setEncontrado.nombre]: opcionMasiva
           };
           
-          // Actualizar el registro individual
-          await actualizarClasificacionArchivo(registroId, {
+          // Actualizar el registro individual usando el código de cuenta
+          await actualizarClasificacionPersistente(registroActual.numero_cuenta, {
+            cliente: clienteId,
             numero_cuenta: registroActual.numero_cuenta,
+            cuenta_nombre: registroActual.cuenta_nombre,
             clasificaciones: nuevasClasificaciones
           });
           
@@ -1292,6 +1694,141 @@ const ModalClasificacionRegistrosRaw = ({
     }
   };
 
+  // ==================== FUNCIONES PARA PEGADO MASIVO EN CLASIFICACIÓN MASIVA ====================
+  const procesarTextoPegadoClasificacionMasiva = (texto) => {
+    console.log('🔄 Procesando texto pegado para clasificación masiva:', texto);
+    
+    // Dividir por líneas y limpiar
+    const lineas = texto.split(/[\r\n]+/).map(linea => linea.trim()).filter(linea => linea.length > 0);
+    
+    console.log('📋 Líneas detectadas para búsqueda:', lineas);
+    
+    // Buscar registros que coincidan con las cuentas pegadas
+    const registrosEncontrados = [];
+    const cuentasNoEncontradas = [];
+    
+    lineas.forEach(cuentaPegada => {
+      const registroEncontrado = registrosFiltrados.find(r => 
+        r.numero_cuenta.toLowerCase().includes(cuentaPegada.toLowerCase()) ||
+        cuentaPegada.toLowerCase().includes(r.numero_cuenta.toLowerCase()) ||
+        r.numero_cuenta === cuentaPegada
+      );
+      
+      if (registroEncontrado) {
+        registrosEncontrados.push(registroEncontrado);
+      } else {
+        cuentasNoEncontradas.push(cuentaPegada);
+      }
+    });
+    
+    console.log('🎯 Resultados búsqueda:', {
+      total_lineas: lineas.length,
+      encontrados: registrosEncontrados.length,
+      no_encontrados: cuentasNoEncontradas.length
+    });
+    
+    return {
+      lineasOriginales: lineas,
+      registrosEncontrados,
+      cuentasNoEncontradas,
+      totalLineas: lineas.length
+    };
+  };
+
+  const handleTextoPegadoClasificacionMasiva = (texto) => {
+    const resultado = procesarTextoPegadoClasificacionMasiva(texto);
+    
+    if (resultado.totalLineas > 1) {
+      // Es pegado masivo
+      console.log('✅ Detectado pegado masivo en clasificación masiva');
+      
+      let mensaje = `📋 Detectadas ${resultado.totalLineas} cuentas:\n\n`;
+      mensaje += `✅ ${resultado.registrosEncontrados.length} cuentas encontradas y se seleccionarán\n`;
+      
+      if (resultado.cuentasNoEncontradas.length > 0) {
+        mensaje += `❌ ${resultado.cuentasNoEncontradas.length} cuentas no encontradas:\n`;
+        mensaje += resultado.cuentasNoEncontradas.slice(0, 10).join('\n');
+        if (resultado.cuentasNoEncontradas.length > 10) {
+          mensaje += `\n... y ${resultado.cuentasNoEncontradas.length - 10} más`;
+        }
+        mensaje += '\n\n';
+      }
+      
+      mensaje += '¿Continuar con la selección de las cuentas encontradas?';
+      
+      if (confirm(mensaje)) {
+        // Seleccionar todos los registros encontrados
+        const idsEncontrados = new Set(resultado.registrosEncontrados.map(r => r.id));
+        setRegistrosSeleccionados(idsEncontrados);
+        
+        // Limpiar el campo de búsqueda
+        setTextoBusquedaMasiva('');
+        
+        // Mostrar resumen
+        console.log(`✅ Seleccionados ${idsEncontrados.size} registros automáticamente`);
+        
+        // Registrar actividad
+        try {
+          registrarActividad(
+            "clasificacion",
+            "bulk_selection_paste",
+            `Selección masiva por pegado: ${idsEncontrados.size} cuentas`,
+            {
+              total_pegadas: resultado.totalLineas,
+              encontradas: resultado.registrosEncontrados.length,
+              no_encontradas: resultado.cuentasNoEncontradas.length,
+              cuentas_seleccionadas: resultado.registrosEncontrados.map(r => r.numero_cuenta)
+            }
+          );
+        } catch (logErr) {
+          console.warn("Error registrando actividad de selección masiva:", logErr);
+        }
+      }
+    } else {
+      // Búsqueda individual - mantener comportamiento original
+      const cuentaBuscada = resultado.lineasOriginales[0] || '';
+      setTextoBusquedaMasiva(cuentaBuscada);
+      
+      // Auto-seleccionar si encuentra exactamente una coincidencia
+      if (resultado.registrosEncontrados.length === 1) {
+        const registroEncontrado = resultado.registrosEncontrados[0];
+        const nuevosSeleccionados = new Set(registrosSeleccionados);
+        
+        if (nuevosSeleccionados.has(registroEncontrado.id)) {
+          console.log('ℹ️ Cuenta ya estaba seleccionada');
+        } else {
+          nuevosSeleccionados.add(registroEncontrado.id);
+          setRegistrosSeleccionados(nuevosSeleccionados);
+          console.log(`✅ Auto-seleccionada cuenta: ${registroEncontrado.numero_cuenta}`);
+        }
+      }
+    }
+  };
+
+  const buscarYSeleccionarCuentas = (textoBusqueda) => {
+    if (!textoBusqueda.trim()) {
+      return;
+    }
+    
+    const busquedaLimpia = textoBusqueda.toLowerCase().trim();
+    const registrosCoincidentes = registrosFiltrados.filter(r => 
+      r.numero_cuenta.toLowerCase().includes(busquedaLimpia)
+    );
+    
+    if (registrosCoincidentes.length > 0) {
+      const idsCoincidentes = new Set(registrosCoincidentes.map(r => r.id));
+      const nuevosSeleccionados = new Set([...registrosSeleccionados, ...idsCoincidentes]);
+      setRegistrosSeleccionados(nuevosSeleccionados);
+      
+      console.log(`🔍 Búsqueda "${textoBusqueda}": ${registrosCoincidentes.length} cuentas agregadas a selección`);
+      
+      // Limpiar búsqueda después de seleccionar
+      setTextoBusquedaMasiva('');
+    } else {
+      console.log(`🔍 Búsqueda "${textoBusqueda}": Sin coincidencias`);
+    }
+  };
+
   const registrosFiltrados = aplicarFiltros(registros || []);
   const setsUnicos = obtenerSetsUnicos();
 
@@ -1319,12 +1856,12 @@ const ModalClasificacionRegistrosRaw = ({
             <h2 className="text-xl font-semibold text-white flex items-center gap-2">
               <Database size={20} />
               Gestión de Clasificaciones
+              {creandoMasivo && (
+                <span className="bg-green-600 text-green-100 px-2 py-1 rounded text-sm font-medium">
+                  Creación Masiva: {cuentasMasivas.length} cuentas
+                </span>
+              )}
             </h2>
-            
-            {/* Indicador de fuente de datos */}
-            <div className="px-3 py-1 rounded-full text-xs font-medium bg-blue-900 text-blue-300 border border-blue-600">
-              � Archivo Excel
-            </div>
             
             {/* Switch global de idioma - Solo para clientes con sets bilingües */}
             {(() => {
@@ -1445,9 +1982,11 @@ const ModalClasificacionRegistrosRaw = ({
                       onClick={handleIniciarCreacion}
                       className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-medium transition flex items-center gap-2"
                       disabled={modoClasificacionMasiva}
+                      title="Crear nuevo registro individual o pegar múltiples cuentas desde Excel"
                     >
                       <Plus size={16} />
                       Nuevo Registro
+                      <span className="text-xs text-blue-200 ml-1">(o pegar Excel)</span>
                     </button>
                   </div>
                 </div>
@@ -1598,6 +2137,44 @@ const ModalClasificacionRegistrosRaw = ({
                     <h3 className="text-green-400 font-medium">Clasificación Masiva</h3>
                   </div>
                   
+                  {/* Campo de búsqueda/pegado masivo */}
+                  <div className="mb-4 p-3 bg-gray-700/50 rounded border border-gray-600">
+                    <label className="block text-xs text-gray-400 mb-2">
+                      🔍 Buscar/Seleccionar cuentas:
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={textoBusquedaMasiva}
+                        onChange={(e) => setTextoBusquedaMasiva(e.target.value)}
+                        onPaste={(e) => {
+                          e.preventDefault();
+                          const textoPegado = e.clipboardData.getData('text');
+                          handleTextoPegadoClasificacionMasiva(textoPegado);
+                        }}
+                        onKeyPress={(e) => {
+                          if (e.key === 'Enter') {
+                            buscarYSeleccionarCuentas(textoBusquedaMasiva);
+                          }
+                        }}
+                        placeholder="Buscar cuenta individual o pegar múltiples cuentas de Excel..."
+                        className="flex-1 bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 text-sm focus:border-green-500 focus:outline-none"
+                      />
+                      <button
+                        onClick={() => buscarYSeleccionarCuentas(textoBusquedaMasiva)}
+                        disabled={!textoBusquedaMasiva.trim()}
+                        className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 disabled:opacity-50 text-white px-3 py-2 rounded text-sm transition flex items-center gap-1"
+                        title="Buscar y seleccionar"
+                      >
+                        <Plus size={14} />
+                        Buscar
+                      </button>
+                    </div>
+                    <div className="mt-2 text-xs text-gray-400">
+                      💡 <strong>Tip:</strong> Pega varias cuentas de Excel (una por línea) para seleccionarlas automáticamente
+                    </div>
+                  </div>
+                  
                   <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-end">
                     {/* Selector de Set */}
                     <div>
@@ -1641,6 +2218,7 @@ const ModalClasificacionRegistrosRaw = ({
                           onClick={seleccionarTodosLosRegistros}
                           className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded text-sm transition"
                           disabled={registrosFiltrados.length === 0}
+                          title="Seleccionar todos los registros visibles"
                         >
                           Todos
                         </button>
@@ -1648,6 +2226,7 @@ const ModalClasificacionRegistrosRaw = ({
                           onClick={limpiarSeleccionRegistros}
                           className="bg-gray-600 hover:bg-gray-500 text-white px-3 py-2 rounded text-sm transition"
                           disabled={registrosSeleccionados.size === 0}
+                          title="Limpiar selección"
                         >
                           Limpiar
                         </button>
@@ -1673,6 +2252,20 @@ const ModalClasificacionRegistrosRaw = ({
                         {obtenerSetsDisponibles().find(s => s.id === parseInt(setMasivo))?.nombre}: {opcionMasiva}
                       </span>{' '}
                       a <span className="font-medium text-green-400">{registrosSeleccionados.size}</span> registro(s).
+                    </div>
+                  )}
+                  
+                  {/* Indicador de estado de selección */}
+                  {registrosSeleccionados.size > 0 && (
+                    <div className="mt-3 p-2 bg-blue-900/20 border border-blue-700/50 rounded text-xs">
+                      <span className="text-blue-400">📋 Seleccionados:</span>{' '}
+                      <span className="font-medium text-white">{registrosSeleccionados.size}</span> de{' '}
+                      <span className="text-gray-300">{registrosFiltrados.length}</span> registros visibles
+                      {textoBusquedaMasiva && (
+                        <span className="text-yellow-400 ml-2">
+                          (búsqueda activa: "{textoBusquedaMasiva}")
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1732,9 +2325,6 @@ const ModalClasificacionRegistrosRaw = ({
                           </th>
                         )}
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider border-b border-gray-700">
-                          Fila
-                        </th>
-                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider border-b border-gray-700">
                           Número Cuenta
                         </th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider border-b border-gray-700">
@@ -1746,15 +2336,160 @@ const ModalClasificacionRegistrosRaw = ({
                       </tr>
                     </thead>
                     <tbody className="bg-gray-900 divide-y divide-gray-700">
+                      {/* Sección de creación masiva */}
+                      {creandoMasivo && (
+                        <>
+                          {/* Encabezado de creación masiva */}
+                          <tr className="bg-green-900/20 border-l-4 border-l-green-500">
+                            <td colSpan={modoClasificacionMasiva ? 4 : 3} className="px-3 py-4">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="flex items-center gap-2">
+                                    <FolderPlus size={20} className="text-green-400" />
+                                    <h3 className="text-green-400 font-medium">
+                                      Creación Masiva: {cuentasMasivas.length} cuentas detectadas
+                                    </h3>
+                                  </div>
+                                  
+                                  {/* Panel de clasificación masiva para cuentas */}
+                                  <div className="flex items-center gap-2 ml-6">
+                                    <span className="text-xs text-gray-400">Aplicar a todas:</span>
+                                    <select
+                                      value={setMasivo}
+                                      onChange={(e) => {
+                                        setSetMasivo(e.target.value);
+                                        setOpcionMasiva('');
+                                      }}
+                                      className="bg-gray-700 text-white px-2 py-1 rounded border border-gray-600 text-xs focus:border-green-500 focus:outline-none"
+                                    >
+                                      <option value="">Set...</option>
+                                      {obtenerSetsDisponibles().map(set => (
+                                        <option key={set.id} value={set.id}>{set.nombre}</option>
+                                      ))}
+                                    </select>
+                                    
+                                    {setMasivo && (
+                                      <select
+                                        value={opcionMasiva}
+                                        onChange={(e) => setOpcionMasiva(e.target.value)}
+                                        className="bg-gray-700 text-white px-2 py-1 rounded border border-gray-600 text-xs focus:border-green-500 focus:outline-none"
+                                      >
+                                        <option value="">Opción...</option>
+                                        {obtenerOpcionesParaSet(setMasivo).map(opcion => (
+                                          <option key={opcion.id} value={opcion.valor}>{opcion.valor}</option>
+                                        ))}
+                                      </select>
+                                    )}
+                                    
+                                    {setMasivo && opcionMasiva && (
+                                      <button
+                                        onClick={aplicarClasificacionMasivaACuentas}
+                                        className="bg-green-600 hover:bg-green-500 px-2 py-1 rounded text-white text-xs transition flex items-center gap-1"
+                                        title="Aplicar a todas las cuentas"
+                                      >
+                                        <Plus size={12} />
+                                        Aplicar
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                                
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={handleGuardarCreacionMasiva}
+                                    disabled={aplicandoCreacionMasiva}
+                                    className="bg-green-600 hover:bg-green-500 disabled:bg-gray-600 text-white px-3 py-1 rounded text-sm font-medium transition flex items-center gap-1"
+                                  >
+                                    {aplicandoCreacionMasiva ? (
+                                      <>
+                                        <Clock size={14} className="animate-spin" />
+                                        Creando...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Save size={14} />
+                                        Crear Todas ({cuentasMasivas.length})
+                                      </>
+                                    )}
+                                  </button>
+                                  <button
+                                    onClick={handleCancelarCreacionMasiva}
+                                    disabled={aplicandoCreacionMasiva}
+                                    className="bg-gray-600 hover:bg-gray-500 disabled:bg-gray-700 text-white px-3 py-1 rounded text-sm transition flex items-center gap-1"
+                                  >
+                                    <XCircle size={14} />
+                                    Cancelar
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                          
+                          {/* Lista de cuentas masivas */}
+                          {cuentasMasivas.map((cuenta, index) => (
+                            <tr key={`masiva-${index}`} className="bg-green-900/10 hover:bg-green-900/20 transition">
+                              {modoClasificacionMasiva && (
+                                <td className="px-3 py-2">
+                                  {/* Sin checkbox para cuentas masivas */}
+                                </td>
+                              )}
+                              <td className="px-3 py-2">
+                                <div className="font-mono text-sm text-green-300">
+                                  {cuenta.numero_cuenta}
+                                </div>
+                              </td>
+                              <td className="px-3 py-2">
+                                {/* Clasificaciones de la cuenta */}
+                                {Object.keys(cuenta.clasificaciones).length > 0 ? (
+                                  <div className="flex flex-wrap gap-1">
+                                    {Object.entries(cuenta.clasificaciones).map(([set, valor]) => (
+                                      <div key={set} className="flex items-center gap-1 bg-green-900/50 px-2 py-1 rounded text-xs border border-green-700/50">
+                                        <span className="text-green-300 font-medium">{set}:</span>
+                                        <span className="text-white">{valor}</span>
+                                        <button
+                                          onClick={() => removerClasificacionDeCuentaMasiva(index, set)}
+                                          className="text-red-400 hover:text-red-300 ml-1 hover:bg-red-900/30 rounded p-0.5 transition"
+                                          title="Eliminar clasificación"
+                                        >
+                                          <XCircle size={10} />
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-xs text-yellow-400 italic">
+                                    Sin clasificaciones
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-3 py-2">
+                                <div className="text-xs text-gray-500">
+                                  Cuenta #{index + 1}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </>
+                      )}
+                      
                       {/* Fila de creación de nuevo registro */}
                       {creandoNuevo && (
-                        <tr className="bg-gray-800 border-l-4 border-l-blue-500">
+                        <>
+                          {/* Fila informativa */}
+                          <tr className="bg-blue-900/20">
+                            <td colSpan={modoClasificacionMasiva ? 4 : 3} className="px-3 py-2 text-center">
+                              <div className="text-xs text-blue-400 bg-blue-900/30 px-3 py-2 rounded border border-blue-700/50 inline-block">
+                                💡 <strong>Tip:</strong> Puedes pegar varias cuentas de Excel (una por línea) en el campo "Número de cuenta" para crearlas masivamente
+                              </div>
+                            </td>
+                          </tr>
+                          
+                          <tr className="bg-gray-800 border-l-4 border-l-blue-500">
                           {modoClasificacionMasiva && (
                             <td className="px-3 py-2">
                               {/* Sin checkbox para fila de creación */}
                             </td>
                           )}
-                          <td className="px-3 py-2 text-gray-400 text-sm">Nuevo</td>
                           <td className="px-3 py-2">
                             {(() => {
                               const cuentaExiste = nuevoRegistro.numero_cuenta.trim() && 
@@ -1765,7 +2500,12 @@ const ModalClasificacionRegistrosRaw = ({
                                     type="text"
                                     value={nuevoRegistro.numero_cuenta}
                                     onChange={(e) => setNuevoRegistro(prev => ({ ...prev, numero_cuenta: e.target.value }))}
-                                    placeholder="Número de cuenta"
+                                    onPaste={(e) => {
+                                      e.preventDefault();
+                                      const textoPegado = e.clipboardData.getData('text');
+                                      handleTextoPegado(textoPegado);
+                                    }}
+                                    placeholder="Número de cuenta (o pega varias líneas desde Excel)"
                                     className={`w-full bg-gray-700 text-white px-2 py-1 rounded border focus:outline-none ${
                                       cuentaExiste 
                                         ? 'border-red-500 focus:border-red-400' 
@@ -1786,7 +2526,9 @@ const ModalClasificacionRegistrosRaw = ({
                             {Object.keys(nuevoRegistro.clasificaciones).length > 0 && (
                               <div className="mb-2">
                                 <div className="flex flex-wrap gap-1">
-                                  {Object.entries(nuevoRegistro.clasificaciones || {}).map(([set, valor]) => (
+                                  {Object.entries(nuevoRegistro.clasificaciones || {})
+                                    .filter(([set, valor]) => set !== 'undefined' && set && valor)
+                                    .map(([set, valor]) => (
                                     <div key={set} className="flex items-center gap-1 bg-blue-900/50 px-2 py-1 rounded text-xs border border-blue-700/50">
                                       <span className="text-blue-300 font-medium">{set}:</span>
                                       <span className="text-white">{valor}</span>
@@ -1871,6 +2613,7 @@ const ModalClasificacionRegistrosRaw = ({
                             </div>
                           </td>
                         </tr>
+                        </>
                       )}
                       
                       {/* Filas de registros existentes */}
@@ -1888,7 +2631,6 @@ const ModalClasificacionRegistrosRaw = ({
                               />
                             </td>
                           )}
-                          <td className="px-3 py-2 text-gray-400 text-sm">{registro.fila_excel}</td>
                           <td className="px-3 py-2">
                             {editandoId === registro.id ? (
                               <input
@@ -1908,7 +2650,9 @@ const ModalClasificacionRegistrosRaw = ({
                                 {Object.keys(registroEditando.clasificaciones).length > 0 && (
                                   <div className="mb-2">
                                     <div className="flex flex-wrap gap-1">
-                                      {Object.entries(registroEditando.clasificaciones || {}).map(([set, valor]) => (
+                                      {Object.entries(registroEditando.clasificaciones || {})
+                                        .filter(([set, valor]) => set !== 'undefined' && set && valor)
+                                        .map(([set, valor]) => (
                                         <div key={set} className="flex items-center gap-1 bg-blue-900/50 px-2 py-1 rounded text-xs border border-blue-700/50">
                                           <span className="text-blue-300 font-medium">{set}:</span>
                                           <span className="text-white">{valor}</span>
@@ -1976,11 +2720,16 @@ const ModalClasificacionRegistrosRaw = ({
                               </div>
                             ) : (
                               <div className="flex flex-wrap gap-1">
-                                {Object.entries(registro.clasificaciones || {}).map(([set, valor]) => (
+                                {Object.entries(registro.clasificaciones || {})
+                                  .filter(([set, valor]) => set !== 'undefined' && set && valor)
+                                  .map(([set, valor]) => (
                                   <span key={set} className="inline-block bg-blue-900/50 px-2 py-1 rounded text-xs">
                                     <span className="text-gray-300">{set}:</span> <span className="text-white">{valor}</span>
                                   </span>
                                 ))}
+                                {Object.keys(registro.clasificaciones || {}).length === 0 && (
+                                  <span className="text-gray-400 text-xs italic">Sin clasificaciones</span>
+                                )}
                               </div>
                             )}
                           </td>

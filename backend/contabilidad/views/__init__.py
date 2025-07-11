@@ -5,15 +5,19 @@ from .libro_mayor import (
 from .tipo_documento import TipoDocumentoViewSet, cargar_tipo_documento
 from .nombres_ingles import NombreInglesViewSet, cargar_nombres_ingles, NombresEnInglesView, NombresEnInglesUploadViewSet
 from .clasificacion import (
-    ClasificacionCuentaArchivoViewSet, 
+    # ClasificacionCuentaArchivoViewSet,  # OBSOLETO - ELIMINADO EN REDISEÑO
     cargar_clasificacion_bulk,
     ClasificacionViewSet,
     ClasificacionSetViewSet,
     ClasificacionOptionViewSet,
     AccountClassificationViewSet,
+    obtener_clasificaciones_persistentes_detalladas,  # CORRECTO - Incluye temporales
+    crear_registro_clasificacion_completo,  # Nueva función para registros completos
+    actualizar_registro_clasificacion_completo,  # Nueva función para editar registros completos
+    eliminar_registro_clasificacion_completo,  # Nueva función para eliminar registros completos
 )
 from .clasificacion_persistente import (
-    obtener_clasificaciones_persistentes_detalladas,
+    # obtener_clasificaciones_persistentes_detalladas,  # MOVIDO A clasificacion.py
     registrar_vista_clasificaciones_persistentes,
     clasificacion_masiva_persistente,
     obtener_estadisticas_clasificaciones_persistentes,
@@ -81,7 +85,7 @@ __all__ = [
     "cargar_nombres_ingles",
     "NombresEnInglesView",
     "NombresEnInglesUploadViewSet",
-    "ClasificacionCuentaArchivoViewSet",
+    # "ClasificacionCuentaArchivoViewSet",  # OBSOLETO - ELIMINADO EN REDISEÑO
     "cargar_clasificacion_bulk",
     "ClasificacionViewSet",
     "ClasificacionSetViewSet",
@@ -125,6 +129,9 @@ __all__ = [
     "registrar_vista_clasificaciones_persistentes", 
     "clasificacion_masiva_persistente",
     "obtener_estadisticas_clasificaciones_persistentes",
+    "crear_registro_clasificacion_completo",
+    "actualizar_registro_clasificacion_completo",
+    "eliminar_registro_clasificacion_completo",
     # Utilidades
     "test_celery",
     "limpiar_archivos_temporales", 

@@ -10,7 +10,7 @@ from contabilidad.models import (
     ClasificacionOption,
     AccountClassification,
     UploadLog,
-    ClasificacionCuentaArchivo,
+    # ClasificacionCuentaArchivo,  # OBSOLETO - ELIMINADO EN REDISEÑO
     NombreIngles,
     Incidencia,
     TarjetaActivityLog,
@@ -154,20 +154,23 @@ class ReprocesarIncompletosTests(TestCase):
         set1 = ClasificacionSet.objects.create(cliente=self.cliente, nombre="G")
         opt1 = ClasificacionOption.objects.create(set_clas=set1, valor="X")
 
-        # Registro en ClasificacionCuentaArchivo para que el reprocesamiento
-        # aplique la clasificación de forma automática
+        # Crear clasificación directamente en AccountClassification (nuevo diseño)
+        # El reprocesamiento buscará y aplicará estas clasificaciones automáticamente
         log = UploadLog.objects.create(
             tipo_upload="clasificacion",
             cliente=self.cliente,
             nombre_archivo_original="tmp.xlsx",
             tamaño_archivo=10,
         )
-        ClasificacionCuentaArchivo.objects.create(
+        
+        # Crear clasificación temporal por código (sin FK a cuenta)
+        AccountClassification.objects.create(
             cliente=self.cliente,
+            cuenta_codigo="2001",  # Código temporal
+            set_clas=set1,
+            opcion=opt1,
             upload_log=log,
-            numero_cuenta="2001",
-            clasificaciones={"G": "X"},
-            fila_excel=1,
+            origen='excel',
         )
 
         NombreIngles.objects.create(

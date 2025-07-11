@@ -2,17 +2,19 @@
 Tasks especializadas para el procesamiento de archivos de clasificación bulk
 Refactorizado para usar Celery Chains y distribuir validaciones/procesamiento
 
-FLUJO CORRECTO DE CLASIFICACIÓN:
+FLUJO NUEVO DE CLASIFICACIÓN (REDISEÑADO):
 1. Usuario sube archivo de clasificación (códigos + sets + valores)
-2. Se almacenan datos RAW en ClasificacionCuentaArchivo (NO se hace mapeo inmediato)
+2. Se procesan y almacenan directamente en AccountClassification
+   - Con FK a cuenta si existe, o código temporal si no existe
+   - Se crean ClasificacionSet y ClasificacionOption según necesidad
 3. Usuario sube libro mayor -> se crean las CuentaContable
-4. Se ejecuta mapeo: mapear_clasificaciones_con_cuentas() 
-   - Crea ClasificacionSet y ClasificacionOption desde datos RAW
-   - Mapea clasificaciones RAW con CuentaContable existentes
-   - Crea AccountClassification con las FK correctas
+4. Se ejecuta migración automática: migrar_clasificaciones_temporales_a_fk()
+   - Convierte clasificaciones temporales (por código) a FK reales
+   - Elimina duplicados manteniendo la versión con FK
 
 IMPORTANTE: 
-- Durante subida de clasificación NO se crean sets/opciones/mapeos
+- AccountClassification es la única fuente de verdad
+- Modelo ClasificacionCuentaArchivo fue eliminado
 - El mapeo ocurre DESPUÉS cuando existen las cuentas del libro mayor
 """
 
@@ -30,7 +32,7 @@ from django.core.exceptions import ObjectDoesNotExist
 
 from .models import (
     ClasificacionArchivo, 
-    ClasificacionCuentaArchivo, 
+    # ClasificacionCuentaArchivo,  # OBSOLETO - ELIMINADO EN REDISEÑO
     ClasificacionSet,
     ClasificacionOption,
     CuentaContable,
@@ -243,11 +245,11 @@ def validar_contenido_clasificacion_excel_task(upload_log_id):
 @shared_task(name='contabilidad.procesar_datos_clasificacion_task')
 def procesar_datos_clasificacion_task(upload_log_id):
     """
-    Task 4: Procesar los datos del Excel y crear registros RAW en BD
-    IMPORTANTE: Solo almacena datos RAW, NO hace mapeo con CuentaContable
-    El mapeo se realizará posteriormente cuando se suba el libro mayor
+    REDISEÑADO: Procesa Excel y crea directamente AccountClassification.
+    No usa modelo intermedio - es la fuente única de verdad.
+    Soporta tanto clasificaciones con FK (cuentas existentes) como temporales (por código).
     """
-    logger.info(f"Procesando datos RAW de clasificación para upload_log_id: {upload_log_id}")
+    logger.info(f"Procesando clasificación Excel directamente para upload_log_id: {upload_log_id}")
     
     try:
         upload_log = UploadLog.objects.get(id=upload_log_id)
@@ -262,13 +264,6 @@ def procesar_datos_clasificacion_task(upload_log_id):
     inicio = timezone.now()
     
     try:
-        # Debug: Test if ClasificacionCuentaArchivo is accessible
-        try:
-            test_count = ClasificacionCuentaArchivo.objects.count()
-            logger.info(f"[DEBUG] Current ClasificacionCuentaArchivo count: {test_count}")
-        except Exception as debug_e:
-            logger.error(f"[DEBUG] Error accessing ClasificacionCuentaArchivo model: {debug_e}")
-        
         ruta_completa = default_storage.path(upload_log.ruta_archivo)
         
         # Leer el Excel
@@ -279,22 +274,18 @@ def procesar_datos_clasificacion_task(upload_log_id):
         columna_cuentas = df.columns[0]
         sets = list(df.columns[1:])
 
-        # Debug: Check ClasificacionCuentaArchivo model fields
-        model_fields = [f.name for f in ClasificacionCuentaArchivo._meta.get_fields()]
-        logger.info(f"[DEBUG] ClasificacionCuentaArchivo model fields: {model_fields}")
-
-        # Marcar registros anteriores como obsoletos en lugar de eliminarlos
-        # para mantener histórico completo
-        ClasificacionCuentaArchivo.objects.filter(upload_log=upload_log).update(
-            activo=False,
-            fecha_obsolescencia=timezone.now()
-        )
+        # Eliminar clasificaciones anteriores del mismo upload_log
+        AccountClassification.objects.filter(upload_log=upload_log).delete()
+        logger.info(f"Eliminadas clasificaciones anteriores del upload_log {upload_log.id}")
 
         errores = []
-        registros = 0
+        clasificaciones_creadas = 0
+        clasificaciones_actualizadas = 0
+        sets_creados = 0
+        opciones_creadas = 0
         filas_vacias = 0
 
-        # Procesar cada fila - SOLO ALMACENAR DATOS RAW
+        # Procesar cada fila - CREAR DIRECTAMENTE AccountClassification
         for index, row in df.iterrows():
             numero_cuenta = (
                 str(row[columna_cuentas]).strip()
@@ -305,45 +296,124 @@ def procesar_datos_clasificacion_task(upload_log_id):
                 filas_vacias += 1
                 continue
                 
-            # Construir diccionario de clasificaciones (RAW, sin mapeo)
-            clasif = {}
+            # Verificar si la cuenta existe (para FK) o usar código temporal
+            cuenta_obj = None
+            try:
+                cuenta_obj = CuentaContable.objects.get(
+                    cliente=upload_log.cliente, 
+                    codigo=numero_cuenta
+                )
+            except CuentaContable.DoesNotExist:
+                # La cuenta no existe aún, se creará clasificación temporal
+                pass
+                
+            # Procesar cada clasificación de la fila
             for set_name in sets:
                 valor = row[set_name]
-                if not pd.isna(valor) and str(valor).strip() != "":
-                    clasif[set_name] = str(valor).strip()
+                if pd.isna(valor) or str(valor).strip() == "":
+                    continue  # Saltar clasificaciones vacías
                     
-            try:
-                # Debug: Log the data being created
-                logger.debug(f"Creando registro para cuenta {numero_cuenta}, clasificaciones: {clasif}")
+                valor_limpio = str(valor).strip()
                 
-                # Crear registro RAW - numero_cuenta es string, NO FK
-                # Explicitly create with only the expected fields
-                registro = ClasificacionCuentaArchivo(
-                    cliente=upload_log.cliente,
-                    upload_log=upload_log,
-                    numero_cuenta=numero_cuenta,  # String, no FK
-                    clasificaciones=clasif,       # JSON con set_name -> valor
-                    fila_excel=index + 2,
-                    activo=True  # Marcar como activo
-                )
-                registro.save()
-                registros += 1
-                logger.debug(f"Registro creado exitosamente para cuenta {numero_cuenta}")
-            except Exception as e:
-                error_msg = f"Fila {index+2}: {str(e)}"
-                logger.error(f"Error creando registro: {error_msg}")
-                errores.append(error_msg)
+                try:
+                    # Buscar o crear el set
+                    set_clas, set_creado = ClasificacionSet.objects.get_or_create(
+                        cliente=upload_log.cliente,
+                        nombre=set_name,
+                        defaults={
+                            'descripcion': f'Set creado automáticamente desde Excel: {set_name}',
+                            'idioma': 'es'
+                        }
+                    )
+                    
+                    if set_creado:
+                        sets_creados += 1
+                        logger.debug(f"Set creado: {set_name}")
+                    
+                    # Buscar o crear la opción
+                    opcion, opcion_creada = ClasificacionOption.objects.get_or_create(
+                        set_clas=set_clas,
+                        valor=valor_limpio,
+                        defaults={
+                            'descripcion': f'Opción creada automáticamente: {valor_limpio}'
+                        }
+                    )
+                    
+                    if opcion_creada:
+                        opciones_creadas += 1
+                        logger.debug(f"Opción creada: {valor_limpio} en set {set_name}")
+                    
+                    # Crear o actualizar AccountClassification
+                    if cuenta_obj:
+                        # Usar FK a cuenta existente
+                        clasificacion_existente = AccountClassification.objects.filter(
+                            cuenta=cuenta_obj,
+                            set_clas=set_clas
+                        ).first()
+                        
+                        if clasificacion_existente:
+                            # Actualizar existente
+                            clasificacion_existente.opcion = opcion
+                            clasificacion_existente.upload_log = upload_log
+                            clasificacion_existente.origen = 'actualizacion'
+                            clasificacion_existente.save()
+                            clasificaciones_actualizadas += 1
+                        else:
+                            # Crear nueva con FK
+                            AccountClassification.objects.create(
+                                cuenta=cuenta_obj,
+                                cliente=upload_log.cliente,
+                                set_clas=set_clas,
+                                opcion=opcion,
+                                upload_log=upload_log,
+                                origen='excel',
+                                cuenta_codigo=numero_cuenta  # Mantener código para compatibilidad con modal
+                            )
+                            clasificaciones_creadas += 1
+                    else:
+                        # Crear clasificación temporal (por código)
+                        clasificacion_existente = AccountClassification.objects.filter(
+                            cliente=upload_log.cliente,
+                            cuenta_codigo=numero_cuenta,
+                            set_clas=set_clas
+                        ).first()
+                        
+                        if clasificacion_existente:
+                            # Actualizar temporal existente
+                            clasificacion_existente.opcion = opcion
+                            clasificacion_existente.upload_log = upload_log
+                            clasificacion_existente.origen = 'actualizacion'
+                            clasificacion_existente.save()
+                            clasificaciones_actualizadas += 1
+                        else:
+                            # Crear nueva temporal
+                            AccountClassification.objects.create(
+                                cuenta_codigo=numero_cuenta,
+                                cliente=upload_log.cliente,
+                                set_clas=set_clas,
+                                opcion=opcion,
+                                upload_log=upload_log,
+                                origen='excel'
+                            )
+                            clasificaciones_creadas += 1
+                            
+                except Exception as e:
+                    error_msg = f"Fila {index+2}, Set '{set_name}': {str(e)}"
+                    logger.error(f"Error procesando clasificación: {error_msg}")
+                    errores.append(error_msg)
 
         # Preparar resumen
         resumen_procesamiento = {
             "total_filas": len(df),
             "filas_vacias": filas_vacias,
             "sets_encontrados": sets,
-            "registros_guardados": registros,
+            "sets_creados": sets_creados,
+            "opciones_creadas": opciones_creadas,
+            "clasificaciones_creadas": clasificaciones_creadas,
+            "clasificaciones_actualizadas": clasificaciones_actualizadas,
             "errores_count": len(errores),
             "errores": errores[:10],  # Solo los primeros 10 errores
-            "datos_raw": True,  # Indicador de que son datos RAW
-            "mapeo_realizado": False,  # Mapeo pendiente
+            "procesamiento_directo": True,  # Indicador del nuevo flujo
         }
 
         # Actualizar resumen existente
@@ -355,96 +425,7 @@ def procesar_datos_clasificacion_task(upload_log_id):
         upload_log.tiempo_procesamiento = timezone.now() - inicio
         upload_log.save(update_fields=['resumen', 'tiempo_procesamiento'])
         
-        # =================== NUEVA LÓGICA: POBLAR CLASIFICACIONES PERSISTENTES ===================
-        logger.info(f"Iniciando población de clasificaciones persistentes para upload_log {upload_log_id}")
-        
-        try:
-            clasificaciones_persistentes_creadas = 0
-            clasificaciones_persistentes_actualizadas = 0
-            
-            # Obtener todos los registros RAW creados
-            registros_raw = ClasificacionCuentaArchivo.objects.filter(upload_log=upload_log)
-            
-            for registro_raw in registros_raw:
-                # Buscar o crear la cuenta
-                cuenta, cuenta_creada = CuentaContable.objects.get_or_create(
-                    cliente=upload_log.cliente,
-                    codigo=registro_raw.numero_cuenta,
-                    defaults={
-                        'nombre': registro_raw.numero_cuenta,  # Por defecto usar código como nombre
-                        'nombre_en': registro_raw.numero_cuenta
-                    }
-                )
-                
-                if cuenta_creada:
-                    logger.debug(f"Cuenta creada: {cuenta.codigo}")
-                
-                # Procesar cada clasificación en el registro
-                for set_nombre, opcion_valor in registro_raw.clasificaciones.items():
-                    try:
-                        # Buscar o crear el set
-                        set_clas, set_creado = ClasificacionSet.objects.get_or_create(
-                            cliente=upload_log.cliente,
-                            nombre=set_nombre,
-                            defaults={'descripcion': f'Set creado automáticamente desde archivo: {set_nombre}'}
-                        )
-                        
-                        if set_creado:
-                            logger.debug(f"Set creado: {set_nombre}")
-                        
-                        # Buscar o crear la opción
-                        opcion, opcion_creada = ClasificacionOption.objects.get_or_create(
-                            set_clas=set_clas,
-                            valor=opcion_valor,
-                            defaults={'descripcion': f'Opción creada automáticamente: {opcion_valor}'}
-                        )
-                        
-                        if opcion_creada:
-                            logger.debug(f"Opción creada: {opcion_valor} para set {set_nombre}")
-                        
-                        # Crear o actualizar la clasificación persistente
-                        clasificacion, clasificacion_creada = AccountClassification.objects.update_or_create(
-                            cuenta=cuenta,
-                            set_clas=set_clas,
-                            defaults={'opcion': opcion}
-                        )
-                        
-                        if clasificacion_creada:
-                            clasificaciones_persistentes_creadas += 1
-                            logger.debug(f"Clasificación persistente creada: {cuenta.codigo} -> {set_nombre} -> {opcion_valor}")
-                        else:
-                            clasificaciones_persistentes_actualizadas += 1
-                            logger.debug(f"Clasificación persistente actualizada: {cuenta.codigo} -> {set_nombre} -> {opcion_valor}")
-                            
-                    except Exception as e:
-                        logger.error(f"Error procesando clasificación {set_nombre}={opcion_valor} para cuenta {cuenta.codigo}: {e}")
-                        continue
-            
-            # Actualizar resumen con información de clasificaciones persistentes
-            resumen_procesamiento.update({
-                "clasificaciones_persistentes_creadas": clasificaciones_persistentes_creadas,
-                "clasificaciones_persistentes_actualizadas": clasificaciones_persistentes_actualizadas,
-                "poblacion_persistente_exitosa": True
-            })
-            
-            upload_log.resumen = resumen_procesamiento
-            upload_log.save(update_fields=['resumen'])
-            
-            logger.info(f"Clasificaciones persistentes pobladas exitosamente: {clasificaciones_persistentes_creadas} creadas, {clasificaciones_persistentes_actualizadas} actualizadas")
-            
-        except Exception as e:
-            logger.error(f"Error poblando clasificaciones persistentes: {e}")
-            # Actualizar resumen con error pero no fallar la task principal
-            resumen_procesamiento.update({
-                "error_poblacion_persistente": str(e),
-                "poblacion_persistente_exitosa": False
-            })
-            upload_log.resumen = resumen_procesamiento
-            upload_log.save(update_fields=['resumen'])
-        
-        # =================== FIN NUEVA LÓGICA ===================
-        
-        logger.info(f"Datos RAW procesados para upload_log {upload_log_id}: {registros} registros almacenados")
+        logger.info(f"Clasificaciones procesadas para upload_log {upload_log_id}: {clasificaciones_creadas} creadas, {clasificaciones_actualizadas} actualizadas")
         return upload_log_id
         
     except Exception as e:
@@ -453,6 +434,8 @@ def procesar_datos_clasificacion_task(upload_log_id):
         upload_log.tiempo_procesamiento = timezone.now() - inicio
         upload_log.save()
         raise
+
+
 
 
 @shared_task(name='contabilidad.guardar_archivo_clasificacion_task')
@@ -647,10 +630,10 @@ def iniciar_procesamiento_clasificacion_chain(upload_log_id):
 @shared_task(name='contabilidad.mapear_clasificaciones_con_cuentas')
 def mapear_clasificaciones_con_cuentas(upload_log_id, cierre_id=None):
     """
-    Task para mapear las clasificaciones RAW con las cuentas reales después de la subida del libro mayor.
-    Esta función se debe llamar DESPUÉS de procesar el libro mayor cuando ya existen las CuentaContable.
+    REDISEÑADO: Migra clasificaciones temporales (por código) a FK definitivas
+    después de la subida del libro mayor cuando ya existen las CuentaContable.
     """
-    logger.info(f"Iniciando mapeo de clasificaciones RAW para upload_log {upload_log_id}")
+    logger.info(f"Iniciando migración de clasificaciones temporales a FK para upload_log {upload_log_id}")
 
     try:
         # Obtener el upload_log y extraer el cliente
@@ -686,11 +669,15 @@ def mapear_clasificaciones_con_cuentas(upload_log_id, cierre_id=None):
         logger.warning(msg)
         return {'warning': msg}
 
-    # 2) Obtener RAW pendientes
-    from contabilidad.models import ClasificacionCuentaArchivo, CuentaContable, AccountClassification
-    registros_raw = ClasificacionCuentaArchivo.objects.filter(cliente=cliente)
-    if not registros_raw.exists():
-        msg = f"[mapear_clasificaciones] No hay clasificaciones RAW para cliente {cliente_id}."
+    # 2) Obtener clasificaciones temporales pendientes (sin FK a cuenta)
+    clasificaciones_temporales = AccountClassification.objects.filter(
+        cliente=cliente,
+        cuenta__isnull=True,  # Solo las temporales
+        cuenta_codigo__isnull=False  # Que tengan código
+    ).exclude(cuenta_codigo='')
+    
+    if not clasificaciones_temporales.exists():
+        msg = f"[mapear_clasificaciones] No hay clasificaciones temporales para cliente {cliente_id}."
         logger.info(msg)
         return {'info': msg}
 
@@ -701,76 +688,65 @@ def mapear_clasificaciones_con_cuentas(upload_log_id, cierre_id=None):
         logger.warning(msg)
         return {'warning': msg}
 
-    # 4) Crear sets y opciones
-    resultado_sets = crear_sets_y_opciones_clasificacion_desde_raw(cliente_id)
-    logger.info(f"[mapear_clasificaciones] Resultado creación sets: {resultado_sets}")
-
-    # 5) Hacer el mapeo
-    mapeos_exitosos = 0
+    # 4) Hacer la migración de temporales a FK
+    migraciones_exitosas = 0
     cuentas_no_encontradas = 0
     errores_mapeo = []
 
-    for registro in registros_raw:
+    for clasificacion_temporal in clasificaciones_temporales:
         try:
-            cuenta = cuentas_dict.get(registro.numero_cuenta)
+            cuenta = cuentas_dict.get(clasificacion_temporal.cuenta_codigo)
             if not cuenta:
                 cuentas_no_encontradas += 1
+                logger.debug(f"Cuenta no encontrada: {clasificacion_temporal.cuenta_codigo}")
                 continue
 
-            for set_nombre, valor in (registro.clasificaciones or {}).items():
-                if not valor or not str(valor).strip():
-                    continue
-
-                from contabilidad.models import ClasificacionSet, ClasificacionOption
-
-                clasificacion_set = ClasificacionSet.objects.filter(
-                    cliente=cliente, nombre=set_nombre
-                ).first()
-                if not clasificacion_set:
-                    logger.warning(f"Set no encontrado: {set_nombre}")
-                    continue
-
-                opcion = ClasificacionOption.objects.filter(
-                    set_clas=clasificacion_set, valor=str(valor).strip()
-                ).first()
-                if not opcion:
-                    logger.warning(f"Opción no encontrada: '{valor}' en set '{set_nombre}'")
-                    continue
-
-                # Creamos o actualizamos
-                obj, created = AccountClassification.objects.update_or_create(
-                    cuenta=cuenta, set_clas=clasificacion_set,
-                    defaults={'opcion': opcion, 'asignado_por': None}
-                )
-                if created:
-                    mapeos_exitosos += 1
-
-            # registro procesado (ya no necesitamos marcar como procesado)
-            pass
+            # Verificar si ya existe una clasificación definitiva para esta cuenta y set
+            clasificacion_definitiva = AccountClassification.objects.filter(
+                cuenta=cuenta,
+                set_clas=clasificacion_temporal.set_clas
+            ).first()
+            
+            if clasificacion_definitiva:
+                # Ya existe definitiva, eliminar la temporal
+                clasificacion_temporal.delete()
+                logger.debug(f"Eliminada clasificación temporal duplicada: {cuenta.codigo} -> {clasificacion_temporal.set_clas.nombre}")
+            else:
+                # Migrar temporal a definitiva
+                clasificacion_temporal.cuenta = cuenta
+                clasificacion_temporal.cliente = cuenta.cliente
+                # CORREGIDO: MANTENER cuenta_codigo para compatibilidad con modal CRUD
+                # clasificacion_temporal.cuenta_codigo = ''  # NO limpiar código temporal
+                clasificacion_temporal.origen = 'migracion_fk'
+                clasificacion_temporal.save()
+                
+                migraciones_exitosas += 1
+                logger.debug(f"Migración exitosa: {cuenta.codigo} -> {clasificacion_temporal.set_clas.nombre} -> {clasificacion_temporal.opcion.valor}")
 
         except Exception as e:
-            errores_mapeo.append(f"Registro {registro.id}: {e}")
-            logger.error(f"[mapear_clasificaciones] Error en registro {registro.id}: {e}")
+            errores_mapeo.append(f"Clasificación temporal {clasificacion_temporal.id}: {e}")
+            logger.error(f"[mapear_clasificaciones] Error migrando clasificación {clasificacion_temporal.id}: {e}")
 
-    # 6) Registrar actividad
+    # 5) Registrar actividad
     from contabilidad.utils.activity_logger import registrar_actividad_tarjeta
+    from datetime import date
     periodo = cierre.periodo or date.today().strftime("%Y-%m")
     registrar_actividad_tarjeta(
         cliente_id=cliente_id,
         periodo=periodo,
         tarjeta="clasificacion",
-        accion="mapeo_clasificaciones",
+        accion="migracion_clasificaciones_fk",
         descripcion=(
-            f"Mapeo completado: {mapeos_exitosos} mapeos, "
+            f"Migración completada: {migraciones_exitosas} migradas, "
             f"{cuentas_no_encontradas} cuentas no encontradas, "
             f"{len(errores_mapeo)} errores"
         ),
         usuario=None,
         detalles={
-            "mapeos_exitosos": mapeos_exitosos,
+            "migraciones_exitosas": migraciones_exitosas,
             "cuentas_no_encontradas": cuentas_no_encontradas,
             "errores_mapeo": errores_mapeo,
-            "registros_procesados": registros_raw.count(),
+            "clasificaciones_procesadas": clasificaciones_temporales.count(),
             "cierre_id": cierre.id,
         },
         resultado="exito" if not errores_mapeo else "parcial",
@@ -778,7 +754,7 @@ def mapear_clasificaciones_con_cuentas(upload_log_id, cierre_id=None):
     )
 
     return {
-        "mapeos_exitosos": mapeos_exitosos,
+        "migraciones_exitosas": migraciones_exitosas,
         "cuentas_no_encontradas": cuentas_no_encontradas,
         "errores_mapeo": errores_mapeo,
     }
@@ -786,26 +762,36 @@ def mapear_clasificaciones_con_cuentas(upload_log_id, cierre_id=None):
 @shared_task(name='contabilidad.crear_sets_y_opciones_clasificacion_desde_raw')
 def crear_sets_y_opciones_clasificacion_desde_raw(cliente_id):
     """
-    Crea automáticamente ClasificacionSet y ClasificacionOption basado en 
-    los datos RAW de clasificación almacenados para un cliente.
-    Se ejecuta durante el mapeo, no durante la subida inicial.
+    REDISEÑADO: Esta función ya no es necesaria porque los sets y opciones
+    se crean automáticamente durante el procesamiento directo del Excel
+    en procesar_datos_clasificacion_task.
     """
-    logger.info(f"Creando sets y opciones desde datos RAW para cliente {cliente_id}")
+    logger.info(f"Función obsoleta: crear_sets_y_opciones_clasificacion_desde_raw para cliente {cliente_id}")
+    logger.info("Los sets y opciones se crean automáticamente durante el procesamiento del Excel")
     
     try:
         from .models import Cliente
+        cliente = Cliente.objects.get(id=cliente_id)
         
-        try:
-            cliente = Cliente.objects.get(id=cliente_id)
-        except Cliente.DoesNotExist:
-            msg = f"[crear_sets_y_opciones] Cliente con id={cliente_id} no existe. Se omite creación de sets."
-            logger.error(msg)
-            return {'error': msg}
+        # Obtener estadísticas actuales para el reporte
+        from contabilidad.models import ClasificacionSet, ClasificacionOption, AccountClassification
         
-        # Obtener todos los registros RAW del cliente
-        registros_clasificacion = ClasificacionCuentaArchivo.objects.filter(
-            cliente=cliente
-        )
+        sets_count = ClasificacionSet.objects.filter(cliente=cliente).count()
+        opciones_count = ClasificacionOption.objects.filter(set_clas__cliente=cliente).count()
+        clasificaciones_count = AccountClassification.objects.filter(cliente=cliente).count()
+        
+        return {
+            'info': 'Sets y opciones ya creados automáticamente durante procesamiento',
+            'sets_existentes': sets_count,
+            'opciones_existentes': opciones_count,
+            'clasificaciones_existentes': clasificaciones_count,
+            'proceso_automatico': True
+        }
+        
+    except Cliente.DoesNotExist:
+        msg = f"Cliente con id={cliente_id} no existe."
+        logger.error(msg)
+        return {'error': msg}
         
         if not registros_clasificacion.exists():
             logger.warning(f"No hay registros RAW para cliente {cliente_id}")

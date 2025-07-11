@@ -16,7 +16,8 @@ from ..models import (
     NombreIngles,
     NombreInglesArchivo,
     NombresEnInglesUpload,
-    ClasificacionCuentaArchivo,
+    # ClasificacionCuentaArchivo,  # OBSOLETO - ELIMINADO EN REDISEÑO
+    AccountClassification,  # NUEVO: Fuente única de verdad para clasificaciones
     ClasificacionArchivo,
 )
 from ..utils.activity_logger import registrar_actividad_tarjeta
@@ -732,12 +733,13 @@ def registrar_vista_clasificaciones(request, cliente_id):
     try:
         cliente = Cliente.objects.get(id=cliente_id)
         
-        # Obtener conteo de clasificaciones (archivo activo)
-        archivo_clasificacion = ClasificacionCuentaArchivo.objects.filter(cliente=cliente).first()
-        total_registros = 0
-        if archivo_clasificacion:
-            # Aquí podrías contar las líneas del archivo o usar otro método
-            total_registros = "archivo_activo"
+        # Obtener conteo de clasificaciones activas (desde AccountClassification)
+        total_clasificaciones = AccountClassification.objects.filter(cliente=cliente).count()
+        archivo_clasificacion = ClasificacionArchivo.objects.filter(cliente=cliente).first()
+        
+        # Determinar si hay clasificaciones disponibles
+        if archivo_clasificacion or total_clasificaciones > 0:
+            total_registros = total_clasificaciones  # Usar el conteo real de AccountClassification
         
         # Obtener cierre_id del query parameter si se proporciona
         cierre_id = request.GET.get('cierre_id')
@@ -823,8 +825,8 @@ def estado_clasificaciones(request, cliente_id):
         archivo_clasificacion = ClasificacionArchivo.objects.filter(cliente_id=cliente_id).first()
 
         if archivo_clasificacion:
-            # Contar registros en el diccionario maestro
-            total_registros = ClasificacionCuentaArchivo.objects.filter(cliente_id=cliente_id).count()
+            # Contar registros reales en AccountClassification (fuente única de verdad)
+            total_registros = AccountClassification.objects.filter(cliente_id=cliente_id).count()
             
             return Response({
                 "estado": "subido",

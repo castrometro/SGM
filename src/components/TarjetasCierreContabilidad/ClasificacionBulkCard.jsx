@@ -18,11 +18,11 @@ import {
   eliminarBulkClasificacion,
   eliminarTodosBulkClasificacion,
   reprocesarBulkClasificacionUpload,
-  obtenerClasificacionesArchivo,
+  obtenerClasificacionesPorUpload,
   obtenerEstadoUploadLog,
   // API para clasificaciones persistentes
   obtenerClasificacionesPersistentesDetalladas,
-  crearClasificacionArchivo,
+  crearClasificacionPersistente,
   obtenerCuentasCliente,
 } from "../../api/contabilidad";
 
@@ -201,7 +201,7 @@ const ClasificacionBulkCard = ({
         console.log("🔗 Intentando cargar registros para upload ID:", last.id);
         // Cargar registros raw para mostrar información
         try {
-          const registros = await obtenerClasificacionesArchivo(last.id);
+          const registros = await obtenerClasificacionesPorUpload(last.id);
           console.log("📊 Registros cargados:", registros.length);
           setRegistrosRaw(registros);
         } catch (err) {
@@ -328,7 +328,12 @@ const ClasificacionBulkCard = ({
 
   // NUEVO: Función para verificar cuentas nuevas del libro mayor
   const verificarCuentasNuevas = async () => {
-    if (!cierreId) return;
+    // Solo verificar si hay un cierre activo
+    if (!cierreId) {
+      console.log('ℹ️ No hay cierre activo, no se verificarán cuentas nuevas');
+      setCuentasNuevasDisponibles(0);
+      return;
+    }
     
     try {
       console.log('🔍 INICIANDO VERIFICACIÓN DE CUENTAS NUEVAS');
@@ -344,19 +349,19 @@ const ClasificacionBulkCard = ({
         console.log(`  ${index + 1}. ${cuenta.codigo} - ${cuenta.nombre}`);
       });
       
-      // Obtener clasificaciones existentes
+      // Obtener clasificaciones existentes (incluyendo temporales)
       const clasificacionesExistentes = await obtenerClasificacionesPersistentesDetalladas(clienteId);
       console.log(`📊 Total clasificaciones existentes: ${clasificacionesExistentes.length}`);
       
       // Log de todas las clasificaciones existentes
       console.log('📋 TODAS LAS CLASIFICACIONES EXISTENTES:');
       clasificacionesExistentes.forEach((clasif, index) => {
-        console.log(`  ${index + 1}. ${clasif.numero_cuenta} - ${clasif.nombre_cuenta || 'Sin nombre'}`);
+        console.log(`  ${index + 1}. ${clasif.cuenta_codigo} - ${clasif.cuenta_nombre || 'Sin nombre'}`);
       });
       
       // Crear set de cuentas que ya tienen clasificación
       const cuentasClasificadas = new Set(
-        clasificacionesExistentes.map(c => c.numero_cuenta)
+        clasificacionesExistentes.map(c => c.cuenta_codigo)
       );
       
       console.log('🔗 SET DE CUENTAS CLASIFICADAS:', Array.from(cuentasClasificadas));
@@ -400,13 +405,13 @@ const ClasificacionBulkCard = ({
       const cuentasCliente = await obtenerCuentasCliente(clienteId);
       console.log(`📊 Total cuentas del cliente: ${cuentasCliente.length}`);
       
-      // Obtener clasificaciones existentes
+      // Obtener clasificaciones existentes (incluyendo temporales)
       const clasificacionesExistentes = await obtenerClasificacionesPersistentesDetalladas(clienteId);
       console.log(`📊 Total clasificaciones existentes: ${clasificacionesExistentes.length}`);
       
       // Crear set de cuentas que ya tienen clasificación
       const cuentasClasificadas = new Set(
-        clasificacionesExistentes.map(c => c.numero_cuenta)
+        clasificacionesExistentes.map(c => c.cuenta_codigo)
       );
       
       // Filtrar cuentas sin clasificación
@@ -441,7 +446,7 @@ const ClasificacionBulkCard = ({
           
           console.log(`📤 Datos a enviar:`, datosAEnviar);
           
-          const resultado = await crearClasificacionArchivo(datosAEnviar);
+          const resultado = await crearClasificacionPersistente(datosAEnviar);
           console.log(`✅ Cuenta ${cuenta.codigo} añadida correctamente:`, resultado);
           
           cuentasAñadidas++;
@@ -580,8 +585,8 @@ const ClasificacionBulkCard = ({
           Gestionar clasificaciones
         </button>
         
-        {/* NUEVO: Botón para sincronizar cuentas nuevas */}
-        {cuentasNuevasDisponibles > 0 && (
+        {/* NUEVO: Botón para sincronizar cuentas nuevas - Solo si hay cierre activo */}
+        {cuentasNuevasDisponibles > 0 && cierreId && (
           <button
             onClick={sincronizarCuentasNuevas}
             disabled={sincronizandoCuentas}
@@ -601,8 +606,8 @@ const ClasificacionBulkCard = ({
         )}
       </div>            {/* Información del estado y resumen */}
             <div className="text-xs text-gray-400 italic mt-2">
-              {/* NUEVO: Mostrar información de cuentas nuevas */}
-              {cuentasNuevasDisponibles > 0 && (
+              {/* NUEVO: Mostrar información de cuentas nuevas - Solo si hay cierre activo */}
+              {cuentasNuevasDisponibles > 0 && cierreId && (
                 <div className="bg-yellow-900/20 border border-yellow-500/30 rounded p-2 mb-2">
                   <div className="text-yellow-300 font-medium mb-1">
                     🆕 {cuentasNuevasDisponibles} cuentas nuevas detectadas
@@ -631,21 +636,6 @@ const ClasificacionBulkCard = ({
                       ✔ Clasificaciones persistentes disponibles
                     </div>
                   )}
-                  
-                  {/* Información sobre los dos tipos de gestión */}
-                  <div className="bg-blue-900/20 border border-blue-500/30 rounded p-2 mt-2">
-                    <div className="text-blue-300 font-medium mb-1">💡 Dos formas de gestionar clasificaciones:</div>
-                    <div className="space-y-1 text-xs">
-                      <div className="flex items-center gap-2">
-                        <FileText size={12} className="text-blue-400" />
-                        <span><strong>Ver archivo:</strong> Datos temporales del archivo subido (se borran después de un tiempo)</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Database size={12} className="text-green-400" />
-                        <span><strong>Gestionar clasificaciones:</strong> Base de datos persistente (nunca se borran, siempre editables)</span>
-                      </div>
-                    </div>
-                  </div>
                   
                   {/* Mostrar información de registros raw si están disponibles */}
                   {registrosRaw.length > 0 && (
@@ -715,19 +705,34 @@ const ClasificacionBulkCard = ({
               )}
             </div>
 
-      {/* Modal para gestión de clasificaciones - datos de archivo */}
+      {/* Modal para gestión de clasificaciones - datos persistentes */}
       <ModalClasificacionRegistrosRaw
         isOpen={modalRegistrosRaw}
         onClose={() => setModalRegistrosRaw(false)}
-        uploadId={ultimoUpload?.id} // Usar el ID del último upload para obtener datos del archivo
+        uploadId={null} // Ya no usar uploadId, cargar directo desde AccountClassification
         clienteId={clienteId}
         cierreId={cierreId}
         cliente={cliente}
         onDataChanged={async () => {
+          console.log('🔄 Modal reportó cambios, recargando datos...');
           await cargar(); // Recargar datos después de cambios CRUD
           await verificarCuentasNuevas(); // NUEVO: También verificar cuentas nuevas
         }}
       />
+
+      {/* DEBUG: Mostrar información del upload actual */}
+      {process.env.NODE_ENV === 'development' && ultimoUpload && (
+        <div className="text-xs bg-gray-900 border border-gray-600 rounded p-2 mt-2">
+          <div className="text-yellow-300 font-medium mb-1">🔧 DEBUG - Upload Info:</div>
+          <div className="text-gray-300 space-y-1">
+            <div>Upload ID: {ultimoUpload.id}</div>
+            <div>Archivo: {ultimoUpload.archivo}</div>
+            <div>Estado: {ultimoUpload.estado}</div>
+            <div>Fecha: {ultimoUpload.fecha_subida}</div>
+            <div>Registros Raw: {registrosRaw.length}</div>
+          </div>
+        </div>
+      )}
 
       <Notificacion
         tipo={notificacion.tipo}

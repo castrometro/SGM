@@ -8,7 +8,7 @@ from .models import (
     Auxiliar,
     CentroCosto,
     CierreContabilidad,
-    ClasificacionCuentaArchivo,
+    # ClasificacionCuentaArchivo,  # OBSOLETO - ELIMINADO
     ClasificacionOption,
     ClasificacionSet,
     CuentaContable,
@@ -327,27 +327,16 @@ class AuxiliarSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
-class ClasificacionCuentaArchivoSerializer(serializers.ModelSerializer):
-    """
-    Serializer para mostrar las clasificaciones tal como vienen del archivo,
-    antes del mapeo a cuentas reales
-    """
+# ======================================
+#     SERIALIZER OBSOLETO - ELIMINADO
+# ======================================
 
-    cliente_nombre = serializers.CharField(source="cliente.nombre", read_only=True)
-
-    class Meta:
-        model = ClasificacionCuentaArchivo
-        fields = [
-            "id",
-            "cliente",
-            "cliente_nombre",
-            "upload_log",
-            "numero_cuenta",
-            "clasificaciones",
-            "fila_excel",
-            "fecha_creacion",
-        ]
-        read_only_fields = ["fecha_creacion", "fecha_procesado"]
+# class ClasificacionCuentaArchivoSerializer(serializers.ModelSerializer):
+#     """
+#     OBSOLETO: Este serializer será eliminado.
+#     Ahora AccountClassification es la fuente única de verdad.
+#     """
+#     pass
 
 
 class NombresEnInglesUploadSerializer(serializers.ModelSerializer):

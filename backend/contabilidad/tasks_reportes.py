@@ -1247,4 +1247,104 @@ def _obtener_clasificaciones_completas(cuenta_ids, cliente, set_esf, sets_client
             'esf': None,
             'cliente_sets': {}
         }
+    
+    try:
+        # Obtener todas las clasificaciones ESF
+        if set_esf:
+            clasificaciones_esf = AccountClassification.objects.filter(
+                cuenta_id__in=cuenta_ids,
+                set_clas=set_esf
+            ).select_related('opcion', 'cuenta')
+            
+            for clasificacion in clasificaciones_esf:
+                cuenta_id = clasificacion.cuenta_id
+                if cuenta_id in clasificaciones_completas:
+                    clasificaciones_completas[cuenta_id]['esf'] = {
+                        'opcion_valor': clasificacion.opcion.valor,
+                        'opcion_id': clasificacion.opcion.id
+                    }
+        
+        # Obtener clasificaciones de sets del cliente
+        if sets_cliente:
+            for set_cliente in sets_cliente:
+                clasificaciones_cliente = AccountClassification.objects.filter(
+                    cuenta_id__in=cuenta_ids,
+                    set_clas=set_cliente
+                ).select_related('opcion', 'cuenta')
+                
+                for clasificacion in clasificaciones_cliente:
+                    cuenta_id = clasificacion.cuenta_id
+                    if cuenta_id in clasificaciones_completas:
+                        clasificaciones_completas[cuenta_id]['cliente_sets'][set_cliente.nombre] = {
+                            'opcion_valor': clasificacion.opcion.valor,
+                            'opcion_id': clasificacion.opcion.id
+                        }
+        
+        return clasificaciones_completas
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo clasificaciones completas: {str(e)}")
+        return clasificaciones_completas
+
+
+def _obtener_clasificaciones_completas_eri(cuenta_ids, cliente, set_eri, sets_cliente):
+    """
+    Obtiene todas las clasificaciones de las cuentas para ERI y sets del cliente
+    
+    Returns:
+        dict: {
+            cuenta_id: {
+                'eri': {'opcion_valor': '...', 'opcion_id': ...},
+                'cliente_sets': {
+                    'set_nombre': {'opcion_valor': '...', 'opcion_id': ...}
+                }
+            }
+        }
+    """
+    clasificaciones_completas = {}
+    
+    # Inicializar estructura para todas las cuentas
+    for cuenta_id in cuenta_ids:
+        clasificaciones_completas[cuenta_id] = {
+            'eri': None,
+            'cliente_sets': {}
+        }
+    
+    try:
+        # Obtener todas las clasificaciones ERI
+        if set_eri:
+            clasificaciones_eri = AccountClassification.objects.filter(
+                cuenta_id__in=cuenta_ids,
+                set_clas=set_eri
+            ).select_related('opcion', 'cuenta')
+            
+            for clasificacion in clasificaciones_eri:
+                cuenta_id = clasificacion.cuenta_id
+                if cuenta_id in clasificaciones_completas:
+                    clasificaciones_completas[cuenta_id]['eri'] = {
+                        'opcion_valor': clasificacion.opcion.valor,
+                        'opcion_id': clasificacion.opcion.id
+                    }
+        
+        # Obtener clasificaciones de sets del cliente
+        if sets_cliente:
+            for set_cliente in sets_cliente:
+                clasificaciones_cliente = AccountClassification.objects.filter(
+                    cuenta_id__in=cuenta_ids,
+                    set_clas=set_cliente
+                ).select_related('opcion', 'cuenta')
+                
+                for clasificacion in clasificaciones_cliente:
+                    cuenta_id = clasificacion.cuenta_id
+                    if cuenta_id in clasificaciones_completas:
+                        clasificaciones_completas[cuenta_id]['cliente_sets'][set_cliente.nombre] = {
+                            'opcion_valor': clasificacion.opcion.valor,
+                            'opcion_id': clasificacion.opcion.id
+                        }
+        
+        return clasificaciones_completas
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo clasificaciones completas ERI: {str(e)}")
+        return clasificaciones_completas
    

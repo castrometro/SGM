@@ -15,7 +15,7 @@ from .models import (
     CentroCosto,
     CierreContabilidad,
     ClasificacionArchivo,
-    ClasificacionCuentaArchivo,
+    # ClasificacionCuentaArchivo,  # OBSOLETO - COMENTADO
     ClasificacionOption,
     ClasificacionSet,
     CuentaContable,
@@ -529,29 +529,30 @@ class AuxiliarAdmin(admin.ModelAdmin):
     list_display = ("rut_auxiliar", "nombre", "fecha_creacion")
 
 
-@admin.register(ClasificacionCuentaArchivo)
-class ClasificacionCuentaArchivoAdmin(admin.ModelAdmin):
-    list_display = (
-        "cliente",
-        "upload_log",
-        "numero_cuenta",
-        "fila_excel",
-        "fecha_creacion",
-    )
-    list_filter = ("cliente", "upload_log__estado", "fecha_creacion")
-    search_fields = ("numero_cuenta", "cliente__nombre")
-    readonly_fields = ("fecha_creacion",)
-
-    def has_add_permission(self, request):
-        """No permitir agregar manualmente"""
-        return False
-
-    def get_queryset(self, request):
-        return (
-            super()
-            .get_queryset(request)
-            .select_related("cliente", "upload_log")
-        )
+# ADMIN OBSOLETO - COMENTADO JUNTO CON EL MODELO
+# @admin.register(ClasificacionCuentaArchivo)
+# class ClasificacionCuentaArchivoAdmin(admin.ModelAdmin):
+#     list_display = (
+#         "cliente",
+#         "upload_log",
+#         "numero_cuenta",
+#         "fila_excel",
+#         "fecha_creacion",
+#     )
+#     list_filter = ("cliente", "upload_log__estado", "fecha_creacion")
+#     search_fields = ("numero_cuenta", "cliente__nombre")
+#     readonly_fields = ("fecha_creacion",)
+# 
+#     def has_add_permission(self, request):
+#         """No permitir agregar manualmente"""
+#         return False
+# 
+#     def get_queryset(self, request):
+#         return (
+#             super()
+#             .get_queryset(request)
+#             .select_related("cliente", "upload_log")
+#         )
 
 
 @admin.register(NombresEnInglesUpload)

@@ -92,19 +92,6 @@ services:
       - redis
       - celery_worker
 
-  streamlit_pruebas:
-    build:
-      context: .
-      dockerfile: streamlit_pruebas/streamlit.Dockerfile
-    volumes:
-      - ./streamlit_pruebas:/app
-    ports:
-      - "8501:8501"
-    environment:
-      - PORT=8501
-    depends_on:
-      - ollama
-
   streamlit_conta:
     build:
       context: .
@@ -121,7 +108,6 @@ services:
       - REDIS_DB_CONTABILIDAD=1
     depends_on:
       - redis
-      - ollama
 
   streamlit_nomina:
     build:
@@ -139,20 +125,11 @@ services:
       - REDIS_DB_NOMINA=2
     depends_on:
       - redis
-      - ollama
 
-  ollama:
-    image: ollama/ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    restart: always
 
 volumes:
   postgres_data:
   redis_data:        # ← NUEVO: Persistencia para Redis
   redisinsight_data: # ← NUEVO: Configuración de RedisInsight
-  ollama_data:
 
 

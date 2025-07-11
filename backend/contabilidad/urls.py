@@ -144,6 +144,18 @@ router.register(r"analisis-cuentas", AnalisisCuentaCierreViewSet)
 router.register(r"nombres-ingles-upload", NombresEnInglesUploadViewSet, basename="nombres-ingles-upload")
 
 urlpatterns = [
+    # Rutas específicas de clasificaciones (DEBEN IR ANTES del router)
+    path("clasificaciones/registro-completo/", 
+         crear_registro_clasificacion_completo, 
+         name="crear_registro_clasificacion_completo"),
+    path("clasificaciones/registro-completo/<str:cuenta_codigo>/", 
+         actualizar_registro_clasificacion_completo, 
+         name="actualizar_registro_clasificacion_completo"),
+    path("clasificaciones/registro-completo/<str:cuenta_codigo>/delete/", 
+         eliminar_registro_clasificacion_completo, 
+         name="eliminar_registro_clasificacion_completo"),
+    
+    # Router con ViewSets (incluye el resto de endpoints)
     path("", include(router.urls)),
     # Endpoints específicos de CierreContabilidadViewSet
     path(
@@ -221,15 +233,6 @@ urlpatterns = [
     path("clientes/<int:cliente_id>/clasificaciones/registrar-vista/", 
          registrar_vista_clasificaciones_persistentes, 
          name="registrar_vista_clasificaciones_persistentes"),
-    path("clasificaciones/registro-completo/", 
-         crear_registro_clasificacion_completo, 
-         name="crear_registro_clasificacion_completo"),
-    path("clasificaciones/registro-completo/<str:cuenta_codigo>/", 
-         actualizar_registro_clasificacion_completo, 
-         name="actualizar_registro_clasificacion_completo"),
-    path("clasificaciones/registro-completo/<str:cuenta_codigo>/delete/", 
-         eliminar_registro_clasificacion_completo, 
-         name="eliminar_registro_clasificacion_completo"),
     
     # Nombres en inglés
     path("nombre-ingles/<int:cliente_id>/estado/", estado_nombres_ingles),
@@ -318,9 +321,9 @@ urlpatterns = [
          get_cache_health, 
          name="cache_health"),
     
-    # ===================================
+    # ===============================================
     # ENDPOINTS DE PRUEBAS - SISTEMA DE CACHE
-    # ===================================
+    # ===============================================
     
     # ESF de pruebas
     path("cache/pruebas/esf/<int:cliente_id>/<str:periodo>/", 

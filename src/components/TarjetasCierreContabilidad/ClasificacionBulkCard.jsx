@@ -432,15 +432,16 @@ const ClasificacionBulkCard = ({
       
       // Crear registros de clasificación vacíos para las cuentas nuevas
       let cuentasAñadidas = 0;
+      const cuentasAñadidasExitosamente = [];
       
       for (const cuenta of cuentasSinClasificar) {
         try {
           console.log(`➕ Añadiendo cuenta: ${cuenta.codigo} - ${cuenta.nombre}`);
           
           const datosAEnviar = {
-            cliente_id: clienteId,
+            cliente: clienteId,
             numero_cuenta: cuenta.codigo,
-            nombre_cuenta: cuenta.nombre,
+            cuenta_nombre: cuenta.nombre,
             clasificaciones: {} // Sin clasificación inicial
           };
           
@@ -450,6 +451,10 @@ const ClasificacionBulkCard = ({
           console.log(`✅ Cuenta ${cuenta.codigo} añadida correctamente:`, resultado);
           
           cuentasAñadidas++;
+          cuentasAñadidasExitosamente.push({
+            codigo: cuenta.codigo,
+            nombre: cuenta.nombre
+          });
         } catch (error) {
           console.error(`❌ Error añadiendo cuenta ${cuenta.codigo}:`, error);
           
@@ -480,6 +485,18 @@ const ClasificacionBulkCard = ({
         
         // Notificar al padre para actualizar el estado
         if (onCompletado) onCompletado(true);
+        
+        // NUEVO: Abrir el modal automáticamente para mostrar las cuentas añadidas
+        // Guardar las cuentas recién añadidas en el estado para pasarlas al modal
+        setCuentasRecienAñadidas(cuentasAñadidasExitosamente);
+        
+        setTimeout(() => {
+          setModalRegistrosRaw(true);
+          mostrarNotificacion(
+            'info',
+            '📋 Las cuentas nuevas se han añadido. Ahora puede clasificarlas en el modal.'
+          );
+        }, 500);
       } else {
         mostrarNotificacion('error', 'No se pudieron añadir las cuentas nuevas');
       }
@@ -493,6 +510,9 @@ const ClasificacionBulkCard = ({
       console.log('─'.repeat(80));
     }
   };
+
+  // NUEVO: Estado para rastrear cuentas recién añadidas
+  const [cuentasRecienAñadidas, setCuentasRecienAñadidas] = useState([]);
 
   return (
     <div
@@ -708,7 +728,10 @@ const ClasificacionBulkCard = ({
       {/* Modal para gestión de clasificaciones - datos persistentes */}
       <ModalClasificacionRegistrosRaw
         isOpen={modalRegistrosRaw}
-        onClose={() => setModalRegistrosRaw(false)}
+        onClose={() => {
+          setModalRegistrosRaw(false);
+          setCuentasRecienAñadidas([]); // Limpiar cuentas recién añadidas al cerrar
+        }}
         uploadId={null} // Ya no usar uploadId, cargar directo desde AccountClassification
         clienteId={clienteId}
         cierreId={cierreId}
@@ -718,6 +741,8 @@ const ClasificacionBulkCard = ({
           await cargar(); // Recargar datos después de cambios CRUD
           await verificarCuentasNuevas(); // NUEVO: También verificar cuentas nuevas
         }}
+        // NUEVO: Pasar información sobre cuentas recién añadidas
+        cuentasRecienAñadidas={cuentasRecienAñadidas}
       />
 
       {/* DEBUG: Mostrar información del upload actual */}

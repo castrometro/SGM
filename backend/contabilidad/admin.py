@@ -471,44 +471,216 @@ class ClasificacionOptionAdmin(admin.ModelAdmin):
     list_display = ("set_clas", "valor")
 
 
+# ✨ FILTROS PERSONALIZADOS PARA ACCOUNTCLASSIFICATION
+class AccountClassificationStatusFilter(admin.SimpleListFilter):
+    title = "Estado de la cuenta"
+    parameter_name = "estado_cuenta"
+
+    def lookups(self, request, model_admin):
+        return [
+            ("con_fk", "Con FK (Sincronizadas)"),
+            ("temporales", "Temporales (Sin FK)"),
+            ("inconsistentes", "Inconsistentes (FK ≠ código)"),
+        ]
+
+    def queryset(self, request, queryset):
+        val = self.value()
+        if val == "con_fk":
+            return queryset.filter(cuenta__isnull=False)
+        elif val == "temporales":
+            return queryset.filter(cuenta__isnull=True)
+        elif val == "inconsistentes":
+            # Clasificaciones donde el FK existe pero el código no coincide
+            from django.db.models import Q, F
+            return queryset.filter(
+                cuenta__isnull=False
+            ).exclude(
+                cuenta__codigo=F('cuenta_codigo')
+            )
+        return queryset
+
+
+class AccountClassificationClienteFilter(admin.SimpleListFilter):
+    title = "Cliente (optimizado)"
+    parameter_name = "cliente_opt"
+
+    def lookups(self, request, model_admin):
+        # Obtener clientes que tienen clasificaciones
+        from django.db.models import Count
+        try:
+            clientes = AccountClassification.objects.values(
+                'cliente__id', 'cliente__nombre'
+            ).annotate(
+                clasificaciones_count=Count('id')
+            ).order_by('-clasificaciones_count')[:10]  # Top 10 clientes con más clasificaciones
+            
+            return [(c['cliente__id'], f"{c['cliente__nombre']} ({c['clasificaciones_count']} clasif.)") for c in clientes if c['cliente__id']]
+        except:
+            return []
+
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(cliente_id=self.value())
+        return queryset
+
+
 @admin.register(AccountClassification)
 class AccountClassificationAdmin(admin.ModelAdmin):
-    list_display = ("cuenta", "set_clas", "opcion", "asignado_por", "fecha")
+    list_display = (
+        "estado_cuenta_display", 
+        "codigo_cuenta_display", 
+        "nombre_cuenta_display",
+        "set_clas", 
+        "opcion", 
+        "cliente_display",
+        "asignado_por", 
+        "fecha"
+    )
     list_filter = (
+        AccountClassificationStatusFilter,  # Filtro personalizado por estado
+        AccountClassificationClienteFilter,  # Filtro personalizado por cliente
         "set_clas",  # Filtro por set de clasificación
         "opcion",    # Filtro por opción de clasificación
-        "cuenta__cliente",  # Filtro por cliente
         "asignado_por",     # Filtro por quien asignó
         "fecha",            # Filtro por fecha
+        ("cuenta", admin.EmptyFieldListFilter),  # Filtro para FK vacío/lleno
     )
     search_fields = (
-        "cuenta__codigo", 
-        "cuenta__nombre", 
+        "cuenta_codigo",     # Búsqueda por código temporal
+        "cuenta__codigo",    # Búsqueda por código FK
+        "cuenta__nombre",    # Búsqueda por nombre FK
         "set_clas__nombre", 
         "opcion__valor",
-        "cuenta__cliente__nombre"
+        "cliente__nombre"
     )
-    raw_id_fields = ("cuenta",)  # Para facilitar búsqueda de cuentas
+    raw_id_fields = ("cuenta", "cliente")  # Para facilitar búsqueda
     readonly_fields = ("fecha",)
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
             'cuenta', 
-            'cuenta__cliente', 
+            'cliente', 
             'set_clas', 
             'opcion', 
             'asignado_por'
         )
     
+    def estado_cuenta_display(self, obj):
+        """Muestra el estado de la relación con la cuenta"""
+        if obj.cuenta:
+            return format_html(
+                '<span style="color: green; font-weight: bold;">✓ FK</span>'
+            )
+        else:
+            return format_html(
+                '<span style="color: orange; font-weight: bold;">⚠ TEMPORAL</span>'
+            )
+    estado_cuenta_display.short_description = "Estado"
+    estado_cuenta_display.admin_order_field = "cuenta"
+    
+    def codigo_cuenta_display(self, obj):
+        """Muestra el código de cuenta (FK o temporal)"""
+        if obj.cuenta:
+            # Si hay FK, mostrar el código del FK
+            return format_html(
+                '<strong style="color: green;">{}</strong>',
+                obj.cuenta.codigo
+            )
+        else:
+            # Si no hay FK, mostrar el código temporal
+            return format_html(
+                '<span style="color: orange; font-style: italic;">{}</span>',
+                obj.cuenta_codigo or "Sin código"
+            )
+    codigo_cuenta_display.short_description = "Código Cuenta"
+    codigo_cuenta_display.admin_order_field = "cuenta_codigo"
+    
+    def nombre_cuenta_display(self, obj):
+        """Muestra el nombre de la cuenta si existe FK"""
+        if obj.cuenta:
+            return format_html(
+                '<span style="color: green;">{}</span>',
+                obj.cuenta.nombre[:50] + "..." if len(obj.cuenta.nombre) > 50 else obj.cuenta.nombre
+            )
+        else:
+            return format_html(
+                '<span style="color: #888; font-style: italic;">Sin cuenta asignada</span>'
+            )
+    nombre_cuenta_display.short_description = "Nombre Cuenta"
+    nombre_cuenta_display.admin_order_field = "cuenta__nombre"
+    
+    def cliente_display(self, obj):
+        """Muestra el cliente"""
+        if obj.cliente:
+            return format_html(
+                '{} ({})',
+                obj.cliente.nombre[:30] + "..." if len(obj.cliente.nombre) > 30 else obj.cliente.nombre,
+                obj.cliente.rut or "Sin RUT"
+            )
+        return "Sin cliente"
+    cliente_display.short_description = "Cliente"
+    cliente_display.admin_order_field = "cliente__nombre"
+    
     fieldsets = (
+        ("Estado de la Clasificación", {
+            "fields": ("estado_cuenta_display", "codigo_cuenta_display", "nombre_cuenta_display"),
+            "classes": ("wide",),
+            "description": "Estado actual de la relación con la cuenta contable"
+        }),
         ("Clasificación Principal", {
-            "fields": ("cuenta", "set_clas", "opcion")
+            "fields": ("cuenta", "cuenta_codigo", "cliente", "set_clas", "opcion"),
+            "description": "Configuración de la clasificación. Use 'cuenta' para FK directo o 'cuenta_codigo' para referencia temporal."
         }),
         ("Metadatos", {
             "fields": ("asignado_por", "fecha"),
             "classes": ("collapse",)
         })
     )
+    
+    def get_readonly_fields(self, request, obj=None):
+        """Campos de solo lectura dinámicos"""
+        readonly = list(self.readonly_fields)
+        readonly.extend(["estado_cuenta_display", "codigo_cuenta_display", "nombre_cuenta_display"])
+        return readonly
+    
+    def save_model(self, request, obj, form, change):
+        """Lógica personalizada al guardar"""
+        # Si no hay asignado_por, usar el usuario actual
+        if not obj.asignado_por:
+            obj.asignado_por = request.user
+        
+        # Si hay cuenta FK pero no hay código temporal, sincronizar
+        if obj.cuenta and not obj.cuenta_codigo:
+            obj.cuenta_codigo = obj.cuenta.codigo
+        
+        # Si no hay cliente pero hay cuenta FK, tomar cliente de la cuenta
+        if obj.cuenta and not obj.cliente:
+            obj.cliente = obj.cuenta.cliente
+            
+        super().save_model(request, obj, form, change)
+    
+    actions = ['sincronizar_fk_temporal', 'limpiar_temporales_huerfanas']
+    
+    def sincronizar_fk_temporal(self, request, queryset):
+        """Acción para sincronizar FK con códigos temporales"""
+        sincronizadas = 0
+        for clasif in queryset:
+            if clasif.cuenta and clasif.cuenta.codigo != clasif.cuenta_codigo:
+                clasif.cuenta_codigo = clasif.cuenta.codigo
+                clasif.save(update_fields=['cuenta_codigo'])
+                sincronizadas += 1
+        
+        self.message_user(request, f'Sincronizadas {sincronizadas} clasificaciones FK → temporal')
+    sincronizar_fk_temporal.short_description = "Sincronizar FK → código temporal"
+    
+    def limpiar_temporales_huerfanas(self, request, queryset):
+        """Acción para limpiar clasificaciones temporales huérfanas"""
+        temporales = queryset.filter(cuenta__isnull=True)
+        count = temporales.count()
+        temporales.delete()
+        
+        self.message_user(request, f'Eliminadas {count} clasificaciones temporales huérfanas')
+    limpiar_temporales_huerfanas.short_description = "Limpiar temporales huérfanas"
 
 
 @admin.register(Incidencia)

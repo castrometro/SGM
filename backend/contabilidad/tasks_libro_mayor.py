@@ -304,7 +304,6 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
     }
     
     stats = {"cuentas_nuevas": 0, "aperturas": 0, "movimientos": 0, "incidencias_detectadas": 0}
-    cuentas_con_clasificacion_previa = 0  # Contador para clasificaciones existentes
     
     logger.info(f"CARGA INICIAL COMPLETADA:")
     logger.info(f"  - {len(nombres_ingles_map)} nombres en inglés")
@@ -580,8 +579,16 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                     if created:
                         stats["cuentas_nuevas"] += 1
                         logger.debug(f"Cuenta nueva creada: {code} - {nombre_real}")
-                        # NUEVO: Sincronizar clasificaciones temporales con la cuenta real
-                    if created or not cuenta.id:
+                    
+                    # Aplicar nombre en inglés UNA SOLA VEZ usando nombres_ingles_map
+                    ing = nombres_ingles_map.get(cuenta.codigo)
+                    if ing and not cuenta.nombre_en:
+                        cuenta.nombre_en = ing
+                        cuenta.save(update_fields=["nombre_en"])
+                        logger.debug(f"Aplicado nombre en inglés a cuenta {cuenta.codigo}: {ing}")
+                    
+                    # NUEVO: Sincronizar clasificaciones temporales con la cuenta real
+                    if created:
                         clasificaciones_temporales = AccountClassification.objects.filter(
                             cliente=cliente,
                             cuenta_codigo=code,
@@ -591,18 +598,6 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                         if clasificaciones_temporales.exists():
                             num_actualizadas = clasificaciones_temporales.update(cuenta=cuenta)
                             logger.info(f"✅ Sincronizadas {num_actualizadas} clasificaciones temporales con FK para cuenta {code}")
-                            
-                            """ # Opcional: Limpiar el campo cuenta_codigo ya que ahora tiene FK
-                            AccountClassification.objects.filter(
-                                cuenta=cuenta
-                            ).update(cuenta_codigo='') """
-                    
-                    # Aplicar nombre en inglés UNA SOLA VEZ usando nombres_ingles_map
-                    ing = nombres_ingles_map.get(cuenta.codigo)
-                    if ing and not cuenta.nombre_en:
-                        cuenta.nombre_en = ing
-                        cuenta.save(update_fields=["nombre_en"])
-                        logger.debug(f"Aplicado nombre en inglés a cuenta {cuenta.codigo}: {ing}")
                     
                     # Aplicar clasificaciones existentes (si las hay)
                     clasificaciones_cuenta = clasif_existentes.get(cuenta.codigo)
@@ -610,7 +605,6 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                         logger.debug(f"Encontradas clasificaciones existentes para cuenta {cuenta.codigo}: {list(clasificaciones_cuenta.keys())}")
                         # Las clasificaciones ya están aplicadas en AccountClassification
                         # Solo registramos que esta cuenta ya tiene clasificaciones
-                        cuentas_con_clasificacion_previa += 1
                     
                     # VALIDACIÓN DE CLASIFICACIONES EN LÍNEA - Solo si hay sets configurados
                     if sets_clasificacion:
@@ -625,7 +619,6 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                             
                             # CORREGIDO: Verificar clasificación usando TANTO FK como código temporal
                             # Esto incluye clasificaciones que pueden estar guardadas solo con cuenta_codigo (temporales)
-                            # Verificar si existe clasificación (evitando duplicados)
                             tiene_clasificacion = AccountClassification.objects.filter(
                                 Q(cuenta=cuenta) | Q(cuenta_codigo=cuenta.codigo, cuenta__isnull=True),
                                 cliente=cliente,
@@ -700,12 +693,6 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
         if movimientos:
             MovimientoContable.objects.bulk_create(movimientos, batch_size=500)
         
-        # NUEVO: Sincronizar todas las clasificaciones temporales después del procesamiento
-        try:
-            resultado_sync = sincronizar_todas_las_clasificaciones_temporales(cliente_id)
-            logger.info(f"Sincronización post-procesamiento: {resultado_sync}")
-        except Exception as e:
-            logger.error(f"Error en sincronización post-procesamiento: {e}")
         # NUEVO: Resumen de movimientos por cuenta
         logger.info("="*80)
         logger.info("📊 RESUMEN DE MOVIMIENTOS PROCESADOS POR CUENTA")
@@ -989,32 +976,49 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
         creadas += len(incidencias_a_crear)
         logger.info(f"Creadas {len(incidencias_a_crear)} incidencias desde procesamiento en línea")
 
-    # 2. EJECUTAR MAPEO ADICIONAL DE CLASIFICACIONES (para cuentas no procesadas)
+    # 2. SINCRONIZACIÓN FINAL DE CLASIFICACIONES TEMPORALES
     try:
-        from .tasks_cuentas_bulk import mapear_clasificaciones_con_cuentas
+        # Verificar si hay clasificaciones temporales (sin FK a cuenta) para el cliente
+        clasificaciones_temporales = AccountClassification.objects.filter(
+            cliente=upload_log.cliente,
+            cuenta__isnull=True  # Solo las temporales sin FK
+        )
         
-        # Verificar si hay clasificaciones existentes para el cliente
-        registros_clasificacion_count = AccountClassification.objects.filter(
+        temporales_count = clasificaciones_temporales.count()
+        logger.info(f"Clasificaciones temporales disponibles para sincronización: {temporales_count} para cliente {upload_log.cliente.id}")
+        
+        if temporales_count > 0:
+            # Sincronizar clasificaciones temporales con cuentas reales creadas
+            sincronizadas = 0
+            for clasif_temp in clasificaciones_temporales:
+                try:
+                    cuenta_real = CuentaContable.objects.get(
+                        cliente=upload_log.cliente,
+                        codigo=clasif_temp.cuenta_codigo
+                    )
+                    clasif_temp.cuenta = cuenta_real
+                    clasif_temp.save(update_fields=['cuenta'])
+                    sincronizadas += 1
+                except CuentaContable.DoesNotExist:
+                    logger.debug(f"Cuenta {clasif_temp.cuenta_codigo} no existe aún para sincronizar clasificación temporal")
+                    continue
+            
+            logger.info(f"Sincronizadas {sincronizadas} clasificaciones temporales con cuentas reales")
+        
+        # Verificar estado final de clasificaciones
+        total_clasificaciones = AccountClassification.objects.filter(
             cliente=upload_log.cliente
         ).count()
-        logger.info(f"Clasificaciones existentes en AccountClassification: {registros_clasificacion_count} para cliente {upload_log.cliente.id}")
-        
-        if registros_clasificacion_count > 0:
-            logger.info(f"Se encontraron clasificaciones existentes, revisando migración de temporales a FK")
-            # Aquí podríamos llamar a una función de migración si es necesario
-            # resultado_migracion = migrar_clasificaciones_temporales_a_fk(upload_log_id)
-            logger.info(f"Clasificaciones disponibles para uso en reportes")
-        
-        # Verificar si hay clasificaciones disponibles después del mapeo
-        total_clasificaciones = AccountClassification.objects.filter(
-            cuenta__cliente=upload_log.cliente
+        clasificaciones_con_fk = AccountClassification.objects.filter(
+            cliente=upload_log.cliente,
+            cuenta__isnull=False
         ).count()
-        logger.info(f"Total de clasificaciones después del mapeo: {total_clasificaciones}")
+        clasificaciones_temporales_restantes = total_clasificaciones - clasificaciones_con_fk
         
-    except ImportError as e:
-        logger.warning(f"No se pudo importar mapear_clasificaciones_con_cuentas: {e}")
+        logger.info(f"Estado final de clasificaciones - Total: {total_clasificaciones}, Con FK: {clasificaciones_con_fk}, Temporales: {clasificaciones_temporales_restantes}")
+        
     except Exception as e:
-        logger.error(f"Error en mapeo adicional de clasificaciones: {e}")
+        logger.error(f"Error en sincronización final de clasificaciones: {e}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
 
@@ -1064,14 +1068,12 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
         diferencia_balance = abs(balance_total)
         
         # 🚧 BYPASS TEMPORAL: Descomenta la siguiente línea para bypasear validación de balance
-        diferencia_balance = 0  # BYPASS: Simula balance correcto para desarrollo
+        # diferencia_balance = 0  # BYPASS: Simula balance correcto para desarrollo
         
         if diferencia_balance <= 1000.00:  # Tolerancia más amplia para balances reales
             print(f"   ✅ BALANCE CORRECTO: Balance total = ${balance_total:,.2f} (contabilidad balanceada)")
             print(f"   📊 Interpretación: ESF + ERI ≈ 0 indica que los movimientos están balanceados")
             print(f"   🔍 Validación: Diferencia ${diferencia_balance:,.2f} dentro de tolerancia (±$1,000.00)")
-            if diferencia_balance == 0 and abs(balance_total) > 1000.00:
-                print(f"   🚧 BYPASS ACTIVO: Balance real ${balance_total:,.2f} bypasseado para desarrollo")
             logger.info("✓ Balance ESF/ERI validado correctamente - contabilidad balanceada")
         else:
             print(f"   ❌ BALANCE DESCUADRADO")
@@ -1199,14 +1201,6 @@ El balance total debería ser cercano a $0.00 para indicar una contabilidad bala
 def finalizar_procesamiento_libro_mayor(upload_log_id, user_correo_bdo):
     upload = UploadLog.objects.get(pk=upload_log_id)
     cierre = upload.cierre
-    clasificaciones_huerfanas = AccountClassification.objects.filter(
-        cliente=upload.cliente,
-        cuenta__isnull=True,
-        cuenta_codigo__isnull=False
-        ).exclude(cuenta_codigo='').count()
-
-    if clasificaciones_huerfanas > 0:
-        logger.warning(f"⚠️ Aún quedan {clasificaciones_huerfanas} clasificaciones sin sincronizar")
 
     # NUEVO: Auto-incrementar iteración para libro mayor
     if upload.tipo_upload == 'libro_mayor' and upload.cierre:
@@ -1252,7 +1246,6 @@ def finalizar_procesamiento_libro_mayor(upload_log_id, user_correo_bdo):
         path = default_storage.path(upload.ruta_archivo)
         if os.path.exists(path):
             os.remove(path)
-            logger.info(f"Archivo temporal eliminado: {path}")
     except Exception as e:
         logger.warning(f"No se eliminó temp: {e}")
 
@@ -1264,7 +1257,6 @@ def finalizar_procesamiento_libro_mayor(upload_log_id, user_correo_bdo):
         f"Incidencias: {stats_inc.get('creadas',0)}"
     )
     return msg
-    
 
 
 def aplicar_nombres_ingles_pendientes(upload_log_id):
@@ -1652,49 +1644,3 @@ def comparar_con_iteracion_anterior(upload_log_actual, incidencias_actuales):
     except Exception as e:
         logger.error(f"Error comparando con iteración anterior: {e}")
         return {'error_comparacion': str(e)}
-
-
-def sincronizar_todas_las_clasificaciones_temporales(cliente_id):
-    """
-    Sincroniza TODAS las clasificaciones temporales de un cliente
-    con sus cuentas reales correspondientes.
-    Útil para ejecutar después de procesar el libro mayor.
-    """
-    from django.db.models import F
-    
-    try:
-        # Obtener todas las clasificaciones temporales
-        clasificaciones_temporales = AccountClassification.objects.filter(
-            cliente_id=cliente_id,
-            cuenta__isnull=True,
-            cuenta_codigo__isnull=False
-        ).exclude(cuenta_codigo='')
-        
-        logger.info(f"Encontradas {clasificaciones_temporales.count()} clasificaciones temporales para sincronizar")
-        
-        # Obtener diccionario de cuentas reales
-        cuentas_dict = {
-            c.codigo: c 
-            for c in CuentaContable.objects.filter(cliente_id=cliente_id)
-        }
-        
-        actualizadas = 0
-        errores = 0
-        
-        for clasificacion in clasificaciones_temporales:
-            cuenta_real = cuentas_dict.get(clasificacion.cuenta_codigo)
-            if cuenta_real:
-                clasificacion.cuenta = cuenta_real
-                clasificacion.save(update_fields=['cuenta'])
-                actualizadas += 1
-                logger.debug(f"Sincronizada clasificación ID {clasificacion.id} con cuenta {cuenta_real.codigo}")
-            else:
-                errores += 1
-                logger.warning(f"No se encontró cuenta real para código {clasificacion.cuenta_codigo}")
-        
-        logger.info(f"Sincronización completada: {actualizadas} actualizadas, {errores} errores")
-        return {'actualizadas': actualizadas, 'errores': errores}
-        
-    except Exception as e:
-        logger.error(f"Error en sincronización masiva: {e}")
-        return {'error': str(e)}

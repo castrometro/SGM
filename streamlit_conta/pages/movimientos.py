@@ -14,6 +14,10 @@ def show(data_esf=None, data_eri=None, metadata=None):
     lang_field = st.session_state.get("lang_field", "nombre_es")
     idioma_legible = "Español" if lang_field == "nombre_es" else "English"
 
+    # Debug: verificar qué información viene en metadata
+    if metadata and st.checkbox("Ver metadata (debug)", value=False):
+        st.json(metadata)
+
     if data_esf is None and data_eri is None:
         st.info("No se encontró información de movimientos.")
         return
@@ -143,11 +147,15 @@ def show(data_esf=None, data_eri=None, metadata=None):
                 unsafe_allow_html=True
             )
 
-        # Descarga CSV (usar df_to_show original sin formato para el CSV)
+        # Descarga CSV mejorada
         nombre_archivo = f"{vista_seleccionada.lower().replace(' ', '_')}.csv"
+        
+        # Preparar datos para CSV con información adicional
+        csv_data = preparar_csv_con_metadata(df_to_show, metadata, vista_seleccionada)
+        
         st.download_button(
             label="Descargar en CSV",
-            data=df_to_show.to_csv(index=False, encoding="utf-8-sig"),
+            data=csv_data,
             file_name=nombre_archivo,
             mime="text/csv"
         )
@@ -361,3 +369,47 @@ def formatear_monto(monto, moneda="CLP"):
     elif moneda.upper() == "EUR":
         return f"€{monto_formateado}"
     return f"{monto_formateado} {moneda}"
+
+
+def preparar_csv_con_metadata(df, metadata, tipo_reporte):
+    """
+    Prepara el CSV con metadata del cliente y fecha/hora.
+    Corrige problemas de encoding en headers.
+    """
+    from datetime import datetime
+    import io
+    
+    # Crear un buffer de texto con encoding UTF-8
+    output = io.StringIO()
+    
+    # Escribir metadata al inicio del archivo
+    if metadata:
+        output.write(f"# Reporte: {tipo_reporte}\n")
+        output.write(f"# Cliente: {metadata.get('cliente', {}).get('nombre', 'N/A')}\n")
+        output.write(f"# RUT Cliente: {metadata.get('cliente', {}).get('rut', 'N/A')}\n")
+        output.write(f"# Periodo: {metadata.get('periodo', 'N/A')}\n")
+        output.write(f"# Fecha generacion: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        output.write(f"# Moneda: {metadata.get('moneda', 'CLP')}\n")
+        output.write("#\n")  # Línea en blanco para separar
+    
+    # Renombrar columnas para evitar tildes en headers
+    column_mapping = {
+        'Código Cuenta': 'Codigo Cuenta',
+        'Clasificación': 'Clasificacion',
+        'Descripción': 'Descripcion',
+        'N° Doc': 'Nro Doc',
+        'Variación': 'Variacion',
+        'Nombre Inglés': 'Nombre Ingles'
+    }
+    
+    # Crear copia del dataframe con columnas renombradas
+    df_csv = df.rename(columns=column_mapping)
+    
+    # Escribir el CSV
+    df_csv.to_csv(output, index=False, encoding='utf-8', sep=',', decimal='.')
+    
+    # Obtener el contenido y codificarlo correctamente
+    csv_content = output.getvalue()
+    
+    # Retornar como bytes con BOM para Excel
+    return '\ufeff' + csv_content  # BOM para UTF-8

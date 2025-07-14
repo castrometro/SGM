@@ -1581,6 +1581,8 @@ def guardar_datos_en_redis(cierre, esf, estado_resultados, ratios, cuentas_saldo
     import json
     from decimal import Decimal
     from django.utils import timezone
+    from .cache_redis import get_cache_system
+    cache_system = get_cache_system()
     
     try:
         print(f"   ⚡ Preparando datos ESF y ERI para Redis...")
@@ -1594,72 +1596,6 @@ def guardar_datos_en_redis(cierre, esf, estado_resultados, ratios, cuentas_saldo
             elif isinstance(obj, Decimal):
                 return float(obj)
             return obj
-        
-        # ========================================
-        # 1. GUARDAR ESF EN CARPETA DE PRUEBAS
-        # ========================================
-        print(f"   🧪 Guardando ESF en carpeta de pruebas Redis...")
-        
-        try:
-            from .cache_redis import get_cache_system
-            cache_system = get_cache_system()
-            
-            # Preparar ESF para guardar como prueba
-            esf_prueba = {
-                'tipo_estado': 'ESF',
-                'cliente_id': cierre.cliente.id,
-                'cliente_nombre': cierre.cliente.nombre,
-                'periodo': cierre.periodo,
-                'cierre_id': cierre.id,
-                'generated_by': 'sistema_finalizacion_sgm',
-                'generated_at': timezone.now().isoformat(),
-                'source': 'task_finalizacion_automatico',
-                
-                # Datos del ESF (ya convertidos a float)
-                **decimal_to_float(esf),
-                
-                # Metadata adicional para pruebas
-                'metadata_prueba': {
-                    'total_cuentas_procesadas': len(cuentas_saldos),
-                    'ratios_calculados': len(ratios),
-                    'fecha_cierre': cierre.fecha_finalizacion.isoformat() if cierre.fecha_finalizacion else None,
-                    'version_sistema': '2.0_automatico',
-                    'validado_balance': esf.get('balance_cuadrado', False),
-                    'diferencia_balance': float(esf.get('diferencia', 0)) if 'diferencia' in esf else 0
-                },
-                
-                # Información de contexto
-                'contexto_generacion': {
-                    'proceso': 'finalizar_cierre_y_generar_reportes',
-                    'tipo_calculo': 'saldos_iniciales_mas_movimientos',
-                    'incluye_saldos_iniciales': True,
-                    'incluye_movimientos_periodo': True,
-                    'clasificaciones_aplicadas': True
-                }
-            }
-            
-            # Guardar en Redis como prueba del sistema actual
-            cache_success = cache_system.set_prueba_esf(
-                cliente_id=cierre.cliente.id,
-                periodo=cierre.periodo,
-                esf_data=esf_prueba,
-                test_type="finalizacion_automatica"
-            )
-            
-            if cache_success:
-                print(f"   ✅ ESF guardado en Redis carpeta pruebas:")
-                print(f"       Key: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:pruebas:esf:finalizacion_automatica")
-                print(f"       Cliente: {cierre.cliente.nombre}")
-                print(f"       Período: {cierre.periodo}")
-                print(f"       Total Activos: ${esf_prueba['total_activos']:,.2f}")
-                print(f"       Balance Cuadrado: {'✅ SÍ' if esf_prueba.get('balance_cuadrado', False) else '❌ NO'}")
-            else:
-                print(f"   ⚠️ No se pudo guardar ESF en carpeta de pruebas")
-                
-        except Exception as e:
-            print(f"   ❌ Error guardando ESF en carpeta de pruebas: {e}")
-            import traceback
-            print(f"   📋 Traceback: {traceback.format_exc()}")
         
         # ========================================
         # 2. GUARDAR DATOS PRINCIPALES EN REDIS CON RETENCIÓN
@@ -1715,7 +1651,7 @@ def guardar_datos_en_redis(cierre, esf, estado_resultados, ratios, cuentas_saldo
         # ========================================
         # 3. DATOS LEGACY (COMPATIBILIDAD)
         # ========================================
-        datos_redis = {
+        """ datos_redis = {
             'cierre_id': cierre.id,
             'cliente_id': cierre.cliente.id,
             'cliente_nombre': cierre.cliente.nombre,
@@ -1745,16 +1681,16 @@ def guardar_datos_en_redis(cierre, esf, estado_resultados, ratios, cuentas_saldo
         redis_key = f"contabilidad:cliente:{cierre.cliente.id}:ultimo_cierre"
         print(f"   📝 Datos ESF/ERI preparados para Redis key legacy: {redis_key}")
         print(f"   📊 Resumen: {len(cuentas_saldos)} cuentas, Assets: {datos_redis['resumen_ejecutivo']['total_assets']:,.2f}")
-        print(f"   💰 Revenue: {datos_redis['resumen_ejecutivo']['revenue']:,.2f}, Earnings: {datos_redis['resumen_ejecutivo']['earnings_before_taxes']:,.2f}")
+        print(f"   💰 Revenue: {datos_redis['resumen_ejecutivo']['revenue']:,.2f}, Earnings: {datos_redis['resumen_ejecutivo']['earnings_before_taxes']:,.2f}") """
         
         # TODO: Implementar conexión real a Redis legacy si es necesario
         # redis_client.set(redis_key, json.dumps(datos_redis))
         # redis_client.sadd("contabilidad:clientes_activos", cierre.cliente.id)
         
-        print(f"   ✅ ESF guardado exitosamente en:")
-        print(f"       📁 Carpeta pruebas: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:pruebas:esf:finalizacion_automatica")
-        print(f"       🗂️ Cache principal: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:esf")
-        print(f"       🔑 Cache KPIs: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:kpis")
+        #print(f"   ✅ ESF guardado exitosamente en:")
+        #print(f"       📁 Carpeta pruebas: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:pruebas:esf:finalizacion_automatica")
+        #print(f"       🗂️ Cache principal: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:esf")
+        #print(f"       🔑 Cache KPIs: sgm:contabilidad:{cierre.cliente.id}:{cierre.periodo}:kpis")
         
     except Exception as e:
         print(f"   ⚠️ Error preparando datos Redis: {e}")

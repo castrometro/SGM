@@ -40,55 +40,135 @@ def _guardar_reportes_con_retencion(cierre, datos_esf=None, datos_eri=None, ttl_
     try:
         cache_system = get_cache_system()
         
-        # Si solo tenemos uno de los dos, obtener el otro del cache si existe
-        if datos_esf and not datos_eri:
-            datos_eri = cache_system.get_estado_financiero(
-                cierre.cliente.id, 
-                cierre.periodo, 
-                'eri'
-            ) or {}
-            
-        elif datos_eri and not datos_esf:
-            datos_esf = cache_system.get_estado_financiero(
-                cierre.cliente.id, 
-                cierre.periodo, 
-                'esf'
-            ) or {}
+        # CAMBIO: Guardar individualmente SIN llamar a la función de retención
+        resultado = {'success': True, 'metodo': 'individual_sin_retencion'}
         
-        # Si tenemos ambos, usar retención automática
-        if datos_esf and datos_eri:
-            resultado = cache_system.set_estado_financiero_with_retention(
+        # Guardar ESF si se proporciona
+        if datos_esf:
+            exito_esf = cache_system.set_estado_financiero(
                 cliente_id=cierre.cliente.id,
                 periodo=cierre.periodo,
-                datos_esf=datos_esf,
-                datos_eri=datos_eri,
-                max_cierres_por_cliente=2,
-                ttl_hours=ttl_hours
+                tipo_estado='esf',
+                datos=datos_esf,
+                ttl=ttl_hours * 3600  # Convertir horas a segundos
             )
+            resultado['esf_guardado'] = exito_esf
+            logger.info(f"✅ ESF guardado individualmente para período {cierre.periodo}")
             
-            logger.info(f"🔄 Retención aplicada para cliente {cierre.cliente.id}:")
-            logger.info(f"   📁 Cierres mantenidos: {len(resultado.get('cierres_mantenidos', []))}")
-            logger.info(f"   🗑️ Cierres eliminados: {len(resultado.get('cierres_eliminados', []))}")
-            
-            return resultado
-        else:
-            # Fallback: guardar individualmente sin retención
-            logger.warning("No se tienen ambos reportes (ESF + ERI), guardando individualmente")
-            
-            if datos_esf:
-                cache_system.set_estado_financiero(
-                    cierre.cliente.id, cierre.periodo, 'esf', datos_esf, ttl_hours * 3600
-                )
-            if datos_eri:
-                cache_system.set_estado_financiero(
-                    cierre.cliente.id, cierre.periodo, 'eri', datos_eri, ttl_hours * 3600
-                )
+        # Guardar ERI si se proporciona
+        if datos_eri:
+            exito_eri = cache_system.set_estado_financiero(
+                cliente_id=cierre.cliente.id,
+                periodo=cierre.periodo,
+                tipo_estado='eri',
+                datos=datos_eri,
+                ttl=ttl_hours * 3600  # Convertir horas a segundos
+            )
+            resultado['eri_guardado'] = exito_eri
+            logger.info(f"✅ ERI guardado individualmente para período {cierre.periodo}")
+        
+        # CAMBIO CLAVE: Solo aplicar retención cuando tenemos MÁS de 2 períodos COMPLETOS ÚNICOS
+        # y SOLO cuando se están guardando AMBOS reportes (período completo nuevo)
+        if datos_esf and datos_eri:
+            try:
+                # Obtener períodos que tienen TANTO ESF como ERI
+                periodos_completos = _obtener_periodos_completos(cache_system, cierre.cliente.id)
                 
-            return {'success': True, 'metodo': 'individual'}
+                # IMPORTANTE: Asegurar que el período actual está en la lista
+                # Esto maneja el caso donde estamos actualizando un período existente
+                periodo_actual = cierre.periodo
+                if periodo_actual not in periodos_completos:
+                    periodos_completos.append(periodo_actual)
+                
+                # Obtener lista única de períodos
+                periodos_unicos = sorted(list(set(periodos_completos)))
+                
+                logger.info(f"📊 Períodos únicos encontrados: {periodos_unicos}")
+                logger.info(f"📊 Total de períodos únicos: {len(periodos_unicos)} (límite: 2)")
+                
+                # Solo aplicar retención si tenemos MÁS de 2 períodos únicos
+                if len(periodos_unicos) > 2:
+                    logger.info(f"🔄 Aplicando retención: {len(periodos_unicos)} períodos encontrados (límite: 2)")
+                    
+                    # Mantener solo los 2 más recientes
+                    periodos_a_eliminar = periodos_unicos[:-2]
+                    periodos_a_mantener = periodos_unicos[-2:]
+                    
+                    for periodo_viejo in periodos_a_eliminar:
+                        # Eliminar TODOS los datos de ese período
+                        eliminados = cache_system.invalidate_cliente_periodo(cierre.cliente.id, periodo_viejo)
+                        if eliminados > 0:
+                            logger.info(f"🗑️ Período completo eliminado por retención: {periodo_viejo} ({eliminados} claves)")
+                    
+                    resultado['retencion_aplicada'] = True
+                    resultado['periodos_eliminados'] = periodos_a_eliminar
+                    resultado['periodos_mantenidos'] = periodos_a_mantener
+                else:
+                    logger.info(f"✅ No se aplica retención: {len(periodos_unicos)} períodos únicos (límite: 2)")
+                    resultado['retencion_aplicada'] = False
+                    resultado['periodos_actuales'] = periodos_unicos
+                    
+            except Exception as e:
+                logger.warning(f"Error aplicando retención manual: {e}")
+                resultado['retencion_error'] = str(e)
+        
+        return resultado
             
     except Exception as e:
-        logger.error(f"Error en retención de cierres: {e}")
+        logger.error(f"Error guardando reportes en caché: {e}")
         return {'success': False, 'error': str(e)}
+
+
+def _obtener_periodos_completos(cache_system, cliente_id):
+    """
+    Obtiene solo los períodos que tienen TANTO ESF como ERI completos
+    
+    Args:
+        cache_system: Sistema de caché
+        cliente_id: ID del cliente
+        
+    Returns:
+        list: Lista de períodos únicos que tienen ambos reportes
+    """
+    try:
+        # Obtener todas las claves del cliente
+        pattern_esf = f"sgm:contabilidad:{cliente_id}:*:esf"
+        pattern_eri = f"sgm:contabilidad:{cliente_id}:*:eri"
+        
+        claves_esf = cache_system.redis_client.keys(pattern_esf)
+        claves_eri = cache_system.redis_client.keys(pattern_eri)
+        
+        # Extraer períodos de las claves
+        periodos_esf = set()
+        for clave in claves_esf:
+            partes = clave.split(':')
+            if len(partes) >= 4:
+                periodo = partes[3]  # sgm:contabilidad:{cliente_id}:{periodo}:esf
+                periodos_esf.add(periodo)
+        
+        periodos_eri = set()
+        for clave in claves_eri:
+            partes = clave.split(':')
+            if len(partes) >= 4:
+                periodo = partes[3]  # sgm:contabilidad:{cliente_id}:{periodo}:eri
+                periodos_eri.add(periodo)
+        
+        # Solo devolver períodos que tienen AMBOS reportes
+        periodos_completos = periodos_esf.intersection(periodos_eri)
+        
+        # Convertir a lista y ordenar
+        periodos_lista = sorted(list(periodos_completos))
+        
+        logger.debug(f"Períodos con ESF: {sorted(list(periodos_esf))}")
+        logger.debug(f"Períodos con ERI: {sorted(list(periodos_eri))}")
+        logger.debug(f"Períodos completos (ESF + ERI): {periodos_lista}")
+        
+        return periodos_lista
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo períodos completos: {e}")
+        return []
+
 
 @shared_task(bind=True)
 def generar_estado_situacion_financiera(self, cierre_id, usuario_id=None, regenerar=False):
@@ -256,7 +336,7 @@ def generar_estado_situacion_financiera(self, cierre_id, usuario_id=None, regene
                 logger.warning(f"⚠️ Problema guardando ESF con retención: {resultado_cache.get('error', 'Error desconocido')}")
                 
             # Mantener guardado de pruebas para compatibilidad
-            try:
+            """ try:
                 import redis as redis_lib
                 redis_client = redis_lib.Redis(
                     host='redis', port=6379, db=1,
@@ -271,7 +351,7 @@ def generar_estado_situacion_financiera(self, cierre_id, usuario_id=None, regene
                 logger.info(f"📋 ESF también guardado en clave de pruebas: {clave_pruebas}")
                 
             except Exception as pruebas_error:
-                logger.warning(f"No se pudo guardar ESF en clave de pruebas: {pruebas_error}")
+                logger.warning(f"No se pudo guardar ESF en clave de pruebas: {pruebas_error}") """
                 
         except Exception as cache_error:
             logger.error(f"Error guardando ESF en Redis: {cache_error}")
@@ -436,7 +516,7 @@ def generar_estado_resultados_integral(self, cierre_id, usuario_id=None, regener
                 logger.warning(f"⚠️ Problema guardando ERI con retención: {resultado_cache.get('error', 'Error desconocido')}")
                 
             # Mantener guardado de pruebas para compatibilidad
-            try:
+            """ try:
                 import redis as redis_lib
                 redis_client = redis_lib.Redis(
                     host='redis', port=6379, db=1,
@@ -451,7 +531,7 @@ def generar_estado_resultados_integral(self, cierre_id, usuario_id=None, regener
                 logger.info(f"📋 ERI también guardado en clave de pruebas: {clave_pruebas}")
                 
             except Exception as pruebas_error:
-                logger.warning(f"No se pudo guardar ERI en clave de pruebas: {pruebas_error}")
+                logger.warning(f"No se pudo guardar ERI en clave de pruebas: {pruebas_error}") """
                 
         except Exception as cache_error:
             logger.error(f"Error guardando ERI en Redis: {cache_error}")

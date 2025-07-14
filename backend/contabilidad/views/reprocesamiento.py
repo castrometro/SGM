@@ -221,9 +221,21 @@ def preparar_archivo_para_reprocesamiento(libro_mayor_archivo, nueva_iteracion):
 def limpiar_datos_cierre_para_reprocesamiento(cierre):
     """
     Limpia los datos de movimientos e incidencias del cierre para reprocesamiento limpio
+    y cambia el estado del cierre para permitir regeneración de reportes
     """
     try:
         with transaction.atomic():
+            # Guardar estado anterior para logging
+            estado_anterior = cierre.estado
+            
+            # Cambiar estado del cierre para permitir regeneración de reportes
+            # Si está finalizado/aprobado, volver a sin_incidencias para permitir nuevos reportes
+            if cierre.estado in ['finalizado', 'aprobado']:
+                cierre.estado = 'sin_incidencias'
+                cierre.fecha_finalizacion = None  # Limpiar fecha de finalización
+                cierre.save(update_fields=['estado', 'fecha_finalizacion'])
+                logger.info(f"Estado del cierre {cierre.id} cambiado de '{estado_anterior}' a '{cierre.estado}' para reprocesamiento")
+            
             # Eliminar movimientos contables
             movimientos_eliminados = MovimientoContable.objects.filter(cierre=cierre).count()
             MovimientoContable.objects.filter(cierre=cierre).delete()

@@ -268,11 +268,15 @@ const LibroMayorCard = ({
   const handleReprocesar = async () => {
     if (!cierreId) return;
     
-    const confirmar = window.confirm(
-      "¿Está seguro de que desea reprocesar el Libro Mayor?\n\n" +
-      "Esto creará una nueva iteración aplicando las excepciones marcadas como 'No aplica'. " +
-      "El procesamiento puede tomar varios minutos."
-    );
+    const mensajeConfirmacion = sinIncidencias 
+      ? "¿Está seguro de que desea reprocesar el Libro Mayor?\n\n" +
+        "Actualmente no hay incidencias detectadas. El reprocesamiento regenerará " +
+        "los reportes con las clasificaciones actuales."
+      : "¿Está seguro de que desea reprocesar el Libro Mayor?\n\n" +
+        "Esto creará una nueva iteración aplicando las excepciones marcadas como 'No aplica'. " +
+        "El procesamiento puede tomar varios minutos.";
+    
+    const confirmar = window.confirm(mensajeConfirmacion);
     
     if (!confirmar) return;
     
@@ -284,9 +288,11 @@ const LibroMayorCard = ({
       const resultado = await reprocesarConExcepciones(cierreId);
       
       setUploadLogId(resultado.upload_log_id);
-      mostrarNotificacion("success", 
-        `✅ Reprocesamiento iniciado. Nueva iteración: ${resultado.nueva_iteracion}`
-      );
+      const mensajeInicio = sinIncidencias
+        ? `✅ Reprocesamiento iniciado. Regenerando reportes - Iteración: ${resultado.nueva_iteracion}`
+        : `✅ Reprocesamiento iniciado. Nueva iteración: ${resultado.nueva_iteracion}`;
+      
+      mostrarNotificacion("success", mensajeInicio);
       
       // Iniciar polling más frecuente para reprocesamiento
       iniciarPollingReprocesamiento(resultado.upload_log_id);
@@ -327,6 +333,7 @@ const LibroMayorCard = ({
           
           mostrarNotificacion("success", mensaje);
           await cargarEstado(); // Recargar todo el estado
+          onCompletado && onCompletado(true); // Notificar al padre para recargar estado del cierre
           return; // Detener polling
         } else if (estadoUpload.estado === 'error') {
           // Error en reprocesamiento
@@ -493,26 +500,22 @@ const LibroMayorCard = ({
                 </div>
               )}
               
-              {/* Botón reprocesar - disponible cuando hay un procesamiento completado */}
-              {sinIncidencias ? (
-                <button
-                  type="button"
-                  disabled
-                  className="bg-green-600 text-white text-xs px-2 py-1 rounded cursor-not-allowed opacity-75 flex items-center gap-1"
-                  title="No hay incidencias que procesar"
-                >
-                  ✅ Sin Incidencias!
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleReprocesar}
-                  className="bg-orange-600 hover:bg-orange-700 text-white text-xs px-2 py-1 rounded transition-colors flex items-center gap-1"
-                  title="Crear nueva iteración aplicando excepciones marcadas"
-                >
-                  🔄 Reprocesar
-                </button>
-              )}
+              {/* Botón reprocesar - siempre disponible después del procesamiento */}
+              <button
+                type="button"
+                onClick={handleReprocesar}
+                className={`text-white text-xs px-2 py-1 rounded transition-colors flex items-center gap-1 ${
+                  sinIncidencias 
+                    ? 'bg-blue-600 hover:bg-blue-700' 
+                    : 'bg-orange-600 hover:bg-orange-700'
+                }`}
+                title={sinIncidencias 
+                  ? "Reprocesar libro mayor (sin incidencias detectadas)" 
+                  : "Crear nueva iteración aplicando excepciones marcadas"
+                }
+              >
+                🔄 Reprocesar
+              </button>
               
               {/* Botón historial */}
               <button

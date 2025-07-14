@@ -230,11 +230,9 @@ class ClasificacionSetSerializer(serializers.ModelSerializer):
 
 
 class ClasificacionOptionSerializer(serializers.ModelSerializer):
-    # Campos bilingües adicionales
+    # Campos bilingües adicionales para lectura
     valor_es = serializers.SerializerMethodField()
-    valor_en = serializers.SerializerMethodField()
     descripcion_es = serializers.SerializerMethodField()
-    descripcion_en = serializers.SerializerMethodField()
     tiene_es = serializers.SerializerMethodField()
     tiene_en = serializers.SerializerMethodField()
     es_bilingue = serializers.SerializerMethodField()
@@ -243,21 +241,67 @@ class ClasificacionOptionSerializer(serializers.ModelSerializer):
         model = ClasificacionOption
         fields = "__all__"
         
+    def create(self, validated_data):
+        """
+        Crear una nueva opción de clasificación con soporte bilingüe completo.
+        UPDATED: Forzar recarga con logging detallado
+        """
+        print(f"🔧 ClasificacionOptionSerializer.create() - Datos recibidos: {validated_data}")
+        
+        # Extraer todos los campos bilingües
+        valor = validated_data.get('valor', '')
+        valor_en = validated_data.get('valor_en', '')
+        descripcion = validated_data.get('descripcion', '')
+        descripcion_en = validated_data.get('descripcion_en', '')
+        
+        print(f"   📝 Campos extraídos:")
+        print(f"      valor (ES): '{valor}'")
+        print(f"      valor_en (EN): '{valor_en}'")
+        print(f"      descripcion (ES): '{descripcion}'")
+        print(f"      descripcion_en (EN): '{descripcion_en}'")
+        
+        # Crear la instancia
+        instance = ClasificacionOption.objects.create(**validated_data)
+        
+        print(f"   ✅ Instancia creada con ID: {instance.id}")
+        print(f"   🔍 Valores guardados en DB:")
+        print(f"      instance.valor: '{instance.valor}'")
+        print(f"      instance.valor_en: '{instance.valor_en}'")
+        print(f"      instance.descripcion: '{instance.descripcion}'")
+        print(f"      instance.descripcion_en: '{instance.descripcion_en}'")
+        
+        return instance
+        
+    def update(self, instance, validated_data):
+        """
+        Actualizar una opción de clasificación con soporte bilingüe completo.
+        """
+        print(f"🔧 ClasificacionOptionSerializer.update() - Datos recibidos: {validated_data}")
+        print(f"   📋 Instancia actual ID: {instance.id}")
+        
+        # Actualizar todos los campos
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+            print(f"      {attr}: '{value}'")
+            
+        instance.save()
+        
+        print(f"   ✅ Instancia actualizada")
+        print(f"   🔍 Valores finales en DB:")
+        print(f"      instance.valor: '{instance.valor}'")
+        print(f"      instance.valor_en: '{instance.valor_en}'")
+        print(f"      instance.descripcion: '{instance.descripcion}'")
+        print(f"      instance.descripcion_en: '{instance.descripcion_en}'")
+        
+        return instance
+        
     def get_valor_es(self, obj):
         """Obtener valor en español"""
         return obj.valor
         
-    def get_valor_en(self, obj):
-        """Obtener valor en inglés"""
-        return obj.valor_en
-        
     def get_descripcion_es(self, obj):
         """Obtener descripción en español"""
         return obj.descripcion
-        
-    def get_descripcion_en(self, obj):
-        """Obtener descripción en inglés"""
-        return obj.descripcion_en
         
     def get_tiene_es(self, obj):
         """Verificar si tiene contenido en español"""

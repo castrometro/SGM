@@ -605,6 +605,51 @@ class ClasificacionOptionViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(set_clas_id=set_id)
         return queryset.order_by("valor")
 
+    def create(self, request, *args, **kwargs):
+        """
+        Crear una nueva opción con logging detallado para debugging bilingüe.
+        UPDATED: Forzar recarga del viewset
+        """
+        print(f"🚀 ClasificacionOptionViewSet.create() - REQUEST DATA:")
+        print(f"   📤 request.data: {request.data}")
+        print(f"   🔍 Campos bilingües en request:")
+        print(f"      valor: '{request.data.get('valor', 'NO_PRESENTE')}'")
+        print(f"      valor_en: '{request.data.get('valor_en', 'NO_PRESENTE')}'")
+        print(f"      descripcion: '{request.data.get('descripcion', 'NO_PRESENTE')}'")
+        print(f"      descripcion_en: '{request.data.get('descripcion_en', 'NO_PRESENTE')}'")
+        print(f"      set_clas: '{request.data.get('set_clas', 'NO_PRESENTE')}'")
+        
+        # Llamar al método create del padre
+        response = super().create(request, *args, **kwargs)
+        
+        print(f"   ✅ RESPONSE DATA:")
+        print(f"      status: {response.status_code}")
+        print(f"      data: {response.data}")
+        
+        # Verificar qué se guardó realmente en la base de datos
+        if response.status_code == 201 and 'id' in response.data:
+            try:
+                created_instance = ClasificacionOption.objects.get(id=response.data['id'])
+                print(f"   🔍 VERIFICACIÓN EN DB - Instancia ID {created_instance.id}:")
+                print(f"      valor (ES): '{created_instance.valor}'")
+                print(f"      valor_en (EN): '{created_instance.valor_en}'")
+                print(f"      descripcion (ES): '{created_instance.descripcion}'")
+                print(f"      descripcion_en (EN): '{created_instance.descripcion_en}'")
+                
+                # Verificar si los campos bilingües se guardaron correctamente
+                valor_en_guardado = created_instance.valor_en is not None and created_instance.valor_en.strip()
+                if request.data.get('valor_en') and not valor_en_guardado:
+                    print(f"   ❌ PROBLEMA: Se envió valor_en pero no se guardó!")
+                    print(f"      Enviado: '{request.data.get('valor_en')}'")
+                    print(f"      Guardado: '{created_instance.valor_en}'")
+                elif request.data.get('valor_en') and valor_en_guardado:
+                    print(f"   ✅ valor_en se guardó correctamente")
+                    
+            except Exception as e:
+                print(f"   ❌ Error verificando instancia creada: {e}")
+        
+        return response
+
     def perform_create(self, serializer):
         instance = serializer.save()
 
@@ -619,9 +664,11 @@ class ClasificacionOptionViewSet(viewsets.ModelViewSet):
             detalles={
                 "opcion_id": instance.id,
                 "opcion_valor": instance.valor,
+                "opcion_valor_en": instance.valor_en,  # Agregar campo en inglés
                 "set_id": instance.set_clas.id,
                 "set_nombre": instance.set_clas.nombre,
                 "accion_origen": "manual_sets_tab",
+                "es_bilingue": bool(instance.valor_en and instance.valor_en.strip()),
             },
             resultado="exito",
             ip_address=self.request.META.get("REMOTE_ADDR"),

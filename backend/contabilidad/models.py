@@ -458,16 +458,16 @@ class ClasificacionOption(models.Model):
     valor = models.CharField(max_length=100)
     descripcion = models.TextField(blank=True)
     
-    # Campos para soporte bilingüe (solo para sets por defecto del sistema)
+    # Campos para soporte bilingüe (disponible para todas las opciones)
     valor_en = models.CharField(
         max_length=100, 
         blank=True, 
         null=True,
-        help_text="Valor en inglés para sets por defecto del sistema"
+        help_text="Valor en inglés - disponible para todas las opciones"
     )
     descripcion_en = models.TextField(
         blank=True,
-        help_text="Descripción en inglés para sets por defecto del sistema"
+        help_text="Descripción en inglés - disponible para todas las opciones"
     )
 
     @property

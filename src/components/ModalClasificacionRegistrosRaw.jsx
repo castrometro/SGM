@@ -51,25 +51,73 @@ const ModalClasificacionRegistrosRaw = ({
         return;
       }
 
-      // Usar el cierreId si existe, de lo contrario usar null para que el backend use cualquier cierre existente
-      const cierreParaLog = cierreId || null;
-
-      await registrarActividadTarjeta(
-        clienteId,
+      console.log('🔍 Registrando actividad:', { 
         tipo, 
-        accion,
-        descripcion,
-        {
-          upload_id: uploadId,
-          cierre_id: cierreParaLog,
-          accion_origen: "modal_clasificaciones_persistentes",
-          source_type: "persistent_db",
-          ...detalles
-        },
-        cierreParaLog
-      );
+        accion, 
+        cierreId, 
+        tienecierre: !!cierreId,
+        cierreIdTipo: typeof cierreId
+      });
+
+      const detallesCompletos = {
+        upload_id: uploadId,
+        accion_origen: "modal_clasificaciones_persistentes",
+        source_type: "persistent_db",
+        ...detalles
+      };
+
+      // CORREGIDO: Usar SIEMPRE el cierreId si está disponible y es válido
+      // El problema era que no estábamos usando el cierreId del cierre específico que se está editando
+      if (cierreId && (typeof cierreId === 'number' || typeof cierreId === 'string') && cierreId != '0' && cierreId !== 0) {
+        // Usar el cierreId específico del cierre que se está editando
+        console.log('✅ Registrando actividad en el cierre específico:', cierreId);
+        detallesCompletos.cierre_id = cierreId;
+        await registrarActividadTarjeta(
+          clienteId,
+          tipo, 
+          accion,
+          descripcion,
+          detallesCompletos,
+          cierreId // IMPORTANTE: Pasar el cierreId específico
+        );
+        console.log('✅ Actividad registrada en cierre específico:', cierreId);
+      } else {
+        // Solo si realmente no hay cierreId, usar el período actual
+        console.log('⚠️ No hay cierreId específico - registrando en período actual');
+        
+        if (cierreId !== undefined && cierreId !== null) {
+          console.log(`   CierreId recibido: ${cierreId} (tipo: ${typeof cierreId})`);
+          detallesCompletos.cierre_id_original = cierreId; // Para debug
+        }
+        
+        // Sin cierreId, el backend usará el período actual
+        await registrarActividadTarjeta(
+          clienteId,
+          tipo, 
+          accion,
+          descripcion,
+          detallesCompletos
+          // No pasar cierreId - backend usará período actual
+        );
+        console.log('✅ Actividad registrada en período actual');
+      }
     } catch (error) {
-      console.warn('Error registrando actividad:', error);
+      console.warn('❌ Error registrando actividad:', error);
+      console.warn('   Detalles del error:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        cierreId_usado: cierreId,
+        cierreId_tipo: typeof cierreId
+      });
+      
+      // Log específico para problemas de cierre
+      if (error.message && error.message.includes('cierre inexistente')) {
+        console.warn('⚠️ Error: Cierre inexistente detectado');
+        console.warn(`   CierreId problemático: ${cierreId} (tipo: ${typeof cierreId})`);
+        console.warn('   Esto puede indicar que el cierre no existe en la base de datos');
+      }
+      
       // No fallar la operación principal por un error de logging
     }
   };
@@ -289,22 +337,49 @@ const ModalClasificacionRegistrosRaw = ({
       clienteId, 
       cliente: !!cliente,
       clienteBilingue: cliente?.bilingue,
-      clienteCompleto: cliente ? { id: cliente.id, nombre: cliente.nombre, bilingue: cliente.bilingue } : null
+      clienteCompleto: cliente ? { id: cliente.id, nombre: cliente.nombre, bilingue: cliente.bilingue } : null,
+      cierreId,
+      cierreIdTipo: typeof cierreId,
+      cierreIdValido: cierreId && (typeof cierreId === 'number' || typeof cierreId === 'string') && cierreId != '0' && cierreId !== 0
     });
     
     if (isOpen && clienteId) {
-      console.log('✅ Condiciones cumplidas - iniciando carga de datos de archivo');
+      console.log('✅ Condiciones cumplidas - iniciando carga de datos');
+      console.log('📋 Contexto del cierre:', {
+        cierreId,
+        esEdicionDeCierre: !!cierreId,
+        periodo: cierreId ? `Editando cierre ID ${cierreId}` : 'Sin cierre específico'
+      });
       
-      // Cargar los datos de archivo
+      // Marcar tiempo de apertura del modal para estadísticas
+      window.modalClasificacionesOpenTime = Date.now();
+      
+      // Cargar los datos
       cargarRegistros();
       cargarSets();
+      
+      // Registrar apertura del modal en el cierre específico si estamos editando uno
+      registrarActividad(
+        "clasificacion",
+        "open_persistent_modal",
+        cierreId ? 
+          `Abrió modal de clasificaciones para cierre ${cierreId}` : 
+          "Abrió modal de clasificaciones persistentes",
+        {
+          uploadId: uploadId,
+          modo_inicial: "registros",
+          cierre_id_recibido: cierreId,
+          editando_cierre_especifico: !!cierreId,
+          contexto: cierreId ? "edicion_cierre" : "general"
+        }
+      ).catch(err => console.warn("Error registrando apertura del modal:", err));
     } else {
       console.log('❌ Condiciones no cumplidas para carga', { 
         isOpen, 
         clienteId
       });
     }
-  }, [isOpen, clienteId, uploadId]);
+  }, [isOpen, clienteId, uploadId, cierreId]);
 
   const cargarRegistros = async () => {
     setLoading(true);
@@ -399,7 +474,23 @@ const ModalClasificacionRegistrosRaw = ({
       for (const set of sets) {
         try {
           const opciones = await obtenerOpcionesSet(set.id);
-          console.log(`📋 Opciones para set ${set.id} (${set.nombre}):`, opciones);
+          console.log(`📋 Opciones RAW para set ${set.id} (${set.nombre}):`, opciones);
+          
+          // DEBUG: Examinar cada opción individualmente
+          opciones.forEach((opcion, index) => {
+            console.log(`🔍 Opción ${index + 1} completa:`, {
+              id: opcion.id,
+              valor: opcion.valor,
+              valor_en: opcion.valor_en,
+              valor_es: opcion.valor_es,
+              descripcion: opcion.descripcion,
+              descripcion_en: opcion.descripcion_en,
+              descripcion_es: opcion.descripcion_es,
+              tiene_es: opcion.tiene_es,
+              tiene_en: opcion.tiene_en,
+              todosLosCampos: Object.keys(opcion)
+            });
+          });
           
           // Organizar opciones por idioma usando los nuevos campos del serializer
           const opcionesEs = [];
@@ -519,12 +610,16 @@ const ModalClasificacionRegistrosRaw = ({
       await registrarActividad(
         "clasificacion",
         "close_persistent_modal",
-        `Cerró modal de clasificaciones persistentes`,
+        cierreId ? 
+          `Cerró modal de clasificaciones para cierre ${cierreId}` : 
+          `Cerró modal de clasificaciones persistentes`,
         {
           tiempo_sesion: Date.now() - (window.modalClasificacionesOpenTime || Date.now()),
           pestana_activa: pestanaActiva,
           registros_cargados: registros.length,
-          sets_disponibles: sets.length
+          sets_disponibles: sets.length,
+          editando_cierre_especifico: !!cierreId,
+          contexto: cierreId ? "edicion_cierre" : "general"
         }
       );
     } catch (logErr) {
@@ -802,6 +897,14 @@ const ModalClasificacionRegistrosRaw = ({
 
   // ==================== FUNCIONES CRUD PARA OPCIONES ====================
   const handleCrearOpcion = async (setId) => {
+    console.log('🚀 Iniciando creación de opción:', {
+      setId,
+      modoCreacionOpcion,
+      nuevaOpcionBilingue,
+      clienteBilingue: cliente?.bilingue
+    });
+
+    // Validación según el modo de creación
     if (modoCreacionOpcion === 'ambos') {
       // Validar que ambos idiomas tengan valor
       if (!nuevaOpcionBilingue.es.trim() || !nuevaOpcionBilingue.en.trim()) {
@@ -813,11 +916,38 @@ const ModalClasificacionRegistrosRaw = ({
         const datosOpcion = {
           valor: nuevaOpcionBilingue.es.trim(),
           valor_en: nuevaOpcionBilingue.en.trim(),
-          descripcion: nuevaOpcionBilingue.descripcion_es.trim(),
-          descripcion_en: nuevaOpcionBilingue.descripcion_en.trim(),
+          descripcion: nuevaOpcionBilingue.descripcion_es.trim() || '',
+          descripcion_en: nuevaOpcionBilingue.descripcion_en.trim() || '',
         };
         
+        console.log('📤 DATOS COMPLETOS ENVIANDO AL BACKEND (modo bilingüe):', {
+          setId,
+          datosOpcion,
+          modoCreacionOpcion,
+          estadoCompleto: nuevaOpcionBilingue
+        });
+        
         const opcionCreada = await crearOpcion(setId, datosOpcion);
+        
+        console.log('✅ RESPUESTA COMPLETA DEL BACKEND:', {
+          opcionCreada,
+          respuestaCompleta: JSON.stringify(opcionCreada, null, 2)
+        });
+        
+        // Verificar qué campos se guardaron realmente
+        if (opcionCreada.valor && opcionCreada.valor_en) {
+          console.log('✅ Ambos idiomas guardados correctamente:', {
+            español: opcionCreada.valor,
+            inglés: opcionCreada.valor_en
+          });
+        } else if (opcionCreada.valor && !opcionCreada.valor_en) {
+          console.error('❌ PROBLEMA: Solo se guardó español:', {
+            español: opcionCreada.valor,
+            inglés: opcionCreada.valor_en || 'NO GUARDADO'
+          });
+        } else {
+          console.error('❌ PROBLEMA: Datos inesperados en respuesta:', opcionCreada);
+        }
         
         // Registrar actividad detallada de creación de opción bilingüe
         try {
@@ -834,19 +964,42 @@ const ModalClasificacionRegistrosRaw = ({
               valor_en: datosOpcion.valor_en,
               descripcion_es: datosOpcion.descripcion,
               descripcion_en: datosOpcion.descripcion_en,
-              tipo_creacion: "bilingue"
+              tipo_creacion: "bilingue",
+              // Datos de verificación
+              guardado_es: opcionCreada.valor,
+              guardado_en: opcionCreada.valor_en,
+              ambos_idiomas_guardados: !!(opcionCreada.valor && opcionCreada.valor_en)
             }
           );
         } catch (logErr) {
           console.warn("Error registrando actividad de creación de opción bilingüe:", logErr);
         }
         
+        // Limpiar estados después del éxito
         setNuevaOpcionBilingue({ es: '', en: '', descripcion_es: '', descripcion_en: '' });
         setCreandoOpcionPara(null);
+        setModoCreacionOpcion('es'); // Reset al modo por defecto
+        
+        // Mostrar mensaje específico según lo que se guardó
+        if (opcionCreada.valor && opcionCreada.valor_en) {
+          alert(`✅ Opción bilingüe creada exitosamente:\n🇪🇸 Español: ${opcionCreada.valor}\n🇺🇸 Inglés: ${opcionCreada.valor_en}`);
+        } else if (opcionCreada.valor && !opcionCreada.valor_en) {
+          alert(`⚠️ PROBLEMA: Solo se guardó en español: "${opcionCreada.valor}"\nEl inglés NO se guardó. Verificar backend.`);
+        } else {
+          alert(`Opción creada: ${datosOpcion.valor} / ${datosOpcion.valor_en}`);
+        }
+        
         await cargarSets();
+        
       } catch (error) {
-        console.error("Error creando opción bilingüe:", error);
-        alert("Error al crear la opción bilingüe");
+        console.error("❌ Error creando opción bilingüe:", error);
+        let errorMessage = "Error al crear la opción bilingüe";
+        if (error.response?.data?.error) {
+          errorMessage += `: ${error.response.data.error}`;
+        } else if (error.response?.data?.detail) {
+          errorMessage += `: ${error.response.data.detail}`;
+        }
+        alert(errorMessage);
       }
     } else {
       // Crear solo en un idioma
@@ -863,13 +1016,15 @@ const ModalClasificacionRegistrosRaw = ({
         
         if (modoCreacionOpcion === 'es') {
           datos.valor = valor.trim();
-          if (descripcion.trim()) datos.descripcion = descripcion.trim();
+          if (descripcion && descripcion.trim()) datos.descripcion = descripcion.trim();
         } else {
           datos.valor_en = valor.trim();
-          if (descripcion.trim()) datos.descripcion_en = descripcion.trim();
+          if (descripcion && descripcion.trim()) datos.descripcion_en = descripcion.trim();
         }
         
+        console.log(`📤 Enviando datos de opción ${modoCreacionOpcion.toUpperCase()}:`, datos);
         const opcionCreada = await crearOpcion(setId, datos);
+        console.log('✅ Opción monolingüe creada exitosamente:', opcionCreada);
         
         // Registrar actividad detallada de creación de opción monolingüe
         try {
@@ -884,7 +1039,7 @@ const ModalClasificacionRegistrosRaw = ({
               set_nombre: setActual?.nombre,
               idioma: modoCreacionOpcion,
               valor: valor.trim(),
-              descripcion: descripcion.trim(),
+              descripcion: descripcion?.trim() || '',
               tipo_creacion: "monolingue"
             }
           );
@@ -892,12 +1047,23 @@ const ModalClasificacionRegistrosRaw = ({
           console.warn("Error registrando actividad de creación de opción:", logErr);
         }
         
+        // Limpiar estados después del éxito
         setNuevaOpcionBilingue({ es: '', en: '', descripcion_es: '', descripcion_en: '' });
         setCreandoOpcionPara(null);
+        setModoCreacionOpcion('es'); // Reset al modo por defecto
         await cargarSets();
+        
+        alert(`Opción creada exitosamente: ${valor.trim()}`);
+        
       } catch (error) {
-        console.error("Error creando opción:", error);
-        alert("Error al crear la opción");
+        console.error("❌ Error creando opción monolingüe:", error);
+        let errorMessage = "Error al crear la opción";
+        if (error.response?.data?.error) {
+          errorMessage += `: ${error.response.data.error}`;
+        } else if (error.response?.data?.detail) {
+          errorMessage += `: ${error.response.data.detail}`;
+        }
+        alert(errorMessage);
       }
     }
   };
@@ -3138,33 +3304,49 @@ const ModalClasificacionRegistrosRaw = ({
                                 {/* Selector de modo de creación */}
                                 {cliente?.bilingue && (
                                   <div className="mb-3">
-                                    <label className="block text-xs text-gray-400 mb-2">Modo de creación:</label>
+                                    <label className="block text-xs text-gray-400 mb-2">
+                                      Modo de creación: 
+                                      <span className="ml-2 text-blue-400 font-medium">
+                                        {modoCreacionOpcion === 'es' && '🇪🇸 Solo Español'}
+                                        {modoCreacionOpcion === 'en' && '🇺🇸 Solo Inglés'}
+                                        {modoCreacionOpcion === 'ambos' && '🌐 Bilingüe (Recomendado)'}
+                                      </span>
+                                    </label>
                                     <div className="flex gap-2">
                                       <button
-                                        onClick={() => setModoCreacionOpcion('es')}
+                                        onClick={() => {
+                                          console.log('📝 Cambiando modo a: Solo Español');
+                                          setModoCreacionOpcion('es');
+                                        }}
                                         className={`px-3 py-1 rounded text-sm transition ${
                                           modoCreacionOpcion === 'es' 
-                                            ? 'bg-blue-600 text-white' 
+                                            ? 'bg-blue-600 text-white shadow-lg ring-2 ring-blue-400' 
                                             : 'bg-gray-600 text-gray-300 hover:bg-gray-500'
                                         }`}
                                       >
                                         🇪🇸 Solo Español
                                       </button>
                                       <button
-                                        onClick={() => setModoCreacionOpcion('en')}
+                                        onClick={() => {
+                                          console.log('📝 Cambiando modo a: Solo Inglés');
+                                          setModoCreacionOpcion('en');
+                                        }}
                                         className={`px-3 py-1 rounded text-sm transition ${
                                           modoCreacionOpcion === 'en' 
-                                            ? 'bg-green-600 text-white' 
+                                            ? 'bg-green-600 text-white shadow-lg ring-2 ring-green-400' 
                                             : 'bg-gray-600 text-gray-300 hover:bg-gray-500'
                                         }`}
                                       >
                                         🇺🇸 Solo Inglés
                                       </button>
                                       <button
-                                        onClick={() => setModoCreacionOpcion('ambos')}
+                                        onClick={() => {
+                                          console.log('📝 Cambiando modo a: Bilingüe');
+                                          setModoCreacionOpcion('ambos');
+                                        }}
                                         className={`px-3 py-1 rounded text-sm transition ${
                                           modoCreacionOpcion === 'ambos' 
-                                            ? 'bg-purple-600 text-white' 
+                                            ? 'bg-purple-600 text-white shadow-lg ring-2 ring-purple-400' 
                                             : 'bg-gray-600 text-gray-300 hover:bg-gray-500'
                                         }`}
                                       >
@@ -3174,80 +3356,160 @@ const ModalClasificacionRegistrosRaw = ({
                                   </div>
                                 )}
                                 
+                                {/* Indicador para clientes no bilingües */}
+                                {!cliente?.bilingue && (
+                                  <div className="mb-3">
+                                    <div className="text-xs text-gray-400 flex items-center gap-2">
+                                      <span className="bg-blue-600 text-white px-2 py-1 rounded text-xs">🇪🇸 Español</span>
+                                      <span>Cliente configurado para español únicamente</span>
+                                    </div>
+                                  </div>
+                                )}
+                                
                                 {/* Campos de entrada según el modo */}
-                                <div className="space-y-2">
+                                <div className="space-y-3">
                                   {(modoCreacionOpcion === 'es' || modoCreacionOpcion === 'ambos') && (
-                                    <div>
+                                    <div className="space-y-2">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs text-gray-400">🇪🇸 Español</span>
+                                        {modoCreacionOpcion === 'ambos' && (
+                                          <span className="text-xs text-red-400">*Requerido</span>
+                                        )}
+                                      </div>
                                       <input
                                         type="text"
                                         value={nuevaOpcionBilingue.es}
                                         onChange={(e) => setNuevaOpcionBilingue(prev => ({ ...prev, es: e.target.value }))}
-                                        placeholder="Valor en Español"
-                                        className="w-full bg-gray-800 text-white px-2 py-1 rounded border border-gray-600 text-sm"
+                                        placeholder={`Valor en Español${modoCreacionOpcion === 'ambos' ? ' *' : ''}`}
+                                        className={`w-full text-white px-3 py-2 rounded border text-sm transition ${
+                                          modoCreacionOpcion === 'ambos' && !nuevaOpcionBilingue.es.trim()
+                                            ? 'bg-red-900/20 border-red-500 focus:border-red-400'
+                                            : 'bg-gray-800 border-gray-600 focus:border-blue-500'
+                                        }`}
                                         onKeyPress={(e) => e.key === 'Enter' && handleCrearOpcion(set.id)}
+                                        autoFocus={modoCreacionOpcion === 'es'}
                                       />
                                       <input
                                         type="text"
                                         value={nuevaOpcionBilingue.descripcion_es}
                                         onChange={(e) => setNuevaOpcionBilingue(prev => ({ ...prev, descripcion_es: e.target.value }))}
                                         placeholder="Descripción en Español (opcional)"
-                                        className="w-full bg-gray-800 text-white px-2 py-1 rounded border border-gray-600 text-xs mt-1"
+                                        className="w-full bg-gray-800 text-white px-3 py-2 rounded border border-gray-600 text-xs focus:border-blue-500 transition"
                                       />
                                     </div>
                                   )}
                                   
                                   {(modoCreacionOpcion === 'en' || modoCreacionOpcion === 'ambos') && (
-                                    <div>
+                                    <div className="space-y-2">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs text-gray-400">🇺🇸 English</span>
+                                        {modoCreacionOpcion === 'ambos' && (
+                                          <span className="text-xs text-red-400">*Required</span>
+                                        )}
+                                      </div>
                                       <input
                                         type="text"
                                         value={nuevaOpcionBilingue.en}
                                         onChange={(e) => setNuevaOpcionBilingue(prev => ({ ...prev, en: e.target.value }))}
-                                        placeholder="Valor en Inglés"
-                                        className="w-full bg-gray-800 text-white px-2 py-1 rounded border border-gray-600 text-sm"
+                                        placeholder={`English Value${modoCreacionOpcion === 'ambos' ? ' *' : ''}`}
+                                        className={`w-full text-white px-3 py-2 rounded border text-sm transition ${
+                                          modoCreacionOpcion === 'ambos' && !nuevaOpcionBilingue.en.trim()
+                                            ? 'bg-red-900/20 border-red-500 focus:border-red-400'
+                                            : 'bg-gray-800 border-gray-600 focus:border-green-500'
+                                        }`}
                                         onKeyPress={(e) => e.key === 'Enter' && handleCrearOpcion(set.id)}
+                                        autoFocus={modoCreacionOpcion === 'en'}
                                       />
                                       <input
                                         type="text"
                                         value={nuevaOpcionBilingue.descripcion_en}
                                         onChange={(e) => setNuevaOpcionBilingue(prev => ({ ...prev, descripcion_en: e.target.value }))}
-                                        placeholder="Descripción en Inglés (opcional)"
-                                        className="w-full bg-gray-800 text-white px-2 py-1 rounded border border-gray-600 text-xs mt-1"
+                                        placeholder="English Description (optional)"
+                                        className="w-full bg-gray-800 text-white px-3 py-2 rounded border border-gray-600 text-xs focus:border-green-500 transition"
                                       />
                                     </div>
                                   )}
                                 </div>
                                 
                                 {/* Botones de acción */}
-                                <div className="flex gap-2 mt-3">
+                                <div className="flex gap-2 mt-4">
                                   <button
                                     onClick={() => handleCrearOpcion(set.id)}
-                                    className="bg-green-600 hover:bg-green-500 px-3 py-1 rounded text-white text-sm transition flex items-center gap-1"
-                                    title="Crear opción"
+                                    disabled={
+                                      (modoCreacionOpcion === 'es' && !nuevaOpcionBilingue.es.trim()) ||
+                                      (modoCreacionOpcion === 'en' && !nuevaOpcionBilingue.en.trim()) ||
+                                      (modoCreacionOpcion === 'ambos' && (!nuevaOpcionBilingue.es.trim() || !nuevaOpcionBilingue.en.trim()))
+                                    }
+                                    className={`px-4 py-2 rounded text-sm font-medium transition flex items-center gap-2 ${
+                                      (modoCreacionOpcion === 'es' && !nuevaOpcionBilingue.es.trim()) ||
+                                      (modoCreacionOpcion === 'en' && !nuevaOpcionBilingue.en.trim()) ||
+                                      (modoCreacionOpcion === 'ambos' && (!nuevaOpcionBilingue.es.trim() || !nuevaOpcionBilingue.en.trim()))
+                                        ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                                        : 'bg-green-600 hover:bg-green-500 text-white shadow-lg hover:shadow-xl'
+                                    }`}
+                                    title={
+                                      modoCreacionOpcion === 'es' ? 'Crear opción en español' :
+                                      modoCreacionOpcion === 'en' ? 'Crear opción en inglés' :
+                                      'Crear opción bilingüe'
+                                    }
                                   >
                                     <Save size={14} />
-                                    Crear
+                                    {modoCreacionOpcion === 'es' && '🇪🇸 Crear en Español'}
+                                    {modoCreacionOpcion === 'en' && '🇺🇸 Crear en Inglés'}
+                                    {modoCreacionOpcion === 'ambos' && '🌐 Crear Bilingüe'}
                                   </button>
                                   <button
                                     onClick={() => {
+                                      console.log('❌ Cancelando creación de opción');
                                       setCreandoOpcionPara(null);
                                       setNuevaOpcionBilingue({ es: '', en: '', descripcion_es: '', descripcion_en: '' });
                                       setModoCreacionOpcion('es');
                                     }}
-                                    className="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded text-white text-sm transition flex items-center gap-1"
+                                    className="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded text-white text-sm font-medium transition flex items-center gap-2 shadow-lg hover:shadow-xl"
                                     title="Cancelar"
                                   >
                                     <XCircle size={14} />
                                     Cancelar
                                   </button>
                                 </div>
+                                
+                                {/* Helper text */}
+                                <div className="mt-3 text-xs text-gray-500">
+                                  {modoCreacionOpcion === 'ambos' && (
+                                    <div className="flex items-center gap-1">
+                                      <span>💡</span>
+                                      <span>Modo bilingüe: ambos idiomas son requeridos</span>
+                                    </div>
+                                  )}
+                                  {modoCreacionOpcion !== 'ambos' && (
+                                    <div className="flex items-center gap-1">
+                                      <span>💡</span>
+                                      <span>Presiona Enter en el campo de valor para crear rápidamente</span>
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             ) : (
                               <button
                                 onClick={() => {
+                                  console.log('🚀 Iniciando creación de opción para set:', set.id);
+                                  console.log('👤 Cliente bilingüe:', cliente?.bilingue);
+                                  console.log('🌍 Idioma actual del set:', idiomaPorSet[set.id]);
+                                  
                                   setCreandoOpcionPara(set.id);
-                                  // Detectar idioma actual del switch del set para inicializar el modo
-                                  const idiomaActual = idiomaPorSet[set.id] || 'es';
-                                  setModoCreacionOpcion(cliente?.bilingue ? idiomaActual : 'es');
+                                  
+                                  // Inicializar modo según si el cliente es bilingüe
+                                  if (cliente?.bilingue) {
+                                    // Para clientes bilingües, usar el idioma actual del set o defaultear a 'ambos'
+                                    const idiomaActual = idiomaPorSet[set.id] || 'es';
+                                    setModoCreacionOpcion('ambos'); // Para clientes bilingües, defaultear a bilingüe
+                                  } else {
+                                    // Para clientes monolingües, siempre español
+                                    setModoCreacionOpcion('es');
+                                  }
+                                  
+                                  // Limpiar campos
+                                  setNuevaOpcionBilingue({ es: '', en: '', descripcion_es: '', descripcion_en: '' });
                                 }}
                                 className="text-blue-400 hover:text-blue-300 flex items-center gap-1 text-sm"
                                 title="Agregar opción"

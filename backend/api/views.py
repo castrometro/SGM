@@ -4,6 +4,9 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework_simplejwt.views import TokenObtainPairView
+from django.http import HttpResponseRedirect
+from django.conf import settings
+import os
 
 
 from .permissions import IsGerenteOrSelfOrReadOnly
@@ -742,3 +745,70 @@ def remover_asignacion(request, analista_id, cliente_id):
         
     except AsignacionClienteUsuario.DoesNotExist:
         return Response({'error': 'Asignación no encontrada'}, status=404)
+
+@api_view(['POST', 'GET'])
+@permission_classes([IsAuthenticated])
+def dashboard_streamlit_redirect(request, cliente_id=None):
+    """
+    Redirigir al dashboard de Streamlit con el cliente específico cargado
+    
+    Métodos soportados:
+    - POST: {"cliente_id": 123}
+    - GET: /api/dashboard-streamlit/123/
+    """
+    try:
+        # Obtener cliente_id desde diferentes fuentes
+        if request.method == 'POST':
+            cliente_id = request.data.get('cliente_id', cliente_id)
+        
+        if not cliente_id:
+            return Response({'error': 'cliente_id es requerido'}, status=400)
+        
+        # Verificar que el cliente existe y el usuario tiene acceso
+        try:
+            cliente = Cliente.objects.get(id=cliente_id)
+        except Cliente.DoesNotExist:
+            return Response({'error': 'Cliente no encontrado'}, status=404)
+        
+        # Verificar permisos según el tipo de usuario
+        user = request.user
+        if user.tipo_usuario == 'analista':
+            # Los analistas solo pueden ver clientes asignados
+            if not AsignacionClienteUsuario.objects.filter(
+                usuario=user, cliente=cliente
+            ).exists():
+                return Response({
+                    'error': 'No tiene permisos para ver este cliente'
+                }, status=403)
+        elif user.tipo_usuario not in ['gerente', 'supervisor']:
+            return Response({
+                'error': 'No tiene permisos para acceder al dashboard'
+            }, status=403)
+        
+        # Construir URL de Streamlit
+        streamlit_host = os.getenv('STREAMLIT_CONTA_HOST', 'localhost')
+        streamlit_port = os.getenv('STREAMLIT_CONTA_PORT', '8502')
+        
+        # URL con parámetros para cargar el cliente automáticamente
+        streamlit_url = f"http://{streamlit_host}:{streamlit_port}/?cliente_id={cliente_id}"
+        
+        if request.method == 'POST':
+            # Para POST, devolver la URL en JSON
+            return Response({
+                'success': True,
+                'streamlit_url': streamlit_url,
+                'cliente': {
+                    'id': cliente.id,
+                    'nombre': cliente.nombre,
+                    'razon_social': cliente.razon_social
+                },
+                'message': f'Dashboard de {cliente.nombre} listo para abrir'
+            })
+        else:
+            # Para GET, redirigir directamente
+            return HttpResponseRedirect(streamlit_url)
+            
+    except Exception as e:
+        return Response({
+            'error': f'Error al acceder al dashboard: {str(e)}'
+        }, status=500)

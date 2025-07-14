@@ -448,3 +448,49 @@ def obtener_info_redis_completa(cliente_id: int = 2) -> Dict[str, Any]:
         info['cierres_disponibles'] = ['2025-03', '2025-02', '2025-01']
     
     return info
+
+
+def verificar_disponibilidad_redis(cliente_id: int, periodo: str) -> Dict[str, bool]:
+    """
+    Verificar si los datos de un cierre específico están disponibles en Redis
+    
+    Args:
+        cliente_id: ID del cliente
+        periodo: Período del cierre (ej: '2025-03')
+    
+    Returns:
+        Dict con disponibilidad de ESF y ERI en Redis
+    """
+    disponibilidad = {
+        'esf_disponible': False,
+        'eri_disponible': False,
+        'dashboard_disponible': False,
+        'error': None
+    }
+    
+    try:
+        redis_client = conectar_redis()
+        
+        # Verificar existencia de datos ESF
+        clave_esf = f"sgm:contabilidad:{cliente_id}:{periodo}:esf"
+        disponibilidad['esf_disponible'] = redis_client.exists(clave_esf)
+        
+        # Verificar existencia de datos ERI
+        clave_eri = f"sgm:contabilidad:{cliente_id}:{periodo}:eri"
+        disponibilidad['eri_disponible'] = redis_client.exists(clave_eri)
+        
+        # Dashboard disponible si ambos existen
+        disponibilidad['dashboard_disponible'] = (
+            disponibilidad['esf_disponible'] and 
+            disponibilidad['eri_disponible']
+        )
+        
+        logger.debug(f"📊 Disponibilidad Redis cliente {cliente_id} período {periodo}: "
+                    f"ESF={disponibilidad['esf_disponible']}, "
+                    f"ERI={disponibilidad['eri_disponible']}")
+        
+    except Exception as e:
+        logger.error(f"❌ Error verificando disponibilidad Redis: {e}")
+        disponibilidad['error'] = str(e)
+    
+    return disponibilidad

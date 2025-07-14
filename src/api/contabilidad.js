@@ -827,10 +827,28 @@ export const obtenerOpcionesSet = async (setId) => {
 
 export const crearOpcion = async (setId, datos) => {
   // datos puede ser: { valor: "...", valor_en: "...", descripcion: "...", descripcion_en: "..." }
-  const res = await api.post("/contabilidad/clasificaciones-opcion/", {
+  const datosCompletos = {
     set_clas: setId,
     ...datos,
+  };
+  
+  console.log('📤 API crearOpcion - Enviando al backend:', {
+    setId,
+    datosOriginales: datos,
+    datosCompletos,
+    esBilingue: !!(datos.valor && datos.valor_en),
+    camposEnviados: Object.keys(datosCompletos)
   });
+  
+  const res = await api.post("/contabilidad/clasificaciones-opcion/", datosCompletos);
+  
+  console.log('📥 API crearOpcion - Respuesta del backend:', {
+    status: res.status,
+    data: res.data,
+    tieneValorEn: !!res.data.valor_en,
+    datosCompletos: JSON.stringify(res.data, null, 2)
+  });
+  
   return res.data;
 };
 

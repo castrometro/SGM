@@ -1093,9 +1093,22 @@ def crear_sets_predefinidos_clasificacion(cliente_id, omit_sets=None):
                     {'valor': 'Ganancias Brutas', 'descripcion': 'Ganancias Brutas', 'valor_en': 'Gross Earnings', 'descripcion_en': 'Gross earnings'},
                     {'valor': 'Ganancia (perdida)', 'descripcion': 'Ganancia (pérdida)', 'valor_en': 'Earnings (Loss)', 'descripcion_en': 'Earnings (Loss)'},
                     {'valor': 'Ganancia (perdida) antes de Impuestos', 'descripcion': 'Ganancia (pérdida) antes de Impuestos', 'valor_en': 'Earnings (Loss) Before Taxes', 'descripcion_en': 'Earnings (Loss) before taxes'},
-
                 ]
             },
+
+            'Estado de Cambio Patrimonial': {
+                'descripcion': 'Clasificación para informe ECP',
+                'opciones': [
+                    {'valor': 'Capital', 'descripcion': 'Capital', 'valor_en': 'Capital', 'descripcion_en': 'Capital'},
+                    {'valor': 'Otras Reservas', 'descripcion': 'Otras Reservas', 'valor_en': 'Other Reserves', 'descripcion_en': 'Other reserves'},
+                    {'valor': 'Resultados Acumulados', 'descripcion': 'Resultados Acumulados', 'valor_en': 'Accumulated Earnings', 'descripcion_en': 'Accumulated earnings'},
+
+    
+                ]
+            },
+
+
+
         }
         
         logger.info(f"[SETS_PREDEFINIDOS] Creando {len(sets_predefinidos)} sets predefinidos (sets únicos con opciones bilingües)...")

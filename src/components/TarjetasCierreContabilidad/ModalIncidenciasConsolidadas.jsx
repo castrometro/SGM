@@ -277,9 +277,147 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
     }
   };
 
+  const handleSeleccionarTodas = async (tipoIncidencia) => {
+    const cuentasDelTipo = cuentasDetalle[tipoIncidencia];
+    if (!cuentasDelTipo || !cuentasDelTipo.cuentas) {
+      console.log(`❌ No hay cuentas para seleccionar en ${tipoIncidencia}`);
+      return;
+    }
+
+    // Filtrar cuentas que no tienen excepción y que pueden ser marcadas como no aplica
+    const cuentasSinExcepcion = cuentasDelTipo.cuentas.filter(cuenta => 
+      !cuenta.tiene_excepcion && puedeMarcarNoAplica(tipoIncidencia)
+    );
+
+    if (cuentasSinExcepcion.length === 0) {
+      alert('ℹ️ No hay cuentas disponibles para marcar como "No aplica" en este tipo de incidencia.');
+      return;
+    }
+
+    const confirmar = window.confirm(
+      `¿Está seguro de que desea marcar ${cuentasSinExcepcion.length} cuentas como "No aplica" para el tipo de incidencia "${tipoIncidencia}"?\n\n` +
+      'Esta acción se puede deshacer individualmente antes de guardar.'
+    );
+    
+    if (!confirmar) return;
+
+    try {
+      console.log(`🔄 Marcando ${cuentasSinExcepcion.length} cuentas como "No aplica" para ${tipoIncidencia}`);
+      
+      // Actualizar estado local para todas las cuentas
+      setCuentasDetalle(prev => ({
+        ...prev,
+        [tipoIncidencia]: {
+          ...prev[tipoIncidencia],
+          cuentas: prev[tipoIncidencia].cuentas.map(cuenta =>
+            cuentasSinExcepcion.some(c => c.codigo === cuenta.codigo)
+              ? { ...cuenta, tiene_excepcion: true, motivo_excepcion: 'Marcado como no aplica (selección masiva)' }
+              : cuenta
+          )
+        }
+      }));
+      
+      // Agregar todas las excepciones a la lista local
+      const nuevasExcepciones = cuentasSinExcepcion.map(cuenta => ({
+        codigoCuenta: cuenta.codigo,
+        tipoIncidencia,
+        setId: cuenta.set_id,
+        motivo: 'Marcado como no aplica (selección masiva)',
+        accion: 'crear'
+      }));
+
+      setExcepcionesLocales(prev => {
+        // Filtrar duplicados existentes
+        const filtradas = prev.filter(exc => 
+          !nuevasExcepciones.some(nueva => 
+            nueva.codigoCuenta === exc.codigoCuenta && 
+            nueva.tipoIncidencia === exc.tipoIncidencia && 
+            nueva.setId === exc.setId
+          )
+        );
+        
+        return [...filtradas, ...nuevasExcepciones];
+      });
+      
+      console.log(`✅ ${cuentasSinExcepcion.length} cuentas marcadas localmente como "No aplica" para ${tipoIncidencia}`);
+      
+    } catch (error) {
+      console.error('Error en selección masiva:', error);
+      alert(`❌ Error al marcar las cuentas: ${error.message}`);
+    }
+  };
+
+  const handleDesseleccionarTodas = async (tipoIncidencia) => {
+    const cuentasDelTipo = cuentasDetalle[tipoIncidencia];
+    if (!cuentasDelTipo || !cuentasDelTipo.cuentas) {
+      console.log(`❌ No hay cuentas para deseleccionar en ${tipoIncidencia}`);
+      return;
+    }
+
+    // Filtrar cuentas que tienen excepción (ya sea local o del servidor)
+    const cuentasConExcepcion = cuentasDelTipo.cuentas.filter(cuenta => cuenta.tiene_excepcion);
+
+    if (cuentasConExcepcion.length === 0) {
+      alert('ℹ️ No hay cuentas marcadas como "No aplica" para deseleccionar en este tipo de incidencia.');
+      return;
+    }
+
+    const confirmar = window.confirm(
+      `¿Está seguro de que desea quitar la marca "No aplica" de ${cuentasConExcepcion.length} cuentas para el tipo de incidencia "${tipoIncidencia}"?\n\n` +
+      'Estas cuentas volverán a aparecer como incidencias.'
+    );
+    
+    if (!confirmar) return;
+
+    try {
+      console.log(`🔄 Desmarcando ${cuentasConExcepcion.length} cuentas de ${tipoIncidencia}`);
+      
+      // Actualizar estado local para todas las cuentas
+      setCuentasDetalle(prev => ({
+        ...prev,
+        [tipoIncidencia]: {
+          ...prev[tipoIncidencia],
+          cuentas: prev[tipoIncidencia].cuentas.map(cuenta =>
+            cuentasConExcepcion.some(c => c.codigo === cuenta.codigo)
+              ? { ...cuenta, tiene_excepcion: false }
+              : cuenta
+          )
+        }
+      }));
+      
+      // Procesar cada cuenta para manejar excepciones locales vs del servidor
+      cuentasConExcepcion.forEach(cuenta => {
+        const excepcionLocalIndex = excepcionesLocales.findIndex(exc => 
+          exc.codigoCuenta === cuenta.codigo && 
+          exc.tipoIncidencia === tipoIncidencia && 
+          exc.setId === cuenta.set_id
+        );
+        
+        if (excepcionLocalIndex >= 0) {
+          // Es una excepción local - quitarla de la lista
+          setExcepcionesLocales(prev => prev.filter((_, index) => index !== excepcionLocalIndex));
+        } else {
+          // Es una excepción del servidor - marcar para eliminación
+          setExcepcionesLocales(prev => [...prev, {
+            codigoCuenta: cuenta.codigo,
+            tipoIncidencia,
+            setId: cuenta.set_id,
+            accion: 'eliminar'
+          }]);
+        }
+      });
+      
+      console.log(`✅ ${cuentasConExcepcion.length} cuentas desmarcadas para ${tipoIncidencia}`);
+      
+    } catch (error) {
+      console.error('Error en deselección masiva:', error);
+      alert(`❌ Error al desmarcar las cuentas: ${error.message}`);
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-900 rounded-xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-xl">
+      <div className="bg-gray-900 rounded-xl max-w-6xl w-full max-h-[95vh] flex flex-col shadow-xl">
         {/* Header */}
         <div className="p-4 border-b border-gray-700 flex justify-between items-center">
           <div className="flex items-center gap-3">
@@ -389,20 +527,44 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
                     <div className="border-t border-gray-700 p-4 bg-gray-700/50">
                       {cuentasDetalle[incidencia.tipo_incidencia] ? (
                         <div>
-                          <h4 className="text-white font-medium mb-3">
-                            Cuentas afectadas ({cuentasDetalle[incidencia.tipo_incidencia].cuentas?.length || 0})
-                            {incidencia.tipo_incidencia === 'CUENTA_NO_CLAS' && (
-                              <span className="text-sm text-gray-400 font-normal ml-2">
-                                - Falta clasificación en sets específicos
-                              </span>
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-white font-medium">
+                              Cuentas afectadas ({cuentasDetalle[incidencia.tipo_incidencia].cuentas?.length || 0})
+                              {incidencia.tipo_incidencia === 'CUENTA_NO_CLAS' && (
+                                <span className="text-sm text-gray-400 font-normal ml-2">
+                                  - Falta clasificación en sets específicos
+                                </span>
+                              )}
+                              {incidencia.tipo_incidencia === 'CUENTA_NO_CLASIFICADA' && (
+                                <span className="text-sm text-gray-400 font-normal ml-2">
+                                  - Falta clasificación en sets específicos
+                                </span>
+                              )}
+                            </h4>
+                            
+                            {/* Botones de selección masiva */}
+                            {puedeMarcarNoAplica(incidencia.tipo_incidencia) && (
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => handleSeleccionarTodas(incidencia.tipo_incidencia)}
+                                  className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors flex items-center gap-2"
+                                  title="Marcar todas las cuentas como 'No aplica'"
+                                >
+                                  <CheckCircle size={14} />
+                                  Seleccionar todas
+                                </button>
+                                <button
+                                  onClick={() => handleDesseleccionarTodas(incidencia.tipo_incidencia)}
+                                  className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white text-sm rounded transition-colors flex items-center gap-2"
+                                  title="Quitar marca 'No aplica' de todas las cuentas"
+                                >
+                                  <Trash2 size={14} />
+                                  Deseleccionar todas
+                                </button>
+                              </div>
                             )}
-                            {incidencia.tipo_incidencia === 'CUENTA_NO_CLASIFICADA' && (
-                              <span className="text-sm text-gray-400 font-normal ml-2">
-                                - Falta clasificación en sets específicos
-                              </span>
-                            )}
-                          </h4>
-                          <div className="space-y-2 max-h-60 overflow-y-auto">
+                          </div>
+                          <div className="space-y-2 max-h-80 overflow-y-auto">
                             {cuentasDetalle[incidencia.tipo_incidencia].cuentas?.map((cuenta, idx) => {
                               // Verificar si esta cuenta tiene cambios locales pendientes
                               const tieneExcepcionLocal = excepcionesLocales.some(exc => 

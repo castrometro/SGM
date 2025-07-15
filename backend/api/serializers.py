@@ -18,6 +18,16 @@ class AreaSerializer(serializers.ModelSerializer):
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     username_field = Usuario.USERNAME_FIELD
+    
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        
+        # Actualizar last_login manualmente
+        from django.utils import timezone
+        self.user.last_login = timezone.now()
+        self.user.save(update_fields=['last_login'])
+        
+        return data
 
 class UsuarioSerializer(serializers.ModelSerializer):
     areas = AreaSerializer(many=True, read_only=True)  # <--- Aquí va el cambio

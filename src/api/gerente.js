@@ -22,6 +22,139 @@ export const obtenerPerfilCompletoCliente = async (clienteId) => {
   return res.data;
 };
 
+// ==================== LOGS Y ACTIVIDAD ====================
+
+export const obtenerLogsActividad = async (filtros = {}) => {
+  const params = new URLSearchParams();
+  
+  if (filtros.cliente_id) params.append('cliente_id', filtros.cliente_id);
+  if (filtros.usuario_id) params.append('usuario_id', filtros.usuario_id);
+  if (filtros.tarjeta) params.append('tarjeta', filtros.tarjeta);
+  if (filtros.accion) params.append('accion', filtros.accion);
+  if (filtros.fecha_desde) params.append('fecha_desde', filtros.fecha_desde);
+  if (filtros.fecha_hasta) params.append('fecha_hasta', filtros.fecha_hasta);
+  if (filtros.page) params.append('page', filtros.page);
+  if (filtros.page_size) params.append('page_size', filtros.page_size);
+  
+  const res = await api.get(`/contabilidad/gerente/logs-actividad/?${params}`);
+  return res.data;
+};
+
+export const obtenerEstadisticasActividad = async (periodo = 'semana') => {
+  const res = await api.get(`/contabilidad/gerente/estadisticas-actividad/?periodo=${periodo}`);
+  return res.data;
+};
+
+export const obtenerUsuariosActividad = async () => {
+  const res = await api.get('/contabilidad/gerente/usuarios-actividad/');
+  return res.data;
+};
+
+// ==================== ESTADOS DE CIERRES ====================
+
+export const obtenerEstadosCierres = async (filtros = {}) => {
+  const params = new URLSearchParams();
+  
+  if (filtros.cliente_id) params.append('cliente_id', filtros.cliente_id);
+  if (filtros.estado) params.append('estado', filtros.estado);
+  if (filtros.usuario_id) params.append('usuario_id', filtros.usuario_id); // Cambio: analista_id -> usuario_id
+  if (filtros.periodo) params.append('periodo', filtros.periodo);
+  
+  const res = await api.get(`/contabilidad/gerente/estados-cierres/?${params}`);
+  return res.data;
+};
+
+export const obtenerMetricasCierres = async () => {
+  const res = await api.get('/contabilidad/gerente/metricas-cierres/');
+  return res.data;
+};
+
+// ==================== CACHE REDIS ====================
+
+export const obtenerEstadoCache = async () => {
+  const res = await api.get('/contabilidad/gerente/estado-cache/');
+  return res.data;
+};
+
+export const obtenerCierresEnCache = async () => {
+  const res = await api.get('/contabilidad/gerente/cierres-cache/');
+  return res.data;
+};
+
+export const cargarCierreACache = async (clienteId, periodo) => {
+  const res = await api.post('/contabilidad/gerente/cargar-cierre-cache/', {
+    cliente_id: clienteId,
+    periodo: periodo
+  });
+  return res.data;
+};
+
+export const limpiarCache = async (opciones = {}) => {
+  const res = await api.post('/contabilidad/gerente/limpiar-cache/', opciones);
+  return res.data;
+};
+
+export const obtenerMetricasCache = async () => {
+  const res = await api.get('/contabilidad/gerente/metricas-cache/');
+  return res.data;
+};
+
+// ==================== GESTIÓN DE USUARIOS Y CLIENTES ====================
+
+export const obtenerUsuarios = async () => {
+  const res = await api.get('/contabilidad/gerente/usuarios/');
+  return res.data;
+};
+
+export const crearUsuario = async (datosUsuario) => {
+  const res = await api.post('/contabilidad/gerente/usuarios/', datosUsuario);
+  return res.data;
+};
+
+export const actualizarUsuario = async (userId, datosUsuario) => {
+  const res = await api.put(`/contabilidad/gerente/usuarios/${userId}/`, datosUsuario);
+  return res.data;
+};
+
+export const eliminarUsuario = async (userId) => {
+  const res = await api.delete(`/contabilidad/gerente/usuarios/${userId}/eliminar/`);
+  return res.data;
+};
+
+export const obtenerClientes = async () => {
+  const res = await api.get('/contabilidad/gerente/clientes/');
+  return res.data;
+};
+
+export const crearCliente = async (datosCliente) => {
+  const res = await api.post('/contabilidad/gerente/clientes/', datosCliente);
+  return res.data;
+};
+
+export const obtenerAreas = async () => {
+  const res = await api.get('/contabilidad/gerente/areas/');
+  return res.data;
+};
+
+export const obtenerMetricasSistema = async () => {
+  const res = await api.get('/contabilidad/gerente/metricas-sistema/');
+  return res.data;
+};
+
+// ==================== FUNCIONES ADICIONALES ====================
+
+export const forzarRecalculoCierre = async (cierreId) => {
+  const res = await api.post(`/contabilidad/gerente/cierres/${cierreId}/recalcular/`);
+  return res.data;
+};
+
+export const reasignarClienteMasivo = async (asignaciones) => {
+  const res = await api.post('/contabilidad/gerente/reasignar-masivo/', {
+    asignaciones: asignaciones
+  });
+  return res.data;
+};
+
 // ========== MÉTRICAS Y KPIs ==========
 
 export const obtenerMetricasAvanzadas = async (filtros = {}) => {
@@ -136,5 +269,14 @@ export const asignarObjetivos = async (analistaId, objetivos) => {
 
 export const evaluarRendimiento = async (analistaId, evaluacion) => {
   const res = await api.post(`/gerente/analistas/${analistaId}/evaluacion/`, evaluacion);
+  return res.data;
+};
+
+// ==================== USUARIOS CONECTADOS ====================
+
+export const obtenerUsuariosConectados = async () => {
+  // Agregar timestamp para evitar cache
+  const timestamp = new Date().getTime();
+  const res = await api.get(`/contabilidad/gerente/usuarios-conectados/?t=${timestamp}`);
   return res.data;
 };

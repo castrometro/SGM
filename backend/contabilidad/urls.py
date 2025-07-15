@@ -30,6 +30,32 @@ from .views.cache_views import (
     invalidate_pruebas_cliente,
     capture_current_esf,
 )
+# Views para gerentes
+from .views.gerente import (
+    obtener_logs_actividad,
+    obtener_estadisticas_actividad,
+    obtener_usuarios_actividad,
+    obtener_estados_cierres,
+    obtener_metricas_cierres,
+    obtener_estado_cache,
+    obtener_cierres_en_cache,
+    cargar_cierre_a_cache,
+    limpiar_cache,
+    # Nuevas funciones añadidas
+    gestionar_usuarios,
+    actualizar_usuario,
+    eliminar_usuario,
+    gestionar_clientes,
+    obtener_areas,
+    obtener_metricas_sistema,
+    obtener_metricas_cache,
+    forzar_recalculo_cierre,
+    obtener_usuarios_conectados,
+    # Funciones para estados de cierres
+    obtener_historial_cierre,
+    obtener_dashboard_cierres,
+    debug_cierres,
+)
 from .views.incidencias import (
     obtener_incidencias_consolidadas,
     obtener_incidencias_consolidadas_optimizado,
@@ -362,4 +388,98 @@ urlpatterns = [
     path("cuentas/<int:cuenta_id>/actualizar/", actualizar_cuenta_con_clasificaciones, name="actualizar_cuenta_clasificaciones"),
     path("cuentas/<int:cuenta_id>/eliminar/", eliminar_cuenta_con_clasificaciones, name="eliminar_cuenta_clasificaciones"),
     path("cuentas/clasificacion-masiva/", clasificacion_masiva_cuentas, name="clasificacion_masiva_cuentas"),
+    
+    # ===================================
+    # ENDPOINTS PARA GERENTES
+    # ===================================
+    
+    # Logs y actividad
+    path("gerente/logs-actividad/", 
+         obtener_logs_actividad, 
+         name="gerente_logs_actividad"),
+    
+    path("gerente/estadisticas-actividad/", 
+         obtener_estadisticas_actividad, 
+         name="gerente_estadisticas_actividad"),
+    
+    path("gerente/usuarios-actividad/", 
+         obtener_usuarios_actividad, 
+         name="gerente_usuarios_actividad"),
+    
+    # Estados de cierres
+    path("gerente/estados-cierres/", 
+         obtener_estados_cierres, 
+         name="gerente_estados_cierres"),
+    
+    path("gerente/metricas-cierres/", 
+         obtener_metricas_cierres, 
+         name="gerente_metricas_cierres"),
+    
+    # Cache Redis
+    path("gerente/estado-cache/", 
+         obtener_estado_cache, 
+         name="gerente_estado_cache"),
+    
+    path("gerente/cierres-cache/", 
+         obtener_cierres_en_cache, 
+         name="gerente_cierres_cache"),
+    
+    path("gerente/cargar-cierre-cache/", 
+         cargar_cierre_a_cache, 
+         name="gerente_cargar_cierre_cache"),
+    
+    path("gerente/limpiar-cache/", 
+         limpiar_cache, 
+         name="gerente_limpiar_cache"),
+    
+    # Admin Sistema
+    path("gerente/usuarios/", 
+         gestionar_usuarios, 
+         name="gerente_usuarios"),
+    
+    path("gerente/usuarios/<int:user_id>/", 
+         actualizar_usuario, 
+         name="gerente_actualizar_usuario"),
+    
+    path("gerente/usuarios/<int:user_id>/eliminar/", 
+         eliminar_usuario, 
+         name="gerente_eliminar_usuario"),
+    
+    path("gerente/clientes/", 
+         gestionar_clientes, 
+         name="gerente_clientes"),
+    
+    path("gerente/areas/", 
+         obtener_areas, 
+         name="gerente_areas"),
+    
+    path("gerente/metricas-sistema/", 
+         obtener_metricas_sistema, 
+         name="gerente_metricas_sistema"),
+    
+    path("gerente/metricas-cache/", 
+         obtener_metricas_cache, 
+         name="gerente_metricas_cache"),
+    
+    path("gerente/cierres/<int:cierre_id>/recalcular/", 
+         forzar_recalculo_cierre, 
+         name="gerente_forzar_recalculo"),
+    
+    path("gerente/usuarios-conectados/", 
+         obtener_usuarios_conectados, 
+         name="gerente_usuarios_conectados"),
+    
+    # Estados de cierres - Nuevas funcionalidades
+    path("gerente/historial-cierre/<int:cierre_id>/", 
+         obtener_historial_cierre, 
+         name="gerente_historial_cierre"),
+    
+    path("gerente/dashboard-cierres/", 
+         obtener_dashboard_cierres, 
+         name="gerente_dashboard_cierres"),
+    
+    # Debug endpoint
+    path("gerente/debug-cierres/", 
+         debug_cierres, 
+         name="gerente_debug_cierres"),
 ]

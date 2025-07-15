@@ -9,6 +9,25 @@ const ClienteRow = ({ cliente, areaActiva }) => {
     ultimo_cierre: null,
     estado_cierre_actual: null,
   });
+
+  // Determinar el estado del cierre según el área activa
+  const getEstadoCierre = () => {
+    if (!resumen) return null;
+    
+    // Para nómina usamos estado_cierre_actual
+    if (areaActiva === "Nomina") {
+      return resumen.estado_cierre_actual;
+    }
+    
+    // Para contabilidad usamos estado_ultimo_cierre
+    if (areaActiva === "Contabilidad") {
+      return resumen.estado_ultimo_cierre;
+    }
+    
+    // Fallback: intentar cualquiera de los dos campos
+    return resumen.estado_cierre_actual || resumen.estado_ultimo_cierre;
+  };
+
   useEffect(() => {
     const fetchResumen = async () => {
       try {
@@ -38,7 +57,7 @@ const ClienteRow = ({ cliente, areaActiva }) => {
         {resumen.ultimo_cierre || "—"}
       </td>
       <td className="p-2 text-center">
-        <EstadoBadge estado={resumen.estado_cierre_actual} />
+        <EstadoBadge estado={getEstadoCierre()} />
       </td>
       <td className="p-2 text-center">
         <Link

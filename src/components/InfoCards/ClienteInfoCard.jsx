@@ -1,7 +1,23 @@
 import EstadoBadge from "../EstadoBadge";
 
-const ClienteInfoCard = ({ cliente, resumen }) => {
-
+const ClienteInfoCard = ({ cliente, resumen, areaActiva }) => {
+  // Determinar el estado del cierre según el área activa
+  const getEstadoCierre = () => {
+    if (!resumen) return null;
+    
+    // Para nómina usamos estado_cierre_actual
+    if (areaActiva === "Nomina") {
+      return resumen.estado_cierre_actual;
+    }
+    
+    // Para contabilidad usamos estado_ultimo_cierre
+    if (areaActiva === "Contabilidad") {
+      return resumen.estado_ultimo_cierre;
+    }
+    
+    // Fallback: intentar cualquiera de los dos campos
+    return resumen.estado_cierre_actual || resumen.estado_ultimo_cierre;
+  };
 
   return (
     <div className="bg-gray-800 p-6 rounded-lg shadow-lg">
@@ -28,7 +44,7 @@ const ClienteInfoCard = ({ cliente, resumen }) => {
         </div>
         <div className="bg-gray-700 p-4 rounded">
           <h3 className="text-sm text-gray-400">Estado</h3>
-          <EstadoBadge estado={resumen.estado_cierre_actual} />
+          <EstadoBadge estado={getEstadoCierre()} />
         </div>
       </div>
     </div>

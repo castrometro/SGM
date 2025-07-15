@@ -21,6 +21,12 @@ import VistaGerencial from "./pages/VistaGerencial";
 import Tools from "./pages/Tools";
 import MisAnalistas from "./pages/MisAnalistas";
 
+// Importar componentes de Gerente
+import LogsActividad from "./components/Gerente/LogsActividad";
+import EstadosCierres from "./components/Gerente/EstadosCierres";
+import CacheRedis from "./components/Gerente/CacheRedis";
+import AdminSistema from "./components/Gerente/AdminSistema";
+
 function App() {
   return (
     <Router>
@@ -69,6 +75,12 @@ function App() {
           
           {/* ----------- ÁREA: VISTA GERENCIAL ------------- */}
           <Route path="vista-gerencial" element={<VistaGerencial />} />
+
+          {/* ----------- ÁREA: GERENTE - FUNCIONES AVANZADAS ------------- */}
+          <Route path="gerente/logs-actividad" element={<LogsActividad />} />
+          <Route path="gerente/estados-cierres" element={<EstadosCierres />} />
+          <Route path="gerente/cache-redis" element={<CacheRedis />} />
+          <Route path="gerente/admin-sistema" element={<AdminSistema />} />
 
           {/* ----------- ÁREA: ANALYTICS DE PERFORMANCE ------------- */}
           <Route path="analytics" element={<Dashboard />} />

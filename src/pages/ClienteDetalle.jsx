@@ -75,7 +75,7 @@ const ClienteDetalle = () => {
           {areaActiva}
         </span>
       </div>
-      <ClienteInfoCard cliente={cliente} resumen={resumen} />
+      <ClienteInfoCard cliente={cliente} resumen={resumen} areaActiva={areaActiva} />
       <ServiciosContratados servicios={servicios} areaActiva={areaActiva} />
       <KpiResumenCliente />
       <ClienteActionButtons clienteId={cliente.id} areaActiva={areaActiva} />

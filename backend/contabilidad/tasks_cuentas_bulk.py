@@ -1101,9 +1101,7 @@ def crear_sets_predefinidos_clasificacion(cliente_id, omit_sets=None):
                 'opciones': [
                     {'valor': 'Capital', 'descripcion': 'Capital', 'valor_en': 'Capital', 'descripcion_en': 'Capital'},
                     {'valor': 'Otras Reservas', 'descripcion': 'Otras Reservas', 'valor_en': 'Other Reserves', 'descripcion_en': 'Other reserves'},
-                    {'valor': 'Resultados Acumulados', 'descripcion': 'Resultados Acumulados', 'valor_en': 'Accumulated Earnings', 'descripcion_en': 'Accumulated earnings'},
-
-    
+                    {'valor': 'Resultados Acumulados', 'descripcion': 'Resultados Acumulados', 'valor_en': 'Accumulated Earnings', 'descripcion_en': 'Accumulated earnings'},   
                 ]
             },
 

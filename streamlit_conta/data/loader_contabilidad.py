@@ -65,7 +65,7 @@ def conectar_redis():
 
 def obtener_datos_batch_redis(cliente_id: int, periodo: str, redis_client) -> Dict[str, Any]:
     """
-    🚀 OPTIMIZACIÓN: Obtener ESF y ERI de Redis en una sola consulta batch
+    🚀 OPTIMIZACIÓN: Obtener ESF, ERI y ECP de Redis en una sola consulta batch
     Simplificado para obtener solo los datos que realmente existen
     
     Args:
@@ -74,12 +74,13 @@ def obtener_datos_batch_redis(cliente_id: int, periodo: str, redis_client) -> Di
         redis_client: Cliente Redis conectado
         
     Returns:
-        Dict con ESF y ERI disponibles
+        Dict con ESF, ERI y ECP disponibles
     """
-    # Solo consultar los datos que realmente necesitamos: ESF y ERI
+    # Solo consultar los datos que realmente necesitamos: ESF, ERI y ECP
     claves_consulta = {
         'esf': f"sgm:contabilidad:{cliente_id}:{periodo}:esf",
-        'eri': f"sgm:contabilidad:{cliente_id}:{periodo}:eri"
+        'eri': f"sgm:contabilidad:{cliente_id}:{periodo}:eri",
+        'ecp': f"sgm:contabilidad:{cliente_id}:{periodo}:ecp"
     }
     
     datos_encontrados = {}
@@ -89,8 +90,8 @@ def obtener_datos_batch_redis(cliente_id: int, periodo: str, redis_client) -> Di
         pipe = redis_client.pipeline()
         for clave in claves_consulta.values():
             pipe.get(clave)
-        
-        # Ejecutar las 2 consultas de una vez
+
+        # Ejecutar las 3 consultas de una vez
         resultados = pipe.execute()
         
         # Procesar resultados
@@ -104,7 +105,7 @@ def obtener_datos_batch_redis(cliente_id: int, periodo: str, redis_client) -> Di
             else:
                 logger.debug(f"❌ No encontrado: {nombre_dato}")
                 
-        logger.info(f"🚀 Consulta batch completada: {len(datos_encontrados)}/2 datasets encontrados")
+        logger.info(f"🚀 Consulta batch completada: {len(datos_encontrados)}/3 datasets encontrados")
         
     except Exception as e:
         logger.error(f"❌ Error en consulta batch Redis: {e}")
@@ -112,39 +113,6 @@ def obtener_datos_batch_redis(cliente_id: int, periodo: str, redis_client) -> Di
     return datos_encontrados
 
 
-def cargar_esf_desde_redis(cliente_id: int = 2, periodo: str = "2025-08", test_type: str = "finalizacion_automatica") -> Optional[Dict[str, Any]]:
-    """
-    🚀 SIMPLIFICADO: Cargar solo ESF desde Redis 
-    Wrapper para compatibilidad con código existente
-    
-    Args:
-        cliente_id: ID del cliente
-        periodo: Período contable
-        test_type: Tipo de test (ignorado, mantenido por compatibilidad)
-        
-    Returns:
-        Dict con ESF o None si no se encuentra
-    """
-    redis_client = conectar_redis()
-    if not redis_client:
-        return None
-    
-    try:
-        # Usar la clave directa simplificada
-        key = f"sgm:contabilidad:{cliente_id}:{periodo}:esf"
-        data = redis_client.get(key)
-        
-        if data:
-            esf_data = json.loads(data)
-            logger.info(f"✅ ESF cargado desde Redis: {key}")
-            return esf_data
-        else:
-            logger.warning(f"⚠️ No se encontró ESF en Redis: {key}")
-            return None
-            
-    except Exception as e:
-        logger.error(f"❌ Error cargando ESF desde Redis: {e}")
-        return None
 
 
 def listar_esf_disponibles(cliente_id: int = 1) -> Dict[str, Any]:
@@ -275,7 +243,7 @@ def cargar_datos_sistema_cierre(cliente_id: int = 2, periodo: str = "2025-08") -
 
 def cargar_datos_redis(cliente_id: int = 2, periodo: str = "2025-08", test_type: str = "finalizacion_automatica") -> Dict[str, Any]:
     """
-    🚀 SIMPLIFICADO: Cargar ESF y ERI desde Redis
+    🚀 SIMPLIFICADO: Cargar ESF, ERI y ECP desde Redis
     Enfocado únicamente en los datos que realmente existen
     
     Args:
@@ -284,7 +252,7 @@ def cargar_datos_redis(cliente_id: int = 2, periodo: str = "2025-08", test_type:
         test_type: Tipo de test (mantenido por compatibilidad)
         
     Returns:
-        Dict con ESF y ERI desde Redis o datos de ejemplo como fallback
+        Dict con ESF, ERI y ECP desde Redis o datos de ejemplo como fallback
     """
     redis_client = conectar_redis()
     if not redis_client:
@@ -294,7 +262,7 @@ def cargar_datos_redis(cliente_id: int = 2, periodo: str = "2025-08", test_type:
         datos_ejemplo["metadata"] = {"source": "archivo_estatico"}
         return datos_ejemplo
     
-    # 🚀 UNA SOLA CONSULTA BATCH para ESF y ERI
+    # 🚀 UNA SOLA CONSULTA BATCH para ESF, ERI y ECP
     datos_redis = obtener_datos_batch_redis(cliente_id, periodo, redis_client)
     
     if datos_redis:
@@ -303,6 +271,7 @@ def cargar_datos_redis(cliente_id: int = 2, periodo: str = "2025-08", test_type:
         # Construir respuesta para Streamlit
         esf_data = datos_redis.get('esf', {})
         eri_data = datos_redis.get('eri', {})
+        ecp_data = datos_redis.get('ecp', {})
         
         # Estructurar datos para Streamlit
         return {
@@ -321,6 +290,7 @@ def cargar_datos_redis(cliente_id: int = 2, periodo: str = "2025-08", test_type:
             },
             "esf": esf_data,
             "eri": eri_data,
+            "ecp": ecp_data,
             "metadata": {
                 "fuente": "redis",
                 "datos_disponibles": list(datos_redis.keys()),
@@ -430,7 +400,7 @@ def obtener_info_redis_completa(cliente_id: int = 2) -> Dict[str, Any]:
             if len(parts) >= 4:
                 periodo = parts[3]  # sgm:contabilidad:{cliente_id}:{periodo}:esf
                 
-                # Verificar que también existe ERI
+                # Verificar que también existe ERI y opcionalmente ECP
                 clave_eri = clave.replace(':esf', ':eri')
                 if redis_client.exists(clave_eri):
                     periodos.append(periodo)
@@ -450,6 +420,7 @@ def obtener_info_redis_completa(cliente_id: int = 2) -> Dict[str, Any]:
     return info
 
 
+
 def verificar_disponibilidad_redis(cliente_id: int, periodo: str) -> Dict[str, bool]:
     """
     Verificar si los datos de un cierre específico están disponibles en Redis
@@ -459,11 +430,12 @@ def verificar_disponibilidad_redis(cliente_id: int, periodo: str) -> Dict[str, b
         periodo: Período del cierre (ej: '2025-03')
     
     Returns:
-        Dict con disponibilidad de ESF y ERI en Redis
+        Dict con disponibilidad de ESF, ERI y ECP en Redis
     """
     disponibilidad = {
         'esf_disponible': False,
         'eri_disponible': False,
+        'ecp_disponible': False,
         'dashboard_disponible': False,
         'error': None
     }
@@ -479,7 +451,11 @@ def verificar_disponibilidad_redis(cliente_id: int, periodo: str) -> Dict[str, b
         clave_eri = f"sgm:contabilidad:{cliente_id}:{periodo}:eri"
         disponibilidad['eri_disponible'] = redis_client.exists(clave_eri)
         
-        # Dashboard disponible si ambos existen
+        # Verificar existencia de datos ECP
+        clave_ecp = f"sgm:contabilidad:{cliente_id}:{periodo}:ecp"
+        disponibilidad['ecp_disponible'] = redis_client.exists(clave_ecp)
+        
+        # Dashboard disponible si ESF y ERI existen (ECP es opcional)
         disponibilidad['dashboard_disponible'] = (
             disponibilidad['esf_disponible'] and 
             disponibilidad['eri_disponible']
@@ -487,7 +463,8 @@ def verificar_disponibilidad_redis(cliente_id: int, periodo: str) -> Dict[str, b
         
         logger.debug(f"📊 Disponibilidad Redis cliente {cliente_id} período {periodo}: "
                     f"ESF={disponibilidad['esf_disponible']}, "
-                    f"ERI={disponibilidad['eri_disponible']}")
+                    f"ERI={disponibilidad['eri_disponible']}, "
+                    f"ECP={disponibilidad['ecp_disponible']}")
         
     except Exception as e:
         logger.error(f"❌ Error verificando disponibilidad Redis: {e}")

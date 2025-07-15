@@ -261,31 +261,28 @@ def finalizar_cierre_y_generar_reportes(self=None, cierre_id=None, usuario_id=No
         # =================== STEP 1: VALIDACIONES FINALES ===================
         actualizar_progreso(1, 5, 'Ejecutando validaciones finales...', 20)
         print(f"📋 STEP 1: Ejecutando validaciones finales...")
-        resultado_validaciones = ejecutar_validaciones_finales(cierre_id)
-        print(f"   ✅ Validaciones completadas: {resultado_validaciones['total_validaciones']} checks")
+
+
         
         # =================== STEP 2: PROCESAMIENTO PARALELO ===================
         # Estos pasos pueden ejecutarse en paralelo ya que no dependen entre sí
-        actualizar_progreso(2, 5, 'Ejecutando cálculos en paralelo...', 40)
-        print(f"🔄 STEP 2: Ejecutando tareas en paralelo...")
+        #actualizar_progreso(2, 5, 'Ejecutando cálculos en paralelo...', 40)
+        #print(f"🔄 STEP 2: Ejecutando tareas en paralelo...")
         
-        try:
-            # Intentar ejecución paralela con Celery
-            job = group([
-                ejecutar_calculos_contables.s(cierre_id, usuario_id),
-                consolidar_datos_dashboard.s(cierre_id)
-            ])
-            resultados_paralelos = job.apply_async().get(timeout=300)  # 5 min timeout
-            resultado_calculos, resultado_consolidacion = resultados_paralelos
-            print(f"   ✅ Ejecución paralela completada")
-        except Exception as e:
+       # try:
+        #    # Intentar ejecución paralela con Celery
+         #   job = group([
+          #      ejecutar_calculos_contables.s(cierre_id, usuario_id),
+           # ])
+            #resultados_paralelos = job.apply_async().get(timeout=300)  # 5 min timeout
+            #resultado_calculos = resultados_paralelos[0]  # Solo hay 1 resultado ahora
+            #print(f"   ✅ Ejecución paralela completada")
+        #except Exception as e:
             # Fallback a ejecución secuencial
-            print(f"   ⚠️ Celery paralelo falló ({str(e)}), ejecutando secuencialmente...")
-            resultado_calculos = ejecutar_calculos_contables(cierre_id, usuario_id)
-            resultado_consolidacion = consolidar_datos_dashboard(cierre_id)
+          #  print(f"   ⚠️ Celery paralelo falló ({str(e)}), ejecutando secuencialmente...")
+          #  resultado_calculos = ejecutar_calculos_contables(cierre_id, usuario_id)
         
-        print(f"   ✅ Cálculos completados: {resultado_calculos['total_cuentas']} cuentas procesadas")
-        print(f"   ✅ Consolidación completada: {resultado_consolidacion['total_registros']} registros")
+      #  print(f"   ✅ Cálculos completados: {resultado_calculos['total_cuentas']} cuentas procesadas")
         
         # =================== STEP 3: GENERACIÓN DE REPORTES ===================
         actualizar_progreso(4, 5, 'Generando reportes finales...', 80)
@@ -317,9 +314,6 @@ def finalizar_cierre_y_generar_reportes(self=None, cierre_id=None, usuario_id=No
                 descripcion=f'Cierre finalizado y reportes generados exitosamente',
                 detalles={
                     'duracion_segundos': duracion,
-                    'validaciones': resultado_validaciones,
-                    'calculos': resultado_calculos,
-                    'consolidacion': resultado_consolidacion,
                     'reportes': resultado_reportes
                 },
                 resultado='exito'
@@ -333,9 +327,6 @@ def finalizar_cierre_y_generar_reportes(self=None, cierre_id=None, usuario_id=No
             'cierre_id': cierre_id,
             'duracion_segundos': duracion,
             'resultados': {
-                'validaciones': resultado_validaciones,
-                'calculos': resultado_calculos,
-                'consolidacion': resultado_consolidacion,
                 'reportes': resultado_reportes
             }
         }
@@ -376,37 +367,6 @@ def finalizar_cierre_y_generar_reportes(self=None, cierre_id=None, usuario_id=No
         }
 
 
-@shared_task(name='contabilidad.ejecutar_validaciones_finales')
-def ejecutar_validaciones_finales(cierre_id):
-    """
-    Ejecuta validaciones finales antes de completar el cierre.
-    
-    Args:
-        cierre_id (int): ID del cierre
-        
-    Returns:
-        dict: Resultado de las validaciones
-    """
-    print(f"   🔍 Validando integridad de datos...")
-    print(f"   🔍 Verificando balance contable...")
-    print(f"   🔍 Validando clasificaciones completas...")
-    print(f"   🔍 Verificando nombres en inglés (si aplica)...")
-    
-    # Simulación de validaciones
-    import time
-    time.sleep(2)  # Simular procesamiento
-    
-    return {
-        'total_validaciones': 4,
-        'validaciones_exitosas': 4,
-        'validaciones_fallidas': 0,
-        'detalle': [
-            {'tipo': 'integridad_datos', 'estado': 'ok'},
-            {'tipo': 'balance_contable', 'estado': 'ok'},
-            {'tipo': 'clasificaciones_completas', 'estado': 'ok'},
-            {'tipo': 'nombres_ingles', 'estado': 'ok'}
-        ]
-    }
 
 
 @shared_task(name='contabilidad.ejecutar_calculos_contables')
@@ -480,34 +440,6 @@ def ejecutar_calculos_contables(cierre_id, usuario_id=None):
         print(f"   ❌ Error en cálculos contables: {str(e)}")
         raise e
 
-
-@shared_task(name='contabilidad.consolidar_datos_dashboard')
-def consolidar_datos_dashboard(cierre_id):
-    """
-    Consolida datos para el dashboard gerencial.
-    
-    Args:
-        cierre_id (int): ID del cierre
-        
-    Returns:
-        dict: Resultado de la consolidación
-    """
-    print(f"   📈 Consolidando datos por área...")
-    print(f"   📈 Generando métricas de gestión...")
-    print(f"   📈 Calculando KPIs financieros...")
-    print(f"   📈 Preparando datos para gráficos...")
-    
-    # Simulación de consolidación
-    import time
-    time.sleep(2)
-    
-    return {
-        'total_registros': 45,
-        'areas_procesadas': 5,
-        'kpis_generados': 15,
-        'graficos_preparados': 8,
-        'metricas_consolidadas': True
-    }
 
 
 @shared_task(name='contabilidad.generar_reportes_finales')
@@ -603,31 +535,41 @@ def generar_reportes_finales(cierre_id, usuario_id=None):
         reportes_fallidos += 1
     
     # 3. TODO: Generar Estado de Cambios en el Patrimonio
-    print(f"   📋 Estado de Cambios en el Patrimonio (próximamente)...")
-    reportes_generados.append({
-        'nombre': 'Estado de Cambios en el Patrimonio',
-        'tipo': 'ecp',
-        'estado': 'pendiente',
-        'nota': 'Implementación pendiente'
-    })
+    try:
+        from .tasks_reportes import generar_estado_cambios_patrimonio
+        resultado_ecp = generar_estado_cambios_patrimonio.apply(args=[cierre_id, usuario_id]).result
+        if resultado_ecp.get('success'):
+            reportes_generados.append({
+                'nombre': 'Estado de Cambios en el Patrimonio',
+                'tipo': 'ecp',
+                'formato': 'JSON',
+                'estado': 'generado',
+                'reporte_id': resultado_ecp.get('reporte_id'),
+                'total_cuentas': resultado_ecp.get('total_cuentas'),
+                'tiempo_generacion': resultado_ecp.get('tiempo_generacion')
+            })
+            reportes_exitosos += 1
+            print(f"   ✅ Estado de Cambios en el Patrimonio generado exitosamente")
+        else:
+            reportes_generados.append({
+                'nombre': 'Estado de Cambios en el Patrimonio',
+                'tipo': 'ecp',
+                'estado': 'error',
+                'error': resultado_ecp.get('error')
+            })
+            reportes_fallidos += 1
+            print(f"   ❌ Error generando Estado de Cambios en el Patrimonio: {resultado_ecp.get('error')}")
+    except Exception as e:
+        print(f"   ❌ Excepción generando Estado de Cambios en el Patrimonio: {str(e)}")
+        reportes_generados.append({
+            'nombre': 'Estado de Cambios en el Patrimonio',
+            'tipo': 'ecp',
+            'estado': 'error',
+            'error': str(e)
+        })
+        reportes_fallidos += 1
     
-    # 4. Reportes complementarios (mantenemos la funcionalidad existente)
-    print(f"   📋 Generando reporte de Clasificaciones...")
-    print(f"   📋 Generando reporte Bilingüe (si aplica)...")
-    print(f"   📋 Generando Dashboard Ejecutivo...")
     
-    # Simulación de reportes complementarios (mantenemos el comportamiento original)
-    import time
-    time.sleep(1)  # Reducido para no impactar tanto el rendimiento
-    
-    reportes_complementarios = [
-        {'nombre': 'Reporte de Clasificaciones', 'formato': 'Excel', 'estado': 'generado'},
-        {'nombre': 'Reporte Bilingüe', 'formato': 'Excel', 'estado': 'generado'},
-        {'nombre': 'Dashboard Ejecutivo', 'formato': 'PDF', 'estado': 'generado'}
-    ]
-    
-    reportes_generados.extend(reportes_complementarios)
-    reportes_exitosos += len(reportes_complementarios)
     
     total_reportes = len(reportes_generados)
     
@@ -638,7 +580,7 @@ def generar_reportes_finales(cierre_id, usuario_id=None):
         'total_reportes': total_reportes,
         'reportes_exitosos': reportes_exitosos,
         'reportes_fallidos': reportes_fallidos,
-        'reportes_financieros_generados': reportes_exitosos - len(reportes_complementarios)
+        'reportes_financieros_generados': reportes_exitosos 
     }
 
 

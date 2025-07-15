@@ -4,6 +4,7 @@ Template Excel específico para Estado de Cambios en el Patrimonio (ECP)
 
 import openpyxl
 import logging
+from datetime import datetime
 from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
 from .base import BaseExcelTemplate
@@ -31,6 +32,9 @@ class ECPTemplate(BaseExcelTemplate):
         current_row = 3
         ws.cell(row=current_row, column=1, value=f"{self._get_text('client', language)}: {metadata.get('cliente_nombre', 'N/A')}")
         ws.cell(row=current_row, column=5, value=f"{self._get_text('period', language)}: {metadata.get('periodo', 'N/A')}")
+        current_row += 1
+        ws.cell(row=current_row, column=1, value=f"{self._get_text('currency', language)}: {metadata.get('moneda', 'CLP')}")
+        ws.cell(row=current_row, column=5, value=f"{self._get_text('date', language)}: {datetime.now().strftime('%d/%m/%Y')}")
         current_row += 2
         
         # Encabezados de columnas
@@ -134,13 +138,11 @@ class ECPTemplate(BaseExcelTemplate):
                 
                 cell.border = self.borders['thin']
                 
-                # Resaltar filas de saldo inicial y final
-                balance_texts = [
-                    self._get_text('initial_balance', language),
-                    self._get_text('final_balance', language)
-                ]
-                if fila["Concepto"] in balance_texts:
-                    cell.fill = self.fills['total']
+                # Resaltar solo la fila de saldo final con color verde oscuro
+                final_balance_text = self._get_text('final_balance', language)
+                
+                if fila["Concepto"] == final_balance_text:
+                    cell.fill = self.fills['final_balance']    # Verde oscuro solo para saldo final
                     cell.font = self.styles['total']
             
             current_row += 1

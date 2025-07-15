@@ -91,19 +91,19 @@ class ExcelTemplateGenerator:
             'en': {
                 'title_esf': 'STATEMENT OF FINANCIAL POSITION',
                 'title_eri': 'STATEMENT OF COMPREHENSIVE INCOME',
-                'title_ecp': 'STATEMENT OF CHANGES IN EQUITY',
+                'title_ecp': 'STATEMENT OF CHANGES IN PATRIMONY',
                 'title_movimientos': 'ACCOUNTING TRANSACTIONS',
                 'assets': 'ASSETS',
                 'current_assets': 'Current Assets',
                 'non_current_assets': 'Non-Current Assets',
                 'total_assets': 'TOTAL ASSETS',
-                'liabilities_equity': 'LIABILITIES AND EQUITY',
+                'liabilities_equity': 'LIABILITIES AND PATRIMONY',
                 'current_liabilities': 'Current Liabilities',
                 'non_current_liabilities': 'Non-Current Liabilities',
                 'total_liabilities': 'TOTAL LIABILITIES',
-                'equity': 'EQUITY',
-                'total_equity': 'TOTAL EQUITY',
-                'total_liabilities_equity': 'TOTAL LIABILITIES AND EQUITY',
+                'equity': 'PATRIMONY',
+                'total_equity': 'TOTAL PATRIMONY',
+                'total_liabilities_equity': 'TOTAL LIABILITIES AND PATRIMONY',
                 'period_result': 'Period Result',
                 'profit_loss': 'Profit for the Period',
                 'loss': 'Loss for the Period',
@@ -132,7 +132,7 @@ class ExcelTemplateGenerator:
                 'initial_balance': 'Initial Balance as of January 1, 2025',
                 'period_result_ecp': 'Result of the Exercise',
                 'other_changes': 'Other Settings',
-                'final_balance': 'Final Balance',
+                'final_balance': 'Final Balance as of June, 2025',
                 'concept': 'Concept',
                 'capital': 'Capital',
                 'other_reserves': 'Other Reserves',
@@ -157,7 +157,9 @@ class ExcelTemplateGenerator:
             'header': PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid'),
             'subheader': PatternFill(start_color='D9E2F3', end_color='D9E2F3', fill_type='solid'),
             'total': PatternFill(start_color='2F5233', end_color='2F5233', fill_type='solid'),
-            'alternate': PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid')
+            'alternate': PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid'),
+            'initial_balance': PatternFill(start_color='4CAF50', end_color='4CAF50', fill_type='solid'),  # Verde claro para saldo inicial
+            'final_balance': PatternFill(start_color='1B5E20', end_color='1B5E20', fill_type='solid')     # Verde oscuro para saldo final
         }
         
         self.borders = {
@@ -736,6 +738,9 @@ class ExcelTemplateGenerator:
         current_row = 3
         ws.cell(row=current_row, column=1, value=f"{self._get_text('client', language)}: {metadata.get('cliente_nombre', 'N/A')}")
         ws.cell(row=current_row, column=5, value=f"{self._get_text('period', language)}: {metadata.get('periodo', 'N/A')}")
+        current_row += 1
+        ws.cell(row=current_row, column=1, value=f"{self._get_text('currency', language)}: {metadata.get('moneda', 'CLP')}")
+        ws.cell(row=current_row, column=5, value=f"{self._get_text('date', language)}: {datetime.now().strftime('%d/%m/%Y')}")
         current_row += 2
         
         # Encabezados de columnas
@@ -854,15 +859,14 @@ class ExcelTemplateGenerator:
                     
                     cell.border = self.borders['thin']
                     
-                    # Resaltar filas de saldo inicial y final
-                    balance_concepts = [
-                        self._get_text('initial_balance', language),
+                    # Resaltar solo la fila de saldo final con color verde oscuro
+                    final_balance_concepts = [
                         self._get_text('final_balance', language),
-                        "Saldo Inicial al 1 de Enero",  # Compatibilidad
                         "Saldo Final"  # Compatibilidad
                     ]
-                    if fila["Concepto"] in balance_concepts:
-                        cell.fill = self.fills['total']
+                    
+                    if fila["Concepto"] in final_balance_concepts:
+                        cell.fill = self.fills['final_balance']    # Verde oscuro solo para saldo final
                         cell.font = self.styles['total']
                 
                 current_row += 1
@@ -878,7 +882,7 @@ class ExcelTemplateGenerator:
         return workbook
 
     def _format_amount(self, amount, moneda="CLP"):
-        """Formatear monto según la moneda"""
+        """Formatear monto según la moneda (sin sufijo de moneda)"""
         if pd.isna(amount) or amount is None:
             return 0
         
@@ -888,11 +892,11 @@ class ExcelTemplateGenerator:
             return 0
         
         if moneda == "USD":
-            return f"${amount:,.2f} USD"
+            return f"${amount:,.2f}"
         elif moneda == "EUR":
-            return f"€{amount:,.2f} EUR"
+            return f"€{amount:,.2f}"
         else:  # CLP por defecto
-            return f"${amount:,.0f} CLP"
+            return f"${amount:,.0f}"
 
     def workbook_to_bytes(self, workbook):
         """Convertir workbook a bytes para descarga"""

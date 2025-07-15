@@ -34,7 +34,9 @@ class BaseExcelTemplate:
             'header': PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid'),
             'subheader': PatternFill(start_color='D9E2F3', end_color='D9E2F3', fill_type='solid'),
             'total': PatternFill(start_color='2F5233', end_color='2F5233', fill_type='solid'),
-            'alternate': PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid')
+            'alternate': PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid'),
+            'initial_balance': PatternFill(start_color='4CAF50', end_color='4CAF50', fill_type='solid'),  # Verde claro para saldo inicial
+            'final_balance': PatternFill(start_color='1B5E20', end_color='1B5E20', fill_type='solid')     # Verde oscuro para saldo final
         }
         
         self.borders = {
@@ -128,7 +130,7 @@ class BaseExcelTemplate:
         return current_row + 2
 
     def _format_amount(self, amount, moneda="CLP"):
-        """Formatear monto según la moneda"""
+        """Formatear monto según la moneda (sin sufijo de moneda)"""
         if pd.isna(amount) or amount is None:
             return 0
         
@@ -138,11 +140,11 @@ class BaseExcelTemplate:
             return 0
         
         if moneda == "USD":
-            return f"${amount:,.2f} USD"
+            return f"${amount:,.2f}"
         elif moneda == "EUR":
-            return f"€{amount:,.2f} EUR"
+            return f"€{amount:,.2f}"
         else:  # CLP por defecto
-            return f"${amount:,.0f} CLP"
+            return f"${amount:,.0f}"
 
     def _debug_data_structure(self, data, section_name=""):
         """Debug helper para verificar estructura de datos"""

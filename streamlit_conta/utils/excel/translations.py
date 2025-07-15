@@ -55,7 +55,7 @@ TRANSLATIONS = {
         'initial_balance': 'Saldo Inicial al 1 de Enero',
         'period_profit_loss': 'Resultado del ejercicio',
         'other_changes': 'Otros cambios',
-        'final_balance': 'Saldo Final',
+        'final_balance': 'Saldo Final a Junio 2025',
         
         # Campos comunes
         'client': 'Cliente',
@@ -79,7 +79,7 @@ TRANSLATIONS = {
         # Títulos principales
         'title_esf': 'STATEMENT OF FINANCIAL POSITION',
         'title_eri': 'STATEMENT OF COMPREHENSIVE INCOME',
-        'title_ecp': 'STATEMENT OF CHANGES IN EQUITY',
+        'title_ecp': 'STATEMENT OF CHANGES OF PATRIMONY',
         'title_movimientos': 'ACCOUNTING TRANSACTIONS',
         
         # ESF - Statement of Financial Position
@@ -87,13 +87,13 @@ TRANSLATIONS = {
         'current_assets': 'Current Assets',
         'non_current_assets': 'Non-Current Assets',
         'total_assets': 'TOTAL ASSETS',
-        'liabilities_equity': 'LIABILITIES AND EQUITY',
+        'liabilities_equity': 'LIABILITIES AND PATRIMONY',
         'current_liabilities': 'Current Liabilities',
         'non_current_liabilities': 'Non-Current Liabilities',
         'total_liabilities': 'TOTAL LIABILITIES',
-        'equity': 'EQUITY',
-        'total_equity': 'TOTAL EQUITY',
-        'total_liabilities_equity': 'TOTAL LIABILITIES AND EQUITY',
+        'equity': 'PATRIMONY',
+        'total_equity': 'TOTAL PATRIMONY',
+        'total_liabilities_equity': 'TOTAL LIABILITIES AND PATRIMONY',
         'period_result': 'Period Result',
         'profit_loss': 'Profit for the Period',
         'loss': 'Loss for the Period',
@@ -116,7 +116,7 @@ TRANSLATIONS = {
         'ganancia_perdida': 'PROFIT OR LOSS',
         'ganancia_perdida_antes_impuestos': 'INCOME BEFORE TAX',
         
-        # ECP - Statement of Changes in Equity
+        # ECP - Statement of Changes in Patrimony
         'concept': 'Concept',
         'capital': 'Capital',
         'other_reserves': 'Other Reserves',
@@ -127,7 +127,7 @@ TRANSLATIONS = {
         'initial_balance': 'Initial Balance at January 1',
         'period_profit_loss': 'Profit (loss) for the period',
         'other_changes': 'Other changes',
-        'final_balance': 'Final Balance',
+        'final_balance': 'Final Balance as of, June 2025',
         
         # Campos comunes
         'client': 'Client',

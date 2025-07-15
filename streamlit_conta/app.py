@@ -183,7 +183,7 @@ def main():
     if menu == "Resumen General":
         resumen.show(data_esf=data.get("esf"), data_eri=data.get("eri"), metadata=metadata)
     elif menu == "ESF":
-        esf.show(data.get("esf"), metadata=metadata)
+        esf.show(data.get("esf"), metadata=metadata, data_eri=data.get("eri"))
     elif menu == "ERI":
         eri.show(data.get("eri"), metadata=metadata)
     elif menu == "Movimientos":

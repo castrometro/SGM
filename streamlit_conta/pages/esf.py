@@ -1,12 +1,49 @@
 import streamlit as st
 import pandas as pd
 
-def show(data_esf=None, metadata=None):
+# Importar la función de cálculo del ERI
+try:
+    from .eri import calcular_total_eri
+except ImportError:
+    # Si falla el import relativo, intentar import absoluto
+    try:
+        from eri import calcular_total_eri
+    except ImportError:
+        # Si todo falla, definir una función dummy
+        def calcular_total_eri(data_eri):
+            return 0.0
+        st.warning("No se pudo importar la función calcular_total_eri del módulo ERI")
+
+def show(data_esf=None, metadata=None, data_eri=None):
     st.subheader("Estado de Situación Financiera (ESF)")
+
+    # DEBUG: Verificar datos recibidos
+    print("=" * 80)
+    print("DEBUG: Parámetros recibidos en ESF:")
+    print(f"- data_esf: {'✓ Recibido' if data_esf is not None else '✗ None'}")
+    print(f"- metadata: {'✓ Recibido' if metadata is not None else '✗ None'}")
+    print(f"- data_eri: {'✓ Recibido' if data_eri is not None else '✗ None'}")
+    print("=" * 80)
+
+    # DEBUG: Ver estructura completa del data_esf
+    print("=" * 80)
+    print("DEBUG: Estructura completa de data_esf:")
+    print("=" * 80)
+    if data_esf:
+        import json
+        print(json.dumps(data_esf, indent=2, ensure_ascii=False))
+    else:
+        print("data_esf is None")
+    print("=" * 80)
 
     # Leer idioma global
     lang_field = st.session_state.get("lang_field", "nombre_es")
     idioma_legible = "Español" if lang_field == "nombre_es" else "English"
+
+    # DEBUG: Ver metadata
+    print("DEBUG: Metadata:")
+    print(metadata)
+    print("-" * 40)
 
     # Encabezado
     if metadata:
@@ -66,7 +103,8 @@ def show(data_esf=None, metadata=None):
         "Total Patrimony": "Total Patrimonio",
         "Total Assets": "Total Activos",
         "Total Liabilities": "Total Pasivos",
-        "Total Liabilities and Patrimony": "Total Pasivos y Patrimonio"
+        "Total Liabilities and Patrimony": "Total Pasivos y Patrimonio",
+        "Earnings / (Loss) for the Period": "Ganancia / (Pérdida) del Ejercicio"
     }
 
     # Función para traducir
@@ -92,8 +130,18 @@ def show(data_esf=None, metadata=None):
 
     # Total Activos
     total_activos = activos_corrientes.get("total", 0) + activos_no_corrientes.get("total", 0)
-    st.markdown(f"<div style='text-align:right;'><b>{traducir('Total Assets')}: {formatear_monto(total_activos, metadata.get('moneda', 'CLP'))}</b></div>", unsafe_allow_html=True)
-    st.markdown("___")
+    st.markdown(f"""
+        <div style='
+            text-align: right; 
+            margin: 20px 0; 
+            padding: 15px; 
+            background-color: #000000; 
+            color: #ffffff; 
+            border-radius: 5px;
+        '>
+            <h3 style='margin: 0;'>{traducir('Total Assets')}: {formatear_monto(total_activos, metadata.get('moneda', 'CLP'))}</h3>
+        </div>
+    """, unsafe_allow_html=True)
 
     # ---------------------------------------------
     # Pasivos Corrientes
@@ -110,8 +158,18 @@ def show(data_esf=None, metadata=None):
     mostrar_bloque(pasivos_no_corrientes, traducir("Total Non-current Liabilities"), metadata.get("moneda", "CLP"), lang_field)
 
     total_pasivos = pasivos_corrientes.get("total", 0) + pasivos_no_corrientes.get("total", 0)
-    st.markdown(f"<div style='text-align:right;'><b>{traducir('Total Liabilities')}: {formatear_monto(total_pasivos, metadata.get('moneda', 'CLP'))}</b></div>", unsafe_allow_html=True)
-    st.markdown("___")
+    st.markdown(f"""
+        <div style='
+            text-align: right; 
+            margin: 20px 0; 
+            padding: 15px; 
+            background-color: #000000; 
+            color: #ffffff; 
+            border-radius: 5px;
+        '>
+            <h3 style='margin: 0;'>{traducir('Total Liabilities')}: {formatear_monto(total_pasivos, metadata.get('moneda', 'CLP'))}</h3>
+        </div>
+    """, unsafe_allow_html=True)
 
     # ---------------------------------------------
     # Patrimonio
@@ -122,9 +180,52 @@ def show(data_esf=None, metadata=None):
 
     total_patrimonio = patrimonio_capital.get("total", 0)
 
-    total_pasivos_patrimonio = total_pasivos + total_patrimonio
-    st.markdown(f"<div style='text-align:right;'><b>{traducir('Total Liabilities and Patrimony')}: {formatear_monto(total_pasivos_patrimonio, metadata.get('moneda', 'CLP'))}</b></div>", unsafe_allow_html=True)
+    # Agregar el total del ERI al patrimonio como subgrupo
+    total_eri = 0.0
+    if data_eri is not None:
+        total_eri = calcular_total_eri(data_eri)
+        print(f"DEBUG: Total ERI calculado: {total_eri}")  # Debug
+        if total_eri != 0.0:
+            # Mostrar el ERI como un expander adicional en Patrimonio
+            with st.expander(f"**{traducir('Earnings / (Loss) for the Period')}** - {formatear_monto(total_eri, metadata.get('moneda', 'CLP'))} ({traducir('Del ERI') if lang_field == 'nombre_es' else 'From ERI'})"):
+                st.info(f"{'Este monto proviene del Estado de Resultado Integral (ERI) y representa el resultado del ejercicio.' if lang_field == 'nombre_es' else 'This amount comes from the Statement of Comprehensive Income (ERI) and represents the earnings for the period.'}")
+                st.markdown(f"**{'Total del Resultado del Ejercicio' if lang_field == 'nombre_es' else 'Total Earnings for the Period'}:** {formatear_monto(total_eri, metadata.get('moneda', 'CLP'))}")
+        else:
+            st.info("El total del ERI es 0, no se muestra en el patrimonio.")
+    else:
+        st.info("No se proporcionaron datos del ERI para incluir en el patrimonio.")
+
+    # Total patrimonio incluyendo ERI
+    total_patrimonio_con_eri = total_patrimonio + total_eri
+
+    # Mostrar total del patrimonio incluyendo ERI
+    st.markdown(f"""
+        <div style='
+            text-align: right; 
+            margin: 15px 0; 
+            padding: 15px; 
+            background-color: #000000; 
+            color: #ffffff; 
+            border-radius: 5px;
+        '>
+            <b>TOTAL {traducir('Patrimony')} (incluyendo resultado del ejercicio): {formatear_monto(total_patrimonio_con_eri, metadata.get('moneda', 'CLP'))}</b>
+        </div>
+    """, unsafe_allow_html=True)
     st.markdown("---")
+
+    total_pasivos_patrimonio = total_pasivos + total_patrimonio_con_eri
+    st.markdown(f"""
+        <div style='
+            text-align: right; 
+            margin: 20px 0; 
+            padding: 15px; 
+            background-color: #000000; 
+            color: #ffffff; 
+            border-radius: 5px;
+        '>
+            <h3 style='margin: 0;'>{traducir('Total Liabilities and Patrimony')}: {formatear_monto(total_pasivos_patrimonio, metadata.get('moneda', 'CLP'))}</h3>
+        </div>
+    """, unsafe_allow_html=True)
 
 def extraer_cuentas_desde_esf(data_esf, lang_field="nombre_es"):
     """
@@ -150,60 +251,84 @@ def extraer_cuentas_desde_esf(data_esf, lang_field="nombre_es"):
 def mostrar_bloque(bloque, total_label, moneda="CLP", lang_field="nombre_es"):
     """
     Muestra un bloque (corriente, no corriente, patrimonio)
-    agrupado por AGRUPACION INFORME.
+    agrupado por AGRUPACION INFORME con UI expandible.
     """
+    # DEBUG: Ver estructura del bloque
+    print(f"\n{'='*60}")
+    print(f"DEBUG: mostrar_bloque - {total_label}")
+    print(f"{'='*60}")
+    print("Estructura del bloque:")
+    import json
+    print(json.dumps(bloque, indent=2, ensure_ascii=False))
+    print(f"{'='*60}")
+    
     if "grupos" in bloque:
+        print(f"DEBUG: El bloque tiene 'grupos'. Cantidad: {len(bloque['grupos'])}")
+        for grupo_key, grupo_info in bloque["grupos"].items():
+            print(f"  - Grupo: {grupo_key}")
+            print(f"    Tipo: {type(grupo_info)}")
+            if isinstance(grupo_info, dict):
+                print(f"    Keys: {list(grupo_info.keys())}")
+                if "cuentas" in grupo_info:
+                    print(f"    Cantidad cuentas: {len(grupo_info['cuentas'])}")
+        print("-" * 40)
+        
         agrupacion = agrupar_por_agrupacion_informe(bloque, lang_field)
 
+        # DEBUG: Ver resultado de agrupación
+        print("DEBUG: Resultado de agrupar_por_agrupacion_informe:")
         for grupo, cuentas in agrupacion.items():
-            st.markdown(f"## {grupo}")
+            print(f"  - {grupo}: {len(cuentas)} cuentas")
+        print("-" * 40)
 
+        # Mostrar grupos con UI expandible
+        for grupo, cuentas in agrupacion.items():
             total_grupo = sum([cuenta["Saldo Final"] for cuenta in cuentas])
+            
+            # Crear el expander con el nombre del grupo y su total
+            with st.expander(f"**{grupo}** - {formatear_monto(total_grupo, moneda)} ({len(cuentas)} cuentas)"):
+                cuentas_formateadas = []
+                for cuenta in cuentas:
+                    cuenta_copia = cuenta.copy()
+                    cuenta_copia["Saldo Final"] = formatear_monto(cuenta["Saldo Final"], moneda)
+                    cuentas_formateadas.append(cuenta_copia)
 
-            cuentas_formateadas = []
-            for cuenta in cuentas:
-                cuenta_copia = cuenta.copy()
-                cuenta_copia["Saldo Final"] = formatear_monto(cuenta["Saldo Final"], moneda)
-                cuentas_formateadas.append(cuenta_copia)
+                df = pd.DataFrame(cuentas_formateadas)
+                if not df.empty:
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    st.info("No hay cuentas en este grupo.")
 
-            df = pd.DataFrame(cuentas_formateadas)
-            if not df.empty:
-                st.dataframe(df, use_container_width=True)
-
-            st.markdown(
-                f"<div style='text-align:right;'><b>Total {grupo}: {formatear_monto(total_grupo, moneda)}</b></div>",
-                unsafe_allow_html=True
-            )
-            st.markdown("---")
-
+        # Mostrar total del bloque
         total_bloque = bloque.get("total", 0)
-        st.markdown(f"<div style='text-align:right;'><b>{total_label}: {formatear_monto(total_bloque, moneda)}</b></div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align:right; margin-top: 15px; padding: 15px; background-color: #000000; color: #ffffff; border-radius: 5px;'><b>{total_label}: {formatear_monto(total_bloque, moneda)}</b></div>", unsafe_allow_html=True)
         st.markdown("---")
 
     elif "cuentas" in bloque:
         cuentas = bloque.get("cuentas", [])
-        cuentas_formateadas = []
         total_bloque = 0.0
-
+        
+        # Calcular total del bloque
         for cuenta in cuentas:
-            saldo_final = cuenta.get("saldo_final", 0)
-            total_bloque += saldo_final
-            cuentas_formateadas.append({
-                "Código": cuenta.get("codigo", ""),
-                "Nombre": cuenta.get(lang_field, cuenta.get("nombre_en", "")),
-                "Saldo Final": formatear_monto(saldo_final, moneda)
-            })
+            total_bloque += cuenta.get("saldo_final", 0)
 
-        df = pd.DataFrame(cuentas_formateadas)
-        if not df.empty:
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.markdown("_No hay cuentas en este bloque._")
+        # Mostrar como un solo expander
+        with st.expander(f"**{total_label}** - {formatear_monto(total_bloque, moneda)} ({len(cuentas)} cuentas)"):
+            cuentas_formateadas = []
+            for cuenta in cuentas:
+                saldo_final = cuenta.get("saldo_final", 0)
+                cuentas_formateadas.append({
+                    "Código": cuenta.get("codigo", ""),
+                    "Nombre": cuenta.get(lang_field, cuenta.get("nombre_en", "")),
+                    "Saldo Final": formatear_monto(saldo_final, moneda)
+                })
 
-        st.markdown(
-            f"<div style='text-align:right;'><b>{total_label}: {formatear_monto(total_bloque, moneda)}</b></div>",
-            unsafe_allow_html=True
-        )
+            df = pd.DataFrame(cuentas_formateadas)
+            if not df.empty:
+                st.dataframe(df, use_container_width=True)
+            else:
+                st.info("No hay cuentas en este bloque.")
+
         st.markdown("---")
 
     else:
@@ -214,14 +339,34 @@ def agrupar_por_agrupacion_informe(bloque, lang_field="nombre_es"):
     """
     Agrupa cuentas según clasificaciones_cliente["AGRUPACION INFORME"].
     """
+    # DEBUG: Ver proceso de agrupación
+    print(f"\n{'*'*50}")
+    print("DEBUG: agrupar_por_agrupacion_informe")
+    print(f"{'*'*50}")
+    
     grupos = bloque.get("grupos", {})
+    print(f"Grupos encontrados: {list(grupos.keys())}")
+    
     agrupacion_final = {}
 
     for grupo, info in grupos.items():
+        print(f"\nProcesando grupo: {grupo}")
+        print(f"Info del grupo: {type(info)} - Keys: {list(info.keys()) if isinstance(info, dict) else 'No es dict'}")
+        
         cuentas = info.get("cuentas", [])
-        for cuenta in cuentas:
+        print(f"Cuentas en este grupo: {len(cuentas)}")
+        
+        for i, cuenta in enumerate(cuentas):
+            print(f"  Cuenta {i+1}:")
+            print(f"    Código: {cuenta.get('codigo', 'N/A')}")
+            print(f"    Nombre: {cuenta.get(lang_field, cuenta.get('nombre_en', 'N/A'))}")
+            print(f"    Saldo final: {cuenta.get('saldo_final', 0)}")
+            
             clasif = cuenta.get("clasificaciones_cliente", {})
+            print(f"    Clasificaciones cliente: {clasif}")
+            
             agrupacion_informe = clasif.get("AGRUPACION INFORME", grupo)
+            print(f"    Agrupación informe: {agrupacion_informe}")
 
             nombre_cuenta = cuenta.get(lang_field, cuenta.get("nombre_en", ""))
 
@@ -234,6 +379,8 @@ def agrupar_por_agrupacion_informe(bloque, lang_field="nombre_es"):
                 "Saldo Final": cuenta.get("saldo_final", 0)
             })
 
+    print(f"\nAgrupación final: {list(agrupacion_final.keys())}")
+    print(f"{'*'*50}")
     return agrupacion_final
 
 

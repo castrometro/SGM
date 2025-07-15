@@ -58,10 +58,28 @@ def show(data_eri=None, metadata=None):
         st.info("No se encontraron cuentas en el ERI.")
 
     # Procesar cada bloque definido en BLOQUES_ERI
+    total_general = 0.0
     for bloque_key in BLOQUES_ERI:
         bloque_data = data_eri.get(bloque_key)
         if bloque_data:
-            procesar_bloque_eri(bloque_data, metadata, lang_field)
+            total_bloque = procesar_bloque_eri(bloque_data, metadata, lang_field)
+            total_general += total_bloque
+
+    # Mostrar Total General al final
+    if total_general != 0.0:
+        st.markdown(f"""
+            <div style='
+            text-align: right; 
+            margin: 20px 0; 
+            padding: 20px; 
+            background-color: #000000; 
+            color: #ffffff; 
+            border-radius: 5px;
+            border: 2px solid #666666;
+        '>
+                <h3 style='margin: 0; font-weight: bold;'>TOTAL GENERAL (Earning / (Loss)): {formatear_monto(total_general, metadata.get('moneda', 'CLP'))}</h3>
+            </div>
+        """, unsafe_allow_html=True)
 
 
 def procesar_bloque_eri(bloque, metadata, lang_field):
@@ -70,109 +88,77 @@ def procesar_bloque_eri(bloque, metadata, lang_field):
 
     total_bloque = 0.0
 
-    # 1. Procesar cuentas sueltas en el bloque
+    # 1. Procesar cuentas sueltas en el bloque (si las hay)
     cuentas_sueltas = bloque.get("cuentas", [])
     if cuentas_sueltas:
-        st.markdown("### Cuentas Directas del Bloque")
         agrupaciones = agrupar_por_agrupacion_informe(cuentas_sueltas, lang_field)
         total_sueltas = 0.0
 
         for agrupacion, cuentas_agrupadas in agrupaciones.items():
-            st.markdown(f"#### {agrupacion}")
             total_agrupacion = sum(c["Saldo Final"] for c in cuentas_agrupadas)
             total_sueltas += total_agrupacion
 
-            cuentas_formateadas = [
-                {"Código": c.get("Código", ""), "Nombre": c.get("Nombre", ""), "Saldo Final": formatear_monto(c.get("Saldo Final", 0.0), metadata.get("moneda", "CLP"))}
-                for c in cuentas_agrupadas
-            ]
-            df = pd.DataFrame(cuentas_formateadas)
-            if not df.empty:
-                st.dataframe(df[["Código", "Nombre", "Saldo Final"]], use_container_width=True)
-            st.markdown(
-                f"<div style='text-align:right; font-weight:bold;'>Total {agrupacion}: {formatear_monto(total_agrupacion, metadata.get('moneda', 'CLP'))}</div>",
-                unsafe_allow_html=True
-            )
-            st.markdown("---")
+            # Crear el expander con el nombre del grupo y su total
+            with st.expander(f"**{agrupacion}** - {formatear_monto(total_agrupacion, metadata.get('moneda', 'CLP'))} ({len(cuentas_agrupadas)} cuentas)"):
+                cuentas_formateadas = [
+                    {"Código": c.get("Código", ""), "Nombre": c.get("Nombre", ""), "Saldo Final": formatear_monto(c.get("Saldo Final", 0.0), metadata.get("moneda", "CLP"))}
+                    for c in cuentas_agrupadas
+                ]
+                df = pd.DataFrame(cuentas_formateadas)
+                if not df.empty:
+                    st.dataframe(df[["Código", "Nombre", "Saldo Final"]], use_container_width=True)
+                else:
+                    st.info("No hay cuentas en esta agrupación.")
 
-        st.markdown(f"""
-            <div style='
-                display: flex;
-                justify-content: space-between;
-                border-top: 1px solid #ddd;
-                margin-top: 8px;
-                padding-top: 5px;
-                font-weight: bold;
-                color: #0A58CA;
-            '>
-                <div>TOTAL Cuentas Directas</div>
-                <div>{formatear_monto(total_sueltas, metadata.get("moneda", "CLP"))}</div>
-            </div>
-        """, unsafe_allow_html=True)
-        st.markdown("___")
         total_bloque += total_sueltas
 
     # 2. Procesar grupos en el bloque
     grupos = bloque.get("grupos", {})
     for grupo_nombre, grupo_info in grupos.items():
         grupo_titulo = grupo_info.get(lang_field, grupo_nombre)
-        st.markdown(f"### {grupo_titulo}")
         cuentas = grupo_info.get("cuentas", [])
         agrupaciones = agrupar_por_agrupacion_informe(cuentas, lang_field)
 
         total_grupo = 0.0
         for agrupacion, cuentas_agrupadas in agrupaciones.items():
-            if agrupacion != grupo_titulo:
-                st.markdown(f"#### {agrupacion}")
             total_agrupacion = sum(c["Saldo Final"] for c in cuentas_agrupadas)
             total_grupo += total_agrupacion
-            cuentas_formateadas = [
-                {"Código": c.get("Código", ""), "Nombre": c.get("Nombre", ""), "Saldo Final": formatear_monto(c.get("Saldo Final", 0.0), metadata.get("moneda", "CLP"))}
-                for c in cuentas_agrupadas
-            ]
-            df = pd.DataFrame(cuentas_formateadas)
-            if not df.empty:
-                st.dataframe(df[["Código", "Nombre", "Saldo Final"]], use_container_width=True)
-            st.markdown(
-                f"<div style='text-align:right; font-weight:bold;'>Total {agrupacion}: {formatear_monto(total_agrupacion, metadata.get('moneda', 'CLP'))}</div>",
-                unsafe_allow_html=True
-            )
-            st.markdown("---")
+            
+            # Usar el título del grupo si la agrupación es igual, sino usar la agrupación
+            titulo_mostrar = grupo_titulo if agrupacion == grupo_titulo else agrupacion
+            
+            # Crear el expander con el nombre del grupo y su total
+            with st.expander(f"**{titulo_mostrar}** - {formatear_monto(total_agrupacion, metadata.get('moneda', 'CLP'))} ({len(cuentas_agrupadas)} cuentas)"):
+                cuentas_formateadas = [
+                    {"Código": c.get("Código", ""), "Nombre": c.get("Nombre", ""), "Saldo Final": formatear_monto(c.get("Saldo Final", 0.0), metadata.get("moneda", "CLP"))}
+                    for c in cuentas_agrupadas
+                ]
+                df = pd.DataFrame(cuentas_formateadas)
+                if not df.empty:
+                    st.dataframe(df[["Código", "Nombre", "Saldo Final"]], use_container_width=True)
+                else:
+                    st.info("No hay cuentas en esta agrupación.")
 
-        st.markdown(f"""
-            <div style='
-                display: flex;
-                justify-content: space-between;
-                border-top: 1px solid #ddd;
-                margin-top: 8px;
-                padding-top: 5px;
-                font-weight: bold;
-                color: #0A58CA;
-            '>
-                <div>TOTAL {grupo_titulo}</div>
-                <div>{formatear_monto(total_grupo, metadata.get("moneda", "CLP"))}</div>
-            </div>
-        """, unsafe_allow_html=True)
-        st.markdown("___")
         total_bloque += total_grupo
 
-    # Total del bloque
+    # Total del bloque principal
     st.markdown(f"""
         <div style='
-            display: flex;
-            justify-content: space-between;
-            border-top: 2px solid #0A58CA;
-            margin-top: 10px;
-            padding-top: 8px;
-            font-size: 18px;
-            font-weight: bold;
-            color: #0A58CA;
+            text-align: right; 
+            margin: 20px 0; 
+            padding: 15px; 
+            background-color: #000000; 
+            color: #ffffff; 
+            border-radius: 5px;
+            border: 2px solid #666666;
         '>
-            <div>TOTAL {nombre_bloque}</div>
-            <div>{formatear_monto(total_bloque, metadata.get('moneda', 'CLP'))}</div>
+            <h3 style='margin: 0;'>TOTAL {nombre_bloque}: {formatear_monto(total_bloque, metadata.get('moneda', 'CLP'))}</h3>
         </div>
     """, unsafe_allow_html=True)
     st.markdown("---")
+    
+    # Devolver el total del bloque para el cálculo del total general
+    return total_bloque
 
 
 def extraer_cuentas_desde_eri(data_eri, lang_field="nombre_es"):
@@ -233,3 +219,38 @@ def formatear_monto(monto, moneda="CLP"):
     elif moneda.upper() == "EUR":
         return f"€{monto_formateado}"
     return f"{monto_formateado} {moneda}"
+
+def calcular_total_eri(data_eri):
+    """
+    Calcula el total general del ERI sin mostrar ninguna UI.
+    Retorna el total para ser usado en otros reportes como ESF.
+    """
+    if data_eri is None:
+        return 0.0
+    
+    total_general = 0.0
+    for bloque_key in BLOQUES_ERI:
+        bloque_data = data_eri.get(bloque_key)
+        if bloque_data:
+            total_bloque = 0.0
+            
+            # Procesar cuentas sueltas en el bloque (si las hay)
+            cuentas_sueltas = bloque_data.get("cuentas", [])
+            if cuentas_sueltas:
+                agrupaciones = agrupar_por_agrupacion_informe(cuentas_sueltas, "nombre_es")
+                for agrupacion, cuentas_agrupadas in agrupaciones.items():
+                    total_agrupacion = sum(c["Saldo Final"] for c in cuentas_agrupadas)
+                    total_bloque += total_agrupacion
+            
+            # Procesar grupos en el bloque
+            grupos = bloque_data.get("grupos", {})
+            for grupo_nombre, grupo_info in grupos.items():
+                cuentas = grupo_info.get("cuentas", [])
+                agrupaciones = agrupar_por_agrupacion_informe(cuentas, "nombre_es")
+                for agrupacion, cuentas_agrupadas in agrupaciones.items():
+                    total_agrupacion = sum(c["Saldo Final"] for c in cuentas_agrupadas)
+                    total_bloque += total_agrupacion
+            
+            total_general += total_bloque
+    
+    return total_general

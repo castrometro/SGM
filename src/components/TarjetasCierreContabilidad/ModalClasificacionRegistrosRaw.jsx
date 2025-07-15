@@ -22,7 +22,7 @@ import {
   eliminarClasificacionPersistente,
   // Migración de temporales a FK
   migrarClasificacionesTemporalesAFK
-} from '../api/contabilidad';
+} from '../../api/contabilidad';
 
 const ModalClasificacionRegistrosRaw = ({ 
   isOpen, 

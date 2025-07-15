@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import EstadoBadge from "../EstadoBadge";
-import ModalClasificacionRegistrosRaw from "../ModalClasificacionRegistrosRaw";
+import ModalClasificacionRegistrosRaw from "./ModalClasificacionRegistrosRaw";
 import Notificacion from "../Notificacion";
 import {
   Download,

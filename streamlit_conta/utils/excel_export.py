@@ -65,7 +65,9 @@ def create_excel_download_button(
         workbook = None
         
         if report_type == 'esf':
-            workbook = excel_generator.generate_esf_template(data, metadata)
+            # Para ESF necesitamos también datos del ERI para incluir ganancia/pérdida del ejercicio
+            data_eri = extra_data.get('data_eri') if extra_data else None
+            workbook = excel_generator.generate_esf_template(data, metadata, data_eri)
         elif report_type == 'eri':
             workbook = excel_generator.generate_eri_template(data, metadata)
         elif report_type == 'ecp':

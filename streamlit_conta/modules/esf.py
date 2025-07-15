@@ -99,7 +99,8 @@ def show(data_esf=None, metadata=None, data_eri=None):
             metadata=metadata or {},
             report_type='esf',
             button_label="📊 Descargar ESF en Excel",
-            file_prefix="estado_situacion_financiera"
+            file_prefix="estado_situacion_financiera",
+            extra_data={'data_eri': data_eri}  # Incluir datos ERI para ganancia/pérdida del ejercicio
         )
     
     with col2:

@@ -1,7 +1,22 @@
 """
 Utilidades para crear y manejar templates de Excel para los informes contables.
-Genera archivos Excel con formato profesional basado en los datos del dashboard.
+DEPRECATED: Este archivo se está migrando al módulo excel/ modular.
+Mantiene compatibilidad hacia atrás mientras se completa la migración.
 """
+
+# Importar el nuevo sistema modular
+try:
+    from .excel import excel_generator
+    print("✅ Usando sistema modular de Excel templates")
+    
+    # Re-exportar para compatibilidad
+    __all__ = ['excel_generator']
+    
+except ImportError as e:
+    # Fallback al sistema antiguo si hay problemas
+    print(f"⚠️  Fallback al sistema antiguo de Excel templates: {e}")
+    
+    # Importar todo el código original como fallback
 
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
@@ -20,6 +35,113 @@ class ExcelTemplateGenerator:
     """Generador de templates Excel para informes contables"""
     
     def __init__(self):
+        # Traducciones para títulos y etiquetas
+        self.translations = {
+            'es': {
+                'title_esf': 'ESTADO DE SITUACIÓN FINANCIERA',
+                'title_eri': 'ESTADO DE RESULTADO INTEGRAL',
+                'title_ecp': 'ESTADO DE CAMBIOS EN EL PATRIMONIO',
+                'title_movimientos': 'MOVIMIENTOS CONTABLES',
+                'assets': 'ACTIVOS',
+                'current_assets': 'Activos Corrientes',
+                'non_current_assets': 'Activos No Corrientes',
+                'total_assets': 'TOTAL ACTIVOS',
+                'liabilities_equity': 'PASIVOS Y PATRIMONIO',
+                'current_liabilities': 'Pasivos Corrientes',
+                'non_current_liabilities': 'Pasivos No Corrientes',
+                'total_liabilities': 'TOTAL PASIVOS',
+                'equity': 'PATRIMONIO',
+                'total_equity': 'TOTAL PATRIMONIO',
+                'total_liabilities_equity': 'TOTAL PASIVOS Y PATRIMONIO',
+                'period_result': 'Resultado del Ejercicio',
+                'profit_loss': 'Ganancia del Ejercicio',
+                'loss': 'Pérdida del Ejercicio',
+                'total_period_result': 'TOTAL RESULTADO DEL EJERCICIO',
+                'client': 'Cliente',
+                'period': 'Período',
+                'currency': 'Moneda',
+                'date': 'Fecha',
+                'no_movements': '(Sin movimientos)',
+                'no_data': '(Sin datos disponibles)',
+                'totals': 'TOTALES:',
+                'total_general': 'TOTAL GENERAL (Ganancia/Pérdida)',
+                'info_sheet': 'Información del Reporte',
+                'report_info': 'INFORMACIÓN DEL REPORTE',
+                'language': 'Idioma',
+                'spanish': 'Español',
+                'generation_date': 'Fecha de generación',
+                'system': 'Sistema',
+                'version': 'Versión',
+                # Bloques ERI
+                'ganancias_brutas': 'Ganancias Brutas',
+                'ganancia_perdida': 'Ganancia (Pérdida)',
+                'ganancia_perdida_antes_impuestos': 'Ganancia (Pérdida) Antes de Impuestos',
+                # ECP
+                'initial_balance': 'Saldo Inicial al 1 de Enero',
+                'period_result_ecp': 'Resultado del ejercicio',
+                'other_changes': 'Otros cambios',
+                'final_balance': 'Saldo Final',
+                'concept': 'Concepto',
+                'capital': 'Capital',
+                'other_reserves': 'Otras Reservas',
+                'accumulated_results': 'Resultados Acumulados',
+                'attributable_capital': 'Capital Atribuible',
+                'non_controlling_interests': 'Participaciones no Controladoras'
+            },
+            'en': {
+                'title_esf': 'STATEMENT OF FINANCIAL POSITION',
+                'title_eri': 'STATEMENT OF COMPREHENSIVE INCOME',
+                'title_ecp': 'STATEMENT OF CHANGES IN EQUITY',
+                'title_movimientos': 'ACCOUNTING TRANSACTIONS',
+                'assets': 'ASSETS',
+                'current_assets': 'Current Assets',
+                'non_current_assets': 'Non-Current Assets',
+                'total_assets': 'TOTAL ASSETS',
+                'liabilities_equity': 'LIABILITIES AND EQUITY',
+                'current_liabilities': 'Current Liabilities',
+                'non_current_liabilities': 'Non-Current Liabilities',
+                'total_liabilities': 'TOTAL LIABILITIES',
+                'equity': 'EQUITY',
+                'total_equity': 'TOTAL EQUITY',
+                'total_liabilities_equity': 'TOTAL LIABILITIES AND EQUITY',
+                'period_result': 'Period Result',
+                'profit_loss': 'Profit for the Period',
+                'loss': 'Loss for the Period',
+                'total_period_result': 'TOTAL PERIOD RESULT',
+                'client': 'Client',
+                'period': 'Period',
+                'currency': 'Currency',
+                'date': 'Date',
+                'no_movements': '(No movements)',
+                'no_data': '(No data available)',
+                'totals': 'TOTAL:',
+                'total_general': 'TOTAL GENERAL (Profit/Loss)',
+                'info_sheet': 'Report Information',
+                'report_info': 'REPORT INFORMATION',
+                'language': 'Language',
+                'spanish': 'Spanish',
+                'english': 'English',
+                'generation_date': 'Generation Date',
+                'system': 'System',
+                'version': 'Version',
+                # Bloques ERI
+                'ganancias_brutas': 'Gross Earnings',
+                'ganancia_perdida': 'Earnings (Loss)',
+                'ganancia_perdida_antes_impuestos': 'Earnings (Loss) Before Taxes',
+                # ECP
+                'initial_balance': 'Initial Balance as of January 1, 2025',
+                'period_result_ecp': 'Result of the Exercise',
+                'other_changes': 'Other Settings',
+                'final_balance': 'Final Balance',
+                'concept': 'Concept',
+                'capital': 'Capital',
+                'other_reserves': 'Other Reserves',
+                'accumulated_results': 'R. Accumulated',
+                'attributable_capital': 'Capital Attributable to the owners of the controller\'s instruments',
+                'non_controlling_interests': 'Uncontrolled participations'
+            }
+        }
+        
         # Estilos predefinidos
         self.styles = {
             'title': Font(name='Arial', size=16, bold=True, color='FFFFFF'),
@@ -53,6 +175,18 @@ class ExcelTemplateGenerator:
             )
         }
 
+    def _get_text(self, key, language='es'):
+        """Obtener texto traducido según el idioma"""
+        lang = 'en' if language.lower() in ['en', 'english', 'inglés'] else 'es'
+        return self.translations.get(lang, {}).get(key, key)
+
+    def _get_account_name(self, cuenta, language='es'):
+        """Obtener nombre de cuenta según el idioma"""
+        if language.lower() in ['en', 'english', 'inglés']:
+            return cuenta.get("nombre_en", cuenta.get("nombre_es", ""))
+        else:
+            return cuenta.get("nombre_es", cuenta.get("nombre_en", ""))
+
     def _apply_header_style(self, worksheet, start_row, start_col, end_col, title=""):
         """Aplicar estilo de encabezado a un rango de celdas"""
         if title:
@@ -81,25 +215,26 @@ class ExcelTemplateGenerator:
                 if row % 2 == 0:
                     cell.fill = self.fills['alternate']
 
-    def _add_metadata_sheet(self, workbook, metadata):
+    def _add_metadata_sheet(self, workbook, metadata, language='es'):
         """Agregar hoja con metadatos del informe"""
-        ws = workbook.create_sheet("Información del Reporte")
+        ws = workbook.create_sheet(self._get_text('info_sheet', language))
         
         # Título
-        ws.cell(row=1, column=1, value="INFORMACIÓN DEL REPORTE")
+        title_text = self._get_text('report_info', language)
+        ws.cell(row=1, column=1, value=title_text)
         ws.cell(row=1, column=1).font = self.styles['title']
         ws.cell(row=1, column=1).fill = self.fills['title']
         ws.merge_cells('A1:B1')
         
         # Metadatos
         info_data = [
-            ("Cliente:", metadata.get('cliente_nombre', 'N/A')),
-            ("Período:", metadata.get('periodo', 'N/A')),
-            ("Moneda:", metadata.get('moneda', 'CLP')),
-            ("Idioma:", metadata.get('idioma', 'Español')),
-            ("Fecha de generación:", datetime.now().strftime("%d/%m/%Y %H:%M")),
-            ("Sistema:", "SGM Dashboard Contable"),
-            ("Versión:", "v1.0")
+            (f"{self._get_text('client', language)}:", metadata.get('cliente_nombre', 'N/A')),
+            (f"{self._get_text('period', language)}:", metadata.get('periodo', 'N/A')),
+            (f"{self._get_text('currency', language)}:", metadata.get('moneda', 'CLP')),
+            (f"{self._get_text('language', language)}:", metadata.get('idioma', self._get_text('spanish', language))),
+            (f"{self._get_text('generation_date', language)}:", datetime.now().strftime("%d/%m/%Y %H:%M")),
+            (f"{self._get_text('system', language)}:", "SGM Dashboard Contable"),
+            (f"{self._get_text('version', language)}:", "v1.0")
         ]
         
         for i, (label, value) in enumerate(info_data, start=3):
@@ -110,58 +245,190 @@ class ExcelTemplateGenerator:
         ws.column_dimensions['A'].width = 20
         ws.column_dimensions['B'].width = 30
 
-    def generate_esf_template(self, data_esf, metadata):
+    def _calcular_total_eri(self, data_eri):
+        """Calcular el total de ganancia/pérdida del ERI"""
+        if not data_eri:
+            return 0
+        
+        total_eri = 0
+        # Sumar todos los bloques del ERI
+        bloques_eri = [
+            "ganancias_brutas",
+            "ganancia_perdida", 
+            "ganancia_perdida_antes_impuestos"
+        ]
+        
+        for bloque_key in bloques_eri:
+            bloque_data = data_eri.get(bloque_key, {})
+            if isinstance(bloque_data, dict) and "total" in bloque_data:
+                total_eri += bloque_data["total"]
+        
+        return total_eri
+
+    def _debug_data_structure(self, data, section_name=""):
+        """Debug helper para verificar estructura de datos"""
+        logger.info(f"=== DEBUG {section_name} ===")
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, dict):
+                    logger.info(f"{key}: dict con {len(value)} elementos")
+                    if "total" in value:
+                        logger.info(f"  - total: {value['total']}")
+                    if "grupos" in value:
+                        logger.info(f"  - grupos: {len(value['grupos'])} grupos")
+                        for grupo_name in value['grupos'].keys():
+                            logger.info(f"    * {grupo_name}")
+                    if "cuentas" in value:
+                        logger.info(f"  - cuentas: {len(value['cuentas'])} cuentas")
+                elif isinstance(value, list):
+                    logger.info(f"{key}: lista con {len(value)} elementos")
+                else:
+                    logger.info(f"{key}: {type(value)} = {value}")
+        else:
+            logger.info(f"Data type: {type(data)} = {data}")
+        logger.info(f"=== FIN DEBUG {section_name} ===")
+
+    def generate_esf_template(self, data_esf, metadata, data_eri=None):
         """Generar template Excel para Estado de Situación Financiera"""
+        # Obtener idioma de los metadatos
+        language = metadata.get('idioma', 'es')
+        
+        # Debug de la estructura de datos
+        if data_esf and logger.isEnabledFor(logging.INFO):
+            self._debug_data_structure(data_esf, "DATA_ESF_COMPLETA")
+            if "patrimonio" in data_esf:
+                self._debug_data_structure(data_esf["patrimonio"], "PATRIMONIO")
+        
         workbook = openpyxl.Workbook()
         ws = workbook.active
-        ws.title = "Estado de Situación Financiera"
+        ws.title = self._get_text('title_esf', language)
         
         # Título principal
-        ws.cell(row=1, column=1, value="ESTADO DE SITUACIÓN FINANCIERA")
-        self._apply_header_style(ws, 1, 1, 4, "ESTADO DE SITUACIÓN FINANCIERA")
+        title_text = self._get_text('title_esf', language)
+        ws.cell(row=1, column=1, value=title_text)
+        self._apply_header_style(ws, 1, 1, 4, title_text)
         
         # Información del período
         current_row = 3
-        ws.cell(row=current_row, column=1, value=f"Cliente: {metadata.get('cliente_nombre', 'N/A')}")
-        ws.cell(row=current_row, column=3, value=f"Período: {metadata.get('periodo', 'N/A')}")
+        ws.cell(row=current_row, column=1, value=f"{self._get_text('client', language)}: {metadata.get('cliente_nombre', 'N/A')}")
+        ws.cell(row=current_row, column=3, value=f"{self._get_text('period', language)}: {metadata.get('periodo', 'N/A')}")
         current_row += 1
-        ws.cell(row=current_row, column=1, value=f"Moneda: {metadata.get('moneda', 'CLP')}")
-        ws.cell(row=current_row, column=3, value=f"Fecha: {datetime.now().strftime('%d/%m/%Y')}")
+        ws.cell(row=current_row, column=1, value=f"{self._get_text('currency', language)}: {metadata.get('moneda', 'CLP')}")
+        ws.cell(row=current_row, column=3, value=f"{self._get_text('date', language)}: {datetime.now().strftime('%d/%m/%Y')}")
         current_row += 2
         
         # Extraer y procesar datos
         if data_esf:
             # ACTIVOS
-            ws.cell(row=current_row, column=1, value="ACTIVOS").font = self.styles['header']
+            ws.cell(row=current_row, column=1, value=self._get_text('assets', language)).font = self.styles['header']
             ws.cell(row=current_row, column=1).fill = self.fills['header']
             current_row += 1
             
             # Activos Corrientes
             activos_corrientes = data_esf.get("activos", {}).get("corrientes", {})
-            current_row = self._add_esf_section(ws, current_row, "Activos Corrientes", activos_corrientes, metadata.get("moneda", "CLP"))
+            current_row = self._add_esf_section(ws, current_row, self._get_text('current_assets', language), activos_corrientes, metadata.get("moneda", "CLP"), language)
             
             # Activos No Corrientes
             activos_no_corrientes = data_esf.get("activos", {}).get("no_corrientes", {})
-            current_row = self._add_esf_section(ws, current_row, "Activos No Corrientes", activos_no_corrientes, metadata.get("moneda", "CLP"))
+            current_row = self._add_esf_section(ws, current_row, self._get_text('non_current_assets', language), activos_no_corrientes, metadata.get("moneda", "CLP"), language)
+            
+            # Total Activos
+            total_activos = data_esf.get("activos", {}).get("total_activos", 0)
+            if total_activos != 0:
+                current_row += 1
+                ws.cell(row=current_row, column=1, value=self._get_text('total_assets', language)).font = self.styles['total']
+                ws.cell(row=current_row, column=2, value=self._format_amount(total_activos, metadata.get("moneda", "CLP"))).font = self.styles['total']
+                ws.cell(row=current_row, column=1).fill = self.fills['total']
+                ws.cell(row=current_row, column=2).fill = self.fills['total']
             
             current_row += 1
             
             # PASIVOS Y PATRIMONIO
-            ws.cell(row=current_row, column=1, value="PASIVOS Y PATRIMONIO").font = self.styles['header']
+            ws.cell(row=current_row, column=1, value=self._get_text('liabilities_equity', language)).font = self.styles['header']
             ws.cell(row=current_row, column=1).fill = self.fills['header']
             current_row += 1
             
             # Pasivos Corrientes
             pasivos_corrientes = data_esf.get("pasivos", {}).get("corrientes", {})
-            current_row = self._add_esf_section(ws, current_row, "Pasivos Corrientes", pasivos_corrientes, metadata.get("moneda", "CLP"))
+            current_row = self._add_esf_section(ws, current_row, self._get_text('current_liabilities', language), pasivos_corrientes, metadata.get("moneda", "CLP"), language)
             
             # Pasivos No Corrientes
             pasivos_no_corrientes = data_esf.get("pasivos", {}).get("no_corrientes", {})
-            current_row = self._add_esf_section(ws, current_row, "Pasivos No Corrientes", pasivos_no_corrientes, metadata.get("moneda", "CLP"))
+            current_row = self._add_esf_section(ws, current_row, self._get_text('non_current_liabilities', language), pasivos_no_corrientes, metadata.get("moneda", "CLP"), language)
             
-            # Patrimonio
+            # Total Pasivos
+            total_pasivos = data_esf.get("pasivos", {}).get("total_pasivos", 0)
+            if total_pasivos != 0:
+                current_row += 1
+                ws.cell(row=current_row, column=1, value=self._get_text('total_liabilities', language)).font = self.styles['total']
+                ws.cell(row=current_row, column=2, value=self._format_amount(total_pasivos, metadata.get("moneda", "CLP"))).font = self.styles['total']
+                ws.cell(row=current_row, column=1).fill = self.fills['total']
+                ws.cell(row=current_row, column=2).fill = self.fills['total']
+                current_row += 2
+            
+            # Patrimonio - manejar estructura anidada
             patrimonio = data_esf.get("patrimonio", {})
-            current_row = self._add_esf_section(ws, current_row, "Patrimonio", patrimonio, metadata.get("moneda", "CLP"))
+            if patrimonio:
+                # Título principal de Patrimonio
+                ws.cell(row=current_row, column=1, value=self._get_text('equity', language)).font = self.styles['header']
+                ws.cell(row=current_row, column=1).fill = self.fills['header']
+                current_row += 1
+                
+                # Procesar cada subcategoría de patrimonio (ej: capital)
+                total_patrimonio = 0
+                for subcategoria_key, subcategoria_data in patrimonio.items():
+                    if isinstance(subcategoria_data, dict) and subcategoria_key not in ['total_patrimonio']:
+                        # Usar nombre en idioma apropiado si está disponible
+                        if language.lower() in ['en', 'english', 'inglés']:
+                            section_name = subcategoria_data.get('nombre_en', subcategoria_data.get('nombre_es', subcategoria_key))
+                        else:
+                            section_name = subcategoria_data.get('nombre_es', subcategoria_data.get('nombre_en', subcategoria_key))
+                        current_row = self._add_esf_section(ws, current_row, section_name, subcategoria_data, metadata.get("moneda", "CLP"), language)
+                        total_patrimonio += subcategoria_data.get('total', 0)
+                
+                # Agregar Ganancia/(Pérdida) del Ejercicio del ERI
+                total_eri = self._calcular_total_eri(data_eri)
+                if total_eri != 0:
+                    # Título de la subcategoría
+                    ws.cell(row=current_row, column=1, value=self._get_text('period_result', language)).font = self.styles['subheader']
+                    ws.cell(row=current_row, column=1).fill = self.fills['subheader']
+                    current_row += 1
+                    
+                    # Línea del resultado
+                    ganancia_perdida_texto = self._get_text('profit_loss', language) if total_eri > 0 else self._get_text('loss', language)
+                    ws.cell(row=current_row, column=1, value=f"  {ganancia_perdida_texto} (Del ERI)")
+                    ws.cell(row=current_row, column=2, value=self._format_amount(total_eri, metadata.get("moneda", "CLP")))
+                    current_row += 1
+                    
+                    # Total de resultado del ejercicio
+                    ws.cell(row=current_row, column=1, value=self._get_text('total_period_result', language)).font = self.styles['total']
+                    ws.cell(row=current_row, column=2, value=self._format_amount(total_eri, metadata.get("moneda", "CLP"))).font = self.styles['total']
+                    ws.cell(row=current_row, column=1).fill = self.fills['total']
+                    ws.cell(row=current_row, column=2).fill = self.fills['total']
+                    current_row += 2
+                    
+                    # Agregar al total del patrimonio
+                    total_patrimonio += total_eri
+                
+                # Total patrimonio
+                if total_patrimonio != 0:
+                    current_row += 1
+                    ws.cell(row=current_row, column=1, value=self._get_text('total_equity', language)).font = self.styles['total']
+                    ws.cell(row=current_row, column=2, value=self._format_amount(total_patrimonio, metadata.get("moneda", "CLP"))).font = self.styles['total']
+                    ws.cell(row=current_row, column=1).fill = self.fills['total']
+                    ws.cell(row=current_row, column=2).fill = self.fills['total']
+                    current_row += 2
+            
+            # TOTAL FINAL: PASIVOS Y PATRIMONIO
+            current_row += 1
+            total_pasivos = data_esf.get("pasivos", {}).get("total_pasivos", 0)
+            # Usar el total de patrimonio ya calculado que incluye el ERI
+            total_pasivos_patrimonio = total_pasivos + total_patrimonio
+            
+            ws.cell(row=current_row, column=1, value=self._get_text('total_liabilities_equity', language)).font = self.styles['total']
+            ws.cell(row=current_row, column=2, value=self._format_amount(total_pasivos_patrimonio, metadata.get("moneda", "CLP"))).font = self.styles['total']
+            ws.cell(row=current_row, column=1).fill = self.fills['total']
+            ws.cell(row=current_row, column=2).fill = self.fills['total']
         
         # Ajustar anchos de columna
         ws.column_dimensions['A'].width = 40
@@ -170,12 +437,12 @@ class ExcelTemplateGenerator:
         ws.column_dimensions['D'].width = 20
         
         # Agregar hoja de metadatos
-        self._add_metadata_sheet(workbook, metadata)
+        self._add_metadata_sheet(workbook, metadata, language)
         
         return workbook
 
-    def _add_esf_section(self, ws, start_row, section_title, section_data, moneda):
-        """Agregar una sección del ESF al worksheet"""
+    def _add_esf_section(self, ws, start_row, section_title, section_data, moneda, language='es'):
+        """Agregar una sección del ESF al worksheet con grupos colapsables"""
         current_row = start_row
         
         # Título de la sección
@@ -186,60 +453,105 @@ class ExcelTemplateGenerator:
         total_section = 0
         
         if isinstance(section_data, dict):
-            if "grupos" in section_data:
-                # Formato con grupos
+            if "grupos" in section_data and section_data["grupos"]:
+                # Formato con grupos - crear grupos colapsables
                 for grupo_nombre, grupo_data in section_data.get("grupos", {}).items():
-                    ws.cell(row=current_row, column=1, value=f"  {grupo_nombre}").font = self.styles['data']
-                    current_row += 1
-                    
-                    for cuenta in grupo_data.get("cuentas", []):
-                        codigo = cuenta.get("codigo", "")
-                        nombre = cuenta.get("nombre_es", cuenta.get("nombre_en", ""))
-                        saldo = cuenta.get("saldo_final", 0)
+                    if isinstance(grupo_data, dict):
+                        # Título del grupo - usar nombre según idioma
+                        if language.lower() in ['en', 'english', 'inglés']:
+                            grupo_display_name = grupo_data.get('nombre_en', grupo_data.get('nombre_es', grupo_nombre))
+                        else:
+                            grupo_display_name = grupo_data.get('nombre_es', grupo_data.get('nombre_en', grupo_nombre))
                         
-                        ws.cell(row=current_row, column=1, value=f"    {codigo} - {nombre}")
-                        ws.cell(row=current_row, column=2, value=self._format_amount(saldo, moneda))
+                        grupo_row = current_row
+                        ws.cell(row=current_row, column=1, value=f"  {grupo_display_name}").font = self.styles['data']
+                        ws.cell(row=current_row, column=2, value=self._format_amount(grupo_data.get('total', 0), moneda)).font = self.styles['data']
                         current_row += 1
-                        total_section += saldo
                         
-            elif "cuentas" in section_data:
+                        # Filas de inicio y fin para el grupo
+                        grupo_start_row = current_row
+                        
+                        # Agregar cuentas del grupo
+                        for cuenta in grupo_data.get("cuentas", []):
+                            codigo = cuenta.get("codigo", "")
+                            nombre = self._get_account_name(cuenta, language)
+                            saldo = cuenta.get("saldo_final", 0)
+                            
+                            ws.cell(row=current_row, column=1, value=f"    {codigo} - {nombre}")
+                            ws.cell(row=current_row, column=2, value=self._format_amount(saldo, moneda))
+                            current_row += 1
+                            total_section += saldo
+                        
+                        # Crear grupo colapsable solo si hay cuentas
+                        if grupo_data.get("cuentas") and current_row > grupo_start_row:
+                            try:
+                                # Crear grupo colapsable desde grupo_start_row hasta current_row-1
+                                ws.row_dimensions.group(grupo_start_row, current_row - 1, outline_level=1)
+                                # Por defecto, dejar el grupo colapsado
+                                for row_num in range(grupo_start_row, current_row):
+                                    ws.row_dimensions[row_num].hidden = True
+                            except Exception as e:
+                                # Si falla la agrupación, continuar sin ella
+                                pass
+                        
+                        # Agregar espacio después del grupo si tiene cuentas
+                        if grupo_data.get("cuentas"):
+                            current_row += 1
+                            
+            elif "cuentas" in section_data and section_data["cuentas"]:
                 # Formato con cuentas directas
                 for cuenta in section_data.get("cuentas", []):
                     codigo = cuenta.get("codigo", "")
-                    nombre = cuenta.get("nombre_es", cuenta.get("nombre_en", ""))
+                    nombre = self._get_account_name(cuenta, language)
                     saldo = cuenta.get("saldo_final", 0)
                     
                     ws.cell(row=current_row, column=1, value=f"  {codigo} - {nombre}")
                     ws.cell(row=current_row, column=2, value=self._format_amount(saldo, moneda))
                     current_row += 1
                     total_section += saldo
+            else:
+                # Si no hay grupos ni cuentas, mostrar mensaje
+                ws.cell(row=current_row, column=1, value=f"  {self._get_text('no_movements', language)}").font = self.styles['metadata']
+                current_row += 1
             
-            # Total de la sección
+            # Usar el total precalculado si existe, sino usar el calculado
             if "total" in section_data:
                 total_section = section_data["total"]
             
+            # Solo mostrar total si hay datos
             if total_section != 0:
                 ws.cell(row=current_row, column=1, value=f"TOTAL {section_title.upper()}").font = self.styles['total']
                 ws.cell(row=current_row, column=2, value=self._format_amount(total_section, moneda)).font = self.styles['total']
                 ws.cell(row=current_row, column=1).fill = self.fills['total']
                 ws.cell(row=current_row, column=2).fill = self.fills['total']
                 current_row += 2
+        else:
+            # Si section_data no es un diccionario válido
+            ws.cell(row=current_row, column=1, value=f"  {self._get_text('no_data', language)}").font = self.styles['metadata']
+            current_row += 2
         
         return current_row
 
     def generate_eri_template(self, data_eri, metadata):
         """Generar template Excel para Estado de Resultado Integral"""
+        # Obtener idioma de los metadatos
+        language = metadata.get('idioma', 'es')
+        
         workbook = openpyxl.Workbook()
         ws = workbook.active
-        ws.title = "Estado de Resultado Integral"
+        ws.title = self._get_text('title_eri', language)
         
         # Título principal
-        self._apply_header_style(ws, 1, 1, 4, "ESTADO DE RESULTADO INTEGRAL")
+        title_text = self._get_text('title_eri', language)
+        self._apply_header_style(ws, 1, 1, 4, title_text)
         
         # Información del período
         current_row = 3
-        ws.cell(row=current_row, column=1, value=f"Cliente: {metadata.get('cliente_nombre', 'N/A')}")
-        ws.cell(row=current_row, column=3, value=f"Período: {metadata.get('periodo', 'N/A')}")
+        ws.cell(row=current_row, column=1, value=f"{self._get_text('client', language)}: {metadata.get('cliente_nombre', 'N/A')}")
+        ws.cell(row=current_row, column=3, value=f"{self._get_text('period', language)}: {metadata.get('periodo', 'N/A')}")
+        current_row += 1
+        ws.cell(row=current_row, column=1, value=f"{self._get_text('currency', language)}: {metadata.get('moneda', 'CLP')}")
+        ws.cell(row=current_row, column=3, value=f"{self._get_text('date', language)}: {datetime.now().strftime('%d/%m/%Y')}")
         current_row += 2
         
         if data_eri:
@@ -255,12 +567,12 @@ class ExcelTemplateGenerator:
             for bloque_key in bloques_eri:
                 bloque_data = data_eri.get(bloque_key)
                 if bloque_data:
-                    current_row, total_bloque = self._add_eri_section(ws, current_row, bloque_key, bloque_data, metadata.get("moneda", "CLP"))
+                    current_row, total_bloque = self._add_eri_section(ws, current_row, bloque_key, bloque_data, metadata.get("moneda", "CLP"), language)
                     total_general += total_bloque
             
             # Total General
             current_row += 1
-            ws.cell(row=current_row, column=1, value="TOTAL GENERAL (Ganancia/Pérdida)").font = self.styles['total']
+            ws.cell(row=current_row, column=1, value=self._get_text('total_general', language)).font = self.styles['total']
             ws.cell(row=current_row, column=2, value=self._format_amount(total_general, metadata.get("moneda", "CLP"))).font = self.styles['total']
             ws.cell(row=current_row, column=1).fill = self.fills['total']
             ws.cell(row=current_row, column=2).fill = self.fills['total']
@@ -272,16 +584,16 @@ class ExcelTemplateGenerator:
         ws.column_dimensions['D'].width = 15
         
         # Agregar hoja de metadatos
-        self._add_metadata_sheet(workbook, metadata)
+        self._add_metadata_sheet(workbook, metadata, language)
         
         return workbook
 
-    def _add_eri_section(self, ws, start_row, bloque_key, bloque_data, moneda):
-        """Agregar una sección del ERI al worksheet"""
+    def _add_eri_section(self, ws, start_row, bloque_key, bloque_data, moneda, language='es'):
+        """Agregar una sección del ERI al worksheet con grupos colapsables"""
         current_row = start_row
         
-        # Título del bloque
-        titulo_bloque = bloque_key.replace("_", " ").title()
+        # Título del bloque - usar traducción si está disponible
+        titulo_bloque = self._get_text(bloque_key, language)
         ws.cell(row=current_row, column=1, value=titulo_bloque).font = self.styles['subheader']
         ws.cell(row=current_row, column=1).fill = self.fills['subheader']
         current_row += 1
@@ -290,19 +602,49 @@ class ExcelTemplateGenerator:
         
         if isinstance(bloque_data, dict):
             if "grupos" in bloque_data:
+                # Procesar grupos con agrupación colapsable
                 for grupo_nombre, grupo_data in bloque_data.get("grupos", {}).items():
-                    ws.cell(row=current_row, column=1, value=f"  {grupo_nombre}").font = self.styles['data']
-                    current_row += 1
-                    
-                    for cuenta in grupo_data.get("cuentas", []):
-                        codigo = cuenta.get("codigo", "")
-                        nombre = cuenta.get("nombre_es", cuenta.get("nombre_en", ""))
-                        saldo = cuenta.get("saldo_final", 0)
+                    if isinstance(grupo_data, dict):
+                        # Título del grupo - usar nombre según idioma
+                        if language.lower() in ['en', 'english', 'inglés']:
+                            grupo_display_name = grupo_data.get('nombre_en', grupo_data.get('nombre_es', grupo_nombre))
+                        else:
+                            grupo_display_name = grupo_data.get('nombre_es', grupo_data.get('nombre_en', grupo_nombre))
                         
-                        ws.cell(row=current_row, column=1, value=f"    {codigo} - {nombre}")
-                        ws.cell(row=current_row, column=2, value=self._format_amount(saldo, moneda))
+                        # Mostrar total del grupo
+                        ws.cell(row=current_row, column=1, value=f"  {grupo_display_name}").font = self.styles['data']
+                        ws.cell(row=current_row, column=2, value=self._format_amount(grupo_data.get('total', 0), moneda)).font = self.styles['data']
                         current_row += 1
-                        total_bloque += saldo
+                        
+                        # Filas de inicio y fin para el grupo
+                        grupo_start_row = current_row
+                        
+                        # Agregar cuentas del grupo
+                        for cuenta in grupo_data.get("cuentas", []):
+                            codigo = cuenta.get("codigo", "")
+                            nombre = self._get_account_name(cuenta, language)
+                            saldo = cuenta.get("saldo_final", 0)
+                            
+                            ws.cell(row=current_row, column=1, value=f"    {codigo} - {nombre}")
+                            ws.cell(row=current_row, column=2, value=self._format_amount(saldo, moneda))
+                            current_row += 1
+                            total_bloque += saldo
+                        
+                        # Crear grupo colapsable solo si hay cuentas
+                        if grupo_data.get("cuentas") and current_row > grupo_start_row:
+                            try:
+                                # Crear grupo colapsable desde grupo_start_row hasta current_row-1
+                                ws.row_dimensions.group(grupo_start_row, current_row - 1, outline_level=1)
+                                # Por defecto, dejar el grupo colapsado
+                                for row_num in range(grupo_start_row, current_row):
+                                    ws.row_dimensions[row_num].hidden = True
+                            except Exception as e:
+                                # Si falla la agrupación, continuar sin ella
+                                pass
+                        
+                        # Agregar espacio después del grupo si tiene cuentas
+                        if grupo_data.get("cuentas"):
+                            current_row += 1
             
             # Total del bloque
             if "total" in bloque_data:
@@ -379,22 +721,33 @@ class ExcelTemplateGenerator:
 
     def generate_ecp_template(self, data_ecp, metadata, data_eri=None):
         """Generar template Excel para Estado de Cambios en el Patrimonio"""
+        # Obtener idioma de los metadatos
+        language = metadata.get('idioma', 'es')
+        
         workbook = openpyxl.Workbook()
         ws = workbook.active
-        ws.title = "Estado de Cambios Patrimonio"
+        ws.title = self._get_text('title_ecp', language)
         
         # Título principal
-        self._apply_header_style(ws, 1, 1, 7, "ESTADO DE CAMBIOS EN EL PATRIMONIO")
+        title_text = self._get_text('title_ecp', language)
+        self._apply_header_style(ws, 1, 1, 7, title_text)
         
         # Información del período
         current_row = 3
-        ws.cell(row=current_row, column=1, value=f"Cliente: {metadata.get('cliente_nombre', 'N/A')}")
-        ws.cell(row=current_row, column=5, value=f"Período: {metadata.get('periodo', 'N/A')}")
+        ws.cell(row=current_row, column=1, value=f"{self._get_text('client', language)}: {metadata.get('cliente_nombre', 'N/A')}")
+        ws.cell(row=current_row, column=5, value=f"{self._get_text('period', language)}: {metadata.get('periodo', 'N/A')}")
         current_row += 2
         
         # Encabezados de columnas
-        headers = ["Concepto", "Capital", "Otras Reservas", "Resultados Acumulados", 
-                  "Capital Atribuible", "Participaciones no Controladoras", "Total"]
+        headers = [
+            self._get_text('concept', language),
+            self._get_text('capital', language),
+            self._get_text('other_reserves', language),
+            self._get_text('accumulated_results', language),
+            self._get_text('attributable_capital', language),
+            self._get_text('non_controlling_interests', language),
+            self._get_text('totals', language).replace(':', '')
+        ]
         
         for col_idx, header in enumerate(headers, 1):
             cell = ws.cell(row=current_row, column=col_idx, value=header)
@@ -405,16 +758,39 @@ class ExcelTemplateGenerator:
         current_row += 1
         
         if data_ecp:
-            # Procesar datos del ECP
-            patrimonio_data = data_ecp.get("patrimonio", {})
-            capital_data = patrimonio_data.get("capital", {})
-            otras_reservas_data = patrimonio_data.get("otras_reservas", {})
+            # Debug de la estructura de datos ECP
+            if logger.isEnabledFor(logging.INFO):
+                self._debug_data_structure(data_ecp, "DATA_ECP_COMPLETA")
             
-            # Calcular totales
-            capital_inicial = capital_data.get("saldo_anterior", 0)
-            capital_cambios = capital_data.get("cambios", 0)
-            otras_reservas_inicial = otras_reservas_data.get("saldo_anterior", 0)
-            otras_reservas_cambios = otras_reservas_data.get("cambios", 0)
+            # Procesar datos del ECP - manejar diferentes estructuras posibles
+            patrimonio_data = data_ecp.get("patrimonio", data_ecp)  # Puede estar directamente en data_ecp
+            
+            # Extraer datos de Capital
+            capital_data = patrimonio_data.get("capital", {})
+            if isinstance(capital_data, dict):
+                capital_inicial = capital_data.get("saldo_inicial", capital_data.get("saldo_anterior", 0))
+                capital_cambios = capital_data.get("cambios", capital_data.get("movimientos", 0))
+                capital_final = capital_data.get("saldo_final", capital_inicial + capital_cambios)
+            else:
+                capital_inicial = capital_cambios = capital_final = 0
+            
+            # Extraer datos de Otras Reservas
+            otras_reservas_data = patrimonio_data.get("otras_reservas", patrimonio_data.get("reservas", {}))
+            if isinstance(otras_reservas_data, dict):
+                otras_reservas_inicial = otras_reservas_data.get("saldo_inicial", otras_reservas_data.get("saldo_anterior", 0))
+                otras_reservas_cambios = otras_reservas_data.get("cambios", otras_reservas_data.get("movimientos", 0))
+                otras_reservas_final = otras_reservas_data.get("saldo_final", otras_reservas_inicial + otras_reservas_cambios)
+            else:
+                otras_reservas_inicial = otras_reservas_cambios = otras_reservas_final = 0
+            
+            # Extraer datos de Resultados Acumulados
+            resultados_data = patrimonio_data.get("resultados_acumulados", patrimonio_data.get("utilidades_retenidas", {}))
+            if isinstance(resultados_data, dict):
+                resultados_inicial = resultados_data.get("saldo_inicial", resultados_data.get("saldo_anterior", 0))
+                resultados_cambios = resultados_data.get("cambios", resultados_data.get("movimientos", 0))
+                resultados_final = resultados_data.get("saldo_final", resultados_inicial + resultados_cambios)
+            else:
+                resultados_inicial = resultados_cambios = resultados_final = 0
             
             # Resultado del ejercicio del ERI
             total_eri = 0
@@ -428,16 +804,16 @@ class ExcelTemplateGenerator:
             # Datos de las filas
             filas_ecp = [
                 {
-                    "Concepto": "Saldo Inicial al 1 de Enero",
+                    "Concepto": self._get_text('initial_balance', language),
                     "Capital": capital_inicial,
                     "Otras Reservas": otras_reservas_inicial,
-                    "Resultados Acumulados": 0,  # Simplificado
-                    "Capital Atribuible": capital_inicial + otras_reservas_inicial,
+                    "Resultados Acumulados": resultados_inicial,
+                    "Capital Atribuible": capital_inicial + otras_reservas_inicial + resultados_inicial,
                     "Participaciones no Controladoras": 0,
-                    "Total": capital_inicial + otras_reservas_inicial
+                    "Total": capital_inicial + otras_reservas_inicial + resultados_inicial
                 },
                 {
-                    "Concepto": "Resultado del ejercicio",
+                    "Concepto": self._get_text('period_result_ecp', language),
                     "Capital": 0,
                     "Otras Reservas": 0,
                     "Resultados Acumulados": total_eri,
@@ -446,22 +822,22 @@ class ExcelTemplateGenerator:
                     "Total": total_eri
                 },
                 {
-                    "Concepto": "Otros cambios",
+                    "Concepto": self._get_text('other_changes', language),
                     "Capital": capital_cambios,
                     "Otras Reservas": otras_reservas_cambios,
-                    "Resultados Acumulados": 0,
-                    "Capital Atribuible": capital_cambios + otras_reservas_cambios,
+                    "Resultados Acumulados": resultados_cambios,
+                    "Capital Atribuible": capital_cambios + otras_reservas_cambios + resultados_cambios,
                     "Participaciones no Controladoras": 0,
-                    "Total": capital_cambios + otras_reservas_cambios
+                    "Total": capital_cambios + otras_reservas_cambios + resultados_cambios
                 },
                 {
-                    "Concepto": "Saldo Final",
+                    "Concepto": self._get_text('final_balance', language),
                     "Capital": capital_inicial + capital_cambios,
                     "Otras Reservas": otras_reservas_inicial + otras_reservas_cambios,
-                    "Resultados Acumulados": total_eri,
-                    "Capital Atribuible": capital_inicial + capital_cambios + otras_reservas_inicial + otras_reservas_cambios + total_eri,
+                    "Resultados Acumulados": resultados_inicial + resultados_cambios + total_eri,
+                    "Capital Atribuible": capital_inicial + capital_cambios + otras_reservas_inicial + otras_reservas_cambios + resultados_inicial + resultados_cambios + total_eri,
                     "Participaciones no Controladoras": 0,
-                    "Total": capital_inicial + capital_cambios + otras_reservas_inicial + otras_reservas_cambios + total_eri
+                    "Total": capital_inicial + capital_cambios + otras_reservas_inicial + otras_reservas_cambios + resultados_inicial + resultados_cambios + total_eri
                 }
             ]
             
@@ -479,7 +855,13 @@ class ExcelTemplateGenerator:
                     cell.border = self.borders['thin']
                     
                     # Resaltar filas de saldo inicial y final
-                    if fila["Concepto"] in ["Saldo Inicial al 1 de Enero", "Saldo Final"]:
+                    balance_concepts = [
+                        self._get_text('initial_balance', language),
+                        self._get_text('final_balance', language),
+                        "Saldo Inicial al 1 de Enero",  # Compatibilidad
+                        "Saldo Final"  # Compatibilidad
+                    ]
+                    if fila["Concepto"] in balance_concepts:
                         cell.fill = self.fills['total']
                         cell.font = self.styles['total']
                 
@@ -491,7 +873,7 @@ class ExcelTemplateGenerator:
             ws.column_dimensions[column_letter].width = 18
         
         # Agregar hoja de metadatos
-        self._add_metadata_sheet(workbook, metadata)
+        self._add_metadata_sheet(workbook, metadata, language)
         
         return workbook
 
@@ -506,11 +888,11 @@ class ExcelTemplateGenerator:
             return 0
         
         if moneda == "USD":
-            return f"${amount:,.2f}"
+            return f"${amount:,.2f} USD"
         elif moneda == "EUR":
-            return f"€{amount:,.2f}"
+            return f"€{amount:,.2f} EUR"
         else:  # CLP por defecto
-            return f"${amount:,.0f}"
+            return f"${amount:,.0f} CLP"
 
     def workbook_to_bytes(self, workbook):
         """Convertir workbook a bytes para descarga"""

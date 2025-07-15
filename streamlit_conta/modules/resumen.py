@@ -1,11 +1,37 @@
 import streamlit as st
 import pandas as pd
 
+# Importar utilidades de exportación Excel
+try:
+    from utils.excel_export import create_template_download_section, show_excel_export_help
+except ImportError:
+    # Si no se puede importar, crear funciones dummy
+    def create_template_download_section():
+        st.warning("⚠️ Funcionalidad de templates Excel no disponible")
+    def show_excel_export_help():
+        pass
+
 def show(data_esf=None, data_eri=None, metadata=None):
     st.subheader("Resumen General")
 
-    """ st.write("Aquí irá el resumen general del dashboard contable.")
-    st.info("Este es un módulo independiente. Aquí puedes agregar métricas generales, gráficos o KPIs.") """
+    # Sección de templates Excel
+    st.markdown("---")
+    create_template_download_section()
+    
+    # Ayuda sobre exportación Excel
+    st.markdown("---")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown("### 📖 Guía de Exportación Excel")
+        st.info("""
+        🎯 **¿Nuevo en las exportaciones Excel?** Haz clic en "Ver Guía Completa" para conocer 
+        todas las funcionalidades disponibles y cómo aprovechar al máximo los reportes en Excel.
+        """)
+    with col2:
+        if st.button("📚 Ver Guía Completa", help="Mostrar ayuda detallada sobre Excel"):
+            show_excel_export_help()
+    
+    st.markdown("---")
 
     # Llamar a conciliación si tenemos datos
     if data_esf and data_eri:

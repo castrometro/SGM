@@ -19,7 +19,6 @@ from .models import (
     ClasificacionOption,
     ClasificacionSet,
     CuentaContable,
-    Incidencia,
     LibroMayorArchivo,  # Nuevo modelo para manejar archivos de libro mayor
     MovimientoContable,
     NombreIngles,
@@ -34,10 +33,11 @@ from .models import (
 
 # ✨ NUEVO: Importar modelos de incidencias consolidadas
 from .models_incidencias import (
+    Incidencia,
     IncidenciaResumen,
 )
 # ✨ NUEVO: Importar modelo de excepciones
-from .models import ExcepcionValidacion
+from .models import ExcepcionValidacion, ExcepcionClasificacionSet
 
 
 class IncidenciaDetalleFilter(admin.SimpleListFilter):
@@ -1351,6 +1351,106 @@ class ExcepcionValidacionAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('cliente', 'usuario_creador')
+
+
+@admin.register(ExcepcionClasificacionSet)
+class ExcepcionClasificacionSetAdmin(admin.ModelAdmin):
+    """Admin para gestionar excepciones específicas por set de clasificación"""
+    list_display = [
+        'cliente',
+        'cuenta_codigo',
+        'cuenta_nombre_display',
+        'set_clasificacion',
+        'activa',
+        'fecha_creacion',
+        'usuario_creador'
+    ]
+    list_filter = [
+        'activa',
+        'fecha_creacion',
+        'cliente',
+        'set_clasificacion',
+        'set_clasificacion__nombre'
+    ]
+    search_fields = [
+        'cuenta_codigo',
+        'cliente__nombre',
+        'cliente__rut',
+        'set_clasificacion__nombre',
+        'motivo',
+        'usuario_creador__username'
+    ]
+    readonly_fields = [
+        'fecha_creacion',
+        'cuenta_nombre_display'
+    ]
+    raw_id_fields = [
+        'set_clasificacion'
+    ]
+    
+    fieldsets = (
+        ('Información Básica', {
+            'fields': (
+                'cliente',
+                'cuenta_codigo',
+                'cuenta_nombre_display',
+                'set_clasificacion',
+                'activa'
+            )
+        }),
+        ('Justificación', {
+            'fields': (
+                'motivo',
+                'usuario_creador'
+            )
+        }),
+        ('Fechas', {
+            'fields': (
+                'fecha_creacion',
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def cuenta_nombre_display(self, obj):
+        """Muestra el nombre de la cuenta si existe"""
+        return obj.cuenta_nombre
+    cuenta_nombre_display.short_description = 'Nombre de la Cuenta'
+    
+    def get_queryset(self, request):
+        """Optimizar consultas con select_related"""
+        return super().get_queryset(request).select_related(
+            'cliente', 
+            'set_clasificacion', 
+            'usuario_creador'
+        )
+    
+    def save_model(self, request, obj, form, change):
+        """Establece el usuario creador automáticamente al crear"""
+        if not change and hasattr(request, 'user'):
+            obj.usuario_creador = request.user
+        super().save_model(request, obj, form, change)
+    
+    # Acciones personalizadas
+    actions = ['activar_excepciones', 'desactivar_excepciones']
+    
+    def activar_excepciones(self, request, queryset):
+        """Activa las excepciones seleccionadas"""
+        updated = queryset.update(activa=True)
+        self.message_user(
+            request,
+            f'Se activaron {updated} excepción(es) de clasificación.'
+        )
+    activar_excepciones.short_description = 'Activar excepciones seleccionadas'
+    
+    def desactivar_excepciones(self, request, queryset):
+        """Desactiva las excepciones seleccionadas"""
+        updated = queryset.update(activa=False)
+        self.message_user(
+            request,
+            f'Se desactivaron {updated} excepción(es) de clasificación.'
+        )
+    desactivar_excepciones.short_description = 'Desactivar excepciones seleccionadas'
 
 
 # ===============================================================================

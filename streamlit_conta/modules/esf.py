@@ -14,36 +14,46 @@ except ImportError:
             return 0.0
         st.warning("No se pudo importar la función calcular_total_eri del módulo ERI")
 
+# Importar utilidades de exportación Excel
+try:
+    from utils.excel_export import create_excel_download_button, show_excel_export_help
+except ImportError:
+    # Si no se puede importar, crear funciones dummy
+    def create_excel_download_button(*args, **kwargs):
+        st.warning("⚠️ Funcionalidad de exportación Excel no disponible")
+    def show_excel_export_help():
+        pass
+
 def show(data_esf=None, metadata=None, data_eri=None):
     st.subheader("Estado de Situación Financiera (ESF)")
 
-    # DEBUG: Verificar datos recibidos
-    print("=" * 80)
-    print("DEBUG: Parámetros recibidos en ESF:")
-    print(f"- data_esf: {'✓ Recibido' if data_esf is not None else '✗ None'}")
-    print(f"- metadata: {'✓ Recibido' if metadata is not None else '✗ None'}")
-    print(f"- data_eri: {'✓ Recibido' if data_eri is not None else '✗ None'}")
-    print("=" * 80)
+    # DEBUG: Verificar datos recibidos (comentado para evitar output en sidebar)
+    # print("=" * 80)
+    # print("DEBUG: Parámetros recibidos en ESF:")
+    # print(f"- data_esf: {'✓ Recibido' if data_esf is not None else '✗ None'}")
+    # print(f"- metadata: {'✓ Recibido' if metadata is not None else '✗ None'}")
+    # print(f"- data_eri: {'✓ Recibido' if data_eri is not None else '✗ None'}")
+    # print("=" * 80)
 
-    # DEBUG: Ver estructura completa del data_esf
-    print("=" * 80)
-    print("DEBUG: Estructura completa de data_esf:")
-    print("=" * 80)
-    if data_esf:
-        import json
-        print(json.dumps(data_esf, indent=2, ensure_ascii=False))
-    else:
-        print("data_esf is None")
-    print("=" * 80)
+    # DEBUG: Ver estructura completa del data_esf (comentado)
+    # print("=" * 80)
+    # print("DEBUG: Estructura completa de data_esf:")
+    # print("=" * 80)
+    # if data_esf:
+    #     import json
+    #     print(json.dumps(data_esf, indent=2, ensure_ascii=False))
+    # else:
+    #     print("data_esf is None")
+    # print("=" * 80)
 
     # Leer idioma global
     lang_field = st.session_state.get("lang_field", "nombre_es")
     idioma_legible = "Español" if lang_field == "nombre_es" else "English"
 
-    # DEBUG: Ver metadata
-    print("DEBUG: Metadata:")
-    print(metadata)
-    print("-" * 40)
+    # DEBUG: Ver metadata (comentado)
+    # print("DEBUG: Metadata:")
+    # print(metadata)
+    # print("-" * 40)
 
     # Encabezado
     if metadata:
@@ -75,6 +85,29 @@ def show(data_esf=None, metadata=None, data_eri=None):
     if data_esf is None:
         st.info("Aún no se ha cargado ningún archivo ESF.")
         return
+    
+    # ===========================
+    # BOTÓN DE EXPORTACIÓN EXCEL
+    # ===========================
+    st.markdown("---")
+    col1, col2, col3 = st.columns([2, 2, 1])
+    
+    with col1:
+        st.markdown("### 📥 Exportar Reporte")
+        create_excel_download_button(
+            data=data_esf,
+            metadata=metadata or {},
+            report_type='esf',
+            button_label="📊 Descargar ESF en Excel",
+            file_prefix="estado_situacion_financiera"
+        )
+    
+    with col2:
+        if st.button("❓ Ayuda Excel", help="Ver información sobre la exportación Excel"):
+            show_excel_export_help()
+    
+    st.markdown("---")
+    
     # ===========================
     # Mostrar cantidad de cuentas ESF
     # ===========================
@@ -84,7 +117,8 @@ def show(data_esf=None, metadata=None, data_eri=None):
     st.markdown(f"#### Total cuentas procesadas en ESF: **{len(cuentas_esf)}**")
 
     if not cuentas_esf.empty:
-        st.dataframe(cuentas_esf, use_container_width=True)
+        with st.expander(f"Ver detalle de las {len(cuentas_esf)} cuentas procesadas"):
+            st.dataframe(cuentas_esf, use_container_width=True)
     else:
         st.info("No se encontraron cuentas en el ESF.")
 
@@ -184,7 +218,7 @@ def show(data_esf=None, metadata=None, data_eri=None):
     total_eri = 0.0
     if data_eri is not None:
         total_eri = calcular_total_eri(data_eri)
-        print(f"DEBUG: Total ERI calculado: {total_eri}")  # Debug
+        # print(f"DEBUG: Total ERI calculado: {total_eri}")  # Debug comentado
         if total_eri != 0.0:
             # Mostrar el ERI como un expander adicional en Patrimonio
             with st.expander(f"**{traducir('Earnings / (Loss) for the Period')}** - {formatear_monto(total_eri, metadata.get('moneda', 'CLP'))} ({traducir('Del ERI') if lang_field == 'nombre_es' else 'From ERI'})"):
@@ -253,33 +287,34 @@ def mostrar_bloque(bloque, total_label, moneda="CLP", lang_field="nombre_es"):
     Muestra un bloque (corriente, no corriente, patrimonio)
     agrupado por AGRUPACION INFORME con UI expandible.
     """
-    # DEBUG: Ver estructura del bloque
-    print(f"\n{'='*60}")
-    print(f"DEBUG: mostrar_bloque - {total_label}")
-    print(f"{'='*60}")
-    print("Estructura del bloque:")
-    import json
-    print(json.dumps(bloque, indent=2, ensure_ascii=False))
-    print(f"{'='*60}")
+    # DEBUG: Ver estructura del bloque (comentado)
+    # print(f"\n{'='*60}")
+    # print(f"DEBUG: mostrar_bloque - {total_label}")
+    # print(f"{'='*60}")
+    # print("Estructura del bloque:")
+    # import json
+    # print(json.dumps(bloque, indent=2, ensure_ascii=False))
+    # print(f"{'='*60}")
     
     if "grupos" in bloque:
-        print(f"DEBUG: El bloque tiene 'grupos'. Cantidad: {len(bloque['grupos'])}")
+        # print(f"DEBUG: El bloque tiene 'grupos'. Cantidad: {len(bloque['grupos'])}")
         for grupo_key, grupo_info in bloque["grupos"].items():
-            print(f"  - Grupo: {grupo_key}")
-            print(f"    Tipo: {type(grupo_info)}")
+            # print(f"  - Grupo: {grupo_key}")
+            # print(f"    Tipo: {type(grupo_info)}")
             if isinstance(grupo_info, dict):
-                print(f"    Keys: {list(grupo_info.keys())}")
+                # print(f"    Keys: {list(grupo_info.keys())}")
                 if "cuentas" in grupo_info:
-                    print(f"    Cantidad cuentas: {len(grupo_info['cuentas'])}")
-        print("-" * 40)
+                    # print(f"    Cantidad cuentas: {len(grupo_info['cuentas'])}")
+                    pass
+        # print("-" * 40)
         
         agrupacion = agrupar_por_agrupacion_informe(bloque, lang_field)
 
-        # DEBUG: Ver resultado de agrupación
-        print("DEBUG: Resultado de agrupar_por_agrupacion_informe:")
-        for grupo, cuentas in agrupacion.items():
-            print(f"  - {grupo}: {len(cuentas)} cuentas")
-        print("-" * 40)
+        # DEBUG: Ver resultado de agrupación (comentado)
+        # print("DEBUG: Resultado de agrupar_por_agrupacion_informe:")
+        # for grupo, cuentas in agrupacion.items():
+        #     print(f"  - {grupo}: {len(cuentas)} cuentas")
+        # print("-" * 40)
 
         # Mostrar grupos con UI expandible
         for grupo, cuentas in agrupacion.items():
@@ -339,34 +374,34 @@ def agrupar_por_agrupacion_informe(bloque, lang_field="nombre_es"):
     """
     Agrupa cuentas según clasificaciones_cliente["AGRUPACION INFORME"].
     """
-    # DEBUG: Ver proceso de agrupación
-    print(f"\n{'*'*50}")
-    print("DEBUG: agrupar_por_agrupacion_informe")
-    print(f"{'*'*50}")
+    # DEBUG: Ver proceso de agrupación (comentado)
+    # print(f"\n{'*'*50}")
+    # print("DEBUG: agrupar_por_agrupacion_informe")
+    # print(f"{'*'*50}")
     
     grupos = bloque.get("grupos", {})
-    print(f"Grupos encontrados: {list(grupos.keys())}")
+    # print(f"Grupos encontrados: {list(grupos.keys())}")
     
     agrupacion_final = {}
 
     for grupo, info in grupos.items():
-        print(f"\nProcesando grupo: {grupo}")
-        print(f"Info del grupo: {type(info)} - Keys: {list(info.keys()) if isinstance(info, dict) else 'No es dict'}")
+        # print(f"\nProcesando grupo: {grupo}")
+        # print(f"Info del grupo: {type(info)} - Keys: {list(info.keys()) if isinstance(info, dict) else 'No es dict'}")
         
         cuentas = info.get("cuentas", [])
-        print(f"Cuentas en este grupo: {len(cuentas)}")
+        # print(f"Cuentas en este grupo: {len(cuentas)}")
         
         for i, cuenta in enumerate(cuentas):
-            print(f"  Cuenta {i+1}:")
-            print(f"    Código: {cuenta.get('codigo', 'N/A')}")
-            print(f"    Nombre: {cuenta.get(lang_field, cuenta.get('nombre_en', 'N/A'))}")
-            print(f"    Saldo final: {cuenta.get('saldo_final', 0)}")
+            # print(f"  Cuenta {i+1}:")
+            # print(f"    Código: {cuenta.get('codigo', 'N/A')}")
+            # print(f"    Nombre: {cuenta.get(lang_field, cuenta.get('nombre_en', 'N/A'))}")
+            # print(f"    Saldo final: {cuenta.get('saldo_final', 0)}")
             
             clasif = cuenta.get("clasificaciones_cliente", {})
-            print(f"    Clasificaciones cliente: {clasif}")
+            # print(f"    Clasificaciones cliente: {clasif}")
             
             agrupacion_informe = clasif.get("AGRUPACION INFORME", grupo)
-            print(f"    Agrupación informe: {agrupacion_informe}")
+            # print(f"    Agrupación informe: {agrupacion_informe}")
 
             nombre_cuenta = cuenta.get(lang_field, cuenta.get("nombre_en", ""))
 
@@ -379,8 +414,8 @@ def agrupar_por_agrupacion_informe(bloque, lang_field="nombre_es"):
                 "Saldo Final": cuenta.get("saldo_final", 0)
             })
 
-    print(f"\nAgrupación final: {list(agrupacion_final.keys())}")
-    print(f"{'*'*50}")
+    # print(f"\nAgrupación final: {list(agrupacion_final.keys())}")
+    # print(f"{'*'*50}")
     return agrupacion_final
 
 

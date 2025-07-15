@@ -1,6 +1,16 @@
 import streamlit as st
 import pandas as pd
 
+# Importar utilidades de exportación Excel
+try:
+    from utils.excel_export import create_excel_download_button, show_excel_export_help
+except ImportError:
+    # Si no se puede importar, crear funciones dummy
+    def create_excel_download_button(*args, **kwargs):
+        st.warning("⚠️ Funcionalidad de exportación Excel no disponible")
+    def show_excel_export_help():
+        pass
+
 # Definimos los bloques ERI a considerar
 BLOQUES_ERI = [
     "ganancias_brutas",
@@ -8,7 +18,7 @@ BLOQUES_ERI = [
     "ganancia_perdida_antes_impuestos"
 ]
 
-def show(data_esf=None, data_eri=None, metadata=None):
+def show(data_esf=None, data_eri=None, metadata=None, data_ecp=None):
     st.subheader("Movimientos Contables")
 
     lang_field = st.session_state.get("lang_field", "nombre_es")
@@ -18,12 +28,12 @@ def show(data_esf=None, data_eri=None, metadata=None):
     if metadata and st.checkbox("Ver metadata (debug)", value=False):
         st.json(metadata)
 
-    if data_esf is None and data_eri is None:
+    if data_esf is None and data_eri is None and data_ecp is None:
         st.info("No se encontró información de movimientos.")
         return
 
-    # Extraer movimientos desde ESF y ERI
-    df = extraer_todos_los_movimientos(data_esf, data_eri, lang_field)
+    # Extraer movimientos desde ESF, ERI y ECP
+    df = extraer_todos_los_movimientos(data_esf, data_eri, data_ecp, lang_field)
 
     if df.empty:
         st.info("No hay movimientos para mostrar.")
@@ -96,7 +106,7 @@ def show(data_esf=None, data_eri=None, metadata=None):
         
     else:  # Tabla completa de cuentas
         # Extraer información completa de cuentas
-        df_cuentas = extraer_info_cuentas_completa(data_esf, data_eri, lang_field)
+        df_cuentas = extraer_info_cuentas_completa(data_esf, data_eri, data_ecp, lang_field)
         df_to_show = df_cuentas
 
     # ------------------------------------------
@@ -147,25 +157,47 @@ def show(data_esf=None, data_eri=None, metadata=None):
                 unsafe_allow_html=True
             )
 
-        # Descarga CSV mejorada
-        nombre_archivo = f"{vista_seleccionada.lower().replace(' ', '_')}.csv"
+        # Descarga CSV y Excel
+        col1, col2, col3 = st.columns([2, 2, 1])
         
-        # Preparar datos para CSV con información adicional
-        csv_data = preparar_csv_con_metadata(df_to_show, metadata, vista_seleccionada)
+        with col1:
+            # Descarga CSV mejorada
+            nombre_archivo = f"{vista_seleccionada.lower().replace(' ', '_')}.csv"
+            
+            # Preparar datos para CSV con información adicional
+            csv_data = preparar_csv_con_metadata(df_to_show, metadata, vista_seleccionada)
+            
+            st.download_button(
+                label="📄 Descargar CSV",
+                data=csv_data,
+                file_name=nombre_archivo,
+                mime="text/csv"
+            )
         
-        st.download_button(
-            label="Descargar en CSV",
-            data=csv_data,
-            file_name=nombre_archivo,
-            mime="text/csv"
-        )
+        with col2:
+            # Descarga Excel
+            create_excel_download_button(
+                data=None,  # Para movimientos no necesitamos data_esf/eri
+                metadata=metadata or {},
+                report_type='movimientos',
+                button_label="📊 Descargar Excel",
+                file_prefix="movimientos_contables",
+                extra_data={
+                    'df_movimientos': df_to_show,
+                    'tipo_vista': vista_seleccionada
+                }
+            )
+        
+        with col3:
+            if st.button("❓ Ayuda", help="Ver información sobre exportación", key="help_mov"):
+                show_excel_export_help()
     else:
         st.info("No hay datos que coincidan con los filtros.")
 
 
-def extraer_todos_los_movimientos(data_esf, data_eri, lang_field="nombre_es"):
+def extraer_todos_los_movimientos(data_esf, data_eri, data_ecp=None, lang_field="nombre_es"):
     """
-    Extrae todos los movimientos desde ESF y ERI en un solo DataFrame.
+    Extrae todos los movimientos desde ESF, ERI y ECP en un solo DataFrame.
     Ahora incluye saldo inicial y clasificación.
     """
     rows = []
@@ -262,6 +294,60 @@ def extraer_todos_los_movimientos(data_esf, data_eri, lang_field="nombre_es"):
                             "Haber": float(mov.get("haber", 0) or 0),
                         })
 
+    # --- Recorrer ECP ---
+    if data_ecp is not None:
+        # Procesar las tres categorías principales del ECP
+        for categoria in ["capital", "otras_reservas", "resultados_acumulados"]:
+            categoria_data = data_ecp.get(categoria, {})
+            if isinstance(categoria_data, dict):
+                # Si hay cuentas directamente en la categoría
+                cuentas = categoria_data.get("cuentas", [])
+                for cuenta in cuentas:
+                    codigo_cuenta = cuenta.get("codigo", "")
+                    nombre_cuenta = cuenta.get(lang_field, cuenta.get("nombre_en", ""))
+                    saldo_inicial = float(cuenta.get("saldo_anterior", 0) or 0)
+                    clasificacion = f"ECP - {categoria.replace('_', ' ').title()}"
+                    
+                    for mov in cuenta.get("movimientos", []):
+                        rows.append({
+                            "Origen": "ECP",
+                            "Fecha": mov.get("fecha", ""),
+                            "Código Cuenta": codigo_cuenta,
+                            "Nombre Cuenta": nombre_cuenta,
+                            "Clasificación": clasificacion,
+                            "Saldo Inicial": saldo_inicial,
+                            "Descripción": mov.get("descripcion", ""),
+                            "Tipo Doc": mov.get("tipo_documento", ""),
+                            "N° Doc": mov.get("numero_documento", ""),
+                            "Debe": float(mov.get("debe", 0) or 0),
+                            "Haber": float(mov.get("haber", 0) or 0),
+                        })
+                
+                # También buscar en grupos dentro de la categoría
+                grupos = categoria_data.get("grupos", {})
+                for grupo_info in grupos.values():
+                    if isinstance(grupo_info, dict):
+                        for cuenta in grupo_info.get("cuentas", []):
+                            codigo_cuenta = cuenta.get("codigo", "")
+                            nombre_cuenta = cuenta.get(lang_field, cuenta.get("nombre_en", ""))
+                            saldo_inicial = float(cuenta.get("saldo_anterior", 0) or 0)
+                            clasificacion = f"ECP - {categoria.replace('_', ' ').title()}"
+                            
+                            for mov in cuenta.get("movimientos", []):
+                                rows.append({
+                                    "Origen": "ECP",
+                                    "Fecha": mov.get("fecha", ""),
+                                    "Código Cuenta": codigo_cuenta,
+                                    "Nombre Cuenta": nombre_cuenta,
+                                    "Clasificación": clasificacion,
+                                    "Saldo Inicial": saldo_inicial,
+                                    "Descripción": mov.get("descripcion", ""),
+                                    "Tipo Doc": mov.get("tipo_documento", ""),
+                                    "N° Doc": mov.get("numero_documento", ""),
+                                    "Debe": float(mov.get("debe", 0) or 0),
+                                    "Haber": float(mov.get("haber", 0) or 0),
+                                })
+
     df = pd.DataFrame(rows)
     if df.empty:
         return df
@@ -271,10 +357,11 @@ def extraer_todos_los_movimientos(data_esf, data_eri, lang_field="nombre_es"):
     return df.sort_values("Fecha")
 
 
-def extraer_info_cuentas_completa(data_esf, data_eri, lang_field="nombre_es"):
+def extraer_info_cuentas_completa(data_esf, data_eri, data_ecp=None, lang_field="nombre_es"):
     """
     Extrae la información completa de todas las cuentas (sin movimientos individuales).
     Útil para ver un resumen general de todas las cuentas.
+    Ahora incluye cuentas del ECP.
     """
     cuentas_dict = {}  # Usamos dict para evitar duplicados
     
@@ -328,6 +415,72 @@ def extraer_info_cuentas_completa(data_esf, data_eri, lang_field="nombre_es"):
                             "Saldo Final": float(info_cuenta.get("monto", 0) or 0),
                             "Cantidad Movimientos": len(info_cuenta.get("movimientos", []))
                         }
+        
+        # También procesar bloques de resumen ERI
+        for bloque_key in BLOQUES_ERI:
+            bloque = data_eri.get(bloque_key, {}) or {}
+            grupos = bloque.get("grupos", {})
+            for grupo_info in grupos.values():
+                if isinstance(grupo_info, dict):
+                    for cuenta in grupo_info.get("cuentas", []):
+                        codigo = cuenta.get("codigo", "")
+                        if codigo and codigo not in cuentas_dict:
+                            cuentas_dict[codigo] = {
+                                "Origen": "ERI",
+                                "Código Cuenta": codigo,
+                                "Nombre Cuenta": cuenta.get(lang_field, cuenta.get("nombre_en", "")),
+                                "Nombre Inglés": cuenta.get("nombre_en", ""),
+                                "Clasificación": cuenta.get("clasificacion", bloque_key.replace("_", " ").title()),
+                                "Saldo Inicial": float(cuenta.get("saldo_anterior", 0) or 0),
+                                "Debe Movimientos": float(cuenta.get("debe_movimientos", 0) or 0),
+                                "Haber Movimientos": float(cuenta.get("haber_movimientos", 0) or 0),
+                                "Saldo Final": float(cuenta.get("saldo_final", 0) or cuenta.get("saldo", 0) or 0),
+                                "Cantidad Movimientos": len(cuenta.get("movimientos", []))
+                            }
+
+    # --- Procesar ECP ---
+    if data_ecp is not None:
+        # Procesar las tres categorías principales del ECP
+        for categoria in ["capital", "otras_reservas", "resultados_acumulados"]:
+            categoria_data = data_ecp.get(categoria, {})
+            if isinstance(categoria_data, dict):
+                # Si hay cuentas directamente en la categoría
+                cuentas = categoria_data.get("cuentas", [])
+                for cuenta in cuentas:
+                    codigo = cuenta.get("codigo", "")
+                    if codigo and codigo not in cuentas_dict:
+                        cuentas_dict[codigo] = {
+                            "Origen": "ECP",
+                            "Código Cuenta": codigo,
+                            "Nombre Cuenta": cuenta.get(lang_field, cuenta.get("nombre_en", "")),
+                            "Nombre Inglés": cuenta.get("nombre_en", ""),
+                            "Clasificación": f"ECP - {categoria.replace('_', ' ').title()}",
+                            "Saldo Inicial": float(cuenta.get("saldo_anterior", 0) or 0),
+                            "Debe Movimientos": float(cuenta.get("debe_movimientos", 0) or 0),
+                            "Haber Movimientos": float(cuenta.get("haber_movimientos", 0) or 0),
+                            "Saldo Final": float(cuenta.get("saldo_final", 0) or 0),
+                            "Cantidad Movimientos": len(cuenta.get("movimientos", []))
+                        }
+                
+                # También procesar grupos dentro de la categoría
+                grupos = categoria_data.get("grupos", {})
+                for grupo_info in grupos.values():
+                    if isinstance(grupo_info, dict):
+                        for cuenta in grupo_info.get("cuentas", []):
+                            codigo = cuenta.get("codigo", "")
+                            if codigo and codigo not in cuentas_dict:
+                                cuentas_dict[codigo] = {
+                                    "Origen": "ECP",
+                                    "Código Cuenta": codigo,
+                                    "Nombre Cuenta": cuenta.get(lang_field, cuenta.get("nombre_en", "")),
+                                    "Nombre Inglés": cuenta.get("nombre_en", ""),
+                                    "Clasificación": f"ECP - {categoria.replace('_', ' ').title()}",
+                                    "Saldo Inicial": float(cuenta.get("saldo_anterior", 0) or 0),
+                                    "Debe Movimientos": float(cuenta.get("debe_movimientos", 0) or 0),
+                                    "Haber Movimientos": float(cuenta.get("haber_movimientos", 0) or 0),
+                                    "Saldo Final": float(cuenta.get("saldo_final", 0) or 0),
+                                    "Cantidad Movimientos": len(cuenta.get("movimientos", []))
+                                }
 
     # Convertir a DataFrame
     df = pd.DataFrame(list(cuentas_dict.values()))

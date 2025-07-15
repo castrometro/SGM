@@ -1,6 +1,16 @@
 import streamlit as st
 import pandas as pd
 
+# Importar utilidades de exportación Excel
+try:
+    from utils.excel_export import create_excel_download_button, show_excel_export_help
+except ImportError:
+    # Si no se puede importar, crear funciones dummy
+    def create_excel_download_button(*args, **kwargs):
+        st.warning("⚠️ Funcionalidad de exportación Excel no disponible")
+    def show_excel_export_help():
+        pass
+
 # Definimos los bloques ERI a procesar
 BLOQUES_ERI = [
     "ganancias_brutas",
@@ -47,13 +57,36 @@ def show(data_eri=None, metadata=None):
         return
 
     # ===========================
+    # BOTÓN DE EXPORTACIÓN EXCEL
+    # ===========================
+    st.markdown("---")
+    col1, col2, col3 = st.columns([2, 2, 1])
+    
+    with col1:
+        st.markdown("### 📥 Exportar Reporte")
+        create_excel_download_button(
+            data=data_eri,
+            metadata=metadata or {},
+            report_type='eri',
+            button_label="📈 Descargar ERI en Excel",
+            file_prefix="estado_resultado_integral"
+        )
+    
+    with col2:
+        if st.button("❓ Ayuda Excel ERI", help="Ver información sobre la exportación Excel", key="help_eri"):
+            show_excel_export_help()
+    
+    st.markdown("---")
+
+    # ===========================
     # Mostrar cantidad de cuentas ERI
     # ===========================
     cuentas_eri = extraer_cuentas_desde_eri(data_eri, lang_field)
     st.markdown(f"#### Total cuentas procesadas en ERI: **{len(cuentas_eri)}**")
 
     if not cuentas_eri.empty:
-        st.dataframe(cuentas_eri, use_container_width=True)
+        with st.expander(f"Ver detalle de las {len(cuentas_eri)} cuentas procesadas"):
+            st.dataframe(cuentas_eri, use_container_width=True)
     else:
         st.info("No se encontraron cuentas en el ERI.")
 

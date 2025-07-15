@@ -717,7 +717,11 @@ def _determinar_categoria_ecp_con_molde(opcion_valor, set_ecp, es_bilingue=False
         'Otras Reservas': ('otras_reservas', {  # Variante con mayúscula
             'nombre_es': 'Otras Reservas',
             'nombre_en': 'Other Reserves'
-        })
+        }),
+        'Resultados acumulados': ('resultados_acumulados', {
+            'nombre_es': 'Resultados Acumulados',
+            'nombre_en': 'Accumulated Results'
+        }),
     }
     
     # Buscar mapeo exacto
@@ -735,7 +739,11 @@ def _determinar_categoria_ecp_con_molde(opcion_valor, set_ecp, es_bilingue=False
     elif 'reserva' in opcion_lower or 'reserve' in opcion_lower:
         nombres_bilingues.update({'nombre_es': 'Otras Reservas', 'nombre_en': 'Other Reserves'})
         return 'otras_reservas', nombres_bilingues
-    
+
+    elif 'resultado' in opcion_lower or 'result' in opcion_lower:
+        nombres_bilingues.update({'nombre_es': 'Resultados Acumulados', 'nombre_en': 'Accumulated Results'})
+        return 'resultados_acumulados', nombres_bilingues
+
     # Si no se puede determinar, no retornar categoría
     return None, nombres_bilingues
 
@@ -778,6 +786,15 @@ def _estructurar_datos_ecp(cuentas_data, clasificaciones, cierre):
         'otras_reservas': {
             'nombre_es': 'Otras Reservas',
             'nombre_en': 'Other Reserves',
+            'grupos': {},
+            'total': 0,
+            'saldo_inicial': 0,
+            'cambios': 0,
+            'saldo_final': 0
+        },
+        'resultados_acumulados': {
+            'nombre_es': 'Resultados Acumulados',
+            'nombre_en': 'Accumulated Results',
             'grupos': {},
             'total': 0,
             'saldo_inicial': 0,

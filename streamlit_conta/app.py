@@ -1,6 +1,6 @@
 import streamlit as st
 from data.loader_contabilidad import cargar_datos_redis
-from pages import esf, eri, ecp, resumen, movimientos, analisis
+from modules import esf, eri, ecp, resumen, movimientos, analisis
 import os
 
 def obtener_cliente_desde_parametros():
@@ -74,6 +74,9 @@ def mostrar_pagina_inicio():
 def main():
     st.set_page_config(page_title="Dashboard Contable", layout="wide")
 
+    # Limpiar cualquier contenido previo del sidebar
+    st.sidebar.empty()  # Comentado por si acaso cause conflictos
+
     # Header
     col1, col2 = st.columns([1, 8])
     with col1:
@@ -141,12 +144,17 @@ def main():
 
     st.markdown("---")
 
-    # Sidebar - Logo
-    logo_path = os.path.join(os.path.dirname(__file__), "assets", "SGM_logo.png")
-    if os.path.exists(logo_path):
-        st.sidebar.image(logo_path, width=100)
-    else:
-        st.sidebar.warning("Logo no encontrado en 'assets/SGM_logo.png'")
+    # Sidebar - Logo  
+    try:
+        logo_path = "assets/SGM_logo.png"
+        if os.path.exists(logo_path):
+            # Cargar imagen como bytes para evitar problemas de path
+            with open(logo_path, "rb") as f:
+                logo_bytes = f.read()
+            st.sidebar.image(logo_bytes, width=100)
+    except Exception:
+        # Si hay cualquier error con el logo, simplemente no mostrar nada
+        pass
 
     st.sidebar.title("SGM Dashboard")
 
@@ -190,7 +198,8 @@ def main():
         movimientos.show(
             data_esf=data.get("esf"),
             data_eri=data.get("eri"),
-            metadata=metadata
+            metadata=metadata,
+            data_ecp=data.get("ecp")
         )
     elif menu == "ECP":  # Agregar este caso nuevo
         ecp.show(

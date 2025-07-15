@@ -105,7 +105,7 @@ def obtener_datos_batch_redis(cliente_id: int, periodo: str, redis_client) -> Di
             else:
                 logger.debug(f"❌ No encontrado: {nombre_dato}")
                 
-        logger.info(f"🚀 Consulta batch completada: {len(datos_encontrados)}/3 datasets encontrados")
+        #logger.info(f"🚀 Consulta batch completada: {len(datos_encontrados)}/3 datasets encontrados")
         
     except Exception as e:
         logger.error(f"❌ Error en consulta batch Redis: {e}")
@@ -113,135 +113,7 @@ def obtener_datos_batch_redis(cliente_id: int, periodo: str, redis_client) -> Di
     return datos_encontrados
 
 
-
-
-def listar_esf_disponibles(cliente_id: int = 1) -> Dict[str, Any]:
-    """
-    🚀 SIMPLIFICADO: Listar ESF disponibles en Redis
-    Busca directamente en las claves simplificadas
-    
-    Args:
-        cliente_id: ID del cliente
-        
-    Returns:
-        Dict con información de ESF disponibles
-    """
-    redis_client = conectar_redis()
-    if not redis_client:
-        return {"error": "No se pudo conectar a Redis", "esf_disponibles": []}
-    
-    try:
-        # Buscar claves ESF directas para el cliente
-        pattern = f"sgm:contabilidad:{cliente_id}:*:esf"
-        keys = redis_client.keys(pattern)
-        
-        esf_disponibles = []
-        
-        if keys:
-            # Usar pipeline para obtener metadata eficientemente
-            pipe = redis_client.pipeline()
-            for key in keys:
-                pipe.get(key)
-            
-            resultados = pipe.execute()
-            
-            for i, key in enumerate(keys):
-                if resultados[i]:
-                    try:
-                        parts = key.split(':')
-                        if len(parts) >= 4:
-                            periodo = parts[3]
-                            
-                            esf_data = json.loads(resultados[i])
-                            esf_info = {
-                                'cliente_id': cliente_id,
-                                'periodo': periodo,
-                                'redis_key': key,
-                                'size_kb': round(len(resultados[i]) / 1024, 1),
-                                'metadata': esf_data.get('metadata', {})
-                            }
-                            esf_disponibles.append(esf_info)
-                    except Exception as e:
-                        logger.warning(f"⚠️ Error procesando clave {key}: {e}")
-        
-        logger.info(f"✅ Encontrados {len(esf_disponibles)} ESF para cliente {cliente_id}")
-        return {
-            "cliente_id": cliente_id,
-            "total_esf": len(esf_disponibles),
-            "esf_disponibles": esf_disponibles
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Error listando ESF: {e}")
-        return {"error": str(e), "esf_disponibles": []}
-
-
-def cargar_datos():
-    """Load example accounting data for the Streamlit dashboard."""
-
-    base = pathlib.Path(__file__).parent
-    with open(base / "contabilidad_ejemplo.json", encoding="utf-8") as f:
-        raw = json.load(f)
-
-    cierre_actual = raw.get("cierres", [{}])[0]
-    return {
-        "cliente": raw.get("cliente"),
-        "clasificaciones": raw.get("clasificaciones", []),
-        "centros_costo": raw.get("centros_costo", []),
-        "tipos_documento": raw.get("tipos_documento", []),
-        "cierre": {
-            k: cierre_actual.get(k)
-            for k in [
-                "id",
-                "cliente",
-                "periodo",
-                "estado",
-                "fecha_inicio_libro",
-                "fecha_fin_libro",
-                "cuentas_nuevas",
-                "parsing_completado",
-            ]
-        },
-        "plan_cuentas": cierre_actual.get("plan_cuentas", []),
-        "movimientos": cierre_actual.get("movimientos", []),
-        "resumen_financiero": cierre_actual.get("resumen_financiero", {})
-    }
-
-
-def cargar_datos_sistema_cierre(cliente_id: int = 2, periodo: str = "2025-08") -> Optional[Dict[str, Any]]:
-    """
-    🚀 SIMPLIFICADO: Cargar ESF y ERI desde Redis
-    Solo busca los datos que realmente existen
-    
-    Args:
-        cliente_id: ID del cliente
-        periodo: Período contable
-        
-    Returns:
-        Dict con ESF y ERI o None si no se encuentra
-    """
-    redis_client = conectar_redis()
-    if not redis_client:
-        return None
-    
-    try:
-        # 🚀 Obtener solo ESF y ERI
-        datos_disponibles = obtener_datos_batch_redis(cliente_id, periodo, redis_client)
-        
-        if not datos_disponibles:
-            logger.warning(f"⚠️ No se encontraron datos en Redis")
-            return None
-        
-        # Retornar datos encontrados
-        logger.info(f"✅ Datos cargados: {list(datos_disponibles.keys())}")
-        return datos_disponibles
-            
-    except Exception as e:
-        logger.error(f"❌ Error cargando datos: {e}")
-        return None
-
-
-def cargar_datos_redis(cliente_id: int = 2, periodo: str = "2025-08", test_type: str = "finalizacion_automatica") -> Dict[str, Any]:
+def cargar_datos_redis(cliente_id: int = 2, periodo: str = "2025-08") -> Dict[str, Any]:
     """
     🚀 SIMPLIFICADO: Cargar ESF, ERI y ECP desde Redis
     Enfocado únicamente en los datos que realmente existen
@@ -257,11 +129,8 @@ def cargar_datos_redis(cliente_id: int = 2, periodo: str = "2025-08", test_type:
     redis_client = conectar_redis()
     if not redis_client:
         logger.warning(f"⚠️ No se pudo conectar a Redis, usando datos de ejemplo")
-        datos_ejemplo = cargar_datos()
-        datos_ejemplo["fuente"] = "archivo_ejemplo"
-        datos_ejemplo["metadata"] = {"source": "archivo_estatico"}
-        return datos_ejemplo
-    
+        return None
+
     # 🚀 UNA SOLA CONSULTA BATCH para ESF, ERI y ECP
     datos_redis = obtener_datos_batch_redis(cliente_id, periodo, redis_client)
     
@@ -299,74 +168,12 @@ def cargar_datos_redis(cliente_id: int = 2, periodo: str = "2025-08", test_type:
             "raw_json": datos_redis
         }
     
-    # Fallback: datos de ejemplo
-    logger.warning(f"⚠️ No se encontraron datos Redis, usando datos de ejemplo")
-    datos_ejemplo = cargar_datos()
-    datos_ejemplo["fuente"] = "archivo_ejemplo"
-    datos_ejemplo["metadata"] = {
-        "source": "archivo_estatico",
-        "datos_disponibles": ["ejemplo"]
-    }
-    return datos_ejemplo
+    else:
+        return None
 
 
-def verificar_estado_redis(cliente_id: int = 2, periodo: str = "2025-03") -> Dict[str, Any]:
-    """
-    Verificar el estado de la conexión Redis y disponibilidad de datos
-    
-    Returns:
-        Dict con el estado de cada componente del sistema
-    """
-    estado = {
-        'redis_conectado': False,
-        'cliente_encontrado': False,
-        'cierres_disponibles': 0,
-        'periodo_seleccionado': False,
-        'error_mensaje': None
-    }
-    
-    try:
-        # 1. Verificar conexión Redis
-        redis_client = conectar_redis()
-        if redis_client:
-            redis_client.ping()
-            estado['redis_conectado'] = True
-            logger.info("✅ Redis conectado correctamente")
-        
-        # 2. Verificar si el cliente tiene datos
-        try:
-            pattern = f"sgm:contabilidad:{cliente_id}:*:esf"
-            claves_cliente = redis_client.keys(pattern)
-            
-            if claves_cliente:
-                estado['cliente_encontrado'] = True
-                estado['cierres_disponibles'] = len(claves_cliente)
-                logger.info(f"✅ Cliente {cliente_id} encontrado con {len(claves_cliente)} cierres")
-                
-                # 3. Verificar si el período específico existe
-                esf_key = f"sgm:contabilidad:{cliente_id}:{periodo}:esf"
-                eri_key = f"sgm:contabilidad:{cliente_id}:{periodo}:eri"
-                
-                if redis_client.exists(esf_key) and redis_client.exists(eri_key):
-                    estado['periodo_seleccionado'] = True
-                    logger.info(f"✅ Período {periodo} disponible para cliente {cliente_id}")
-                else:
-                    logger.warning(f"⚠️ Período {periodo} no encontrado para cliente {cliente_id}")
-            else:
-                logger.warning(f"⚠️ No se encontraron datos para cliente {cliente_id}")
-        
-        except Exception as e:
-            logger.error(f"❌ Error verificando datos del cliente: {e}")
-            estado['error_mensaje'] = f"Error verificando cliente: {str(e)}"
-    
-    except Exception as e:
-        logger.error(f"❌ Error conectando a Redis: {e}")
-        estado['error_mensaje'] = f"Error Redis: {str(e)}"
-    
-    return estado
 
-
-def obtener_info_redis_completa(cliente_id: int = 2) -> Dict[str, Any]:
+def obtener_info_redis_completa(cliente_id) -> Dict[str, Any]:
     """
     Obtener información completa de Redis y cierres disponibles
     
@@ -409,13 +216,13 @@ def obtener_info_redis_completa(cliente_id: int = 2) -> Dict[str, Any]:
         periodos_unicos = sorted(list(set(periodos)), reverse=True)
         info['cierres_disponibles'] = periodos_unicos
         
-        logger.info(f"✅ Redis info obtenida: {len(periodos_unicos)} cierres para cliente {cliente_id}")
+        #logger.info(f"✅ Redis info obtenida: {len(periodos_unicos)} cierres para cliente {cliente_id}")
         
     except Exception as e:
         logger.error(f"❌ Error obteniendo info Redis: {e}")
         info['error'] = str(e)
         # Fallback con datos de ejemplo
-        info['cierres_disponibles'] = ['2025-03', '2025-02', '2025-01']
+        #info['cierres_disponibles'] = ['2025-03', '2025-02', '2025-01']
     
     return info
 

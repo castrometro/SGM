@@ -1,6 +1,6 @@
 import streamlit as st
 from data.loader_contabilidad import cargar_datos_redis
-from modules import esf, eri, ecp, resumen, movimientos, analisis
+from modules import esf, eri, ecp, resumen, movimientos, analisis, excel_tools
 import os
 
 def obtener_cliente_desde_parametros():
@@ -174,7 +174,7 @@ def main():
     # Sidebar - Navegación
     menu = st.sidebar.radio(
         "Navegación",
-        ["Resumen General", "ESF", "ERI", "ECP", "Movimientos", "Análisis"]
+        ["Resumen General", "ESF", "ERI", "ECP", "Movimientos", "Análisis", "Herramientas Excel"]
     )
 
     # Cargar datos de Redis usando el período seleccionado y cliente actual
@@ -214,6 +214,8 @@ def main():
             data_eri=data.get("eri"),
             metadata=metadata
         )
+    elif menu == "Herramientas Excel":
+        excel_tools.show_excel_tools_section()
 
 if __name__ == "__main__":
     main()

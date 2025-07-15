@@ -76,8 +76,26 @@ def show(data_esf=None, data_eri=None, metadata=None, data_ecp=None):
     # VISTA: MOVIMIENTOS O RESUMEN POR CUENTA
     # ------------------------------------------
     
-    vista_opciones = ["Movimientos detallados", "Resumen por cuenta", "Tabla completa de cuentas"]
+    vista_opciones = ["Movimientos detallados", "Resumen por cuenta", "Tabla completa de cuentas", "Cuentas sin movimientos"]
     vista_seleccionada = st.radio("Seleccionar vista:", vista_opciones, horizontal=True)
+
+    # Debug: Mostrar información de cuentas duplicadas
+    if vista_seleccionada in ["Tabla completa de cuentas", "Cuentas sin movimientos"]:
+        col_debug1, col_debug2 = st.columns([3, 1])
+        with col_debug1:
+            if 'cuentas_duplicadas' in st.session_state and st.session_state.get('cuentas_duplicadas'):
+                num_duplicados = len(st.session_state['cuentas_duplicadas'])
+                st.info(f"ℹ️ Se encontraron {num_duplicados} cuentas que aparecen en múltiples reportes")
+        with col_debug2:
+            if st.button("🔍 Ver Duplicados", help="Mostrar cuentas que aparecen en múltiples reportes"):
+                if 'cuentas_duplicadas' in st.session_state:
+                    with st.expander("📋 Cuentas Duplicadas", expanded=True):
+                        for codigo, apariciones in st.session_state['cuentas_duplicadas'].items():
+                            st.write(f"**Cuenta {codigo}:**")
+                            for aparicion in apariciones:
+                                st.write(f"  - {aparicion['Origen']}: {aparicion['Nombre Cuenta']} (Saldo: {formatear_monto(aparicion['Saldo Final'], metadata.get('moneda', 'CLP') if metadata else 'CLP')})")
+                else:
+                    st.warning("No hay información de duplicados disponible")
 
     if vista_seleccionada == "Movimientos detallados":
         # Vista original de movimientos
@@ -104,10 +122,16 @@ def show(data_esf=None, data_eri=None, metadata=None, data_ecp=None):
         df_grouped["Variación"] = df_grouped["Saldo Final"] - df_grouped["Saldo Inicial"]
         df_to_show = df_grouped
         
-    else:  # Tabla completa de cuentas
+    elif vista_seleccionada == "Tabla completa de cuentas":
         # Extraer información completa de cuentas
         df_cuentas = extraer_info_cuentas_completa(data_esf, data_eri, data_ecp, lang_field)
         df_to_show = df_cuentas
+        
+    else:  # Cuentas sin movimientos
+        # Extraer información completa de cuentas y filtrar las que no tienen movimientos
+        df_cuentas = extraer_info_cuentas_completa(data_esf, data_eri, data_ecp, lang_field)
+        df_to_show = df_cuentas[df_cuentas["Cantidad Movimientos"] == 0].copy()
+        st.info(f"📊 Mostrando {len(df_to_show)} cuentas sin movimientos de un total de {len(df_cuentas)} cuentas")
 
     # ------------------------------------------
     # MOSTRAR TABLA
@@ -361,9 +385,34 @@ def extraer_info_cuentas_completa(data_esf, data_eri, data_ecp=None, lang_field=
     """
     Extrae la información completa de todas las cuentas (sin movimientos individuales).
     Útil para ver un resumen general de todas las cuentas.
-    Ahora incluye cuentas del ECP.
+    Ahora incluye cuentas del ECP y maneja duplicados inteligentemente.
     """
-    cuentas_dict = {}  # Usamos dict para evitar duplicados
+    cuentas_dict = {}  # Para consolidar información
+    cuentas_por_origen = {}  # Para mostrar todas las apariciones
+    
+    def agregar_cuenta(cuenta_info, origen, consolidar=True):
+        """Función auxiliar para agregar cuentas manejando duplicados."""
+        codigo = cuenta_info["Código Cuenta"]
+        
+        # Crear clave única con origen si no queremos consolidar
+        clave = codigo if consolidar else f"{codigo}_{origen}"
+        
+        if consolidar and codigo in cuentas_dict:
+            # Si ya existe, agregar origen múltiple
+            cuenta_existente = cuentas_dict[codigo]
+            if origen not in cuenta_existente["Origen"]:
+                cuenta_existente["Origen"] += f", {origen}"
+                # Sumar movimientos de diferentes orígenes
+                cuenta_existente["Debe Movimientos"] += cuenta_info["Debe Movimientos"]
+                cuenta_existente["Haber Movimientos"] += cuenta_info["Haber Movimientos"]
+                cuenta_existente["Cantidad Movimientos"] += cuenta_info["Cantidad Movimientos"]
+        else:
+            cuentas_dict[clave] = cuenta_info.copy()
+        
+        # También guardar por origen separado para debugging
+        if codigo not in cuentas_por_origen:
+            cuentas_por_origen[codigo] = []
+        cuentas_por_origen[codigo].append({**cuenta_info, "Origen": origen})
     
     # --- Procesar ESF ---
     if data_esf is not None:
@@ -382,18 +431,19 @@ def extraer_info_cuentas_completa(data_esf, data_eri, data_ecp=None, lang_field=
                     for cuenta in info.get("cuentas", []):
                         codigo = cuenta.get("codigo", "")
                         if codigo:
-                            cuentas_dict[codigo] = {
+                            cuenta_info = {
                                 "Origen": "ESF",
                                 "Código Cuenta": codigo,
                                 "Nombre Cuenta": cuenta.get(lang_field, cuenta.get("nombre_en", "")),
                                 "Nombre Inglés": cuenta.get("nombre_en", ""),
                                 "Clasificación": cuenta.get("clasificacion", f"{bloque_name.title()} - {sub_bloque_name.title()}"),
-                                "Saldo Inicial": float(cuenta.get("saldo_anterior", 0) or 0),  # CAMBIADO: saldo_anterior
+                                "Saldo Inicial": float(cuenta.get("saldo_anterior", 0) or 0),
                                 "Debe Movimientos": float(cuenta.get("debe_movimientos", 0) or 0),
                                 "Haber Movimientos": float(cuenta.get("haber_movimientos", 0) or 0),
                                 "Saldo Final": float(cuenta.get("saldo", 0) or 0),
                                 "Cantidad Movimientos": cuenta.get("movimientos_count", len(cuenta.get("movimientos", [])))
                             }
+                            agregar_cuenta(cuenta_info, "ESF")
 
     # --- Procesar ERI ---
     if data_eri is not None:
@@ -402,19 +452,20 @@ def extraer_info_cuentas_completa(data_esf, data_eri, data_ecp=None, lang_field=
             cuentas_tipo = data_eri.get(tipo, {})
             if isinstance(cuentas_tipo, dict):
                 for codigo, info_cuenta in cuentas_tipo.items():
-                    if isinstance(info_cuenta, dict) and codigo not in cuentas_dict:
-                        cuentas_dict[codigo] = {
+                    if isinstance(info_cuenta, dict):
+                        cuenta_info = {
                             "Origen": "ERI",
                             "Código Cuenta": codigo,
                             "Nombre Cuenta": info_cuenta.get(lang_field, info_cuenta.get("nombre", "")),
                             "Nombre Inglés": info_cuenta.get("nombre_en", ""),
                             "Clasificación": info_cuenta.get("clasificacion", tipo.title()),
-                            "Saldo Inicial": float(info_cuenta.get("saldo_anterior", 0) or 0),  # CAMBIADO: saldo_anterior
+                            "Saldo Inicial": float(info_cuenta.get("saldo_anterior", 0) or 0),
                             "Debe Movimientos": float(info_cuenta.get("debe_movimientos", 0) or 0),
                             "Haber Movimientos": float(info_cuenta.get("haber_movimientos", 0) or 0),
                             "Saldo Final": float(info_cuenta.get("monto", 0) or 0),
                             "Cantidad Movimientos": len(info_cuenta.get("movimientos", []))
                         }
+                        agregar_cuenta(cuenta_info, "ERI")
         
         # También procesar bloques de resumen ERI
         for bloque_key in BLOQUES_ERI:
@@ -424,8 +475,8 @@ def extraer_info_cuentas_completa(data_esf, data_eri, data_ecp=None, lang_field=
                 if isinstance(grupo_info, dict):
                     for cuenta in grupo_info.get("cuentas", []):
                         codigo = cuenta.get("codigo", "")
-                        if codigo and codigo not in cuentas_dict:
-                            cuentas_dict[codigo] = {
+                        if codigo:
+                            cuenta_info = {
                                 "Origen": "ERI",
                                 "Código Cuenta": codigo,
                                 "Nombre Cuenta": cuenta.get(lang_field, cuenta.get("nombre_en", "")),
@@ -437,6 +488,7 @@ def extraer_info_cuentas_completa(data_esf, data_eri, data_ecp=None, lang_field=
                                 "Saldo Final": float(cuenta.get("saldo_final", 0) or cuenta.get("saldo", 0) or 0),
                                 "Cantidad Movimientos": len(cuenta.get("movimientos", []))
                             }
+                            agregar_cuenta(cuenta_info, "ERI")
 
     # --- Procesar ECP ---
     if data_ecp is not None:
@@ -448,8 +500,8 @@ def extraer_info_cuentas_completa(data_esf, data_eri, data_ecp=None, lang_field=
                 cuentas = categoria_data.get("cuentas", [])
                 for cuenta in cuentas:
                     codigo = cuenta.get("codigo", "")
-                    if codigo and codigo not in cuentas_dict:
-                        cuentas_dict[codigo] = {
+                    if codigo:
+                        cuenta_info = {
                             "Origen": "ECP",
                             "Código Cuenta": codigo,
                             "Nombre Cuenta": cuenta.get(lang_field, cuenta.get("nombre_en", "")),
@@ -461,6 +513,7 @@ def extraer_info_cuentas_completa(data_esf, data_eri, data_ecp=None, lang_field=
                             "Saldo Final": float(cuenta.get("saldo_final", 0) or 0),
                             "Cantidad Movimientos": len(cuenta.get("movimientos", []))
                         }
+                        agregar_cuenta(cuenta_info, "ECP")
                 
                 # También procesar grupos dentro de la categoría
                 grupos = categoria_data.get("grupos", {})
@@ -468,8 +521,8 @@ def extraer_info_cuentas_completa(data_esf, data_eri, data_ecp=None, lang_field=
                     if isinstance(grupo_info, dict):
                         for cuenta in grupo_info.get("cuentas", []):
                             codigo = cuenta.get("codigo", "")
-                            if codigo and codigo not in cuentas_dict:
-                                cuentas_dict[codigo] = {
+                            if codigo:
+                                cuenta_info = {
                                     "Origen": "ECP",
                                     "Código Cuenta": codigo,
                                     "Nombre Cuenta": cuenta.get(lang_field, cuenta.get("nombre_en", "")),
@@ -481,6 +534,7 @@ def extraer_info_cuentas_completa(data_esf, data_eri, data_ecp=None, lang_field=
                                     "Saldo Final": float(cuenta.get("saldo_final", 0) or 0),
                                     "Cantidad Movimientos": len(cuenta.get("movimientos", []))
                                 }
+                                agregar_cuenta(cuenta_info, "ECP")
 
     # Convertir a DataFrame
     df = pd.DataFrame(list(cuentas_dict.values()))
@@ -491,6 +545,17 @@ def extraer_info_cuentas_completa(data_esf, data_eri, data_ecp=None, lang_field=
         
         # Ordenar por origen y código
         df = df.sort_values(["Origen", "Código Cuenta"])
+    
+    # Agregar información de debug sobre duplicados
+    duplicados_info = {}
+    for codigo, apariciones in cuentas_por_origen.items():
+        if len(apariciones) > 1:
+            duplicados_info[codigo] = apariciones
+    
+    # Almacenar info de duplicados en session_state para debugging
+    st.session_state['cuentas_duplicadas'] = duplicados_info
+    st.session_state['total_cuentas_procesadas'] = len(cuentas_por_origen)
+    st.session_state['total_cuentas_unicas'] = len(cuentas_dict)
     
     return df
 

@@ -6,7 +6,8 @@ import {
   FolderOpen,
   FileText,
   Users,
-  ListChecks
+  ListChecks,
+  BarChart3
 } from "lucide-react";
 
 const ClienteActionButtons = ({ clienteId, areaActiva }) => {
@@ -14,6 +15,15 @@ const ClienteActionButtons = ({ clienteId, areaActiva }) => {
   // Botones para cada área (puedes adaptar/expandir)
   const botonesPorArea = {
     "Contabilidad": [
+      {
+        label: "Dashboard Contable",
+        icon: BarChart3,
+        color: "#8B5CF6",
+        action: () => {
+          const streamlitUrl = `http://172.17.11.18:8502/?cliente_id=${clienteId}`;
+          window.open(streamlitUrl, '_blank');
+        },
+      },
       {
         label: "Historial de Cierres",
         icon: History,
@@ -40,6 +50,15 @@ const ClienteActionButtons = ({ clienteId, areaActiva }) => {
       },
     ],
     "Nomina": [
+      {
+        label: "Dashboard Nómina",
+        icon: BarChart3,
+        color: "#10B981",
+        action: () => {
+          const streamlitUrl = `http://172.17.11.18:8503/?cliente_id=${clienteId}`;
+          window.open(streamlitUrl, '_blank');
+        },
+      },
       {
         label: "Historial de Cierres",
         icon: History,
@@ -78,7 +97,7 @@ const ClienteActionButtons = ({ clienteId, areaActiva }) => {
   const botones = botonesPorArea[areaActiva] || [];
 
   return (
-    <div className={`grid ${botones.length <= 2 ? "grid-cols-2" : "grid-cols-3"} gap-4`}>
+    <div className={`grid ${botones.length <= 2 ? "grid-cols-2" : botones.length <= 4 ? "grid-cols-2 md:grid-cols-4" : "grid-cols-2 md:grid-cols-3"} gap-4`}>
       {botones.map(({ label, icon: Icon, color, action }) => (
         <button
           key={label}

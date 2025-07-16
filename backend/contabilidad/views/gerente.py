@@ -1002,7 +1002,7 @@ def gestionar_clientes(request):
         return Response({'error': 'Acceso denegado'}, status=status.HTTP_403_FORBIDDEN)
     
     if request.method == 'GET':
-        clientes = Cliente.objects.all().order_by('-fecha_creacion')
+        clientes = Cliente.objects.all().order_by('-fecha_registro')
         data = []
         
         for cliente in clientes:
@@ -1010,12 +1010,9 @@ def gestionar_clientes(request):
                 'id': cliente.id,
                 'nombre': cliente.nombre,
                 'rut': cliente.rut,
-                'direccion': getattr(cliente, 'direccion', ''),
-                'telefono': getattr(cliente, 'telefono', ''),
-                'email': getattr(cliente, 'email', ''),
-                'contacto_principal': getattr(cliente, 'contacto_principal', ''),
-                'activo': cliente.activo,
-                'fecha_creacion': cliente.fecha_creacion,
+                'bilingue': cliente.bilingue,
+                'industria': cliente.industria.nombre if cliente.industria else '',
+                'fecha_registro': cliente.fecha_registro,
             })
         
         return Response(data)
@@ -1023,14 +1020,26 @@ def gestionar_clientes(request):
     elif request.method == 'POST':
         try:
             data = request.data
+            
+            # Validar que el RUT no exista ya
+            rut = data.get('rut')
+            if Cliente.objects.filter(rut=rut).exists():
+                return Response({
+                    'error': f'Ya existe un cliente con el RUT: {rut}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Buscar industria si se proporciona
+            industria = None
+            industria_nombre = data.get('industria')
+            if industria_nombre:
+                from api.models import Industria
+                industria = Industria.objects.filter(nombre=industria_nombre).first()
+            
             cliente = Cliente.objects.create(
                 nombre=data.get('nombre'),
-                rut=data.get('rut'),
-                direccion=data.get('direccion', ''),
-                telefono=data.get('telefono', ''),
-                email=data.get('email', ''),
-                contacto_principal=data.get('contacto_principal', ''),
-                activo=data.get('activo', True)
+                rut=rut,
+                bilingue=data.get('bilingue', False),
+                industria=industria
             )
             
             return Response({
@@ -1042,6 +1051,108 @@ def gestionar_clientes(request):
             return Response({
                 'error': f'Error creando cliente: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def actualizar_cliente(request, cliente_id):
+    """
+    Actualiza datos de un cliente específico
+    """
+    if request.user.tipo_usuario != 'gerente':
+        return Response({'error': 'Acceso denegado'}, status=status.HTTP_403_FORBIDDEN)
+    
+    try:
+        cliente = Cliente.objects.get(id=cliente_id)
+        data = request.data
+        
+        # Validar RUT único si se está cambiando
+        nuevo_rut = data.get('rut')
+        if nuevo_rut and nuevo_rut != cliente.rut:
+            if Cliente.objects.filter(rut=nuevo_rut).exists():
+                return Response({
+                    'error': f'Ya existe un cliente con el RUT: {nuevo_rut}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Actualizar campos disponibles en el modelo
+        cliente.nombre = data.get('nombre', cliente.nombre)
+        cliente.rut = data.get('rut', cliente.rut)
+        cliente.bilingue = data.get('bilingue', cliente.bilingue)
+        
+        # Manejar industria
+        industria_nombre = data.get('industria')
+        if industria_nombre:
+            from api.models import Industria
+            industria = Industria.objects.filter(nombre=industria_nombre).first()
+            cliente.industria = industria
+        elif industria_nombre == '':  # Si se envía string vacío, remover industria
+            cliente.industria = None
+        
+        cliente.save()
+        
+        return Response({
+            'message': 'Cliente actualizado exitosamente'
+        })
+        
+    except Cliente.DoesNotExist:
+        return Response({
+            'error': 'Cliente no encontrado'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': f'Error actualizando cliente: {str(e)}'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def eliminar_cliente(request, cliente_id):
+    """
+    Elimina un cliente específico
+    """
+    if request.user.tipo_usuario != 'gerente':
+        return Response({'error': 'Acceso denegado'}, status=status.HTTP_403_FORBIDDEN)
+    
+    try:
+        cliente = Cliente.objects.get(id=cliente_id)
+        
+        # Verificar si el cliente tiene asignaciones activas
+        asignaciones_activas = AsignacionClienteUsuario.objects.filter(cliente=cliente).count()
+        if asignaciones_activas > 0:
+            return Response({
+                'error': f'No se puede eliminar el cliente {cliente.nombre} porque tiene asignaciones activas. Primero desasigna el cliente de todos los usuarios.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Verificar si el cliente tiene cierres activos
+        from ..models import CierreContabilidad
+        cierres_activos = CierreContabilidad.objects.filter(
+            cliente=cliente,
+            estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias']
+        ).count()
+        
+        if cierres_activos > 0:
+            return Response({
+                'error': f'No se puede eliminar el cliente {cliente.nombre} porque tiene cierres contables activos. Espera a que terminen los procesos en curso.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Guardar información del cliente antes de eliminarlo
+        cliente_nombre = cliente.nombre
+        
+        # Eliminar cliente
+        cliente.delete()
+        
+        return Response({
+            'message': f'Cliente {cliente_nombre} eliminado exitosamente'
+        })
+        
+    except Cliente.DoesNotExist:
+        return Response({
+            'error': 'Cliente no encontrado'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': f'Error eliminando cliente: {str(e)}'
+        }, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['GET'])
@@ -1076,7 +1187,7 @@ def obtener_metricas_sistema(request):
     try:
         # Métricas básicas
         usuarios_totales = Usuario.objects.count()
-        clientes_activos = Cliente.objects.filter(activo=True).count()
+        clientes_activos = Cliente.objects.count()  # Todos los clientes, no hay campo 'activo' en el modelo
         
         # Actividad hoy
         hoy = timezone.now().date()

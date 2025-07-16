@@ -7,6 +7,8 @@ import {
   eliminarUsuario,
   obtenerClientes,
   crearCliente,
+  actualizarCliente,
+  eliminarCliente,
   obtenerAreas,
   obtenerMetricasSistema
 } from '../../api/gerente';
@@ -46,8 +48,11 @@ const AdminSistema = () => {
   const [showUserForm, setShowUserForm] = useState(false);
   const [showClientForm, setShowClientForm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showDeleteClientConfirm, setShowDeleteClientConfirm] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
+  const [editingClient, setEditingClient] = useState(null);
   const [deletingUser, setDeletingUser] = useState(null);
+  const [deletingClient, setDeletingClient] = useState(null);
   const [userForm, setUserForm] = useState({
     nombre: '',
     apellido: '',
@@ -62,11 +67,8 @@ const AdminSistema = () => {
   const [clientForm, setClientForm] = useState({
     nombre: '',
     rut: '',
-    direccion: '',
-    telefono: '',
-    email: '',
-    contacto_principal: '',
-    activo: true
+    bilingue: false,
+    industria: ''
   });
 
   useEffect(() => {
@@ -196,21 +198,32 @@ const AdminSistema = () => {
   const handleCreateClient = async (e) => {
     e.preventDefault();
     try {
-      await crearCliente(clientForm);
+      setError(''); // Limpiar errores previos
+      
+      if (editingClient) {
+        // Actualizar cliente existente
+        await actualizarCliente(editingClient.id, clientForm);
+        setEditingClient(null);
+      } else {
+        // Crear nuevo cliente
+        await crearCliente(clientForm);
+      }
+      
       setShowClientForm(false);
       setClientForm({
         nombre: '',
         rut: '',
-        direccion: '',
-        telefono: '',
-        email: '',
-        contacto_principal: '',
-        activo: true
+        bilingue: false,
+        industria: ''
       });
       await cargarDatos();
     } catch (err) {
-      console.error('Error creando cliente:', err);
-      setError('Error al crear el cliente');
+      console.error('Error con cliente:', err);
+      if (err.response?.data?.error) {
+        setError(err.response.data.error);
+      } else {
+        setError(`Error al ${editingClient ? 'actualizar' : 'crear'} el cliente`);
+      }
     }
   };
 
@@ -226,6 +239,50 @@ const AdminSistema = () => {
       is_active: usuario.activo
     });
     setShowUserForm(true);
+  };
+
+  const handleEditClient = (cliente) => {
+    setEditingClient(cliente);
+    setClientForm({
+      nombre: cliente.nombre,
+      rut: cliente.rut,
+      bilingue: cliente.bilingue || false,
+      industria: cliente.industria || ''
+    });
+    setShowClientForm(true);
+  };
+
+  const handleDeleteClient = (cliente) => {
+    setDeletingClient(cliente);
+    setShowDeleteClientConfirm(true);
+  };
+
+  const confirmDeleteClient = async () => {
+    try {
+      await eliminarCliente(deletingClient.id);
+      setShowDeleteClientConfirm(false);
+      setDeletingClient(null);
+      await cargarDatos();
+    } catch (err) {
+      console.error('Error eliminando cliente:', err);
+      if (err.response?.data?.error) {
+        setError(err.response.data.error);
+      } else {
+        setError('Error al eliminar el cliente');
+      }
+      setShowDeleteClientConfirm(false);
+    }
+  };
+
+  const handleOpenClientForm = () => {
+    setEditingClient(null);
+    setClientForm({
+      nombre: '',
+      rut: '',
+      bilingue: false,
+      industria: ''
+    });
+    setShowClientForm(true);
   };
 
   const getRoleColor = (role) => {
@@ -501,7 +558,7 @@ const AdminSistema = () => {
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-semibold">Gestión de Clientes</h2>
               <button
-                onClick={() => setShowClientForm(true)}
+                onClick={handleOpenClientForm}
                 className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg flex items-center"
               >
                 <Plus className="w-4 h-4 mr-2" />
@@ -509,52 +566,61 @@ const AdminSistema = () => {
               </button>
             </div>
 
-            {/* Lista de Clientes */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {clientes.map((cliente) => (
-                <div key={cliente.id} className="bg-gray-800 p-4 rounded-lg">
-                  <div className="flex justify-between items-start mb-3">
-                    <div>
-                      <h3 className="font-medium text-lg">{cliente.nombre}</h3>
-                      <p className="text-sm text-gray-400">RUT: {cliente.rut}</p>
-                    </div>
-                    <span className={`px-2 py-1 rounded text-xs ${
-                      cliente.activo ? 'bg-green-600' : 'bg-red-600'
-                    }`}>
-                      {cliente.activo ? 'Activo' : 'Inactivo'}
-                    </span>
-                  </div>
-                  
-                  <div className="space-y-2 text-sm">
-                    {cliente.direccion && (
-                      <p className="text-gray-400">{cliente.direccion}</p>
-                    )}
-                    {cliente.email && (
-                      <p className="text-gray-400 flex items-center">
-                        <Mail className="w-3 h-3 mr-1" />
-                        {cliente.email}
-                      </p>
-                    )}
-                    {cliente.telefono && (
-                      <p className="text-gray-400 flex items-center">
-                        <Phone className="w-3 h-3 mr-1" />
-                        {cliente.telefono}
-                      </p>
-                    )}
-                    {cliente.contacto_principal && (
-                      <p className="text-gray-400">
-                        Contacto: {cliente.contacto_principal}
-                      </p>
-                    )}
-                  </div>
-                  
-                  <div className="mt-4 pt-3 border-t border-gray-700">
-                    <p className="text-xs text-gray-400">
-                      Creado: {formatearFecha(cliente.fecha_creacion)}
-                    </p>
-                  </div>
+            {/* Tabla de Clientes */}
+            <div className="bg-gray-800 rounded-lg overflow-hidden">
+              <table className="w-full">
+                <thead className="bg-gray-700">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Nombre</th>
+                    <th className="px-4 py-3 text-left">RUT</th>
+                    <th className="px-4 py-3 text-left">Bilingüe</th>
+                    <th className="px-4 py-3 text-left">Industria</th>
+                    <th className="px-4 py-3 text-left">Fecha Registro</th>
+                    <th className="px-4 py-3 text-center">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {clientes.map((cliente) => (
+                    <tr key={cliente.id} className="border-t border-gray-700 hover:bg-gray-750">
+                      <td className="px-4 py-3 font-medium">{cliente.nombre}</td>
+                      <td className="px-4 py-3 text-gray-300">{cliente.rut}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs ${
+                          cliente.bilingue ? 'bg-blue-600' : 'bg-gray-600'
+                        }`}>
+                          {cliente.bilingue ? 'Sí' : 'No'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-300">{cliente.industria || 'Sin especificar'}</td>
+                      <td className="px-4 py-3 text-gray-300">{formatearFecha(cliente.fecha_registro)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-center space-x-2">
+                          <button
+                            onClick={() => handleEditClient(cliente)}
+                            className="p-1 text-blue-400 hover:text-blue-300"
+                            title="Editar cliente"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteClient(cliente)}
+                            className="p-1 text-red-400 hover:text-red-300"
+                            title="Eliminar cliente"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              
+              {clientes.length === 0 && (
+                <div className="text-center py-8 text-gray-400">
+                  No hay clientes registrados
                 </div>
-              ))}
+              )}
             </div>
           </div>
         )}
@@ -815,11 +881,13 @@ const AdminSistema = () => {
         {showClientForm && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-gray-800 p-6 rounded-lg w-full max-w-md">
-              <h3 className="text-lg font-semibold mb-4">Nuevo Cliente</h3>
+              <h3 className="text-lg font-semibold mb-4">
+                {editingClient ? 'Editar Cliente' : 'Nuevo Cliente'}
+              </h3>
               <form onSubmit={handleCreateClient}>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium mb-1">Nombre</label>
+                    <label className="block text-sm font-medium mb-1">Nombre *</label>
                     <input
                       type="text"
                       value={clientForm.nombre}
@@ -829,86 +897,61 @@ const AdminSistema = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-1">RUT</label>
+                    <label className="block text-sm font-medium mb-1">RUT *</label>
                     <input
                       type="text"
                       value={clientForm.rut}
                       onChange={(e) => setClientForm({...clientForm, rut: e.target.value})}
                       className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2"
+                      placeholder="12.345.678-9"
                       required
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-1">Dirección</label>
+                    <label className="block text-sm font-medium mb-1">Industria</label>
                     <input
                       type="text"
-                      value={clientForm.direccion}
-                      onChange={(e) => setClientForm({...clientForm, direccion: e.target.value})}
+                      value={clientForm.industria}
+                      onChange={(e) => setClientForm({...clientForm, industria: e.target.value})}
                       className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Email</label>
-                    <input
-                      type="email"
-                      value={clientForm.email}
-                      onChange={(e) => setClientForm({...clientForm, email: e.target.value})}
-                      className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Teléfono</label>
-                    <input
-                      type="tel"
-                      value={clientForm.telefono}
-                      onChange={(e) => setClientForm({...clientForm, telefono: e.target.value})}
-                      className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Contacto Principal</label>
-                    <input
-                      type="text"
-                      value={clientForm.contacto_principal}
-                      onChange={(e) => setClientForm({...clientForm, contacto_principal: e.target.value})}
-                      className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2"
+                      placeholder="Ej: Tecnología, Retail, Servicios..."
                     />
                   </div>
                   <div className="flex items-center">
                     <input
                       type="checkbox"
-                      id="clienteActivo"
-                      checked={clientForm.activo}
-                      onChange={(e) => setClientForm({...clientForm, activo: e.target.checked})}
+                      id="clienteBilingue"
+                      checked={clientForm.bilingue}
+                      onChange={(e) => setClientForm({...clientForm, bilingue: e.target.checked})}
                       className="mr-2"
                     />
-                    <label htmlFor="clienteActivo" className="text-sm">Cliente activo</label>
+                    <label htmlFor="clienteBilingue" className="text-sm">
+                      Cliente bilingüe (requiere informes en inglés y español)
+                    </label>
                   </div>
                 </div>
-                <div className="flex justify-end space-x-3 mt-6">
+                <div className="flex space-x-3 mt-6">
+                  <button
+                    type="submit"
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded"
+                  >
+                    {editingClient ? 'Actualizar' : 'Crear'} Cliente
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
                       setShowClientForm(false);
+                      setEditingClient(null);
                       setClientForm({
                         nombre: '',
                         rut: '',
-                        direccion: '',
-                        telefono: '',
-                        email: '',
-                        contacto_principal: '',
-                        activo: true
+                        bilingue: false,
+                        industria: ''
                       });
                     }}
-                    className="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded"
+                    className="flex-1 bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded"
                   >
                     Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded"
-                  >
-                    Crear Cliente
                   </button>
                 </div>
               </form>
@@ -945,6 +988,41 @@ const AdminSistema = () => {
                   className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded"
                 >
                   Eliminar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Confirmación de Eliminación Cliente */}
+        {showDeleteClientConfirm && deletingClient && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-gray-800 p-6 rounded-lg w-full max-w-md">
+              <h3 className="text-lg font-semibold mb-4 text-red-400">
+                Confirmar Eliminación de Cliente
+              </h3>
+              <p className="text-gray-300 mb-6">
+                ¿Estás seguro de que deseas eliminar al cliente{' '}
+                <strong>{deletingClient.nombre}</strong>?
+              </p>
+              <p className="text-sm text-gray-400 mb-6">
+                Esta acción no se puede deshacer. Se verificará que no tenga asignaciones o cierres activos.
+              </p>
+              <div className="flex justify-end space-x-3">
+                <button
+                  onClick={() => {
+                    setShowDeleteClientConfirm(false);
+                    setDeletingClient(null);
+                  }}
+                  className="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={confirmDeleteClient}
+                  className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded"
+                >
+                  Eliminar Cliente
                 </button>
               </div>
             </div>

@@ -131,6 +131,16 @@ export const crearCliente = async (datosCliente) => {
   return res.data;
 };
 
+export const actualizarCliente = async (clienteId, datosCliente) => {
+  const res = await api.put(`/contabilidad/gerente/actualizar-cliente/${clienteId}/`, datosCliente);
+  return res.data;
+};
+
+export const eliminarCliente = async (clienteId) => {
+  const res = await api.delete(`/contabilidad/gerente/eliminar-cliente/${clienteId}/`);
+  return res.data;
+};
+
 export const obtenerAreas = async () => {
   const res = await api.get('/contabilidad/gerente/areas/');
   return res.data;

@@ -46,6 +46,8 @@ from .views.gerente import (
     actualizar_usuario,
     eliminar_usuario,
     gestionar_clientes,
+    actualizar_cliente,
+    eliminar_cliente,
     obtener_areas,
     obtener_metricas_sistema,
     obtener_metricas_cache,
@@ -448,6 +450,14 @@ urlpatterns = [
     path("gerente/clientes/", 
          gestionar_clientes, 
          name="gerente_clientes"),
+    
+    path("gerente/actualizar-cliente/<int:cliente_id>/", 
+         actualizar_cliente, 
+         name="gerente_actualizar_cliente"),
+    
+    path("gerente/eliminar-cliente/<int:cliente_id>/", 
+         eliminar_cliente, 
+         name="gerente_eliminar_cliente"),
     
     path("gerente/areas/", 
          obtener_areas, 

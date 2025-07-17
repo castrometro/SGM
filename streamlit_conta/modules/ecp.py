@@ -107,6 +107,66 @@ def show(data_ecp=None, metadata=None, data_eri=None, data_esf=None):
     
     st.markdown("---")
     
+    # Función para obtener el período de cierre formateado
+    def obtener_periodo_cierre(periodo_str):
+        """
+        Convierte una cadena de período en mes y año para el balance final.
+        También extrae el año para el saldo inicial (siempre 1 de enero).
+        Esperado: formato como "2024-12" o "Diciembre 2024"
+        """
+        if not periodo_str or periodo_str == "Periodo desconocido":
+            return "Diciembre 2024", "December 2024", "2024"
+        
+        # Mapeos de meses
+        meses_es = {
+            "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
+            "05": "Mayo", "06": "Junio", "07": "Julio", "08": "Agosto",
+            "09": "Septiembre", "10": "Octubre", "11": "Noviembre", "12": "Diciembre"
+        }
+        
+        meses_en = {
+            "01": "January", "02": "February", "03": "March", "04": "April",
+            "05": "May", "06": "June", "07": "July", "08": "August",
+            "09": "September", "10": "October", "11": "November", "12": "December"
+        }
+        
+        # Intentar diferentes formatos
+        try:
+            # Formato YYYY-MM
+            if "-" in periodo_str and len(periodo_str.split("-")) == 2:
+                año, mes = periodo_str.split("-")
+                mes_es = meses_es.get(mes.zfill(2), "Diciembre")
+                mes_en = meses_en.get(mes.zfill(2), "December")
+                return f"{mes_es} {año}", f"{mes_en} {año}", año
+            
+            # Formato "Mes YYYY" (ya en español)
+            elif any(mes in periodo_str for mes in meses_es.values()):
+                # Buscar el mes en español
+                for num, mes_es in meses_es.items():
+                    if mes_es in periodo_str:
+                        año = ''.join(filter(str.isdigit, periodo_str))
+                        mes_en = meses_en[num]
+                        return f"{mes_es} {año}", f"{mes_en} {año}", año
+            
+            # Formato "Month YYYY" (ya en inglés)
+            elif any(mes in periodo_str for mes in meses_en.values()):
+                # Buscar el mes en inglés
+                for num, mes_en in meses_en.items():
+                    if mes_en in periodo_str:
+                        año = ''.join(filter(str.isdigit, periodo_str))
+                        mes_es = meses_es[num]
+                        return f"{mes_es} {año}", f"{mes_en} {año}", año
+            
+        except:
+            pass
+        
+        # Fallback
+        return "Diciembre 2024", "December 2024", "2024"
+    
+    # Obtener período de cierre
+    periodo_raw = metadata.get("periodo", "Periodo desconocido") if metadata else "Periodo desconocido"
+    periodo_es, periodo_en, año = obtener_periodo_cierre(periodo_raw)
+    
     # Títulos traducidos
     titulos = {
         "es": {
@@ -117,13 +177,14 @@ def show(data_ecp=None, metadata=None, data_eri=None, data_esf=None):
             "capital_attributable": "Capital Atribuible a los propietarios de la controladora",
             "uncontrolled": "Participaciones no controladoras",
             "total": "Total",
-            "initial_balance": "Saldo Inicial al 1 de Enero",
+            "initial_balance": f"Saldo Inicial al 1 de Enero {año}",
             "changes_capital": "Cambios en capital",
             "dividends": "Dividendos distribuidos",
             "result_exercise": "Resultado del ejercicio",
             "other_settings": "Otros ajustes",
-            "final_balance": "Saldo Final",
-            "show_details": "Ver detalles de cuentas"
+            "final_balance": f"Saldo Final al {periodo_es}",
+            "show_details": "Ver detalles de cuentas",
+            "total_period_change": "Cambio Total del Período"
         },
         "en": {
             "title": "Statement of Changes in Equity",
@@ -133,13 +194,14 @@ def show(data_ecp=None, metadata=None, data_eri=None, data_esf=None):
             "capital_attributable": "Capital Attributable to owners of the controller's instruments",
             "uncontrolled": "Uncontrolled participations",
             "total": "Total",
-            "initial_balance": "Initial Balance as of January 1",
+            "initial_balance": f"Initial Balance as of January 1, {año}",
             "changes_capital": "Changes in capital",
             "dividends": "Dividend distributions", 
             "result_exercise": "Result of the exercise",
             "other_settings": "Other settings",
-            "final_balance": "Final Balance",
-            "show_details": "Show account details"
+            "final_balance": f"Final Balance as of {periodo_en}",
+            "show_details": "Show account details",
+            "total_period_change": "Total Period Change"
         }
     }
     
@@ -373,7 +435,7 @@ def show(data_ecp=None, metadata=None, data_eri=None, data_esf=None):
     with col2:
         cambio_total = capital_cambios + otras_reservas_cambios + total_eri_calculado
         st.metric(
-            label="Cambio Total del Período",
+            label=t["total_period_change"],
             value=formatear_monto(cambio_total, metadata.get("moneda", "CLP")),
             delta=f"{'+' if cambio_total >= 0 else ''}{cambio_total:,.0f}"
         )

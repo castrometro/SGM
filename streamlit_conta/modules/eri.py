@@ -98,8 +98,14 @@ def show(data_eri=None, metadata=None):
             total_bloque = procesar_bloque_eri(bloque_data, metadata, lang_field)
             total_general += total_bloque
 
-    # Mostrar Total General al final
+    # Mostrar Total General al final con traducción dinámica
     if total_general != 0.0:
+        # Obtener texto traducido para el total general
+        if lang_field == "nombre_es":
+            total_text = "TOTAL GENERAL (Ganancia/Pérdida)"
+        else:
+            total_text = "TOTAL GENERAL (Profit/Loss)"
+        
         st.markdown(f"""
             <div style='
             text-align: right; 
@@ -110,7 +116,7 @@ def show(data_eri=None, metadata=None):
             border-radius: 5px;
             border: 2px solid #666666;
         '>
-                <h3 style='margin: 0; font-weight: bold;'>TOTAL GENERAL (Earning / (Loss)): {formatear_monto(total_general, metadata.get('moneda', 'CLP'))}</h3>
+                <h3 style='margin: 0; font-weight: bold;'>{total_text}: {formatear_monto(total_general, metadata.get('moneda', 'CLP'))}</h3>
             </div>
         """, unsafe_allow_html=True)
 
@@ -119,17 +125,16 @@ def procesar_bloque_eri(bloque, metadata, lang_field):
     nombre_bloque = bloque.get(lang_field, "Bloque sin nombre")
     st.markdown(f"## {nombre_bloque}")
 
-    total_bloque = 0.0
+    # ACTUALIZADO: Usar el total pre-calculado para consistencia con Excel
+    total_bloque = bloque.get("total", 0.0)
 
     # 1. Procesar cuentas sueltas en el bloque (si las hay)
     cuentas_sueltas = bloque.get("cuentas", [])
     if cuentas_sueltas:
         agrupaciones = agrupar_por_agrupacion_informe(cuentas_sueltas, lang_field)
-        total_sueltas = 0.0
 
         for agrupacion, cuentas_agrupadas in agrupaciones.items():
             total_agrupacion = sum(c["Saldo Final"] for c in cuentas_agrupadas)
-            total_sueltas += total_agrupacion
 
             # Crear el expander con el nombre del grupo y su total
             with st.expander(f"**{agrupacion}** - {formatear_monto(total_agrupacion, metadata.get('moneda', 'CLP'))} ({len(cuentas_agrupadas)} cuentas)"):
@@ -143,8 +148,6 @@ def procesar_bloque_eri(bloque, metadata, lang_field):
                 else:
                     st.info("No hay cuentas en esta agrupación.")
 
-        total_bloque += total_sueltas
-
     # 2. Procesar grupos en el bloque
     grupos = bloque.get("grupos", {})
     for grupo_nombre, grupo_info in grupos.items():
@@ -152,10 +155,8 @@ def procesar_bloque_eri(bloque, metadata, lang_field):
         cuentas = grupo_info.get("cuentas", [])
         agrupaciones = agrupar_por_agrupacion_informe(cuentas, lang_field)
 
-        total_grupo = 0.0
         for agrupacion, cuentas_agrupadas in agrupaciones.items():
             total_agrupacion = sum(c["Saldo Final"] for c in cuentas_agrupadas)
-            total_grupo += total_agrupacion
             
             # Usar el título del grupo si la agrupación es igual, sino usar la agrupación
             titulo_mostrar = grupo_titulo if agrupacion == grupo_titulo else agrupacion
@@ -171,8 +172,6 @@ def procesar_bloque_eri(bloque, metadata, lang_field):
                     st.dataframe(df[["Código", "Nombre", "Saldo Final"]], use_container_width=True)
                 else:
                     st.info("No hay cuentas en esta agrupación.")
-
-        total_bloque += total_grupo
 
     # Total del bloque principal
     st.markdown(f"""
@@ -257,33 +256,17 @@ def calcular_total_eri(data_eri):
     """
     Calcula el total general del ERI sin mostrar ninguna UI.
     Retorna el total para ser usado en otros reportes como ESF.
+    ACTUALIZADO: Ahora usa el mismo método que excel_templates.py para consistencia.
     """
     if data_eri is None:
         return 0.0
     
     total_general = 0.0
+    
+    # Usar el mismo método que excel_templates.py - más simple y confiable
     for bloque_key in BLOQUES_ERI:
-        bloque_data = data_eri.get(bloque_key)
-        if bloque_data:
-            total_bloque = 0.0
-            
-            # Procesar cuentas sueltas en el bloque (si las hay)
-            cuentas_sueltas = bloque_data.get("cuentas", [])
-            if cuentas_sueltas:
-                agrupaciones = agrupar_por_agrupacion_informe(cuentas_sueltas, "nombre_es")
-                for agrupacion, cuentas_agrupadas in agrupaciones.items():
-                    total_agrupacion = sum(c["Saldo Final"] for c in cuentas_agrupadas)
-                    total_bloque += total_agrupacion
-            
-            # Procesar grupos en el bloque
-            grupos = bloque_data.get("grupos", {})
-            for grupo_nombre, grupo_info in grupos.items():
-                cuentas = grupo_info.get("cuentas", [])
-                agrupaciones = agrupar_por_agrupacion_informe(cuentas, "nombre_es")
-                for agrupacion, cuentas_agrupadas in agrupaciones.items():
-                    total_agrupacion = sum(c["Saldo Final"] for c in cuentas_agrupadas)
-                    total_bloque += total_agrupacion
-            
-            total_general += total_bloque
+        bloque_data = data_eri.get(bloque_key, {})
+        if isinstance(bloque_data, dict) and "total" in bloque_data:
+            total_general += bloque_data["total"]
     
     return total_general

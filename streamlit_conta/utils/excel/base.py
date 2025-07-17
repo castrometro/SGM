@@ -54,9 +54,9 @@ class BaseExcelTemplate:
             )
         }
 
-    def _get_text(self, key, language='es'):
-        """Obtener texto traducido según el idioma"""
-        return get_text(key, language)
+    def _get_text(self, key, language='es', metadata=None):
+        """Obtener texto traducido según el idioma, con soporte para textos dinámicos"""
+        return get_text(key, language, metadata)
 
     def _get_account_name(self, cuenta, language='es'):
         """Obtener nombre de cuenta según el idioma"""
@@ -92,10 +92,10 @@ class BaseExcelTemplate:
 
     def _add_metadata_sheet(self, workbook, metadata, language='es'):
         """Agregar hoja con metadatos del informe"""
-        ws = workbook.create_sheet(self._get_text('info_sheet', language))
+        ws = workbook.create_sheet(self._get_text('info_sheet', language, metadata))
         
         # Título
-        title_text = self._get_text('report_info', language)
+        title_text = self._get_text('report_info', language, metadata)
         ws.cell(row=1, column=1, value=title_text)
         ws.cell(row=1, column=1).font = self.styles['title']
         ws.cell(row=1, column=1).fill = self.fills['title']

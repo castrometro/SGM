@@ -129,10 +129,10 @@ class ExcelTemplateGenerator:
                 'ganancia_perdida': 'Earnings (Loss)',
                 'ganancia_perdida_antes_impuestos': 'Earnings (Loss) Before Taxes',
                 # ECP
-                'initial_balance': 'Initial Balance as of January 1, 2025',
+                'initial_balance': 'Initial Balance as of January 1',
                 'period_result_ecp': 'Result of the Exercise',
                 'other_changes': 'Other Settings',
-                'final_balance': 'Final Balance as of June, 2025',
+                'final_balance': 'Final Balance',
                 'concept': 'Concept',
                 'capital': 'Capital',
                 'other_reserves': 'Other Reserves',
@@ -723,8 +723,85 @@ class ExcelTemplateGenerator:
 
     def generate_ecp_template(self, data_ecp, metadata, data_eri=None):
         """Generar template Excel para Estado de Cambios en el Patrimonio"""
-        # Obtener idioma de los metadatos
-        language = metadata.get('idioma', 'es')
+        # Obtener idioma de los metadatos - usar lógica más robusta
+        language_raw = metadata.get('idioma', 'es')
+        
+        # Normalizar el idioma - ser más permisivo con la detección
+        if isinstance(language_raw, str):
+            language_lower = language_raw.lower()
+            is_english = any(keyword in language_lower for keyword in ['en', 'english', 'inglés', 'ing'])
+        else:
+            is_english = False
+        
+        language = 'en' if is_english else 'es'
+        
+        # Función para obtener el período de cierre formateado
+        def obtener_periodo_cierre(periodo_str):
+            """
+            Convierte una cadena de período en mes y año para el balance final.
+            También extrae el año para el saldo inicial (siempre 1 de enero).
+            Esperado: formato como "2024-12" o "Diciembre 2024"
+            """
+            if not periodo_str or periodo_str == "Periodo desconocido":
+                return "Diciembre 2024", "December 2024", "2024"
+            
+            # Mapeos de meses
+            meses_es = {
+                "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
+                "05": "Mayo", "06": "Junio", "07": "Julio", "08": "Agosto",
+                "09": "Septiembre", "10": "Octubre", "11": "Noviembre", "12": "Diciembre"
+            }
+            
+            meses_en = {
+                "01": "January", "02": "February", "03": "March", "04": "April",
+                "05": "May", "06": "June", "07": "July", "08": "August",
+                "09": "September", "10": "October", "11": "November", "12": "December"
+            }
+            
+            # Intentar diferentes formatos
+            try:
+                # Formato YYYY-MM
+                if "-" in periodo_str and len(periodo_str.split("-")) == 2:
+                    año, mes = periodo_str.split("-")
+                    mes_es = meses_es.get(mes.zfill(2), "Diciembre")
+                    mes_en = meses_en.get(mes.zfill(2), "December")
+                    return f"{mes_es} {año}", f"{mes_en} {año}", año
+                
+                # Formato "Mes YYYY" (ya en español)
+                elif any(mes in periodo_str for mes in meses_es.values()):
+                    # Buscar el mes en español
+                    for num, mes_es in meses_es.items():
+                        if mes_es in periodo_str:
+                            año = ''.join(filter(str.isdigit, periodo_str))
+                            mes_en = meses_en[num]
+                            return f"{mes_es} {año}", f"{mes_en} {año}", año
+                
+                # Formato "Month YYYY" (ya en inglés)
+                elif any(mes in periodo_str for mes in meses_en.values()):
+                    # Buscar el mes en inglés
+                    for num, mes_en in meses_en.items():
+                        if mes_en in periodo_str:
+                            año = ''.join(filter(str.isdigit, periodo_str))
+                            mes_es = meses_es[num]
+                            return f"{mes_es} {año}", f"{mes_en} {año}", año
+                
+            except:
+                pass
+            
+            # Fallback
+            return "Diciembre 2024", "December 2024", "2024"
+        
+        # Obtener período de cierre
+        periodo_raw = metadata.get("periodo", "Periodo desconocido")
+        periodo_es, periodo_en, año = obtener_periodo_cierre(periodo_raw)
+        
+        # Crear textos dinámicos para saldos
+        if is_english:
+            initial_balance_text = f"Initial Balance as of January 1, {año}"
+            final_balance_text = f"Final Balance as of {periodo_en}"
+        else:
+            initial_balance_text = f"Saldo Inicial al 1 de Enero {año}"
+            final_balance_text = f"Saldo Final a {periodo_es}"
         
         workbook = openpyxl.Workbook()
         ws = workbook.active
@@ -809,7 +886,7 @@ class ExcelTemplateGenerator:
             # Datos de las filas
             filas_ecp = [
                 {
-                    "Concepto": self._get_text('initial_balance', language),
+                    "Concepto": initial_balance_text,
                     "Capital": capital_inicial,
                     "Otras Reservas": otras_reservas_inicial,
                     "Resultados Acumulados": resultados_inicial,
@@ -836,7 +913,7 @@ class ExcelTemplateGenerator:
                     "Total": capital_cambios + otras_reservas_cambios + resultados_cambios
                 },
                 {
-                    "Concepto": self._get_text('final_balance', language),
+                    "Concepto": final_balance_text,
                     "Capital": capital_inicial + capital_cambios,
                     "Otras Reservas": otras_reservas_inicial + otras_reservas_cambios,
                     "Resultados Acumulados": resultados_inicial + resultados_cambios + total_eri,
@@ -861,7 +938,7 @@ class ExcelTemplateGenerator:
                     
                     # Resaltar solo la fila de saldo final con color verde oscuro
                     final_balance_concepts = [
-                        self._get_text('final_balance', language),
+                        final_balance_text,  # Usar el texto dinámico
                         "Saldo Final"  # Compatibilidad
                     ]
                     

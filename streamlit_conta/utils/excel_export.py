@@ -7,27 +7,8 @@ import pandas as pd
 from datetime import datetime
 import io
 
-try:
-    from .excel_templates import excel_generator
-except ImportError:
-    # Si falla el import relativo, intentar absoluto
-    try:
-        from utils.excel_templates import excel_generator
-    except ImportError:
-        # Si no se puede importar, crear un mock
-        class MockExcelGenerator:
-            def generate_esf_template(self, *args, **kwargs):
-                return None
-            def generate_eri_template(self, *args, **kwargs):
-                return None
-            def generate_movimientos_template(self, *args, **kwargs):
-                return None
-            def generate_ecp_template(self, *args, **kwargs):
-                return None
-            def workbook_to_bytes(self, workbook):
-                return b""
-        
-        excel_generator = MockExcelGenerator()
+# Usar SOLO el sistema modular
+from .excel import excel_generator
 
 
 def create_excel_download_button(

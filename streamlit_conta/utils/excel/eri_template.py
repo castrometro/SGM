@@ -5,6 +5,7 @@ Template Excel específico para Estado de Resultado Integral (ERI)
 import openpyxl
 import logging
 from .base import BaseExcelTemplate
+from .translations import detect_language_improved
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +15,8 @@ class ERITemplate(BaseExcelTemplate):
 
     def generate(self, data_eri, metadata):
         """Generar template Excel para Estado de Resultado Integral"""
-        # Obtener idioma de los metadatos
-        language = metadata.get('idioma', 'es')
+        # Obtener idioma usando detección mejorada
+        language = detect_language_improved(metadata)
         
         workbook = openpyxl.Workbook()
         ws = workbook.active

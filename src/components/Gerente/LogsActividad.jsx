@@ -4,7 +4,8 @@ import {
   obtenerLogsActividad, 
   obtenerEstadisticasActividad, 
   obtenerUsuariosActividad,
-  obtenerUsuariosConectados
+  obtenerUsuariosConectados,
+  obtenerPeriodosDisponibles
 } from '../../api/gerente';
 import { 
   Search, Filter, Calendar, User, FileText, Activity, RefreshCw, 
@@ -15,9 +16,12 @@ const LogsActividad = () => {
   const [logs, setLogs] = useState([]);
   const [estadisticas, setEstadisticas] = useState(null);
   const [usuarios, setUsuarios] = useState([]);
+  const [clientes, setClientes] = useState([]);
+  const [periodos, setPeriodos] = useState([]);
   const [usuariosConectados, setUsuariosConectados] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [dataSource, setDataSource] = useState(null);
   
   // Estados de filtros
   const [filtros, setFiltros] = useState({
@@ -25,6 +29,8 @@ const LogsActividad = () => {
     usuario_id: '',
     tarjeta: '',
     accion: '',
+    cierre: '',
+    periodo: '',
     fecha_desde: '',
     fecha_hasta: '',
     page: 1,
@@ -46,8 +52,11 @@ const LogsActividad = () => {
     { value: 'libro_mayor', label: 'Libro Mayor' },
     { value: 'clasificacion', label: 'Clasificaciones' },
     { value: 'nombres_ingles', label: 'Nombres en Inglés' },
+    { value: 'incidencias', label: 'Incidencias' },
     { value: 'revision', label: 'Revisión' },
-    { value: 'movimientos_cuenta', label: 'Movimientos por Cuenta' }
+    { value: 'movimientos_cuenta', label: 'Movimientos por Cuenta' },
+    { value: 'movimientos_resumen', label: 'Resumen de Movimientos' },
+    { value: 'reportes', label: 'Reportes' }
   ];
 
   const tiposAccion = [
@@ -58,6 +67,21 @@ const LogsActividad = () => {
     { value: 'manual_delete', label: 'Eliminar Manual' },
     { value: 'upload_excel', label: 'Subir Excel' },
     { value: 'process_complete', label: 'Proceso Completado' }
+  ];
+
+  const tiposCierre = [
+    { value: '', label: 'Todos los cierres' },
+    { value: 'pendiente', label: 'Pendiente' },
+    { value: 'procesando', label: 'Procesando' },
+    { value: 'clasificacion', label: 'Esperando Clasificación' },
+    { value: 'incidencias', label: 'Incidencias Abiertas' },
+    { value: 'sin_incidencias', label: 'Sin Incidencias' },
+    { value: 'generando_reportes', label: 'Generando Reportes' },
+    { value: 'en_revision', label: 'En Revisión' },
+    { value: 'rechazado', label: 'Rechazado' },
+    { value: 'aprobado', label: 'Aprobado' },
+    { value: 'finalizado', label: 'Finalizado' },
+    { value: 'completo', label: 'Completo' }
   ];
 
   useEffect(() => {
@@ -92,6 +116,7 @@ const LogsActividad = () => {
       // Intentar cargar logs
       try {
         logsData = await obtenerLogsActividad(filtros);
+        setDataSource(logsData.source || 'postgres'); // Mostrar fuente de datos
       } catch (err) {
         console.error('Error cargando logs:', err);
       }
@@ -118,6 +143,16 @@ const LogsActividad = () => {
           usuariosData = await obtenerUsuariosActividad();
         } catch (err) {
           console.error('Error cargando usuarios:', err);
+        }
+      }
+
+      // Intentar cargar períodos si no están cargados
+      if (periodos.length === 0) {
+        try {
+          const periodosData = await obtenerPeriodosDisponibles();
+          setPeriodos(periodosData || []);
+        } catch (err) {
+          console.error('Error cargando períodos:', err);
         }
       }
 
@@ -174,6 +209,25 @@ const LogsActividad = () => {
       // Procesar usuarios conectados
       setUsuariosConectados(conectadosData.usuarios_conectados || []);
 
+      // Extraer lista única de clientes desde los logs para el filtro
+      const clientesUnicos = [...new Set(
+        logsConFechasValidadas
+          .filter(log => log.cliente_nombre && log.cliente_nombre.trim() !== '')
+          .map(log => ({
+            id: log.cliente_id || log.cliente_nombre,
+            nombre: log.cliente_nombre
+          }))
+      )];
+      
+      // Actualizar lista de clientes solo si hay nuevos clientes
+      if (clientesUnicos.length > 0) {
+        setClientes(prev => {
+          const clientesExistentes = prev.map(c => c.id);
+          const clientesNuevos = clientesUnicos.filter(c => !clientesExistentes.includes(c.id));
+          return [...prev, ...clientesNuevos];
+        });
+      }
+
       // Limpiar error si todo va bien
       setError('');
 
@@ -203,6 +257,8 @@ const LogsActividad = () => {
       usuario_id: '',
       tarjeta: '',
       accion: '',
+      cierre: '',
+      periodo: '',
       fecha_desde: '',
       fecha_hasta: '',
       page: 1,
@@ -243,10 +299,30 @@ const LogsActividad = () => {
       'libro_mayor': 'bg-green-100 text-green-800',
       'clasificacion': 'bg-purple-100 text-purple-800',
       'nombres_ingles': 'bg-yellow-100 text-yellow-800',
-      'revision': 'bg-red-100 text-red-800',
-      'movimientos_cuenta': 'bg-indigo-100 text-indigo-800'
+      'incidencias': 'bg-red-100 text-red-800',
+      'revision': 'bg-orange-100 text-orange-800',
+      'movimientos_cuenta': 'bg-indigo-100 text-indigo-800',
+      'movimientos_resumen': 'bg-cyan-100 text-cyan-800',
+      'reportes': 'bg-pink-100 text-pink-800'
     };
     return colors[tarjeta] || 'bg-gray-100 text-gray-800';
+  };
+
+  const getCierreColor = (estado) => {
+    const colors = {
+      'pendiente': 'bg-yellow-100 text-yellow-800',
+      'procesando': 'bg-blue-100 text-blue-800',
+      'clasificacion': 'bg-purple-100 text-purple-800',
+      'incidencias': 'bg-red-100 text-red-800',
+      'sin_incidencias': 'bg-green-100 text-green-800',
+      'generando_reportes': 'bg-indigo-100 text-indigo-800',
+      'en_revision': 'bg-orange-100 text-orange-800',
+      'rechazado': 'bg-red-200 text-red-900',
+      'aprobado': 'bg-green-200 text-green-900',
+      'finalizado': 'bg-gray-100 text-gray-800',
+      'completo': 'bg-gray-200 text-gray-900'
+    };
+    return colors[estado] || 'bg-gray-100 text-gray-800';
   };
 
   const getAccionIcon = (accion) => {
@@ -277,10 +353,10 @@ const LogsActividad = () => {
         </div>
 
         {/* Dashboard Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="space-y-6">
           
-          {/* Columna Izquierda: KPIs y Usuarios Conectados */}
-          <div className="lg:col-span-1 space-y-6">
+          {/* Fila Superior: KPIs y Usuarios Conectados */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             
             {/* Widget 1: KPIs Principales */}
             <div className="bg-gray-800 rounded-lg p-6">
@@ -414,161 +490,235 @@ const LogsActividad = () => {
             </div>
           </div>
 
-          {/* Columna Derecha: Tabla de Logs Compacta */}
-          <div className="lg:col-span-2">
-            <div className="bg-gray-800 rounded-lg overflow-hidden">
-              
-              {/* Header de la tabla con filtros compactos */}
-              <div className="p-4 border-b border-gray-700">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center">
-                    <Activity className="w-6 h-6 text-blue-500 mr-2" />
-                    <h3 className="text-lg font-semibold">Actividad Reciente</h3>
-                  </div>
-                  <button
-                    onClick={cargarDatos}
-                    disabled={loading}
-                    className="flex items-center px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded text-sm"
-                  >
-                    <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
-                    Actualizar
-                  </button>
-                </div>
-                
-                {/* Filtros en línea */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                  <select
-                    value={filtros.usuario_id}
-                    onChange={(e) => handleFiltroChange('usuario_id', e.target.value)}
-                    className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
-                  >
-                    <option value="">Todos los usuarios</option>
-                    {usuarios.map(usuario => (
-                      <option key={usuario.id} value={usuario.id}>
-                        {usuario.nombre} {usuario.apellido}
-                      </option>
-                    ))}
-                  </select>
-
-                  <select
-                    value={filtros.tarjeta}
-                    onChange={(e) => handleFiltroChange('tarjeta', e.target.value)}
-                    className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
-                  >
-                    {tiposTarjeta.map(tipo => (
-                      <option key={tipo.value} value={tipo.value}>
-                        {tipo.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  <input
-                    type="date"
-                    value={filtros.fecha_desde}
-                    onChange={(e) => handleFiltroChange('fecha_desde', e.target.value)}
-                    className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
-                  />
-
-                  <button
-                    onClick={limpiarFiltros}
-                    className="text-sm text-blue-400 hover:text-blue-300 px-3 py-2 border border-gray-600 rounded"
-                  >
-                    Limpiar
-                  </button>
-                </div>
-              </div>
-
-              {/* Error */}
-              {error && (
-                <div className="bg-red-600 text-white p-3 text-sm">
-                  {error}
-                </div>
-              )}
-
-              {/* Tabla compacta */}
-              <div className="overflow-x-auto max-h-96 overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-700 sticky top-0">
-                    <tr>
-                      <th className="px-3 py-2 text-left font-medium">Hora</th>
-                      <th className="px-3 py-2 text-left font-medium">Usuario</th>
-                      <th className="px-3 py-2 text-left font-medium">Acción</th>
-                      <th className="px-3 py-2 text-left font-medium">Cliente</th>
-                      <th className="px-3 py-2 text-left font-medium">Tarjeta</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-700">
-                    {logs.map((log) => (
-                      <tr key={log.id} className="hover:bg-gray-750">
-                        <td className="px-3 py-2">
-                          <div className="text-xs">
-                            {log.timestamp ? formatearFecha(log.timestamp).split(' ')[1] || 'Sin hora' : 'Sin hora'}
-                          </div>
-                          <div className="text-xs text-gray-400">
-                            {log.timestamp ? formatearFecha(log.timestamp).split(' ')[0] || 'Sin fecha' : 'Sin fecha'}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="font-medium text-xs">{log.usuario_nombre}</div>
-                          <div className="text-xs text-gray-400">{log.usuario_email}</div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex items-center text-xs">
-                            {getAccionIcon(log.accion)}
-                            <span className="ml-1">{log.accion}</span>
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-xs">
-                          {log.cliente_nombre}
-                        </td>
-                        <td className="px-3 py-2">
-                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getTarjetaColor(log.tarjeta)}`}>
-                            {log.tarjeta}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Paginación compacta */}
-              {paginacion.total_pages > 1 && (
-                <div className="bg-gray-750 px-4 py-3 flex items-center justify-between text-sm">
-                  <div className="text-gray-400">
-                    {paginacion.count} resultados
-                  </div>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => handlePageChange(paginacion.current_page - 1)}
-                      disabled={!paginacion.has_previous}
-                      className="px-2 py-1 bg-gray-600 hover:bg-gray-500 disabled:bg-gray-800 disabled:text-gray-500 rounded text-xs"
-                    >
-                      ‹
-                    </button>
-                    <span className="px-2 py-1 text-xs">
-                      {paginacion.current_page}/{paginacion.total_pages}
+          {/* Bloque Inferior: Tabla de Logs de Actividad Reciente */}
+          <div className="bg-gray-800 rounded-lg overflow-hidden">
+            
+            {/* Header de la tabla con filtros compactos */}
+            <div className="p-4 border-b border-gray-700">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center">
+                  <Activity className="w-6 h-6 text-blue-500 mr-2" />
+                  <h3 className="text-lg font-semibold">Actividad Reciente</h3>
+                  {dataSource && (
+                    <span className={`ml-2 px-2 py-1 rounded text-xs ${
+                      dataSource === 'redis' 
+                        ? 'bg-green-100 text-green-800' 
+                        : 'bg-blue-100 text-blue-800'
+                    }`}>
+                      {dataSource === 'redis' ? '⚡ Tiempo Real' : '🗄️ Base de Datos'}
                     </span>
-                    <button
-                      onClick={() => handlePageChange(paginacion.current_page + 1)}
-                      disabled={!paginacion.has_next}
-                      className="px-2 py-1 bg-gray-600 hover:bg-gray-500 disabled:bg-gray-800 disabled:text-gray-500 rounded text-xs"
-                    >
-                      ›
-                    </button>
-                  </div>
+                  )}
                 </div>
-              )}
+                <button
+                  onClick={cargarDatos}
+                  disabled={loading}
+                  className="flex items-center px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded text-sm"
+                >
+                  <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
+                  Actualizar
+                </button>
+              </div>
+              
+              {/* Filtros en línea */}
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-3">
+                <select
+                  value={filtros.usuario_id}
+                  onChange={(e) => handleFiltroChange('usuario_id', e.target.value)}
+                  className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
+                >
+                  <option value="">Todos los usuarios</option>
+                  {usuarios.map(usuario => (
+                    <option key={usuario.id} value={usuario.id}>
+                      {usuario.nombre} {usuario.apellido}
+                    </option>
+                  ))}
+                </select>
 
-              {/* Sin resultados */}
-              {logs.length === 0 && !loading && (
-                <div className="text-center py-8">
-                  <FileText className="w-12 h-12 mx-auto text-gray-600 mb-3" />
-                  <h4 className="text-gray-300 mb-2">No hay actividad reciente</h4>
-                  <p className="text-gray-400 text-sm">Ajusta los filtros para ver más resultados</p>
-                </div>
-              )}
+                <select
+                  value={filtros.cliente_id}
+                  onChange={(e) => handleFiltroChange('cliente_id', e.target.value)}
+                  className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
+                >
+                  <option value="">Todos los clientes</option>
+                  {clientes.map(cliente => (
+                    <option key={cliente.id} value={cliente.id}>
+                      {cliente.nombre}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={filtros.tarjeta}
+                  onChange={(e) => handleFiltroChange('tarjeta', e.target.value)}
+                  className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
+                >
+                  {tiposTarjeta.map(tipo => (
+                    <option key={tipo.value} value={tipo.value}>
+                      {tipo.label}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={filtros.cierre}
+                  onChange={(e) => handleFiltroChange('cierre', e.target.value)}
+                  className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
+                >
+                  {tiposCierre.map(tipo => (
+                    <option key={tipo.value} value={tipo.value}>
+                      {tipo.label}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={filtros.periodo}
+                  onChange={(e) => handleFiltroChange('periodo', e.target.value)}
+                  className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
+                  title="Seleccionar período de cierre específico"
+                >
+                  <option value="">Todos los períodos</option>
+                  {periodos.map(periodo => (
+                    <option key={periodo.periodo} value={periodo.periodo}>
+                      {periodo.periodo} ({periodo.total_actividades} logs)
+                    </option>
+                  ))}
+                </select>
+
+                <input
+                  type="date"
+                  value={filtros.fecha_desde}
+                  onChange={(e) => handleFiltroChange('fecha_desde', e.target.value)}
+                  className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
+                  placeholder="Desde"
+                />
+
+                <button
+                  onClick={limpiarFiltros}
+                  className="text-sm text-blue-400 hover:text-blue-300 px-3 py-2 border border-gray-600 rounded"
+                >
+                  Limpiar
+                </button>
+              </div>
             </div>
+
+            {/* Error */}
+            {error && (
+              <div className="bg-red-600 text-white p-3 text-sm">
+                {error}
+              </div>
+            )}
+
+            {/* Tabla compacta */}
+            <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-700 sticky top-0">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Hora</th>
+                    <th className="px-3 py-2 text-left font-medium">Usuario</th>
+                    <th className="px-3 py-2 text-left font-medium">Acción</th>
+                    <th className="px-3 py-2 text-left font-medium">Cliente</th>
+                    <th className="px-3 py-2 text-left font-medium">Tarjeta</th>
+                    <th className="px-3 py-2 text-left font-medium">Cierre</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-700">
+                  {logs.map((log) => (
+                    <tr key={log.id} className="hover:bg-gray-750">
+                      <td className="px-3 py-2">
+                        <div className="text-xs">
+                          {log.timestamp ? formatearFecha(log.timestamp).split(' ')[1] || 'Sin hora' : 'Sin hora'}
+                        </div>
+                        <div className="text-xs text-gray-400">
+                          {log.timestamp ? formatearFecha(log.timestamp).split(' ')[0] || 'Sin fecha' : 'Sin fecha'}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="font-medium text-xs">{log.usuario_nombre}</div>
+                        <div className="text-xs text-gray-400">{log.usuario_email}</div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div 
+                          className="flex items-center text-xs cursor-help"
+                          title={log.descripcion || 'Sin descripción'}
+                        >
+                          {getAccionIcon(log.accion)}
+                          <span className="ml-1">{log.accion}</span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {log.cliente_nombre}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span 
+                          className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getTarjetaColor(log.tarjeta)}`}
+                          title={`Tarjeta: ${log.tarjeta}`}
+                        >
+                          {log.tarjeta}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        {log.estado_cierre && (
+                          <div className="flex flex-col">
+                            <span 
+                              className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getCierreColor(log.estado_cierre)}`}
+                              title={`Estado: ${log.estado_cierre}${log.periodo_cierre ? ` - Período: ${log.periodo_cierre}` : ''}`}
+                            >
+                              {log.estado_cierre}
+                            </span>
+                            {log.periodo_cierre && (
+                              <span className="text-xs text-gray-400 mt-1">
+                                {log.periodo_cierre}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {!log.estado_cierre && (
+                          <span className="text-xs text-gray-500">N/A</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Paginación compacta */}
+            {paginacion.total_pages > 1 && (
+              <div className="bg-gray-750 px-4 py-3 flex items-center justify-between text-sm">
+                <div className="text-gray-400">
+                  {paginacion.count} resultados
+                </div>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => handlePageChange(paginacion.current_page - 1)}
+                    disabled={!paginacion.has_previous}
+                    className="px-2 py-1 bg-gray-600 hover:bg-gray-500 disabled:bg-gray-800 disabled:text-gray-500 rounded text-xs"
+                  >
+                    ‹
+                  </button>
+                  <span className="px-2 py-1 text-xs">
+                    {paginacion.current_page}/{paginacion.total_pages}
+                  </span>
+                  <button
+                    onClick={() => handlePageChange(paginacion.current_page + 1)}
+                    disabled={!paginacion.has_next}
+                    className="px-2 py-1 bg-gray-600 hover:bg-gray-500 disabled:bg-gray-800 disabled:text-gray-500 rounded text-xs"
+                  >
+                    ›
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Sin resultados */}
+            {logs.length === 0 && !loading && (
+              <div className="text-center py-8">
+                <FileText className="w-12 h-12 mx-auto text-gray-600 mb-3" />
+                <h4 className="text-gray-300 mb-2">No hay actividad reciente</h4>
+                <p className="text-gray-400 text-sm">Ajusta los filtros para ver más resultados</p>
+              </div>
+            )}
           </div>
         </div>
       </div>

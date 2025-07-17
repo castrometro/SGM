@@ -9,10 +9,13 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.core.paginator import Paginator
 from django.contrib.sessions.models import Session
+import logging
 
 from api.models import Cliente, Usuario, AsignacionClienteUsuario
 from ..models import TarjetaActivityLog, CierreContabilidad
 from ..cache_redis import get_cache_system
+
+logger = logging.getLogger(__name__)
 
 # ==================== LOGS Y ACTIVIDAD ====================
 
@@ -20,7 +23,9 @@ from ..cache_redis import get_cache_system
 @permission_classes([IsAuthenticated])
 def obtener_logs_actividad(request):
     """
-    Obtiene logs de actividad con filtros para gerentes
+    Obtiene logs de actividad con filtros para gerentes usando sistema híbrido
+    - Redis para logs recientes (últimos 7 días)
+    - PostgreSQL para búsquedas históricas
     """
     # Verificar que el usuario sea gerente
     if request.user.tipo_usuario != 'gerente':
@@ -31,11 +36,103 @@ def obtener_logs_actividad(request):
     usuario_id = request.GET.get('usuario_id')
     tarjeta = request.GET.get('tarjeta')
     accion = request.GET.get('accion')
+    cierre = request.GET.get('cierre')  # Nuevo filtro por estado de cierre
+    periodo = request.GET.get('periodo')  # Nuevo filtro por período de cierre
     fecha_desde = request.GET.get('fecha_desde')
     fecha_hasta = request.GET.get('fecha_hasta')
     page = int(request.GET.get('page', 1))
     page_size = int(request.GET.get('page_size', 20))
     
+    # Determinar estrategia de consulta
+    use_redis = should_use_redis_cache(fecha_desde, fecha_hasta)
+    
+    if use_redis and not (usuario_id or tarjeta or accion or cierre):
+        # Usar Redis para consultas simples y recientes
+        try:
+            logs_data = get_logs_from_redis(
+                cliente_id=cliente_id,
+                periodo=periodo,
+                page=page,
+                page_size=page_size
+            )
+            if logs_data['results']:  # Si Redis tiene datos
+                return Response(logs_data)
+        except Exception as e:
+            logger.warning(f"Error con Redis, usando PostgreSQL: {e}")
+    
+    # Usar PostgreSQL para búsquedas complejas o históricas
+    logs_data = get_logs_from_postgres(
+        cliente_id=cliente_id,
+        usuario_id=usuario_id,
+        tarjeta=tarjeta,
+        accion=accion,
+        cierre=cierre,
+        periodo=periodo,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+        page=page,
+        page_size=page_size
+    )
+    
+    return Response(logs_data)
+
+
+def should_use_redis_cache(fecha_desde, fecha_hasta):
+    """Determina si usar Redis o PostgreSQL según los filtros de fecha"""
+    # Si no hay filtros de fecha, usar Redis (logs recientes)
+    if not fecha_desde and not fecha_hasta:
+        return True
+    
+    # Si hay filtros de fecha, verificar si están en el rango de Redis (7 días)
+    if fecha_desde:
+        try:
+            fecha_desde_dt = datetime.strptime(fecha_desde, '%Y-%m-%d')
+            if fecha_desde_dt < datetime.now() - timedelta(days=7):
+                return False
+        except ValueError:
+            pass
+    
+    return True
+
+
+def get_logs_from_redis(cliente_id=None, periodo=None, page=1, page_size=20):
+    """Obtiene logs desde Redis con paginación"""
+    from ..utils.activity_logger import ActivityLogStorage
+    
+    try:
+        # Obtener más logs para filtrado y paginación
+        logs = ActivityLogStorage.get_recent_logs(
+            cliente_id=cliente_id,
+            periodo=periodo,
+            limit=page_size * 10  # Buffer para paginación
+        )
+        
+        # Paginación simple
+        total_count = len(logs)
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_logs = logs[start_idx:end_idx]
+        
+        return {
+            'results': paginated_logs,
+            'count': total_count,
+            'total_pages': (total_count + page_size - 1) // page_size,
+            'current_page': page,
+            'has_next': end_idx < total_count,
+            'has_previous': page > 1,
+            'source': 'redis'  # Para debugging
+        }
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo logs desde Redis: {e}")
+        return {'results': [], 'count': 0, 'total_pages': 0, 'current_page': 1, 'has_next': False, 'has_previous': False}
+
+
+def get_logs_from_postgres(cliente_id=None, usuario_id=None, tarjeta=None,
+                          accion=None, cierre=None, periodo=None,
+                          fecha_desde=None, fecha_hasta=None,
+                          page=1, page_size=20):
+    """Obtiene logs desde PostgreSQL (método mejorado)"""
     # Construir query
     logs = TarjetaActivityLog.objects.select_related(
         'cierre', 'cierre__cliente', 'usuario'
@@ -53,6 +150,12 @@ def obtener_logs_actividad(request):
     
     if accion:
         logs = logs.filter(accion=accion)
+    
+    if cierre:  # Nuevo filtro por estado de cierre
+        logs = logs.filter(cierre__estado=cierre)
+    
+    if periodo:  # Nuevo filtro por período de cierre
+        logs = logs.filter(cierre__periodo=periodo)
     
     if fecha_desde:
         try:
@@ -80,6 +183,7 @@ def obtener_logs_actividad(request):
     for log in page_obj.object_list:
         results.append({
             'id': log.id,
+            'cliente_id': log.cierre.cliente.id if log.cierre and log.cierre.cliente else None,
             'cliente_nombre': log.cierre.cliente.nombre if log.cierre and log.cierre.cliente else 'N/A',
             'usuario_nombre': f"{log.usuario.nombre} {log.usuario.apellido}" if log.usuario else 'Sistema',
             'usuario_email': log.usuario.correo_bdo if log.usuario else 'N/A',
@@ -90,17 +194,20 @@ def obtener_logs_actividad(request):
             'timestamp': log.timestamp.isoformat() if log.timestamp else None,  # Asegurar formato ISO
             'fecha_creacion': log.timestamp.isoformat() if log.timestamp else None,  # Mantener compatibilidad
             'ip_address': log.ip_address,
-            'detalles': log.detalles
+            'detalles': log.detalles,
+            'estado_cierre': log.cierre.estado if log.cierre else None,  # Nuevo campo
+            'periodo_cierre': log.cierre.periodo if log.cierre else None,  # Nuevo campo
         })
     
-    return Response({
+    return {
         'results': results,
         'count': paginator.count,
         'total_pages': paginator.num_pages,
         'current_page': page,
         'has_next': page_obj.has_next(),
         'has_previous': page_obj.has_previous(),
-    })
+        'source': 'postgres'  # Para debugging
+    }
 
 
 @api_view(['GET'])
@@ -193,6 +300,85 @@ def obtener_usuarios_actividad(request):
     )
     
     return Response(list(usuarios))
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def obtener_periodos_disponibles(request):
+    """
+    Obtiene períodos de cierre disponibles para filtros
+    """
+    if request.user.tipo_usuario != 'gerente':
+        return Response({'error': 'Acceso denegado'}, status=status.HTTP_403_FORBIDDEN)
+    
+    # Obtener períodos únicos con conteo de actividad
+    periodos = TarjetaActivityLog.objects.select_related(
+        'cierre'
+    ).values(
+        'cierre__periodo', 'cierre__cliente__nombre'
+    ).annotate(
+        count=Count('id')
+    ).filter(
+        cierre__periodo__isnull=False
+    ).order_by('-cierre__periodo')
+    
+    # Agrupar por período
+    periodos_agrupados = {}
+    for item in periodos:
+        periodo = item['cierre__periodo']
+        cliente = item['cierre__cliente__nombre']
+        count = item['count']
+        
+        if periodo not in periodos_agrupados:
+            periodos_agrupados[periodo] = {
+                'periodo': periodo,
+                'clientes': [],
+                'total_actividades': 0
+            }
+        
+        periodos_agrupados[periodo]['clientes'].append({
+            'nombre': cliente,
+            'actividades': count
+        })
+        periodos_agrupados[periodo]['total_actividades'] += count
+    
+    # Convertir a lista y ordenar
+    resultado = list(periodos_agrupados.values())
+    resultado.sort(key=lambda x: x['periodo'], reverse=True)
+    
+    return Response(resultado)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def obtener_estadisticas_redis_logs(request):
+    """
+    Obtiene estadísticas del sistema Redis para logs
+    """
+    if request.user.tipo_usuario != 'gerente':
+        return Response({'error': 'Acceso denegado'}, status=status.HTTP_403_FORBIDDEN)
+    
+    try:
+        from ..utils.activity_logger import ActivityLogStorage
+        
+        stats = ActivityLogStorage.get_redis_stats()
+        
+        # Agregar información adicional
+        stats['endpoint_info'] = {
+            'description': 'Estadísticas del sistema híbrido de logs',
+            'redis_ttl_days': 7,
+            'max_logs_per_client': 1000,
+            'strategy': 'Redis para logs recientes, PostgreSQL para históricos'
+        }
+        
+        return Response(stats)
+        
+    except Exception as e:
+        return Response({
+            'error': 'Error obteniendo estadísticas Redis',
+            'details': str(e),
+            'redis_available': False
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # ==================== ESTADOS DE CIERRES ====================

@@ -727,8 +727,11 @@ class TarjetaActivityLog(models.Model):
         ("nombres_ingles", "Tarjeta: Nombres en Inglés"),
         ("incidencias", "Tarjeta: Incidencias"),
         ("revision", "Tarjeta: Revisión"),
+        ("movimientos_cuenta", "Tarjeta: Movimientos por Cuenta"),
+        ("movimientos_resumen", "Tarjeta: Resumen de Movimientos"),
+        ("reportes", "Tarjeta: Reportes"),
     ]
-    tarjeta = models.CharField(max_length=20, choices=TARJETA_CHOICES)
+    tarjeta = models.CharField(max_length=30, choices=TARJETA_CHOICES)
 
     # Acción realizada
     ACCION_CHOICES = [

@@ -15,6 +15,12 @@ sgm:contabilidad:{cliente_id}:{periodo}/
 ├── cuentas
 └── pruebas (Datos de prueba y testing)
 
+Logs de actividad:
+sgm:logs:{timestamp}:{id} -> Logs individuales con claves separadas
+- Ejemplo: sgm:logs:2025-07-17T20:29:59.974025+00:00:123
+- Ordenación natural por timestamp para eficiencia
+- Políticas de retención automática
+
 Autor: Sistema SGM
 Fecha: 8 de julio de 2025
 """
@@ -526,6 +532,334 @@ class SGMCacheSystem:
             logger.error(f"Error obteniendo cuentas: {e}")
             return None
     
+    # ========== Logs de Actividad Globales ==========
+    def add_log(self, log_data: Dict[str, Any], max_logs: int = 10000) -> bool:
+        """
+        Agregar un log usando claves individuales sgm:logs:{id}
+        
+        Args:
+            log_data: Datos del log a agregar
+            max_logs: Máximo número de logs a mantener (política de retención)
+            
+        Returns:
+            bool: True si se agregó exitosamente
+        """
+        try:
+            # Generar clave única para este log
+            log_id = log_data.get('id', 'unknown')
+            
+            # Formato simplificado: sgm:logs:{id}
+            log_key = f"sgm:logs:{log_id}"
+            
+            # Serializar y guardar el log individual
+            serialized_data = self._serialize_data(log_data)
+            self.redis_client.set(log_key, serialized_data)
+            
+            # Aplicar política de retención si es necesario
+            self._apply_logs_retention_policy(max_logs)
+            
+            self._increment_stat("cache_writes")
+            self._increment_stat("logs_cached")
+            
+            logger.debug(f"Log agregado: {log_key}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error agregando log: {e}")
+            return False
+    
+    def _apply_logs_retention_policy(self, max_logs: int) -> None:
+        """
+        Aplicar política de retención eliminando logs antiguos si se excede el límite
+        
+        Args:
+            max_logs: Máximo número de logs a mantener
+        """
+        try:
+            # Obtener todas las claves de logs
+            log_keys = self.redis_client.keys("sgm:logs:*")
+            
+            # Si no excedemos el límite, no hacer nada
+            if len(log_keys) <= max_logs:
+                return
+            
+            # Para determinar cuáles son los más antiguos, necesitamos revisar el timestamp dentro del log
+            # Obtener una muestra de logs para ordenar por timestamp
+            logs_with_timestamps = []
+            
+            for key in log_keys:
+                try:
+                    data = self.redis_client.get(key)
+                    if data:
+                        log_data = self._deserialize_data(data)
+                        timestamp = log_data.get('timestamp', '1970-01-01T00:00:00.000Z')
+                        logs_with_timestamps.append((timestamp, key))
+                except Exception:
+                    # Si hay error deserializando, considerar este log como candidato para eliminar
+                    logs_with_timestamps.append(('1970-01-01T00:00:00.000Z', key))
+            
+            # Ordenar por timestamp (más antiguos primero)
+            logs_with_timestamps.sort(key=lambda x: x[0])
+            
+            # Calcular cuántos logs eliminar
+            logs_to_delete = len(logs_with_timestamps) - max_logs
+            old_logs = [key for _, key in logs_with_timestamps[:logs_to_delete]]
+            
+            # Eliminar logs antiguos
+            if old_logs:
+                deleted_count = self.redis_client.delete(*old_logs)
+                logger.debug(f"Política de retención aplicada: {deleted_count} logs eliminados")
+                self._increment_stat("logs_retention_applied")
+            
+        except Exception as e:
+            logger.error(f"Error aplicando política de retención: {e}")
+    
+    def get_all_logs(self, limit: int = None) -> Optional[List[Dict[str, Any]]]:
+        """
+        Obtener todos los logs ordenados por timestamp (más recientes primero)
+        
+        Args:
+            limit: Límite de logs a retornar (opcional)
+            
+        Returns:
+            Lista de logs ordenados o None
+        """
+        try:
+            # Obtener todas las claves de logs
+            log_keys = self.redis_client.keys("sgm:logs:*")
+            
+            if not log_keys:
+                self._increment_stat("cache_misses")
+                return None
+            
+            # Obtener logs con timestamp para ordenar
+            logs_with_timestamps = []
+            
+            for key in log_keys:
+                try:
+                    data = self.redis_client.get(key)
+                    if data:
+                        log_data = self._deserialize_data(data)
+                        timestamp = log_data.get('timestamp', '1970-01-01T00:00:00.000Z')
+                        logs_with_timestamps.append((timestamp, log_data))
+                except Exception as e:
+                    logger.warning(f"Error deserializando log {key}: {e}")
+                    continue
+            
+            # Ordenar por timestamp descendente (más recientes primero)
+            logs_with_timestamps.sort(key=lambda x: x[0], reverse=True)
+            
+            # Extraer solo los datos del log
+            logs = [log_data for _, log_data in logs_with_timestamps]
+            
+            # Aplicar límite si se especifica
+            if limit:
+                logs = logs[:limit]
+            
+            self._increment_stat("cache_hits")
+            self._increment_stat("logs_retrieved")
+            
+            logger.debug(f"Logs obtenidos: {len(logs)} de {len(log_keys)} claves")
+            return logs
+                
+        except Exception as e:
+            logger.error(f"Error obteniendo logs: {e}")
+            return None
+    
+    def get_logs_filtered(self, cliente_id: int = None, periodo: str = None, 
+                         tarjeta: str = None, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Obtener logs filtrados
+        
+        Args:
+            cliente_id: Filtrar por cliente (opcional)
+            periodo: Filtrar por período (opcional)
+            tarjeta: Filtrar por tipo de tarjeta (opcional)
+            limit: Límite de resultados
+            
+        Returns:
+            Lista de logs filtrados
+        """
+        try:
+            # Obtener todas las claves de logs
+            log_keys = self.redis_client.keys("sgm:logs:*")
+            
+            if not log_keys:
+                return []
+            
+            # Obtener logs con timestamp para ordenar
+            logs_with_timestamps = []
+            
+            for key in log_keys:
+                try:
+                    data = self.redis_client.get(key)
+                    if not data:
+                        continue
+                    
+                    log_data = self._deserialize_data(data)
+                    timestamp = log_data.get('timestamp', '1970-01-01T00:00:00.000Z')
+                    
+                    # Aplicar filtros
+                    if cliente_id and log_data.get('cliente_id') != cliente_id:
+                        continue
+                    
+                    if periodo and log_data.get('periodo_cierre') != periodo:
+                        continue
+                    
+                    if tarjeta and log_data.get('tarjeta') != tarjeta:
+                        continue
+                    
+                    logs_with_timestamps.append((timestamp, log_data))
+                    
+                except Exception as e:
+                    logger.warning(f"Error procesando log {key}: {e}")
+                    continue
+            
+            # Ordenar por timestamp descendente (más recientes primero)
+            logs_with_timestamps.sort(key=lambda x: x[0], reverse=True)
+            
+            # Extraer solo los datos del log y aplicar límite
+            filtered_logs = [log_data for _, log_data in logs_with_timestamps[:limit]]
+            
+            logger.debug(f"Logs filtrados: {len(filtered_logs)} de {len(log_keys)} claves, filtros: cliente={cliente_id}, periodo={periodo}, tarjeta={tarjeta}")
+            return filtered_logs
+            
+        except Exception as e:
+            logger.error(f"Error filtrando logs: {e}")
+            return []
+    
+    def clear_logs(self) -> bool:
+        """
+        Limpiar todos los logs
+        
+        Returns:
+            bool: True si se limpiaron exitosamente
+        """
+        try:
+            # Obtener todas las claves de logs
+            log_keys = self.redis_client.keys("sgm:logs:*")
+            
+            if log_keys:
+                deleted_count = self.redis_client.delete(*log_keys)
+                self._increment_stat("logs_cleared")
+                
+                logger.info(f"Logs limpiados: {deleted_count} claves eliminadas")
+                return True
+            else:
+                logger.info("No hay logs para limpiar")
+                return True
+            
+        except Exception as e:
+            logger.error(f"Error limpiando logs: {e}")
+            return False
+    
+    def get_logs_stats(self) -> Dict[str, Any]:
+        """
+        Obtener estadísticas de los logs usando operaciones eficientes de Redis
+        
+        Returns:
+            Dict con estadísticas de logs
+        """
+        try:
+            # Obtener todas las claves de logs
+            log_keys = self.redis_client.keys("sgm:logs:*")
+            
+            # Estadísticas básicas
+            stats = {
+                'total_logs': len(log_keys),
+                'oldest_log': None,
+                'newest_log': None,
+                'logs_by_cliente': {},
+                'logs_by_tarjeta': {},
+                'logs_by_accion': {},
+                'logs_by_resultado': {},
+                'sample_keys': log_keys[:5] if log_keys else []  # Muestra de claves
+            }
+            
+            if not log_keys:
+                return stats
+            
+            # Ordenar claves para obtener el más antiguo y más nuevo
+            log_keys.sort()
+            
+            # Extraer timestamp del más antiguo y más nuevo
+            if log_keys:
+                # Para obtener timestamps, necesitamos revisar el contenido de las claves
+                # Obtener una muestra pequeña para no afectar performance
+                sample_size = min(10, len(log_keys))
+                sample_keys = log_keys[:sample_size] + log_keys[-sample_size:] if len(log_keys) > sample_size else log_keys
+                
+                timestamps = []
+                for key in sample_keys:
+                    try:
+                        data = self.redis_client.get(key)
+                        if data:
+                            log_data = self._deserialize_data(data)
+                            timestamps.append(log_data.get('timestamp', '1970-01-01T00:00:00.000Z'))
+                    except Exception:
+                        continue
+                
+                if timestamps:
+                    timestamps.sort()
+                    stats['oldest_log'] = timestamps[0]
+                    stats['newest_log'] = timestamps[-1]
+            
+            # Para estadísticas detalladas, procesar una muestra o todos si son pocos
+            sample_size = min(1000, len(log_keys))  # Limitar a 1000 para performance
+            sample_keys = log_keys[-sample_size:] if sample_size < len(log_keys) else log_keys
+            
+            for key in sample_keys:
+                try:
+                    data = self.redis_client.get(key)
+                    if not data:
+                        continue
+                    
+                    log_data = self._deserialize_data(data)
+                    
+                    # Contadores por categoría
+                    cliente_id = log_data.get('cliente_id')
+                    if cliente_id:
+                        stats['logs_by_cliente'][str(cliente_id)] = stats['logs_by_cliente'].get(str(cliente_id), 0) + 1
+                    
+                    tarjeta = log_data.get('tarjeta')
+                    if tarjeta:
+                        stats['logs_by_tarjeta'][tarjeta] = stats['logs_by_tarjeta'].get(tarjeta, 0) + 1
+                    
+                    accion = log_data.get('accion')
+                    if accion:
+                        stats['logs_by_accion'][accion] = stats['logs_by_accion'].get(accion, 0) + 1
+                    
+                    resultado = log_data.get('resultado', 'exito')
+                    stats['logs_by_resultado'][resultado] = stats['logs_by_resultado'].get(resultado, 0) + 1
+                    
+                except Exception as e:
+                    logger.warning(f"Error procesando estadísticas de log {key}: {e}")
+                    continue
+            
+            # Indicar si es una muestra
+            if sample_size < len(log_keys):
+                stats['_note'] = f"Estadísticas basadas en muestra de {sample_size} logs de {len(log_keys)} totales"
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error obteniendo estadísticas de logs: {e}")
+            return {'error': str(e)}
+    
+    def get_logs_count(self) -> int:
+        """
+        Obtener el número total de logs de forma eficiente
+        
+        Returns:
+            int: Número total de logs
+        """
+        try:
+            log_keys = self.redis_client.keys("sgm:logs:*")
+            return len(log_keys)
+        except Exception as e:
+            logger.error(f"Error contando logs: {e}")
+            return 0
+
     # ========== Pruebas y Testing ==========
     def set_prueba_esf(self, cliente_id: int, periodo: str, esf_data: Dict[str, Any], 
                        test_type: str = "current_system", ttl: int = None) -> bool:

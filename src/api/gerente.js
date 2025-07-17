@@ -31,6 +31,8 @@ export const obtenerLogsActividad = async (filtros = {}) => {
   if (filtros.usuario_id) params.append('usuario_id', filtros.usuario_id);
   if (filtros.tarjeta) params.append('tarjeta', filtros.tarjeta);
   if (filtros.accion) params.append('accion', filtros.accion);
+  if (filtros.cierre) params.append('cierre', filtros.cierre);
+  if (filtros.periodo) params.append('periodo', filtros.periodo);
   if (filtros.fecha_desde) params.append('fecha_desde', filtros.fecha_desde);
   if (filtros.fecha_hasta) params.append('fecha_hasta', filtros.fecha_hasta);
   if (filtros.page) params.append('page', filtros.page);
@@ -47,6 +49,16 @@ export const obtenerEstadisticasActividad = async (periodo = 'semana') => {
 
 export const obtenerUsuariosActividad = async () => {
   const res = await api.get('/contabilidad/gerente/usuarios-actividad/');
+  return res.data;
+};
+
+export const obtenerPeriodosDisponibles = async () => {
+  const res = await api.get('/contabilidad/gerente/periodos-disponibles/');
+  return res.data;
+};
+
+export const obtenerEstadisticasRedisLogs = async () => {
+  const res = await api.get('/contabilidad/gerente/redis-logs-stats/');
   return res.data;
 };
 

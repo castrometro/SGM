@@ -35,6 +35,8 @@ from .views.gerente import (
     obtener_logs_actividad,
     obtener_estadisticas_actividad,
     obtener_usuarios_actividad,
+    obtener_periodos_disponibles,
+    obtener_estadisticas_redis_logs,
     obtener_estados_cierres,
     obtener_metricas_cierres,
     obtener_estado_cache,
@@ -407,6 +409,14 @@ urlpatterns = [
     path("gerente/usuarios-actividad/", 
          obtener_usuarios_actividad, 
          name="gerente_usuarios_actividad"),
+    
+    path("gerente/periodos-disponibles/", 
+         obtener_periodos_disponibles, 
+         name="gerente_periodos_disponibles"),
+    
+    path("gerente/redis-logs-stats/", 
+         obtener_estadisticas_redis_logs, 
+         name="gerente_redis_logs_stats"),
     
     # Estados de cierres
     path("gerente/estados-cierres/", 

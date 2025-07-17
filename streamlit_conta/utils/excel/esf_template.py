@@ -5,6 +5,7 @@ Template Excel específico para Estado de Situación Financiera (ESF)
 import openpyxl
 import logging
 from .base import BaseExcelTemplate
+from .translations import detect_language_improved
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +15,8 @@ class ESFTemplate(BaseExcelTemplate):
 
     def generate(self, data_esf, metadata, data_eri=None):
         """Generar template Excel para Estado de Situación Financiera"""
-        # Obtener idioma de los metadatos
-        language = metadata.get('idioma', 'es')
+        # Obtener idioma usando detección mejorada
+        language = detect_language_improved(metadata)
         
         # Debug de la estructura de datos
         if data_esf and logger.isEnabledFor(logging.INFO):

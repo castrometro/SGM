@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ShieldCheck, ChevronDown, ChevronRight, Play, Loader2, CheckCircle, AlertTriangle, Filter, Users, Eye } from "lucide-react";
+import { AlertOctagon, ChevronDown, ChevronRight, Play, Loader2, CheckCircle, AlertTriangle, Filter, Users, Eye } from "lucide-react";
 import IncidenciasTable from "./IncidenciasEncontradas/IncidenciasTable";
 import ModalResolucionIncidencia from "./IncidenciasEncontradas/ModalResolucionIncidencia";
 import { 
@@ -10,7 +10,7 @@ import {
   previewIncidenciasCierre
 } from "../../api/nomina";
 
-const VerificacionDatosSection = ({ cierre }) => {
+const IncidenciasEncontradasSectionRespaldo = ({ cierre }) => {
   const [expandido, setExpandido] = useState(true);
   const [incidencias, setIncidencias] = useState([]);
   const [resumen, setResumen] = useState(null);
@@ -60,7 +60,7 @@ const VerificacionDatosSection = ({ cierre }) => {
       setResumen(resumenData);
     } catch (err) {
       console.error("Error cargando datos de incidencias:", err);
-      setError("Error al verificar datos");
+      setError("Error al cargar las incidencias");
     } finally {
       setCargando(false);
     }
@@ -81,7 +81,7 @@ const VerificacionDatosSection = ({ cierre }) => {
       }, 2000);
     } catch (err) {
       console.error("Error generando incidencias:", err);
-      setError("Error al verificar datos");
+      setError("Error al generar incidencias");
     } finally {
       setGenerando(false);
     }
@@ -99,7 +99,7 @@ const VerificacionDatosSection = ({ cierre }) => {
       setMostrandoPreview(true);
     } catch (err) {
       console.error("Error generando vista previa:", err);
-      setError("Error al generar vista previa de verificación");
+      setError("Error al generar vista previa de incidencias");
     } finally {
       setCargando(false);
     }
@@ -140,20 +140,20 @@ const VerificacionDatosSection = ({ cierre }) => {
         onClick={() => setExpandido(!expandido)}
       >
         <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 bg-orange-600 rounded-lg">
-            <ShieldCheck size={20} className="text-white" />
+          <div className="flex items-center justify-center w-10 h-10 bg-red-600 rounded-lg">
+            <AlertOctagon size={20} className="text-white" />
           </div>
           <div>
             <h2 className="text-xl font-semibold text-white">
-              Verificación de Datos
+              Sistema de Incidencias (RESPALDO FUNCIONAL)
             </h2>
             <div className="flex items-center gap-2 text-sm">
               <p className="text-gray-400">
-                Verificación de consistencia y completitud de datos del mes actual
+                Detección y resolución analista de incidencias entre archivos
               </p>
               {estadoIncidencias && (
                 <span className={`${obtenerColorEstado(estadoIncidencias.estado_incidencias)} font-medium`}>
-                  • {estadoIncidencias.total_incidencias || 0} discrepancias
+                  • {estadoIncidencias.total_incidencias || 0} incidencias
                 </span>
               )}
             </div>
@@ -163,7 +163,7 @@ const VerificacionDatosSection = ({ cierre }) => {
           {estadoIncidencias?.tiene_incidencias && (
             <div className="flex items-center gap-2 text-sm">
               <span className="text-gray-400">
-                {estadoIncidencias.incidencias_pendientes} discrepancias pendientes
+                {estadoIncidencias.incidencias_pendientes} pendientes
               </span>
               <span className="text-gray-400">•</span>
               <span className="text-green-400">
@@ -181,97 +181,81 @@ const VerificacionDatosSection = ({ cierre }) => {
 
       {expandido && (
         <div className="space-y-6">
-          {/* Verificación de datos - Diseño simplificado */}
+          {/* Botón para generar incidencias */}
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
             <div className="flex items-center justify-between">
-              {/* Lado izquierdo - Estado y contadores */}
-              <div className="flex items-center gap-6">
-                {/* Estado de verificación */}
-                <div className="text-center">
-                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-2 ${
-                    estadoIncidencias?.tiene_incidencias 
-                      ? (estadoIncidencias.incidencias_pendientes > 0 ? 'bg-red-500/20 border-2 border-red-500' : 'bg-green-500/20 border-2 border-green-500')
-                      : 'bg-gray-500/20 border-2 border-gray-500'
-                  }`}>
-                    <ShieldCheck size={24} className={
-                      estadoIncidencias?.tiene_incidencias 
-                        ? (estadoIncidencias.incidencias_pendientes > 0 ? 'text-red-400' : 'text-green-400')
-                        : 'text-gray-400'
-                    } />
+              <div>
+                <h3 className="text-lg font-medium text-white mb-2">
+                  Generación de Incidencias
+                </h3>
+                <p className="text-gray-400 text-sm mb-4">
+                  Compara los archivos procesados y detecta automáticamente las incidencias entre:
+                </p>
+                <div className="space-y-1 text-sm text-gray-300 mb-4">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-green-500" />
+                    <span>Libro de Remuneraciones vs Archivo de Novedades</span>
                   </div>
-                  <p className="text-sm text-gray-400">Estado</p>
-                  <p className={`text-sm font-medium ${
-                    estadoIncidencias?.tiene_incidencias 
-                      ? (estadoIncidencias.incidencias_pendientes > 0 ? 'text-red-400' : 'text-green-400')
-                      : 'text-gray-400'
-                  }`}>
-                    {estadoIncidencias?.tiene_incidencias 
-                      ? (estadoIncidencias.incidencias_pendientes > 0 ? 'Con Discrepancias' : 'Verificado')
-                      : 'Pendiente'
-                    }
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-green-500" />
+                    <span>MovimientosMes vs Archivos del Analista</span>
+                  </div>
                 </div>
-
-                {/* Contadores */}
-                {estadoIncidencias?.tiene_incidencias && (
-                  <>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-red-400">
-                        {estadoIncidencias.incidencias_pendientes || 0}
-                      </div>
-                      <p className="text-sm text-gray-400">Pendientes</p>
+                <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-3 mb-4">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-blue-400 mt-0.5" />
+                    <div className="text-sm text-blue-300">
+                      <strong>Flujo de Resolución de Incidencias:</strong>
+                      <ul className="mt-1 space-y-1 list-disc list-inside">
+                        <li>🔍 <strong>Detectar:</strong> Generar incidencias para identificar diferencias entre archivos</li>
+                        <li>📝 <strong>Resolver:</strong> Marcar incidencias como resueltas una vez corregidas</li>
+                        <li>🔄 <strong>Resubir:</strong> Si es necesario, resubir archivos y regenerar incidencias</li>
+                        <li>✅ <strong>Meta:</strong> Llegar a 0 incidencias para completar el cierre</li>
+                      </ul>
                     </div>
-                    
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-green-400">
-                        {estadoIncidencias.incidencias_resueltas || 0}
-                      </div>
-                      <p className="text-sm text-gray-400">Resueltas</p>
-                    </div>
-                    
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-white">
-                        {estadoIncidencias.total_incidencias || 0}
-                      </div>
-                      <p className="text-sm text-gray-400">Total</p>
-                    </div>
-                  </>
+                  </div>
+                </div>
+                {!puedeGenerarIncidencias() && (
+                  <div className="flex items-center gap-2 text-yellow-400 text-sm">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>
+                      El cierre debe estar en estado "Datos Consolidados" para generar incidencias
+                    </span>
+                  </div>
                 )}
               </div>
-
-              {/* Lado derecho - Botón de acción */}
               <div className="flex gap-3">
+                <button
+                  onClick={manejarVistaPrevia}
+                  disabled={cargando || !puedeGenerarIncidencias()}
+                  className="flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {cargando ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Eye className="w-4 h-4 mr-2" />
+                  )}
+                  Vista Previa
+                </button>
                 <button
                   onClick={manejarGenerarIncidencias}
                   disabled={generando || !puedeGenerarIncidencias()}
-                  className="flex items-center px-6 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                  className="flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {generando ? (
                     <>
                       <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                      Verificando...
+                      Generando...
                     </>
                   ) : (
                     <>
-                      <ShieldCheck className="w-5 h-5 mr-2" />
-                      Verificar Datos
+                      <Play className="w-5 h-5 mr-2" />
+                      Generar Incidencias
                     </>
                   )}
                 </button>
               </div>
             </div>
-
-            {/* Mensaje de restricción si aplica */}
-            {!puedeGenerarIncidencias() && (
-              <div className="mt-4 p-3 bg-yellow-900/20 border border-yellow-500/30 rounded-lg">
-                <div className="flex items-center gap-2 text-yellow-400 text-sm">
-                  <AlertTriangle className="w-4 h-4" />
-                  <span>
-                    El cierre debe estar en estado "Datos Consolidados" para verificar datos
-                  </span>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Vista previa */}
@@ -512,4 +496,4 @@ const VerificacionDatosSection = ({ cierre }) => {
   );
 };
 
-export default VerificacionDatosSection;
+export default IncidenciasEncontradasSectionRespaldo;

@@ -877,3 +877,83 @@ def analizar_datos_cierre_task(cierre_id, tolerancia_variacion=30.0):
             pass
             
         raise
+
+
+# ===== TAREAS PARA SISTEMA DE DISCREPANCIAS (VERIFICACIÓN DE DATOS) =====
+
+@shared_task
+def generar_discrepancias_cierre_task(cierre_id):
+    """
+    Tarea para generar discrepancias en la verificación de datos de un cierre.
+    Sistema simplificado - solo detecta y registra diferencias.
+    """
+    from .utils.GenerarDiscrepancias import generar_todas_discrepancias
+    from .models import CierreNomina
+    
+    logger.info(f"Iniciando generación de discrepancias para cierre {cierre_id}")
+    
+    try:
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        # Verificar que el cierre tenga los archivos necesarios procesados
+        if not _verificar_archivos_listos_para_discrepancias(cierre):
+            raise ValueError("No todos los archivos están procesados para generar discrepancias")
+        
+        # Eliminar discrepancias anteriores si existen
+        cierre.discrepancias.all().delete()
+        
+        # Generar nuevas discrepancias
+        resultado = generar_todas_discrepancias(cierre)
+        
+        # Actualizar estado del cierre
+        if resultado['total_discrepancias'] == 0:
+            # Sin discrepancias - datos verificados
+            cierre.estado = 'datos_verificados'
+        else:
+            # Con discrepancias - requiere corrección
+            cierre.estado = 'discrepancias_detectadas'
+        
+        cierre.save(update_fields=['estado'])
+        
+        logger.info(f"Discrepancias generadas exitosamente para cierre {cierre_id}: {resultado['total_discrepancias']} discrepancias")
+        return resultado
+        
+    except Exception as e:
+        logger.error(f"Error generando discrepancias para cierre {cierre_id}: {e}")
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            cierre.estado = 'datos_consolidados'  # Volver al estado anterior
+            cierre.save(update_fields=['estado'])
+        except:
+            pass
+        raise
+
+def _verificar_archivos_listos_para_discrepancias(cierre):
+    """Verifica que los archivos necesarios estén procesados para generar discrepancias"""
+    from .models import LibroRemuneracionesUpload, MovimientosMesUpload
+    
+    # Verificar libro de remuneraciones procesado
+    libro = LibroRemuneracionesUpload.objects.filter(cierre=cierre).first()
+    if not libro or libro.estado not in ['clasificado', 'procesado']:
+        logger.warning(f"Libro de remuneraciones no procesado para cierre {cierre.id}")
+        return False
+    
+    # Verificar movimientos del mes procesados
+    movimientos = MovimientosMesUpload.objects.filter(cierre=cierre).first()
+    if not movimientos or movimientos.estado != 'procesado':
+        logger.warning(f"Movimientos del mes no procesados para cierre {cierre.id}")
+        return False
+    
+    # Verificar al menos un archivo del analista procesado
+    archivos_analista = cierre.archivos_analista.filter(estado='procesado')
+    if archivos_analista.count() == 0:
+        logger.warning(f"No hay archivos del analista procesados para cierre {cierre.id}")
+        return False
+    
+    # Archivo de novedades es opcional - si existe debe estar procesado
+    archivo_novedades = cierre.archivos_novedades.first()
+    if archivo_novedades and archivo_novedades.estado not in ['clasificado', 'procesado']:
+        logger.warning(f"Archivo de novedades no procesado para cierre {cierre.id}")
+        return False
+    
+    return True

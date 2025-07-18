@@ -48,6 +48,8 @@ class CierreNomina(models.Model):
             ('pendiente', 'Pendiente'),
             ('en_proceso', 'En Proceso'),
             ('datos_consolidados', 'Datos Consolidados'),
+            ('discrepancias_detectadas', 'Discrepancias Detectadas'),
+            ('datos_verificados', 'Datos Verificados'),
             ('reportes_generados', 'Reportes Generados'),
             ('validacion_senior', 'Validación Senior'),
             ('completado', 'Completado'),
@@ -1007,3 +1009,63 @@ class IncidenciaVariacionSalarial(models.Model):
             self.save()
             return True
         return False
+
+
+# ===== SISTEMA DE VERIFICACIÓN DE DATOS (DISCREPANCIAS) =====
+
+class TipoDiscrepancia(models.TextChoices):
+    """Tipos de discrepancias para verificación de datos simplificada"""
+    # Grupo 1: Libro vs Novedades
+    EMPLEADO_SOLO_LIBRO = 'empleado_solo_libro', 'Empleado solo en Libro'
+    EMPLEADO_SOLO_NOVEDADES = 'empleado_solo_novedades', 'Empleado solo en Novedades'
+    DIFERENCIA_DATOS_PERSONALES = 'diff_datos_personales', 'Diferencia en Datos Personales'
+    DIFERENCIA_SUELDO_BASE = 'diff_sueldo_base', 'Diferencia en Sueldo Base'
+    DIFERENCIA_CONCEPTO_MONTO = 'diff_concepto_monto', 'Diferencia en Monto por Concepto'
+    CONCEPTO_SOLO_LIBRO = 'concepto_solo_libro', 'Concepto solo en Libro'
+    CONCEPTO_SOLO_NOVEDADES = 'concepto_solo_novedades', 'Concepto solo en Novedades'
+    
+    # Grupo 2: MovimientosMes vs Analista
+    INGRESO_NO_REPORTADO = 'ingreso_no_reportado', 'Ingreso no reportado por Analista'
+    FINIQUITO_NO_REPORTADO = 'finiquito_no_reportado', 'Finiquito no reportado por Analista'
+    AUSENCIA_NO_REPORTADA = 'ausencia_no_reportada', 'Ausencia no reportada por Analista'
+    DIFERENCIA_FECHAS_AUSENCIA = 'diff_fechas_ausencia', 'Diferencia en Fechas de Ausencia'
+    DIFERENCIA_DIAS_AUSENCIA = 'diff_dias_ausencia', 'Diferencia en Días de Ausencia'
+    DIFERENCIA_TIPO_AUSENCIA = 'diff_tipo_ausencia', 'Diferencia en Tipo de Ausencia'
+
+class DiscrepanciaCierre(models.Model):
+    """
+    Discrepancias detectadas en la verificación de datos de un cierre.
+    Sistema puramente informativo - solo registra las diferencias encontradas.
+    """
+    cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE, related_name='discrepancias')
+    tipo_discrepancia = models.CharField(max_length=50, choices=TipoDiscrepancia.choices)
+    
+    # Empleado afectado
+    empleado_libro = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE, null=True, blank=True)
+    empleado_novedades = models.ForeignKey('EmpleadoCierreNovedades', on_delete=models.CASCADE, null=True, blank=True)
+    rut_empleado = models.CharField(max_length=20)
+    
+    # Detalles de la discrepancia
+    descripcion = models.TextField()
+    valor_libro = models.CharField(max_length=500, null=True, blank=True)
+    valor_novedades = models.CharField(max_length=500, null=True, blank=True)
+    valor_movimientos = models.CharField(max_length=500, null=True, blank=True)
+    valor_analista = models.CharField(max_length=500, null=True, blank=True)
+    
+    # Contexto adicional
+    concepto_afectado = models.CharField(max_length=200, null=True, blank=True)
+    fecha_detectada = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = "Discrepancia de Verificación"
+        verbose_name_plural = "Discrepancias de Verificación"
+        indexes = [
+            models.Index(fields=['cierre', 'tipo_discrepancia']),
+            models.Index(fields=['rut_empleado', 'cierre']),
+            models.Index(fields=['fecha_detectada']),
+        ]
+        ordering = ['-fecha_detectada']
+    
+    def __str__(self):
+        return f"Discrepancia: {self.get_tipo_discrepancia_display()} - {self.rut_empleado} - {self.cierre}"
+

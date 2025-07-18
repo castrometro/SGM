@@ -11,7 +11,9 @@ from .models import (
     # Modelos para el sistema de incidencias
     IncidenciaCierre, ResolucionIncidencia,
     # Modelos para análisis de datos
-    AnalisisDatosCierre, IncidenciaVariacionSalarial
+    AnalisisDatosCierre, IncidenciaVariacionSalarial,
+    # Modelos para sistema de discrepancias
+    DiscrepanciaCierre, TipoDiscrepancia
 )
 
 class ChecklistItemSerializer(serializers.ModelSerializer):
@@ -391,3 +393,80 @@ class IncidenciaVariacionSalarialSerializer(serializers.ModelSerializer):
     
     def get_diferencia_salarial(self, obj):
         return obj.sueldo_base_actual - obj.sueldo_base_anterior
+
+
+# ===== SERIALIZERS PARA SISTEMA DE DISCREPANCIAS =====
+
+class DiscrepanciaCierreSerializer(serializers.ModelSerializer):
+    """Serializer para las discrepancias de verificación de datos"""
+    tipo_discrepancia_display = serializers.CharField(source='get_tipo_discrepancia_display', read_only=True)
+    empleado_libro_nombre = serializers.SerializerMethodField()
+    empleado_novedades_nombre = serializers.SerializerMethodField()
+    grupo_discrepancia = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = DiscrepanciaCierre
+        fields = [
+            'id', 'cierre', 'tipo_discrepancia', 'tipo_discrepancia_display',
+            'empleado_libro', 'empleado_novedades', 'rut_empleado',
+            'descripcion', 'valor_libro', 'valor_novedades', 
+            'valor_movimientos', 'valor_analista', 'concepto_afectado',
+            'fecha_detectada', 'empleado_libro_nombre', 'empleado_novedades_nombre',
+            'grupo_discrepancia'
+        ]
+        read_only_fields = ['fecha_detectada']
+    
+    def get_empleado_libro_nombre(self, obj):
+        """Obtiene el nombre completo del empleado del libro"""
+        if obj.empleado_libro:
+            return f"{obj.empleado_libro.nombre} {obj.empleado_libro.apellido_paterno} {obj.empleado_libro.apellido_materno}".strip()
+        return None
+    
+    def get_empleado_novedades_nombre(self, obj):
+        """Obtiene el nombre completo del empleado de novedades"""
+        if obj.empleado_novedades:
+            return f"{obj.empleado_novedades.nombre} {obj.empleado_novedades.apellido_paterno} {obj.empleado_novedades.apellido_materno}".strip()
+        return None
+    
+    def get_grupo_discrepancia(self, obj):
+        """Determina el grupo de la discrepancia"""
+        libro_vs_novedades = [
+            'empleado_solo_libro', 'empleado_solo_novedades', 'diff_datos_personales',
+            'diff_sueldo_base', 'diff_concepto_monto', 'concepto_solo_libro', 'concepto_solo_novedades'
+        ]
+        
+        if obj.tipo_discrepancia in libro_vs_novedades:
+            return 'libro_vs_novedades'
+        else:
+            return 'movimientos_vs_analista'
+
+
+class ResumenDiscrepanciasSerializer(serializers.Serializer):
+    """Serializer para el resumen estadístico de discrepancias"""
+    total_discrepancias = serializers.IntegerField()
+    discrepancias_por_tipo = serializers.DictField()
+    discrepancias_por_grupo = serializers.DictField()
+    empleados_afectados = serializers.IntegerField()
+    conceptos_afectados = serializers.ListField(child=serializers.CharField(), required=False)
+    fecha_ultimo_analisis = serializers.DateTimeField(required=False)
+    
+    # Totales por grupo
+    total_libro_vs_novedades = serializers.IntegerField()
+    total_movimientos_vs_analista = serializers.IntegerField()
+    
+    # Top discrepancias por tipo
+    top_tipos_discrepancia = serializers.ListField(
+        child=serializers.DictField(),
+        required=False
+    )
+
+
+class DiscrepanciaCreateSerializer(serializers.ModelSerializer):
+    """Serializer para crear discrepancias (usado internamente por los algoritmos)"""
+    class Meta:
+        model = DiscrepanciaCierre
+        fields = [
+            'cierre', 'tipo_discrepancia', 'empleado_libro', 'empleado_novedades',
+            'rut_empleado', 'descripcion', 'valor_libro', 'valor_novedades',
+            'valor_movimientos', 'valor_analista', 'concepto_afectado'
+        ]

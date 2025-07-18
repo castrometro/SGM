@@ -32,6 +32,9 @@ from .views import (
     # ViewSets para Análisis de Datos
     AnalisisDatosCierreViewSet,
     IncidenciaVariacionSalarialViewSet,
+    # ViewSets para Sistema de Discrepancias
+    DiscrepanciaCierreViewSet,
+    CierreNominaDiscrepanciasViewSet,
 )
 
 from django.urls import path
@@ -71,6 +74,10 @@ router.register(r'cierres-incidencias', CierreNominaIncidenciasViewSet, basename
 # ViewSets para Análisis de Datos
 router.register(r'analisis-datos', AnalisisDatosCierreViewSet)
 router.register(r'incidencias-variacion', IncidenciaVariacionSalarialViewSet)
+
+# ViewSets para Sistema de Discrepancias (Verificación de Datos)
+router.register(r'discrepancias', DiscrepanciaCierreViewSet)
+router.register(r'cierres-discrepancias', CierreNominaDiscrepanciasViewSet, basename='cierre-discrepancias')
 
 urlpatterns = router.urls + [
     path(

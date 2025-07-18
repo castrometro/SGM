@@ -10,6 +10,11 @@ export const obtenerTodosLosClientes = async () => {
   return response.data;
 };
 
+export const obtenerClientesPorArea = async () => {
+  const response = await api.get("/clientes-por-area/");
+  return response.data;
+};
+
 
 export const obtenerCliente = async (id) => {
   const response = await api.get(`/clientes/${id}/`);

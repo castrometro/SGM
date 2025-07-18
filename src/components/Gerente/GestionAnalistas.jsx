@@ -21,9 +21,9 @@ import {
   asignarClienteAnalista,
   removerAsignacion,
   obtenerEstadisticasAnalista
-} from "../api/analistas";
-import { obtenerSupervisoresDisponibles, asignarSupervisor } from "../api/supervisores";
-import AreaIndicator from "../components/AreaIndicator";
+} from "../../api/analistas";
+import { obtenerSupervisoresDisponibles, asignarSupervisor } from "../../api/supervisores";
+import AreaIndicator from "../AreaIndicator";
 
 const AnalistaCard = ({ analista, onViewDetails, onEditAssignments, onAssignSupervisor }) => (
   <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 hover:border-gray-600 transition-colors">
@@ -73,8 +73,44 @@ const AnalistaCard = ({ analista, onViewDetails, onEditAssignments, onAssignSupe
         <p className="text-gray-400 text-sm">Clientes</p>
       </div>
       <div className="text-center">
-        <p className="text-2xl font-bold text-green-400">{analista.cierres_completados}</p>
+        <div 
+          className="text-2xl font-bold text-green-400 cursor-help"
+          title={`Cierres completados: ${analista.cierres_completados}
+Contabilidad: ${analista.cierres_contabilidad || 0} total
+Nómina: ${analista.cierres_nomina || 0} total
+Cálculo: Estados 'aprobado'+'completo'+'finalizado' (Conta) + Estado 'completado' (Nómina)`}
+          onClick={() => {
+            const debugInfo = `
+=== DETALLE CIERRES: ${analista.nombre} ${analista.apellido} ===
+
+CIERRES COMPLETADOS: ${analista.cierres_completados}
+
+DESGLOSE POR ÁREA:
+• Contabilidad Total: ${analista.cierres_contabilidad || 0} cierres
+• Nómina Total: ${analista.cierres_nomina || 0} cierres
+
+LÓGICA DE CÁLCULO:
+- Contabilidad: Solo estados 'aprobado' + 'completo' + 'finalizado'
+- Nómina: Solo estado 'completado'
+
+OTROS CAMPOS:
+- Clientes asignados: ${analista.clientes_asignados}
+- Eficiencia: ${analista.eficiencia}%
+- Carga trabajo: ${analista.carga_trabajo}%
+
+Para ver estadísticas detalladas por estado, 
+haz clic en "Ver detalles" del analista.
+=======================================`;
+            alert(debugInfo);
+          }}
+        >
+          {analista.cierres_completados}
+        </div>
         <p className="text-gray-400 text-sm">Cierres</p>
+        {/* Indicador visual del desglose */}
+        <div className="text-xs text-gray-500 mt-1">
+          C:{analista.cierres_contabilidad || 0} | N:{analista.cierres_nomina || 0}
+        </div>
       </div>
       <div className="text-center">
         <p className="text-2xl font-bold text-yellow-400">{analista.eficiencia}%</p>
@@ -415,14 +451,63 @@ const DetalleAnalistaModal = ({ analista, isOpen, onClose }) => {
 
             {/* Estadísticas de Cierres */}
             <div className="bg-gray-700 p-4 rounded">
-              <h3 className="font-semibold text-white mb-4">Estadísticas de Cierres por Estado</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-white">Estadísticas de Cierres por Estado</h3>
+                <button
+                  onClick={() => {
+                    const debugInfo = `
+=== DEBUG: Estadísticas Detalladas ===
+Analista: ${analista?.nombre} ${analista?.apellido}
+
+ENDPOINT: /analistas-detallado/${analista?.id}/estadisticas/
+
+CÁLCULO DETALLADO:
+${Object.entries(estadisticas.cierres_por_estado || {}).map(([estado, count]) => 
+  `• ${estado}: ${count} cierres`
+).join('\n')}
+
+ESTADOS CONSIDERADOS "COMPLETADOS":
+- 'completo' (Contabilidad)
+- 'completado' (Nómina)  
+- 'aprobado' (Contabilidad)
+- 'finalizado' (Contabilidad)
+
+Total Completados: ${estadisticas.cierres_completados || 0}
+Eficiencia: ${estadisticas.eficiencia || 0}%
+Tiempo Promedio: ${estadisticas.tiempo_promedio_dias || 0} días
+
+FUENTES DE DATOS:
+- CierreContabilidad: usuario=${analista?.id}
+- CierreNomina: usuario_analista=${analista?.id}
+=====================================`;
+                    alert(debugInfo);
+                  }}
+                  className="text-xs text-gray-400 hover:text-gray-300 px-2 py-1 border border-gray-600 rounded"
+                >
+                  🐛 Debug
+                </button>
+              </div>
               <div className="grid grid-cols-3 gap-4">
-                {Object.entries(estadisticas.cierres_por_estado || {}).map(([estado, count]) => (
-                  <div key={estado} className="text-center">
-                    <p className="text-2xl font-bold text-blue-400">{count}</p>
-                    <p className="text-gray-400 text-sm capitalize">{estado.replace('_', ' ')}</p>
-                  </div>
-                ))}
+                {Object.entries(estadisticas.cierres_por_estado || {}).map(([estado, count]) => {
+                  const isCompleted = ['completo', 'completado', 'aprobado', 'finalizado'].includes(estado);
+                  return (
+                    <div key={estado} className="text-center">
+                      <p className={`text-2xl font-bold ${isCompleted ? 'text-green-400' : 'text-blue-400'}`}>
+                        {count}
+                        {isCompleted && <span className="text-xs ml-1">✓</span>}
+                      </p>
+                      <p className="text-gray-400 text-sm capitalize">{estado.replace('_', ' ')}</p>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-4 p-3 bg-gray-600 rounded text-sm">
+                <p className="text-gray-300 mb-2">
+                  <span className="text-green-400">✓ Estados completados:</span> completo, completado, aprobado, finalizado
+                </p>
+                <p className="text-gray-400">
+                  Total completados: <span className="text-green-400 font-semibold">{estadisticas.cierres_completados || 0}</span>
+                </p>
               </div>
             </div>
 
@@ -562,11 +647,7 @@ const GestionAnalistas = () => {
   const [showDetalleModal, setShowDetalleModal] = useState(false);
   const [showSupervisorModal, setShowSupervisorModal] = useState(false);
   const [supervisoresDisponibles, setSupervisoresDisponibles] = useState([]);
-  const [filtroArea, setFiltroArea] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
-
-  // Obtener usuario para mostrar sus áreas
-  const usuario = JSON.parse(localStorage.getItem("usuario"));
 
   useEffect(() => {
     cargarAnalistas();
@@ -576,9 +657,34 @@ const GestionAnalistas = () => {
     try {
       setLoading(true);
       const data = await obtenerAnalistasDetallado();
+      
+      console.log('=== DEBUG: Datos de Analistas Cargados ===');
+      console.log('Total analistas:', data.length);
+      console.log('Estructura de datos completa:', data);
+      
+      // Debug específico de cierres completados
+      console.log('=== CIERRES COMPLETADOS POR ANALISTA ===');
+      data.forEach(analista => {
+        console.log(`${analista.nombre} ${analista.apellido}:`, {
+          id: analista.id,
+          cierres_completados: analista.cierres_completados,
+          cierres_contabilidad: analista.cierres_contabilidad,
+          cierres_nomina: analista.cierres_nomina,
+          clientes_asignados: analista.clientes_asignados,
+          eficiencia: analista.eficiencia,
+          carga_trabajo: analista.carga_trabajo,
+          areas: analista.areas?.map(a => a.nombre) || []
+        });
+      });
+      
+      const totalCierres = data.reduce((sum, a) => sum + a.cierres_completados, 0);
+      console.log('TOTAL CIERRES COMPLETADOS EN SISTEMA:', totalCierres);
+      console.log('========================================');
+      
       setAnalistas(data);
     } catch (error) {
       console.error("Error al cargar analistas:", error);
+      console.error("Detalles del error:", error.response?.data);
     } finally {
       setLoading(false);
     }
@@ -629,10 +735,7 @@ const GestionAnalistas = () => {
                          analista.apellido.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          analista.correo_bdo.toLowerCase().includes(searchTerm.toLowerCase());
     
-    const matchesArea = filtroArea === "all" || 
-                       (analista.areas && analista.areas.some(area => area.nombre === filtroArea));
-    
-    return matchesSearch && matchesArea;
+    return matchesSearch;
   });
 
   return (
@@ -650,6 +753,48 @@ const GestionAnalistas = () => {
           >
             <RefreshCw className="w-4 h-4 mr-2" />
             Actualizar
+          </button>
+          <button
+            onClick={() => {
+              const debugInfo = `
+=== DEBUG: Recuperación de Cierres Completados ===
+
+ENDPOINT PRINCIPAL: /analistas-detallado/
+Este endpoint utiliza anotaciones de Django ORM para calcular:
+
+CÁLCULO DE CIERRES COMPLETADOS:
+1. Cierres de Contabilidad (CierreContabilidad):
+   - Estados considerados completados: 'aprobado', 'completo', 'finalizado'
+   - Count('cierrecontabilidad', filter=Q(cierrecontabilidad__estado__in=['aprobado', 'completo', 'finalizado']))
+
+2. Cierres de Nómina (CierreNomina):
+   - Estado considerado completado: 'completado' 
+   - Count('cierres_analista', filter=Q(cierres_analista__estado='completado'))
+
+TOTAL = Cierres Contabilidad Completados + Cierres Nómina Completados
+
+DATOS ACTUALES:
+${analistas.map(a => 
+  `- ${a.nombre} ${a.apellido}: ${a.cierres_completados} cierres completados`
+).join('\n')}
+
+TOTAL SISTEMA: ${analistas.reduce((sum, a) => sum + a.cierres_completados, 0)} cierres completados
+
+ENDPOINT ESTADÍSTICAS DETALLADAS: /analistas-detallado/{id}/estadisticas/
+Para ver detalles por estado de cada analista, usa el botón "Ver detalles"
+
+CAMPOS RELACIONADOS:
+- cierres_contabilidad: Total cierres de contabilidad (todos los estados)
+- cierres_nomina: Total cierres de nómina (todos los estados)
+- eficiencia: (cierres_completados * 100) / (clientes_asignados + 1)
+
+NOTA: Se corrigió para incluir 'finalizado' como estado completado en Contabilidad
+=================================================`;
+              alert(debugInfo);
+            }}
+            className="flex items-center px-3 py-2 bg-orange-600 hover:bg-orange-700 rounded-lg text-sm"
+          >
+            🐛 Debug Cierres
           </button>
           <button className="flex items-center px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg">
             <Download className="w-4 h-4 mr-2" />
@@ -670,15 +815,6 @@ const GestionAnalistas = () => {
             className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white"
           />
         </div>
-        <select
-          value={filtroArea}
-          onChange={(e) => setFiltroArea(e.target.value)}
-          className="bg-gray-800 border border-gray-600 rounded-lg px-4 py-2 text-white"
-        >
-          <option value="all">Todas las áreas</option>
-          <option value="Contabilidad">Contabilidad</option>
-          <option value="Nomina">Nómina</option>
-        </select>
       </div>
 
       {/* Resumen de Estadísticas */}

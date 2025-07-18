@@ -592,7 +592,7 @@ class AnalistasDetalladoViewSet(viewsets.ReadOnlyModelViewSet):
         ).distinct().annotate(
             clientes_asignados=Count('asignaciones', distinct=True),
             cierres_completados=Count('cierrecontabilidad', 
-                filter=Q(cierrecontabilidad__estado__in=['aprobado', 'completo']),
+                filter=Q(cierrecontabilidad__estado__in=['aprobado', 'completo', 'finalizado']),
                 distinct=True
             ) + Count('cierres_analista',
                 filter=Q(cierres_analista__estado='completado'),
@@ -636,7 +636,10 @@ class AnalistasDetalladoViewSet(viewsets.ReadOnlyModelViewSet):
         
         # Métricas de performance
         total_cierres = sum(cierres_por_estado.values())
-        completados = cierres_por_estado.get('completo', 0) + cierres_por_estado.get('completado', 0) + cierres_por_estado.get('aprobado', 0)
+        completados = (cierres_por_estado.get('completo', 0) + 
+                      cierres_por_estado.get('completado', 0) + 
+                      cierres_por_estado.get('aprobado', 0) + 
+                      cierres_por_estado.get('finalizado', 0))
         eficiencia = (completados / total_cierres * 100) if total_cierres > 0 else 0
         
         # Tiempo promedio (simplificado)

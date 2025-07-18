@@ -17,9 +17,15 @@ export default function Header() {
     <header className="w-full bg-gray-800 px-6 py-4 shadow-md">
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-4">
-          <img src={logo} alt="BDO Logo" className="h-10" />
+          <img 
+            src={logo} 
+            alt="BDO Logo" 
+            className="h-10 cursor-pointer hover:opacity-80 transition-opacity" 
+            onClick={() => navigate('/menu')}
+          />
           <span className="text-white font-semibold text-lg">Sistema de Gestion y Monitoreo SGM</span>
-        </div>        <div className="flex items-center gap-6 text-sm text-gray-300">
+        </div>
+        <div className="flex items-center gap-6 text-sm text-gray-300">
           {/* Indicador de áreas para gerentes */}
           {usuario?.tipo_usuario === "gerente" && usuario?.areas && Array.isArray(usuario.areas) && usuario.areas.length > 0 && (
             <AreaIndicator 

@@ -28,12 +28,7 @@ const LogsActividad = () => {
   const [filtrosFrontend, setFiltrosFrontend] = useState({
     cliente_id: '',
     usuario_id: '',
-    tarjeta: '',
-    accion: '',
-    cierre: '',
-    periodo: '',
-    fecha_desde: '',
-    fecha_hasta: ''
+    periodo: ''
   });
 
   // Filtros para backend - Solo para paginación
@@ -50,45 +45,6 @@ const LogsActividad = () => {
     has_next: false,
     has_previous: false
   });
-
-  // Opciones para filtros
-  const tiposTarjeta = [
-    { value: '', label: 'Todas las tarjetas' },
-    { value: 'tipo_documento', label: 'Tipos de Documento' },
-    { value: 'libro_mayor', label: 'Libro Mayor' },
-    { value: 'clasificacion', label: 'Clasificaciones' },
-    { value: 'nombres_ingles', label: 'Nombres en Inglés' },
-    { value: 'incidencias', label: 'Incidencias' },
-    { value: 'revision', label: 'Revisión' },
-    { value: 'movimientos_cuenta', label: 'Movimientos por Cuenta' },
-    { value: 'movimientos_resumen', label: 'Resumen de Movimientos' },
-    { value: 'reportes', label: 'Reportes' }
-  ];
-
-  const tiposAccion = [
-    { value: '', label: 'Todas las acciones' },
-    { value: 'view_data', label: 'Ver Datos' },
-    { value: 'manual_create', label: 'Crear Manual' },
-    { value: 'manual_edit', label: 'Editar Manual' },
-    { value: 'manual_delete', label: 'Eliminar Manual' },
-    { value: 'upload_excel', label: 'Subir Excel' },
-    { value: 'process_complete', label: 'Proceso Completado' }
-  ];
-
-  const tiposCierre = [
-    { value: '', label: 'Todos los cierres' },
-    { value: 'pendiente', label: 'Pendiente' },
-    { value: 'procesando', label: 'Procesando' },
-    { value: 'clasificacion', label: 'Esperando Clasificación' },
-    { value: 'incidencias', label: 'Incidencias Abiertas' },
-    { value: 'sin_incidencias', label: 'Sin Incidencias' },
-    { value: 'generando_reportes', label: 'Generando Reportes' },
-    { value: 'en_revision', label: 'En Revisión' },
-    { value: 'rechazado', label: 'Rechazado' },
-    { value: 'aprobado', label: 'Aprobado' },
-    { value: 'finalizado', label: 'Finalizado' },
-    { value: 'completo', label: 'Completo' }
-  ];
 
   useEffect(() => {
     cargarDatos();
@@ -346,49 +302,9 @@ const LogsActividad = () => {
         }
       }
 
-      // Filtro por tarjeta
-      if (filtros.tarjeta && filtros.tarjeta !== '') {
-        if (log.tarjeta !== filtros.tarjeta) {
-          return false;
-        }
-      }
-
-      // Filtro por acción
-      if (filtros.accion && filtros.accion !== '') {
-        if (log.accion !== filtros.accion) {
-          return false;
-        }
-      }
-
-      // Filtro por estado de cierre
-      if (filtros.cierre && filtros.cierre !== '') {
-        if (log.estado_cierre !== filtros.cierre) {
-          return false;
-        }
-      }
-
       // Filtro por período
       if (filtros.periodo && filtros.periodo !== '') {
         if (log.periodo_cierre !== filtros.periodo) {
-          return false;
-        }
-      }
-
-      // Filtro por fecha desde
-      if (filtros.fecha_desde && filtros.fecha_desde !== '') {
-        const fechaLog = new Date(log.timestamp || log.fecha_creacion);
-        const fechaDesde = new Date(filtros.fecha_desde);
-        if (fechaLog < fechaDesde) {
-          return false;
-        }
-      }
-
-      // Filtro por fecha hasta
-      if (filtros.fecha_hasta && filtros.fecha_hasta !== '') {
-        const fechaLog = new Date(log.timestamp || log.fecha_creacion);
-        const fechaHasta = new Date(filtros.fecha_hasta);
-        fechaHasta.setHours(23, 59, 59, 999); // Incluir todo el día
-        if (fechaLog > fechaHasta) {
           return false;
         }
       }
@@ -451,12 +367,7 @@ const LogsActividad = () => {
     setFiltrosFrontend({
       cliente_id: '',
       usuario_id: '',
-      tarjeta: '',
-      accion: '',
-      cierre: '',
-      periodo: '',
-      fecha_desde: '',
-      fecha_hasta: ''
+      periodo: ''
     });
   };
 
@@ -766,7 +677,7 @@ const LogsActividad = () => {
               </div>
               
               {/* Filtros en línea */}
-              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-8 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
                 <select
                   value={filtrosFrontend.usuario_id}
                   onChange={(e) => handleFiltroChange('usuario_id', e.target.value)}
@@ -792,60 +703,6 @@ const LogsActividad = () => {
                     </option>
                   ))}
                 </select>
-                
-                <button
-                  onClick={() => {
-                    const debugInfo = `
-                      === DEBUG: Filtro Clientes ===
-                      Filtro actual: "${filtrosFrontend.cliente_id || 'Vacío'}"
-                      
-                      CLIENTES DISPONIBLES (${clientes.length}):
-                      ${clientes.map((c, i) => `${i + 1}. ID: "${c.id}" | Nombre: "${c.nombre}"`).join('\n')}
-                      
-                      LOGS FILTRADOS (primeros 10):
-                      ${logs.slice(0, 10).map((log, i) => 
-                        `${i + 1}. ID: "${log.cliente_id || 'null'}" | Nombre: "${log.cliente_nombre || 'null'}" | Usuario: ${log.usuario_nombre}`
-                      ).join('\n')}
-                      
-                      MATCH TEST:
-                      ${clientes.map(c => {
-                        const matchingLogs = logs.filter(log => 
-                          (log.cliente_id || log.cliente_nombre) === c.id
-                        ).length;
-                        return `Cliente "${c.nombre}" (ID: "${c.id}") → ${matchingLogs} logs matching`;
-                      }).join('\n')}
-                      =============================`;
-                    alert(debugInfo);
-                  }}
-                  className="text-xs text-gray-400 hover:text-gray-300 px-2 py-1 border border-gray-600 rounded"
-                  title="Debug filtro clientes"
-                >
-                  🔍 Clientes
-                </button>
-
-                <select
-                  value={filtrosFrontend.tarjeta}
-                  onChange={(e) => handleFiltroChange('tarjeta', e.target.value)}
-                  className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
-                >
-                  {tiposTarjeta.map(tipo => (
-                    <option key={tipo.value} value={tipo.value}>
-                      {tipo.label}
-                    </option>
-                  ))}
-                </select>
-
-                <select
-                  value={filtrosFrontend.cierre}
-                  onChange={(e) => handleFiltroChange('cierre', e.target.value)}
-                  className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
-                >
-                  {tiposCierre.map(tipo => (
-                    <option key={tipo.value} value={tipo.value}>
-                      {tipo.label}
-                    </option>
-                  ))}
-                </select>
 
                 <select
                   value={filtrosFrontend.periodo}
@@ -860,14 +717,6 @@ const LogsActividad = () => {
                     </option>
                   ))}
                 </select>
-
-                <input
-                  type="date"
-                  value={filtrosFrontend.fecha_desde}
-                  onChange={(e) => handleFiltroChange('fecha_desde', e.target.value)}
-                  className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
-                  placeholder="Desde"
-                />
 
                 <button
                   onClick={limpiarFiltros}

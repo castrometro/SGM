@@ -37,6 +37,7 @@ export const obtenerLogsActividad = async (filtros = {}) => {
   if (filtros.fecha_hasta) params.append('fecha_hasta', filtros.fecha_hasta);
   if (filtros.page) params.append('page', filtros.page);
   if (filtros.page_size) params.append('page_size', filtros.page_size);
+  if (filtros.force_redis) params.append('force_redis', filtros.force_redis);
   
   const res = await api.get(`/contabilidad/gerente/logs-actividad/?${params}`);
   return res.data;
@@ -155,6 +156,11 @@ export const eliminarCliente = async (clienteId) => {
 
 export const obtenerAreas = async () => {
   const res = await api.get('/contabilidad/gerente/areas/');
+  return res.data;
+};
+
+export const obtenerIndustrias = async () => {
+  const res = await api.get('/industrias/');
   return res.data;
 };
 

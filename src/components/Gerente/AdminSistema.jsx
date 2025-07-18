@@ -10,6 +10,7 @@ import {
   actualizarCliente,
   eliminarCliente,
   obtenerAreas,
+  obtenerIndustrias,
   obtenerMetricasSistema
 } from '../../api/gerente';
 import { 
@@ -39,6 +40,7 @@ const AdminSistema = () => {
   const [usuarios, setUsuarios] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [areas, setAreas] = useState([]);
+  const [industrias, setIndustrias] = useState([]);
   const [metricas, setMetricas] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -68,7 +70,8 @@ const AdminSistema = () => {
     nombre: '',
     rut: '',
     bilingue: false,
-    industria: ''
+    industria: '',
+    areas: [] // Agregar areas al formulario
   });
 
   useEffect(() => {
@@ -96,11 +99,16 @@ const AdminSistema = () => {
           setError(`Error al cargar usuarios: ${userError.message || userError}`);
         }
       } else if (activeTab === 'clientes') {
-        console.log('Cargando clientes...');
+        console.log('Cargando clientes e industrias...');
         try {
-          const clientesData = await obtenerClientes();
+          const [clientesData, industriasData] = await Promise.all([
+            obtenerClientes(),
+            obtenerIndustrias()
+          ]);
           console.log('Clientes obtenidos:', clientesData);
+          console.log('Industrias obtenidas:', industriasData);
           setClientes(clientesData || []);
+          setIndustrias(industriasData || []);
         } catch (clientError) {
           console.error('Error específico al cargar clientes:', clientError);
           setError(`Error al cargar clientes: ${clientError.message || clientError}`);
@@ -200,13 +208,19 @@ const AdminSistema = () => {
     try {
       setError(''); // Limpiar errores previos
       
+      // Automáticamente asignar área de Contabilidad si no se especifica
+      const clienteData = {
+        ...clientForm,
+        areas: clientForm.areas.length > 0 ? clientForm.areas : ['Contabilidad']
+      };
+      
       if (editingClient) {
         // Actualizar cliente existente
-        await actualizarCliente(editingClient.id, clientForm);
+        await actualizarCliente(editingClient.id, clienteData);
         setEditingClient(null);
       } else {
         // Crear nuevo cliente
-        await crearCliente(clientForm);
+        await crearCliente(clienteData);
       }
       
       setShowClientForm(false);
@@ -214,7 +228,8 @@ const AdminSistema = () => {
         nombre: '',
         rut: '',
         bilingue: false,
-        industria: ''
+        industria: '',
+        areas: []
       });
       await cargarDatos();
     } catch (err) {
@@ -247,7 +262,8 @@ const AdminSistema = () => {
       nombre: cliente.nombre,
       rut: cliente.rut,
       bilingue: cliente.bilingue || false,
-      industria: cliente.industria || ''
+      industria: cliente.industria || '',
+      areas: cliente.areas_efectivas ? cliente.areas_efectivas.map(area => area.nombre) : []
     });
     setShowClientForm(true);
   };
@@ -280,7 +296,8 @@ const AdminSistema = () => {
       nombre: '',
       rut: '',
       bilingue: false,
-      industria: ''
+      industria: '',
+      areas: ['Contabilidad'] // Por defecto, asignar Contabilidad
     });
     setShowClientForm(true);
   };
@@ -556,7 +573,12 @@ const AdminSistema = () => {
         {activeTab === 'clientes' && (
           <div>
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-semibold">Gestión de Clientes</h2>
+              <div>
+                <h2 className="text-xl font-semibold">Gestión de Clientes de Contabilidad</h2>
+                <p className="text-gray-400 text-sm mt-1">
+                  Mostrando solo clientes con área de Contabilidad (directa o por servicios)
+                </p>
+              </div>
               <button
                 onClick={handleOpenClientForm}
                 className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg flex items-center"
@@ -566,6 +588,21 @@ const AdminSistema = () => {
               </button>
             </div>
 
+            {/* Filtros de clientes */}
+            <div className="bg-gray-800 rounded-lg p-4 mb-6">
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm text-gray-400">Filtros:</span>
+                  <span className="px-2 py-1 bg-blue-600 text-xs rounded">
+                    Área: Contabilidad
+                  </span>
+                </div>
+                <div className="text-sm text-gray-400">
+                  Total: {clientes.length} clientes
+                </div>
+              </div>
+            </div>
+
             {/* Tabla de Clientes */}
             <div className="bg-gray-800 rounded-lg overflow-hidden">
               <table className="w-full">
@@ -573,6 +610,7 @@ const AdminSistema = () => {
                   <tr>
                     <th className="px-4 py-3 text-left">Nombre</th>
                     <th className="px-4 py-3 text-left">RUT</th>
+                    <th className="px-4 py-3 text-left">Áreas</th>
                     <th className="px-4 py-3 text-left">Bilingüe</th>
                     <th className="px-4 py-3 text-left">Industria</th>
                     <th className="px-4 py-3 text-left">Fecha Registro</th>
@@ -585,13 +623,35 @@ const AdminSistema = () => {
                       <td className="px-4 py-3 font-medium">{cliente.nombre}</td>
                       <td className="px-4 py-3 text-gray-300">{cliente.rut}</td>
                       <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1">
+                          {cliente.areas_efectivas && cliente.areas_efectivas.length > 0 ? (
+                            cliente.areas_efectivas.map((area, index) => (
+                              <span
+                                key={index}
+                                className={`px-2 py-1 rounded text-xs ${
+                                  area.nombre === 'Contabilidad' 
+                                    ? 'bg-blue-600 text-white' 
+                                    : 'bg-gray-600 text-gray-300'
+                                }`}
+                              >
+                                {area.nombre}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="px-2 py-1 bg-gray-600 text-gray-300 rounded text-xs">
+                              Sin áreas
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
                         <span className={`px-2 py-1 rounded text-xs ${
-                          cliente.bilingue ? 'bg-blue-600' : 'bg-gray-600'
+                          cliente.bilingue ? 'bg-green-600' : 'bg-gray-600'
                         }`}>
                           {cliente.bilingue ? 'Sí' : 'No'}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-gray-300">{cliente.industria || 'Sin especificar'}</td>
+                      <td className="px-4 py-3 text-gray-300">{cliente.industria_nombre || 'Sin especificar'}</td>
                       <td className="px-4 py-3 text-gray-300">{formatearFecha(cliente.fecha_registro)}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-center space-x-2">
@@ -618,7 +678,14 @@ const AdminSistema = () => {
               
               {clientes.length === 0 && (
                 <div className="text-center py-8 text-gray-400">
-                  No hay clientes registrados
+                  <Building className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                  <p>No hay clientes de Contabilidad registrados</p>
+                  <button
+                    onClick={handleOpenClientForm}
+                    className="mt-2 text-blue-400 hover:text-blue-300"
+                  >
+                    Crear el primer cliente
+                  </button>
                 </div>
               )}
             </div>
@@ -907,15 +974,56 @@ const AdminSistema = () => {
                       required
                     />
                   </div>
+                  
+                  {/* Selección de Áreas */}
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Áreas *</label>
+                    <div className="bg-gray-700 border border-gray-600 rounded px-3 py-2 min-h-[100px]">
+                      <div className="grid grid-cols-1 gap-2">
+                        {areas.map(area => (
+                          <label key={area} className="flex items-center">
+                            <input
+                              type="checkbox"
+                              checked={clientForm.areas.includes(area)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setClientForm({
+                                    ...clientForm,
+                                    areas: [...clientForm.areas, area]
+                                  });
+                                } else {
+                                  setClientForm({
+                                    ...clientForm,
+                                    areas: clientForm.areas.filter(a => a !== area)
+                                  });
+                                }
+                              }}
+                              className="mr-2"
+                            />
+                            <span className="text-sm text-white">{area}</span>
+                          </label>
+                        ))}
+                      </div>
+                      {clientForm.areas.length === 0 && (
+                        <p className="text-gray-400 text-sm mt-2">
+                          Se asignará automáticamente el área de Contabilidad
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  
                   <div>
                     <label className="block text-sm font-medium mb-1">Industria</label>
-                    <input
-                      type="text"
+                    <select
                       value={clientForm.industria}
                       onChange={(e) => setClientForm({...clientForm, industria: e.target.value})}
                       className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2"
-                      placeholder="Ej: Tecnología, Retail, Servicios..."
-                    />
+                    >
+                      <option value="">Seleccionar industria</option>
+                      {industrias.map(industria => (
+                        <option key={industria.id} value={industria.nombre}>{industria.nombre}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="flex items-center">
                     <input
@@ -946,7 +1054,8 @@ const AdminSistema = () => {
                         nombre: '',
                         rut: '',
                         bilingue: false,
-                        industria: ''
+                        industria: '',
+                        areas: ['Contabilidad']
                       });
                     }}
                     className="flex-1 bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded"

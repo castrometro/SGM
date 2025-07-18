@@ -83,16 +83,24 @@ class ServicioClienteMiniSerializer(serializers.ModelSerializer):
 
 class ClienteSerializer(serializers.ModelSerializer):
     industria_nombre = serializers.SerializerMethodField()
+    areas = AreaSerializer(many=True, read_only=True)
+    areas_efectivas = serializers.SerializerMethodField()
+    
     class Meta:
         model = Cliente
         fields = [
-            'id', 'nombre', 'rut',
-            'fecha_registro', 'industria_nombre','bilingue'
+            'id', 'nombre', 'rut', 'industria',
+            'fecha_registro', 'industria_nombre','bilingue',
+            'areas', 'areas_efectivas'
         ]
         read_only_fields = ['id', 'fecha_registro']
 
     def get_industria_nombre(self, obj):
         return obj.industria.nombre if obj.industria else None
+    
+    def get_areas_efectivas(self, obj):
+        areas = obj.get_areas_efectivas()
+        return AreaSerializer(areas, many=True).data
 
 
 class ContratoSerializer(serializers.ModelSerializer):

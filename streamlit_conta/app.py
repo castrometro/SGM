@@ -123,13 +123,19 @@ def main():
     
     with col3_info:
         cierres = info_redis.get('cierres_disponibles', [])
+        error_info = info_redis.get('error', None)
+        
         if cierres:
             cierres_str = "\n".join([f"• {c}" for c in cierres[:3]])
             if len(cierres) > 3:
                 cierres_str += f"\n... y {len(cierres)-3} más"
             st.success(f"📊 **Cierres disponibles:**\n{cierres_str}")
         else:
-            st.warning("📊 **Sin cierres disponibles**")
+            # Mostrar mensaje específico según el error
+            if error_info:
+                st.error(f"📊 **{error_info}**")
+            else:
+                st.warning(f"📊 **No se encontraron cierres para el cliente {cliente_id_actual}**")
     
     with col4_selector:
         if cierres:
@@ -140,7 +146,12 @@ def main():
             )
         else:
             periodo_seleccionado = "2025-03"  # fallback
-            st.warning("🎯 **Sin cierres para seleccionar**")
+            # Mostrar mensaje específico según el error
+            error_info = info_redis.get('error', None)
+            if error_info:
+                st.error(f"🎯 **{error_info}**")
+            else:
+                st.warning(f"🎯 **No se encontraron cierres para el cliente {cliente_id_actual}**")
 
     st.markdown("---")
 
@@ -180,42 +191,55 @@ def main():
     # Cargar datos de Redis usando el período seleccionado y cliente actual
     data = cargar_datos_redis(cliente_id=cliente_id_actual, periodo=periodo_seleccionado)
 
-    metadata = {
-        "cliente_nombre": data.get("cliente", {}).get("nombre"),
-        "periodo": data.get("cierre", {}).get("periodo"),
-        "moneda": data.get("esf", {}).get("metadata", {}).get("moneda", "CLP"),
-        "idioma": idioma
-    }
+    # Verificar si se pudieron cargar los datos
+    if data is None:
+        st.error(f"❌ **No se pudieron cargar los datos para el cliente {cliente_id_actual} en el período {periodo_seleccionado}**")
+        st.info("""
+        **Posibles causas:**
+        - El cliente no tiene cierres disponibles
+        - Error de conexión con Redis
+        - Los datos no están completos (faltan ESF o ERI)
+        
+        **Solución:** Verifica que el cierre esté finalizado y que los datos estén disponibles en Redis.
+        """)
+    else:
+        # Solo proceder si los datos se cargaron correctamente
+        metadata = {
+            "cliente_nombre": data.get("cliente", {}).get("nombre"),
+            "periodo": data.get("cierre", {}).get("periodo"),
+            "moneda": data.get("esf", {}).get("metadata", {}).get("moneda", "CLP"),
+            "idioma": idioma
+        }
 
-    # Mostrar página elegida
-    if menu == "Resumen General":
-        resumen.show(data_esf=data.get("esf"), data_eri=data.get("eri"), metadata=metadata)
-    elif menu == "ESF":
-        esf.show(data.get("esf"), metadata=metadata, data_eri=data.get("eri"))
-    elif menu == "ERI":
-        eri.show(data.get("eri"), metadata=metadata)
-    elif menu == "Movimientos":
-        movimientos.show(
-            data_esf=data.get("esf"),
-            data_eri=data.get("eri"),
-            metadata=metadata,
-            data_ecp=data.get("ecp")
-        )
-    elif menu == "ECP":  # Agregar este caso nuevo
-        ecp.show(
-            data_ecp=data.get("ecp"),
-            metadata=metadata,
-            data_eri=data.get("eri"),
-            data_esf=data.get("esf")
-        )
-    elif menu == "Análisis":
-        analisis.show(
-            data_esf=data.get("esf"),
-            data_eri=data.get("eri"),
-            metadata=metadata
-        )
-    elif menu == "Herramientas Excel":
-        excel_tools.show_excel_tools_section()
+        # Mostrar página elegida
+        if menu == "Resumen General":
+            resumen.show(data_esf=data.get("esf"), data_eri=data.get("eri"), metadata=metadata)
+        elif menu == "ESF":
+            esf.show(data.get("esf"), metadata=metadata, data_eri=data.get("eri"))
+        elif menu == "ERI":
+            eri.show(data.get("eri"), metadata=metadata)
+        elif menu == "Movimientos":
+            movimientos.show(
+                data_esf=data.get("esf"),
+                data_eri=data.get("eri"),
+                metadata=metadata,
+                data_ecp=data.get("ecp")
+            )
+        elif menu == "ECP":  # Agregar este caso nuevo
+            ecp.show(
+                data_ecp=data.get("ecp"),
+                metadata=metadata,
+                data_eri=data.get("eri"),
+                data_esf=data.get("esf")
+            )
+        elif menu == "Análisis":
+            analisis.show(
+                data_esf=data.get("esf"),
+                data_eri=data.get("eri"),
+                metadata=metadata
+            )
+        elif menu == "Herramientas Excel":
+            excel_tools.show_excel_tools_section()
 
 if __name__ == "__main__":
     main()

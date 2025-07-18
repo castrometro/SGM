@@ -152,6 +152,26 @@ class Cliente(models.Model):
         null=True,
         related_name='clientes'
     )
+    # Campo directo para áreas del cliente (bypass de servicios contratados)
+    areas = models.ManyToManyField(
+        Area,
+        related_name='clientes_directos',
+        blank=True,
+        help_text='Áreas directas del cliente (bypass de servicios contratados)'
+    )
+
+    def get_areas_efectivas(self):
+        """
+        Obtiene las áreas del cliente, priorizando el campo directo sobre servicios contratados
+        """
+        # Si tiene áreas directas, usamos esas
+        if self.areas.exists():
+            return self.areas.all()
+        
+        # Si no, fallback a servicios contratados (lógica original)
+        return Area.objects.filter(
+            servicios__precios_cliente__cliente=self
+        ).distinct()
 
     def __str__(self):
         return f"{self.nombre} ({self.rut})"

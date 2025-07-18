@@ -127,10 +127,15 @@ const AsignacionModal = ({ analista, isOpen, onClose, onSave }) => {
       setLoading(true);
       setError(null);
       
+      console.log('🔍 Cargando datos para analista:', analista.id);
+      
       const [disponibles, asignados] = await Promise.all([
-        obtenerClientesDisponibles(analista.id),
+        obtenerClientesDisponibles(analista.id, true), // Force bypass
         obtenerClientesAsignados(analista.id)
       ]);
+      
+      console.log('✅ Clientes disponibles:', disponibles);
+      console.log('✅ Clientes asignados:', asignados);
       
       setClientesDisponibles(disponibles || []);
       setClientesAsignados(asignados || []);

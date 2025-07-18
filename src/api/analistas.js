@@ -15,8 +15,11 @@ export const obtenerAnalistasDetallado = async () => {
   return res.data;
 };
 
-export const obtenerClientesDisponibles = async (analistaId) => {
-  const res = await api.get(`/clientes-disponibles/${analistaId}/`);
+export const obtenerClientesDisponibles = async (analistaId, useBypass = true) => {
+  const endpoint = useBypass 
+    ? `/clientes-disponibles-bypass/${analistaId}/` 
+    : `/clientes-disponibles/${analistaId}/`;
+  const res = await api.get(endpoint);
   return res.data;
 };
 
@@ -38,6 +41,40 @@ export const removerAsignacion = async (analistaId, clienteId) => {
   return res.data;
 };
 
+// Nuevas funciones para manejo de áreas directas
+export const obtenerClientesSinAreas = async () => {
+  const res = await api.get("/clientes-sin-areas/");
+  return res.data;
+};
+
+export const asignarAreasCliente = async (clienteId, areasIds) => {
+  const res = await api.post(`/clientes/${clienteId}/asignar-areas/`, {
+    areas: areasIds
+  });
+  return res.data;
+};
+
+export const migrarClientesAreasDirectas = async () => {
+  const res = await api.post("/migrar-clientes-areas-directas/");
+  return res.data;
+};
+
+// Funciones para obtener datos por área del usuario actual
+export const obtenerClientesArea = async () => {
+  const res = await api.get("/clientes-por-area/");
+  return res.data;
+};
+
+export const obtenerAnalistasArea = async () => {
+  const res = await api.get("/analistas-por-area/");
+  return res.data;
+};
+
+export const obtenerClientesDisponiblesParaAnalista = async (analistaId) => {
+  const res = await api.get(`/clientes-disponibles-bypass/${analistaId}/`);
+  return res.data;
+};
+
 export const obtenerEstadisticasAnalista = async (analistaId) => {
   const res = await api.get(`/analistas-detallado/${analistaId}/estadisticas/`);
   return res.data;
@@ -47,6 +84,7 @@ export const actualizarAnalista = async (analistaId, datosAnalista) => {
   const res = await api.put(`/usuarios/${analistaId}/`, datosAnalista);
   return res.data;
 };
+
 
 export const crearAnalista = async (datosAnalista) => {
   const res = await api.post("/usuarios/", datosAnalista);

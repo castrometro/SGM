@@ -42,23 +42,27 @@ def obtener_logs_actividad(request):
     fecha_hasta = request.GET.get('fecha_hasta')
     page = int(request.GET.get('page', 1))
     page_size = int(request.GET.get('page_size', 20))
+    force_redis = request.GET.get('force_redis', 'false').lower() == 'true'  # Nuevo parámetro
     
     # Determinar estrategia de consulta
-    use_redis = should_use_redis_cache(fecha_desde, fecha_hasta)
+    use_redis = force_redis or should_use_redis_cache(fecha_desde, fecha_hasta)
     
-    if use_redis and not (usuario_id or tarjeta or accion or cierre):
+    if use_redis and (force_redis or not (usuario_id or tarjeta or accion or cierre)):
         # Usar Redis para consultas simples y recientes
         try:
             logs_data = get_logs_from_redis(
                 cliente_id=cliente_id,
                 periodo=periodo,
                 page=page,
-                page_size=page_size
+                page_size=page_size,
+                force_all=force_redis  # Pasar el parámetro para obtener todos los logs
             )
-            if logs_data['results']:  # Si Redis tiene datos
+            if logs_data['results'] or force_redis:  # Si Redis tiene datos o se fuerza su uso
                 return Response(logs_data)
         except Exception as e:
             logger.warning(f"Error con Redis, usando PostgreSQL: {e}")
+            if force_redis:  # Si se fuerza Redis, devolver error
+                return Response({'error': 'Error accediendo a Redis'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     # Usar PostgreSQL para búsquedas complejas o históricas
     logs_data = get_logs_from_postgres(
@@ -95,17 +99,26 @@ def should_use_redis_cache(fecha_desde, fecha_hasta):
     return True
 
 
-def get_logs_from_redis(cliente_id=None, periodo=None, page=1, page_size=20):
+def get_logs_from_redis(cliente_id=None, periodo=None, page=1, page_size=20, force_all=False):
     """Obtiene logs desde Redis con paginación"""
     from ..utils.activity_logger import ActivityLogStorage
     
     try:
-        # Obtener más logs para filtrado y paginación
-        logs = ActivityLogStorage.get_recent_logs(
-            cliente_id=cliente_id,
-            periodo=periodo,
-            limit=page_size * 10  # Buffer para paginación
-        )
+        # Determinar el límite según si se fuerza obtener todos los logs
+        if force_all:
+            # Obtener todos los logs disponibles en Redis
+            logs = ActivityLogStorage.get_recent_logs(
+                cliente_id=cliente_id,
+                periodo=periodo,
+                limit=None  # Sin límite para obtener todos los logs
+            )
+        else:
+            # Obtener más logs para filtrado y paginación
+            logs = ActivityLogStorage.get_recent_logs(
+                cliente_id=cliente_id,
+                periodo=periodo,
+                limit=page_size * 10  # Buffer para paginación
+            )
         
         # Paginación simple
         total_count = len(logs)
@@ -1181,24 +1194,43 @@ def eliminar_usuario(request, user_id):
 @permission_classes([IsAuthenticated])
 def gestionar_clientes(request):
     """
-    GET: Lista todos los clientes del sistema
-    POST: Crea un nuevo cliente
+    GET: Lista todos los clientes del área de contabilidad
+    POST: Crea un nuevo cliente con área de contabilidad
     """
     if request.user.tipo_usuario != 'gerente':
         return Response({'error': 'Acceso denegado'}, status=status.HTTP_403_FORBIDDEN)
     
     if request.method == 'GET':
-        clientes = Cliente.objects.all().order_by('-fecha_registro')
-        data = []
+        # Filtrar solo clientes del área de contabilidad
+        from api.models import Area
+        try:
+            area_contabilidad = Area.objects.get(nombre='Contabilidad')
+        except Area.DoesNotExist:
+            return Response({'error': 'Área de Contabilidad no encontrada'}, status=status.HTTP_404_NOT_FOUND)
         
+        # Obtener clientes que tienen área directa de contabilidad o servicios en contabilidad
+        clientes_directos = Cliente.objects.filter(areas=area_contabilidad)
+        clientes_servicios = Cliente.objects.filter(
+            servicios_contratados__servicio__area=area_contabilidad
+        ).exclude(id__in=clientes_directos.values_list('id', flat=True))
+        
+        # Combinar ambos querysets
+        clientes = clientes_directos.union(clientes_servicios).order_by('-fecha_registro')
+        
+        data = []
         for cliente in clientes:
+            # Obtener áreas efectivas
+            areas_efectivas = cliente.get_areas_efectivas()
+            
             data.append({
                 'id': cliente.id,
                 'nombre': cliente.nombre,
                 'rut': cliente.rut,
                 'bilingue': cliente.bilingue,
                 'industria': cliente.industria.nombre if cliente.industria else '',
+                'industria_nombre': cliente.industria.nombre if cliente.industria else '',
                 'fecha_registro': cliente.fecha_registro,
+                'areas_efectivas': [{'nombre': area.nombre} for area in areas_efectivas]
             })
         
         return Response(data)
@@ -1228,9 +1260,17 @@ def gestionar_clientes(request):
                 industria=industria
             )
             
+            # Asignar áreas directas
+            areas_nombres = data.get('areas', ['Contabilidad'])
+            if areas_nombres:
+                from api.models import Area
+                areas_obj = Area.objects.filter(nombre__in=areas_nombres)
+                cliente.areas.set(areas_obj)
+            
             return Response({
                 'id': cliente.id,
-                'message': 'Cliente creado exitosamente'
+                'message': 'Cliente creado exitosamente',
+                'areas_asignadas': areas_nombres
             }, status=status.HTTP_201_CREATED)
             
         except Exception as e:
@@ -1243,7 +1283,7 @@ def gestionar_clientes(request):
 @permission_classes([IsAuthenticated])
 def actualizar_cliente(request, cliente_id):
     """
-    Actualiza datos de un cliente específico
+    Actualiza datos de un cliente específico incluyendo áreas directas
     """
     if request.user.tipo_usuario != 'gerente':
         return Response({'error': 'Acceso denegado'}, status=status.HTTP_403_FORBIDDEN)
@@ -1274,10 +1314,21 @@ def actualizar_cliente(request, cliente_id):
         elif industria_nombre == '':  # Si se envía string vacío, remover industria
             cliente.industria = None
         
+        # Actualizar áreas directas
+        areas_nombres = data.get('areas')
+        if areas_nombres is not None:
+            from api.models import Area
+            if areas_nombres:
+                areas_obj = Area.objects.filter(nombre__in=areas_nombres)
+                cliente.areas.set(areas_obj)
+            else:
+                cliente.areas.clear()
+        
         cliente.save()
         
         return Response({
-            'message': 'Cliente actualizado exitosamente'
+            'message': 'Cliente actualizado exitosamente',
+            'areas_asignadas': areas_nombres or []
         })
         
     except Cliente.DoesNotExist:

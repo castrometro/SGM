@@ -14,6 +14,7 @@ import {
 
 const LogsActividad = () => {
   const [logs, setLogs] = useState([]);
+  const [logsOriginales, setLogsOriginales] = useState([]); // Para almacenar logs sin filtrar
   const [estadisticas, setEstadisticas] = useState(null);
   const [usuarios, setUsuarios] = useState([]);
   const [clientes, setClientes] = useState([]);
@@ -23,8 +24,8 @@ const LogsActividad = () => {
   const [error, setError] = useState('');
   const [dataSource, setDataSource] = useState(null);
   
-  // Estados de filtros
-  const [filtros, setFiltros] = useState({
+  // Estados de filtros - Solo para frontend
+  const [filtrosFrontend, setFiltrosFrontend] = useState({
     cliente_id: '',
     usuario_id: '',
     tarjeta: '',
@@ -32,9 +33,14 @@ const LogsActividad = () => {
     cierre: '',
     periodo: '',
     fecha_desde: '',
-    fecha_hasta: '',
+    fecha_hasta: ''
+  });
+
+  // Filtros para backend - Solo para paginación
+  const [filtrosBackend, setFiltrosBackend] = useState({
     page: 1,
-    page_size: 10 // Reducido para el dashboard
+    page_size: 100, // Obtener más logs para filtrar en frontend
+    force_redis: true // Forzar uso de Redis para actividad reciente
   });
   
   const [paginacion, setPaginacion] = useState({
@@ -86,7 +92,7 @@ const LogsActividad = () => {
 
   useEffect(() => {
     cargarDatos();
-  }, [filtros]);
+  }, [filtrosBackend]); // Solo recarga cuando cambian los filtros del backend
 
   // Auto-refresh para usuarios conectados cada 30 segundos
   useEffect(() => {
@@ -113,12 +119,33 @@ const LogsActividad = () => {
       let usuariosData = usuarios.length > 0 ? usuarios : [];
       let conectadosData = { usuarios_conectados: [] };
 
-      // Intentar cargar logs
+      // Intentar cargar logs - SIN FILTROS, obtener todo de Redis
       try {
-        logsData = await obtenerLogsActividad(filtros);
+        console.log('=== DEBUG: Obteniendo TODOS los logs de Redis ===');
+        console.log('Filtros backend (solo paginación):', filtrosBackend);
+        console.log('Filtros frontend (para filtrar localmente):', filtrosFrontend);
+        console.log('===============================================');
+        
+        logsData = await obtenerLogsActividad(filtrosBackend);
         setDataSource(logsData.source || 'postgres'); // Mostrar fuente de datos
+        
+        console.log('=== DEBUG: Respuesta del backend ===');
+        console.log('Fuente:', logsData.source);
+        console.log('Total logs sin filtrar:', logsData.results?.length || 0);
+        console.log('Count total:', logsData.count);
+        console.log('==================================');
+        
+        // Debug info para mostrar que está usando Redis
+        if (logsData.source === 'redis') {
+          console.log('=== DEBUG: Usando Redis para todos los logs ===');
+          console.log('Total logs en Redis:', logsData.count);
+          console.log('Logs mostrados:', logsData.results?.length || 0);
+          console.log('Páginas totales:', logsData.total_pages);
+          console.log('============================================');
+        }
       } catch (err) {
         console.error('Error cargando logs:', err);
+        console.error('Error details:', err.response?.data);
       }
 
       // Intentar cargar estadísticas
@@ -184,18 +211,45 @@ const LogsActividad = () => {
           timestamp: log.timestamp,
           fecha_creacion: log.fecha_creacion,
           timestamp_type: typeof log.timestamp,
-          usuario: log.usuario_nombre
+          usuario: log.usuario_nombre,
+          cliente_id: log.cliente_id,
+          cliente_nombre: log.cliente_nombre
         });
       });
       console.log('============================');
       
-      setLogs(logsConFechasValidadas);
+      // APLICAR FILTROS EN FRONTEND
+      const logsFiltrados = aplicarFiltrosFrontend(logsConFechasValidadas, filtrosFrontend);
+      
+      console.log('=== DEBUG: Filtrado Frontend ===');
+      console.log('Logs sin filtrar:', logsConFechasValidadas.length);
+      console.log('Logs después del filtro:', logsFiltrados.length);
+      console.log('Filtros aplicados:', filtrosFrontend);
+      
+      // Debug específico del filtro de cliente
+      if (filtrosFrontend.cliente_id) {
+        console.log(`🔍 Filtro de cliente activo: "${filtrosFrontend.cliente_id}"`);
+        console.log('Logs que coinciden con el cliente:');
+        logsConFechasValidadas.forEach((log, index) => {
+          const clienteIdLog = log.cliente_id || log.cliente_nombre;
+          const matches = clienteIdLog === filtrosFrontend.cliente_id;
+          console.log(`  Log ${index + 1}: cliente_id="${log.cliente_id}", cliente_nombre="${log.cliente_nombre}" → ${matches ? '✅ MATCH' : '❌ NO MATCH'}`);
+        });
+      }
+      
+      console.log('===============================');
+      
+      // Guardar logs originales para filtrado posterior
+      setLogsOriginales(logsConFechasValidadas);
+      setLogs(logsFiltrados);
+      
+      // Actualizar paginación con los logs filtrados
       setPaginacion({
-        count: logsData.count || 0,
-        total_pages: logsData.total_pages || 0,
-        current_page: logsData.current_page || 1,
-        has_next: logsData.has_next || false,
-        has_previous: logsData.has_previous || false
+        count: logsFiltrados.length,
+        total_pages: Math.ceil(logsFiltrados.length / 10),
+        current_page: 1,
+        has_next: logsFiltrados.length > 10,
+        has_previous: false
       });
 
       // Procesar estadísticas
@@ -210,20 +264,46 @@ const LogsActividad = () => {
       setUsuariosConectados(conectadosData.usuarios_conectados || []);
 
       // Extraer lista única de clientes desde los logs para el filtro
-      const clientesUnicos = [...new Set(
-        logsConFechasValidadas
-          .filter(log => log.cliente_nombre && log.cliente_nombre.trim() !== '')
-          .map(log => ({
-            id: log.cliente_id || log.cliente_nombre,
-            nombre: log.cliente_nombre
-          }))
-      )];
+      const clientesMap = new Map();
+      
+      logsConFechasValidadas
+        .filter(log => log.cliente_nombre && log.cliente_nombre.trim() !== '')
+        .forEach(log => {
+          const clienteId = log.cliente_id || log.cliente_nombre;
+          if (!clientesMap.has(clienteId)) {
+            clientesMap.set(clienteId, {
+              id: clienteId,
+              nombre: log.cliente_nombre
+            });
+          }
+        });
+      
+      const clientesUnicos = Array.from(clientesMap.values());
+      
+      // Debug de clientes extraídos
+      console.log('=== DEBUG: Clientes extraídos de logs ===');
+      console.log('Logs con cliente_nombre:', logsConFechasValidadas.filter(log => log.cliente_nombre && log.cliente_nombre.trim() !== '').length);
+      console.log('Clientes únicos encontrados:', clientesUnicos.length);
+      clientesUnicos.forEach((cliente, index) => {
+        console.log(`Cliente ${index + 1}:`, {
+          id: cliente.id,
+          nombre: cliente.nombre
+        });
+      });
+      console.log('========================================');
       
       // Actualizar lista de clientes solo si hay nuevos clientes
       if (clientesUnicos.length > 0) {
         setClientes(prev => {
-          const clientesExistentes = prev.map(c => c.id);
-          const clientesNuevos = clientesUnicos.filter(c => !clientesExistentes.includes(c.id));
+          const clientesExistentes = new Set(prev.map(c => c.id));
+          const clientesNuevos = clientesUnicos.filter(c => !clientesExistentes.has(c.id));
+          
+          console.log('=== DEBUG: Actualización de clientes ===');
+          console.log('Clientes existentes:', prev.length);
+          console.log('Clientes nuevos a agregar:', clientesNuevos.length);
+          console.log('Total después de actualizar:', prev.length + clientesNuevos.length);
+          console.log('=======================================');
+          
           return [...prev, ...clientesNuevos];
         });
       }
@@ -239,20 +319,136 @@ const LogsActividad = () => {
     }
   };
 
+  // Función para aplicar filtros en el frontend
+  const aplicarFiltrosFrontend = (logs, filtros) => {
+    console.log('🔧 Aplicando filtros frontend...');
+    console.log('Total logs de entrada:', logs.length);
+    console.log('Filtros a aplicar:', filtros);
+    
+    return logs.filter(log => {
+      // Filtro por cliente
+      if (filtros.cliente_id && filtros.cliente_id !== '') {
+        const clienteId = log.cliente_id || log.cliente_nombre;
+        // Convertir ambos valores a string para comparar correctamente
+        const clienteIdString = String(clienteId);
+        const filtroClienteString = String(filtros.cliente_id);
+        const match = clienteIdString === filtroClienteString;
+        console.log(`🔍 Filtro cliente: "${filtroClienteString}" vs "${clienteIdString}" → ${match ? 'MATCH' : 'NO MATCH'}`);
+        if (!match) {
+          return false;
+        }
+      }
+
+      // Filtro por usuario
+      if (filtros.usuario_id && filtros.usuario_id !== '') {
+        if (log.usuario_id !== parseInt(filtros.usuario_id)) {
+          return false;
+        }
+      }
+
+      // Filtro por tarjeta
+      if (filtros.tarjeta && filtros.tarjeta !== '') {
+        if (log.tarjeta !== filtros.tarjeta) {
+          return false;
+        }
+      }
+
+      // Filtro por acción
+      if (filtros.accion && filtros.accion !== '') {
+        if (log.accion !== filtros.accion) {
+          return false;
+        }
+      }
+
+      // Filtro por estado de cierre
+      if (filtros.cierre && filtros.cierre !== '') {
+        if (log.estado_cierre !== filtros.cierre) {
+          return false;
+        }
+      }
+
+      // Filtro por período
+      if (filtros.periodo && filtros.periodo !== '') {
+        if (log.periodo_cierre !== filtros.periodo) {
+          return false;
+        }
+      }
+
+      // Filtro por fecha desde
+      if (filtros.fecha_desde && filtros.fecha_desde !== '') {
+        const fechaLog = new Date(log.timestamp || log.fecha_creacion);
+        const fechaDesde = new Date(filtros.fecha_desde);
+        if (fechaLog < fechaDesde) {
+          return false;
+        }
+      }
+
+      // Filtro por fecha hasta
+      if (filtros.fecha_hasta && filtros.fecha_hasta !== '') {
+        const fechaLog = new Date(log.timestamp || log.fecha_creacion);
+        const fechaHasta = new Date(filtros.fecha_hasta);
+        fechaHasta.setHours(23, 59, 59, 999); // Incluir todo el día
+        if (fechaLog > fechaHasta) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  };
+
   const handleFiltroChange = (campo, valor) => {
-    setFiltros(prev => ({
+    setFiltrosFrontend(prev => ({
       ...prev,
-      [campo]: valor,
-      page: 1 // Reset page when filtering
+      [campo]: valor
     }));
   };
 
+  // Efecto para aplicar filtros cuando cambian los filtros del frontend
+  useEffect(() => {
+    if (logsOriginales.length > 0) {
+      const logsFiltrados = aplicarFiltrosFrontend(logsOriginales, filtrosFrontend);
+      
+      console.log('=== DEBUG: Re-filtrado Frontend ===');
+      console.log('Logs originales:', logsOriginales.length);
+      console.log('Logs después del filtro:', logsFiltrados.length);
+      console.log('Filtros aplicados:', filtrosFrontend);
+      
+      // Debug específico para el filtro de cliente
+      if (filtrosFrontend.cliente_id) {
+        console.log(`🔍 Re-filtro de cliente activo: "${filtrosFrontend.cliente_id}"`);
+        console.log('Comparación detallada:');
+        logsOriginales.forEach((log, index) => {
+          const clienteIdLog = log.cliente_id || log.cliente_nombre;
+          // Convertir ambos valores a string para comparar correctamente
+          const clienteIdString = String(clienteIdLog);
+          const filtroClienteString = String(filtrosFrontend.cliente_id);
+          const matches = clienteIdString === filtroClienteString;
+          console.log(`  Log ${index + 1}: cliente_id="${log.cliente_id}", cliente_nombre="${log.cliente_nombre}" → ${matches ? '✅ MATCH' : '❌ NO MATCH'}`);
+        });
+      }
+      
+      console.log('==================================');
+      
+      setLogs(logsFiltrados);
+      
+      // Actualizar paginación
+      setPaginacion({
+        count: logsFiltrados.length,
+        total_pages: Math.ceil(logsFiltrados.length / 10),
+        current_page: 1,
+        has_next: logsFiltrados.length > 10,
+        has_previous: false
+      });
+    }
+  }, [filtrosFrontend, logsOriginales]);
+
   const handlePageChange = (newPage) => {
-    setFiltros(prev => ({ ...prev, page: newPage }));
+    setFiltrosBackend(prev => ({ ...prev, page: newPage }));
   };
 
   const limpiarFiltros = () => {
-    setFiltros({
+    setFiltrosFrontend({
       cliente_id: '',
       usuario_id: '',
       tarjeta: '',
@@ -260,9 +456,7 @@ const LogsActividad = () => {
       cierre: '',
       periodo: '',
       fecha_desde: '',
-      fecha_hasta: '',
-      page: 1,
-      page_size: 10
+      fecha_hasta: ''
     });
   };
 
@@ -350,6 +544,10 @@ const LogsActividad = () => {
         <div className="mb-6">
           <h1 className="text-3xl font-bold mb-2">Dashboard de Actividad del Sistema</h1>
           <p className="text-gray-400">Monitoreo en tiempo real y auditoría de actividades</p>
+          <div className="mt-2 flex items-center text-sm text-green-400">
+            <span className="inline-block w-2 h-2 bg-green-400 rounded-full mr-2"></span>
+            Mostrando todos los logs disponibles en Redis (tiempo real)
+          </div>
         </div>
 
         {/* Dashboard Grid */}
@@ -362,7 +560,7 @@ const LogsActividad = () => {
             <div className="bg-gray-800 rounded-lg p-6">
               <div className="flex items-center mb-4">
                 <BarChart3 className="w-6 h-6 text-blue-500 mr-2" />
-                <h3 className="text-lg font-semibold">Métricas de la Semana</h3>
+                <h3 className="text-lg font-semibold">Métricas</h3>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="text-center">
@@ -393,6 +591,11 @@ const LogsActividad = () => {
               {!estadisticas && (
                 <div className="mt-3 text-xs text-gray-500 text-center">
                   ⚠️ Conectando con el servidor...
+                </div>
+              )}
+              {estadisticas && (
+                <div className="mt-3 text-xs text-green-400 text-center">
+                  ✅ Datos actualizados desde Redis
                 </div>
               )}
             </div>
@@ -498,7 +701,7 @@ const LogsActividad = () => {
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center">
                   <Activity className="w-6 h-6 text-blue-500 mr-2" />
-                  <h3 className="text-lg font-semibold">Actividad Reciente</h3>
+                  <h3 className="text-lg font-semibold">Actividad Reciente - Redis</h3>
                   {dataSource && (
                     <span className={`ml-2 px-2 py-1 rounded text-xs ${
                       dataSource === 'redis' 
@@ -508,21 +711,64 @@ const LogsActividad = () => {
                       {dataSource === 'redis' ? '⚡ Tiempo Real' : '🗄️ Base de Datos'}
                     </span>
                   )}
+                  {!dataSource && (
+                    <span className="ml-2 px-2 py-1 rounded text-xs bg-orange-100 text-orange-800">
+                      🔄 Conectando con Redis...
+                    </span>
+                  )}
                 </div>
-                <button
-                  onClick={cargarDatos}
-                  disabled={loading}
-                  className="flex items-center px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded text-sm"
-                >
-                  <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
-                  Actualizar
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={cargarDatos}
+                    disabled={loading}
+                    className="flex items-center px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded text-sm"
+                  >
+                    <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
+                    Actualizar
+                  </button>
+                  <button
+                    onClick={() => {
+                      const debugInfo = `
+                        === DEBUG: Estado de Redis Logs ===
+                        Fuente de datos: ${dataSource || 'No detectada'}
+                        Total logs cargados: ${logs.length}
+                        Paginación actual: ${paginacion.current_page}/${paginacion.total_pages}
+                        Total disponible: ${paginacion.count}
+                        
+                        Filtros Frontend activos:
+                        - Cliente: ${filtrosFrontend.cliente_id || 'Todos'}
+                        - Usuario: ${filtrosFrontend.usuario_id || 'Todos'}
+                        - Tarjeta: ${filtrosFrontend.tarjeta || 'Todas'}
+                        - Cierre: ${filtrosFrontend.cierre || 'Todos'}
+                        - Período: ${filtrosFrontend.periodo || 'Todos'}
+                        - Fecha desde: ${filtrosFrontend.fecha_desde || 'Sin filtro'}
+                        
+                        Filtros Backend (solo paginación):
+                        - Page: ${filtrosBackend.page}
+                        - Page size: ${filtrosBackend.page_size}
+                        - Force Redis: ${filtrosBackend.force_redis ? 'SÍ' : 'NO'}
+                        
+                        CLIENTES DISPONIBLES:
+                        ${clientes.map(c => `- ID: "${c.id}" | Nombre: "${c.nombre}"`).join('\n')}
+                        
+                        LOGS SAMPLE (primeros 5):
+                        ${logs.slice(0, 5).map(log => 
+                          `- Usuario: ${log.usuario_nombre} | Cliente ID: "${log.cliente_id}" | Cliente Nombre: "${log.cliente_nombre}" | Acción: ${log.accion}`
+                        ).join('\n')}
+                        =====================================`;
+                      alert(debugInfo);
+                    }}
+                    className="text-xs text-gray-400 hover:text-gray-300 px-2 py-1 border border-gray-600 rounded"
+                  >
+                    🔍 Debug Redis
+                  </button>
+                </div>
               </div>
               
               {/* Filtros en línea */}
-              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-8 gap-3">
                 <select
-                  value={filtros.usuario_id}
+                  value={filtrosFrontend.usuario_id}
                   onChange={(e) => handleFiltroChange('usuario_id', e.target.value)}
                   className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
                 >
@@ -535,7 +781,7 @@ const LogsActividad = () => {
                 </select>
 
                 <select
-                  value={filtros.cliente_id}
+                  value={filtrosFrontend.cliente_id}
                   onChange={(e) => handleFiltroChange('cliente_id', e.target.value)}
                   className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
                 >
@@ -546,9 +792,39 @@ const LogsActividad = () => {
                     </option>
                   ))}
                 </select>
+                
+                <button
+                  onClick={() => {
+                    const debugInfo = `
+                      === DEBUG: Filtro Clientes ===
+                      Filtro actual: "${filtrosFrontend.cliente_id || 'Vacío'}"
+                      
+                      CLIENTES DISPONIBLES (${clientes.length}):
+                      ${clientes.map((c, i) => `${i + 1}. ID: "${c.id}" | Nombre: "${c.nombre}"`).join('\n')}
+                      
+                      LOGS FILTRADOS (primeros 10):
+                      ${logs.slice(0, 10).map((log, i) => 
+                        `${i + 1}. ID: "${log.cliente_id || 'null'}" | Nombre: "${log.cliente_nombre || 'null'}" | Usuario: ${log.usuario_nombre}`
+                      ).join('\n')}
+                      
+                      MATCH TEST:
+                      ${clientes.map(c => {
+                        const matchingLogs = logs.filter(log => 
+                          (log.cliente_id || log.cliente_nombre) === c.id
+                        ).length;
+                        return `Cliente "${c.nombre}" (ID: "${c.id}") → ${matchingLogs} logs matching`;
+                      }).join('\n')}
+                      =============================`;
+                    alert(debugInfo);
+                  }}
+                  className="text-xs text-gray-400 hover:text-gray-300 px-2 py-1 border border-gray-600 rounded"
+                  title="Debug filtro clientes"
+                >
+                  🔍 Clientes
+                </button>
 
                 <select
-                  value={filtros.tarjeta}
+                  value={filtrosFrontend.tarjeta}
                   onChange={(e) => handleFiltroChange('tarjeta', e.target.value)}
                   className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
                 >
@@ -560,7 +836,7 @@ const LogsActividad = () => {
                 </select>
 
                 <select
-                  value={filtros.cierre}
+                  value={filtrosFrontend.cierre}
                   onChange={(e) => handleFiltroChange('cierre', e.target.value)}
                   className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
                 >
@@ -572,7 +848,7 @@ const LogsActividad = () => {
                 </select>
 
                 <select
-                  value={filtros.periodo}
+                  value={filtrosFrontend.periodo}
                   onChange={(e) => handleFiltroChange('periodo', e.target.value)}
                   className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
                   title="Seleccionar período de cierre específico"
@@ -587,7 +863,7 @@ const LogsActividad = () => {
 
                 <input
                   type="date"
-                  value={filtros.fecha_desde}
+                  value={filtrosFrontend.fecha_desde}
                   onChange={(e) => handleFiltroChange('fecha_desde', e.target.value)}
                   className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
                   placeholder="Desde"

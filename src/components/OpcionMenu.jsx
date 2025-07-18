@@ -6,7 +6,7 @@ const OpcionMenu = ({ label, descripcion, icon: Icon, color, path }) => {
   return (
     <button
       onClick={() => navigate(path)}
-      className="flex flex-col items-start bg-gray-800 hover:bg-gray-700 hover:shadow-xl hover:scale-[1.02] transition-all duration-300 rounded-lg p-6 shadow cursor-pointer"
+      className="w-full h-full flex flex-col items-start bg-gray-800 hover:bg-gray-700 hover:shadow-xl hover:scale-[1.01] transition-all duration-200 rounded-lg p-6 shadow cursor-pointer"
     >
       <Icon size={28} style={{ color }} />
       <span className="mt-4 text-lg font-semibold">{label}</span>

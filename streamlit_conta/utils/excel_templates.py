@@ -270,24 +270,23 @@ class ExcelTemplateGenerator:
     def _debug_data_structure(self, data, section_name=""):
         """Debug helper para verificar estructura de datos"""
         logger.info(f"=== DEBUG {section_name} ===")
-        if isinstance(data, dict):
-            for key, value in data.items():
-                if isinstance(value, dict):
-                    logger.info(f"{key}: dict con {len(value)} elementos")
-                    if "total" in value:
-                        logger.info(f"  - total: {value['total']}")
-                    if "grupos" in value:
-                        logger.info(f"  - grupos: {len(value['grupos'])} grupos")
-                        for grupo_name in value['grupos'].keys():
-                            logger.info(f"    * {grupo_name}")
-                    if "cuentas" in value:
-                        logger.info(f"  - cuentas: {len(value['cuentas'])} cuentas")
-                elif isinstance(value, list):
-                    logger.info(f"{key}: lista con {len(value)} elementos")
-                else:
-                    logger.info(f"{key}: {type(value)} = {value}")
-        else:
-            logger.info(f"Data type: {type(data)} = {data}")
+        #if isinstance(data, dict):
+           # for key, value in data.items():
+               ##if isinstance(value, dict):
+                   # logger.info(f"{key}: dict con {len(value)} elementos")
+                   # if "total" in value:
+                    #   logger.info(f"  - total: {value['total']}")
+                   # if "grupos" in value:
+                    #    logger.info(f"  - grupos: {len(value['grupos'])} grupos")
+                     #      logger.info(f"    * {grupo_name}")
+                   #if "cuentas" in value:
+                     #   logger.info(f"  - cuentas: {len(value['cuentas'])} cuentas")
+               # elif isinstance(value, list):
+                #    logger.info(f"{key}: lista con {len(value)} elementos")
+               # else:
+                 #   logger.info(f"{key}: {type(value)} = {value}")
+       # else:
+           # logger.info(f"Data type: {type(data)} = {data}")
         logger.info(f"=== FIN DEBUG {section_name} ===")
 
     def generate_esf_template(self, data_esf, metadata, data_eri=None):

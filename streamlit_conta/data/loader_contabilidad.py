@@ -99,7 +99,7 @@ def obtener_datos_batch_redis(cliente_id: int, periodo: str, redis_client) -> Di
             if resultados[i]:
                 try:
                     datos_encontrados[nombre_dato] = json.loads(resultados[i])
-                    logger.info(f"✅ {nombre_dato.upper()} encontrado ({len(resultados[i])} bytes)")
+                    #logger.info(f"✅ {nombre_dato.upper()} encontrado ({len(resultados[i])} bytes)")
                 except json.JSONDecodeError as e:
                     logger.warning(f"⚠️ Error parsing JSON para {nombre_dato}: {e}")
             else:
@@ -190,6 +190,13 @@ def obtener_info_redis_completa(cliente_id) -> Dict[str, Any]:
     try:
         # Obtener información de conexión Redis
         redis_client = conectar_redis()
+        
+        # Verificar si se pudo conectar a Redis
+        if not redis_client:
+            info['error'] = "No se pudo conectar a Redis"
+            logger.error(f"❌ No se pudo conectar a Redis para cliente {cliente_id}")
+            return info
+        
         redis_host = os.getenv('REDIS_HOST', 'redis')
         redis_port = os.getenv('REDIS_PORT', '6379')
         redis_db = os.getenv('REDIS_DB_CONTABILIDAD', '1')
@@ -199,6 +206,12 @@ def obtener_info_redis_completa(cliente_id) -> Dict[str, Any]:
         # Obtener cierres disponibles para el cliente
         pattern = f"sgm:contabilidad:{cliente_id}:*:esf"
         claves_esf = redis_client.keys(pattern)
+        
+        # Verificar si se encontraron claves ESF para este cliente
+        if not claves_esf:
+            logger.info(f"ℹ️ No se encontraron cierres para cliente {cliente_id}")
+            info['error'] = f"No se encontraron cierres para el cliente {cliente_id}"
+            return info
         
         # Extraer períodos únicos
         periodos = []
@@ -212,17 +225,21 @@ def obtener_info_redis_completa(cliente_id) -> Dict[str, Any]:
                 if redis_client.exists(clave_eri):
                     periodos.append(periodo)
         
+        # Verificar si después de filtrar por ERI hay períodos disponibles
+        if not periodos:
+            logger.info(f"ℹ️ No se encontraron cierres completos (ESF+ERI) para cliente {cliente_id}")
+            info['error'] = f"No se encontraron cierres completos para el cliente {cliente_id}"
+            return info
+        
         # Ordenar períodos (más reciente primero)
         periodos_unicos = sorted(list(set(periodos)), reverse=True)
         info['cierres_disponibles'] = periodos_unicos
         
-        #logger.info(f"✅ Redis info obtenida: {len(periodos_unicos)} cierres para cliente {cliente_id}")
+        logger.info(f"✅ Redis info obtenida: {len(periodos_unicos)} cierres para cliente {cliente_id}")
         
     except Exception as e:
         logger.error(f"❌ Error obteniendo info Redis: {e}")
         info['error'] = str(e)
-        # Fallback con datos de ejemplo
-        #info['cierres_disponibles'] = ['2025-03', '2025-02', '2025-01']
     
     return info
 

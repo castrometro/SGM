@@ -76,7 +76,7 @@ class ActivityLogStorage:
     """Gestión de almacenamiento híbrido para logs de actividad usando Django Cache"""
     
     RECENT_LOGS_TTL = 7 * 24 * 60 * 60  # 7 días en segundos
-    MAX_LOGS_PER_CLIENT = 1000
+    MAX_LOGS_PER_CLIENT = 10  # Política: Solo mantener los últimos 10 logs en Redis
     
     @staticmethod
     def _get_redis_client():
@@ -174,12 +174,15 @@ class ActivityLogStorage:
             # Agregar nuevo log al inicio (más reciente)
             logs_list.insert(0, log_data)
             
-            # Limitar a los más recientes solamente
+            # Limitar a los últimos 10 logs solamente (política de Redis)
             if len(logs_list) > ActivityLogStorage.MAX_LOGS_PER_CLIENT:
                 logs_list = logs_list[:ActivityLogStorage.MAX_LOGS_PER_CLIENT]
+                logger.debug(f"Lista de logs limitada a {ActivityLogStorage.MAX_LOGS_PER_CLIENT} logs más recientes")
             
             # Guardar lista actualizada
             cache.set(list_key, logs_list, timeout=ActivityLogStorage.RECENT_LOGS_TTL)
+            
+            logger.debug(f"Log agregado a Redis. Total logs en cache: {len(logs_list)}")
             
         except Exception as e:
             logger.error(f"Error actualizando lista global: {e}")

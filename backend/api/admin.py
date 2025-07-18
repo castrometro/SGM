@@ -91,7 +91,50 @@ class AsignacionClienteUsuarioAdmin(admin.ModelAdmin):
     get_supervisor_info.short_description = 'Supervisor'
 
 
-admin.site.register([Industria, Area, Cliente, Servicio, ServicioCliente])
+@admin.register(Cliente)
+class ClienteAdmin(admin.ModelAdmin):
+    list_display = ('nombre', 'rut', 'get_industria', 'get_areas', 'get_areas_servicios', 'fecha_registro')
+    list_filter = ('industria', 'areas', 'bilingue')
+    search_fields = ('nombre', 'rut')
+    filter_horizontal = ('areas',)  # 👈 Esto crea la interfaz dual para seleccionar áreas
+    ordering = ('nombre',)
+    
+    fieldsets = (
+        ('Información Básica', {
+            'fields': ('nombre', 'rut', 'industria', 'bilingue')
+        }),
+        ('Áreas del Cliente', {
+            'fields': ('areas',),
+            'description': 'Áreas directas del cliente (bypass de servicios contratados). '
+                          'Selecciona las áreas arrastrando desde "Áreas disponibles" hacia "Áreas seleccionadas".'
+        }),
+    )
+    
+    def get_areas(self, obj):
+        """Muestra las áreas directas asignadas al cliente"""
+        areas = obj.areas.all()
+        if areas:
+            return ", ".join([area.nombre for area in areas])
+        return "Sin áreas directas"
+    get_areas.short_description = 'Áreas Directas'
+    
+    def get_areas_servicios(self, obj):
+        """Muestra las áreas de servicios contratados como referencia"""
+        from .models import Area
+        areas_servicios = Area.objects.filter(
+            servicios__precios_cliente__cliente=obj
+        ).distinct()
+        if areas_servicios:
+            return ", ".join([area.nombre for area in areas_servicios])
+        return "Sin servicios"
+    get_areas_servicios.short_description = 'Áreas por Servicios'
+    
+    def get_industria(self, obj):
+        return obj.industria.nombre if obj.industria else "Sin industria"
+    get_industria.short_description = 'Industria'
+
+
+admin.site.register([Industria, Area, Servicio, ServicioCliente])
 
 
 

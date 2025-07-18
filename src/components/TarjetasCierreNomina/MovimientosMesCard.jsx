@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { descargarPlantillaMovimientosMes } from "../../api/nomina";
 import EstadoBadge from "../EstadoBadge";
+import { createActivityLogger } from "../../utils/activityLogger";
 
 const MovimientosMesCard = ({
   estado,
@@ -11,11 +12,24 @@ const MovimientosMesCard = ({
   onEliminarArchivo,
   subiendo = false,
   disabled = false,
+  cierreId, // Nueva prop necesaria para logging
 }) => {
   const fileInputRef = useRef();
   const pollingRef = useRef(null);
   const [error, setError] = useState("");
   const [eliminando, setEliminando] = useState(false);
+  
+  // Activity Logger
+  const activityLogger = useRef(null);
+  
+  // Inicializar logger cuando tengamos cierreId
+  useEffect(() => {
+    if (cierreId && !activityLogger.current) {
+      activityLogger.current = createActivityLogger(cierreId, 'movimientos_mes');
+      // Registrar inicio de sesión
+      activityLogger.current.logSessionStart();
+    }
+  }, [cierreId]);
 
   // Definir variables de estado inmediatamente después de las declaraciones de estado
   const isProcesando = estado === "en_proceso" || estado === "procesando";
@@ -47,6 +61,11 @@ const MovimientosMesCard = ({
     if (estado === "en_proceso" && !pollingRef.current && onActualizarEstado) {
       console.log('🔄 Iniciando polling para monitorear procesamiento de movimientos...');
       
+      // Logging: inicio de polling
+      if (activityLogger.current) {
+        activityLogger.current.logPollingStart(5);
+      }
+      
       let contadorPolling = 0;
       pollingRef.current = setInterval(async () => {
         contadorPolling++;
@@ -60,6 +79,12 @@ const MovimientosMesCard = ({
       
     } else if (estado !== "en_proceso" && pollingRef.current) {
       console.log(`✅ MovimientosMes Estado cambió a "${estado}" - deteniendo polling`);
+      
+      // Logging: detención de polling
+      if (activityLogger.current) {
+        activityLogger.current.logPollingStop(`estado cambió a ${estado}`);
+      }
+      
       clearInterval(pollingRef.current);
       pollingRef.current = null;
     }
@@ -68,6 +93,12 @@ const MovimientosMesCard = ({
   const handleSeleccionArchivo = async (e) => {
     const archivo = e.target.files[0];
     if (!archivo) return;
+    
+    // Logging: selección de archivo
+    if (activityLogger.current) {
+      await activityLogger.current.logFileSelect(archivo.name, archivo.size);
+    }
+    
     setError("");
     try {
       await onSubirArchivo(archivo);
@@ -114,17 +145,42 @@ const MovimientosMesCard = ({
         className={`flex items-center gap-2 bg-gray-700 hover:bg-blue-600 px-3 py-1 rounded !text-white text-sm font-medium transition shadow w-fit mb-2 ${isDisabled ? "opacity-60 pointer-events-none" : ""}`}
         tabIndex={isDisabled ? -1 : 0}
         style={{ pointerEvents: isDisabled ? "none" : "auto" }}
+        onClick={async () => {
+          // Logging: descarga de plantilla
+          if (activityLogger.current) {
+            await activityLogger.current.logDownloadTemplate('movimientos_mes');
+          }
+        }}
       >
         <Download size={16} />
         Descargar Plantilla
       </a>
 
       <div className="flex gap-3 items-center">
+        {/* Input de archivo oculto */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          onChange={handleSeleccionArchivo}
+          accept=".xlsx,.xls"
+          className="hidden"
+        />
+        
         {/* ✅ BOTÓN DE SUBIDA CONDICIONAL */}
         {puedeSubirArchivo ? (
           <button
             type="button"
-            onClick={() => fileInputRef.current.click()}
+            onClick={async () => {
+              // Logging: apertura de modal de selección
+              if (activityLogger.current) {
+                await activityLogger.current.logModalOpen('file_selector', {
+                  trigger: 'user_click',
+                  upload_type: 'movimientos_mes'
+                });
+              }
+              
+              fileInputRef.current.click();
+            }}
             disabled={isDisabled}
             className={`bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded text-sm font-medium transition ${isDisabled ? "opacity-60 cursor-not-allowed" : ""}`}
           >

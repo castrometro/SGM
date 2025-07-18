@@ -239,7 +239,6 @@ def procesar_ausentismos(df: pd.DataFrame, cierre) -> int:
                 cargo=str(row.get('CARGO', '')).strip(),
                 centro_de_costo=str(row.get('CENTRO DE COSTO', '')).strip(),
                 sucursal=str(row.get('SUCURSAL', '')).strip(),
-                fecha_ingreso=convertir_fecha(row.get('FECHA INGRESO')),
                 fecha_inicio_ausencia=convertir_fecha(row.get('FECHA INICIO AUSENCIA')),
                 fecha_fin_ausencia=convertir_fecha(row.get('FECHA FIN AUSENCIA')),
                 dias=convertir_entero(row.get('DIAS')),

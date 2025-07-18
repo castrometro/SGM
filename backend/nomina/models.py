@@ -43,37 +43,32 @@ class CierreNomina(models.Model):
     periodo = models.CharField(max_length=7)  # Ej: "2025-06"
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     estado = models.CharField(
-        max_length=30,
+        max_length=40,
         choices=[
             ('pendiente', 'Pendiente'),
-            ('en_proceso', 'En Proceso'),
-            ('datos_consolidados', 'Datos Consolidados'),
-            ('discrepancias_detectadas', 'Discrepancias Detectadas'),
-            ('datos_verificados', 'Datos Verificados'),
-            ('reportes_generados', 'Reportes Generados'),
-            ('validacion_senior', 'Validación Senior'),
+            ('cargando_archivos', 'Cargando Archivos'),
+            ('archivos_completos', 'Archivos Completos'),
+            ('verificacion_datos', 'Verificación de Datos'),
+            ('verificado_sin_discrepancias', 'Verificado Sin Discrepancias'),
+            ('incidencias_generadas', 'Incidencias Generadas'),
+            ('incidencias_resueltas', 'Incidencias Resueltas'),
+            ('validacion_final', 'Validación Final'),
             ('completado', 'Completado'),
-            ('analisis_generado', 'Análisis Generado'),
-            ('incidencias_abiertas', 'Incidencias Abiertas'),
-            ('sin_incidencias', 'Sin Incidencias'),
         ],
         default='pendiente'
     )
     usuario_analista = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='cierres_analista')
     
-    # NUEVOS CAMPOS PARA INCIDENCIAS
+    # CAMPOS PARA SEGUIMIENTO DE INCIDENCIAS
     estado_incidencias = models.CharField(
-        max_length=50,
+        max_length=30,
         choices=[
-            ('analisis_pendiente', 'Análisis de Incidencias Pendiente'),
-            ('incidencias_generadas', 'Incidencias Detectadas'),
-            ('archivos_consolidados', 'Archivos Consolidados'),
-            ('analisis_generado', 'Análisis Generado'),
-            ('incidencias_abiertas', 'Incidencias Abiertas'),
-            ('sin_incidencias', 'Sin Incidencias'),
-            ('cerrado', 'Cerrado'),
+            ('pendiente', 'Pendiente'),
+            ('detectadas', 'Detectadas'),
+            ('en_revision', 'En Revisión'),
+            ('resueltas', 'Resueltas'),
         ],
-        default='analisis_pendiente'
+        default='pendiente'
     )
     fecha_ultima_revision = models.DateTimeField(null=True, blank=True)
     revisiones_realizadas = models.PositiveIntegerField(default=0)
@@ -101,15 +96,19 @@ class CierreNomina(models.Model):
         
         if not archivos_listos['todos_listos']:
             # Aún no están todos los archivos procesados
-            if self.estado != 'en_proceso':
-                self.estado = 'en_proceso'
+            if self.estado == 'pendiente':
+                self.estado = 'cargando_archivos'
+                self.save(update_fields=['estado'])
+            elif self.estado != 'cargando_archivos':
+                # Mantener en cargando_archivos mientras se procesan
+                self.estado = 'cargando_archivos'
                 self.save(update_fields=['estado'])
             return self.estado
         
-        # Todos los archivos están listos, cambiar a "datos_consolidados"
-        if self.estado != 'datos_consolidados':
-            self.estado = 'datos_consolidados'
-            self.estado_incidencias = 'analisis_pendiente'
+        # Todos los archivos están listos, cambiar a "archivos_completos"
+        if self.estado != 'archivos_completos':
+            self.estado = 'archivos_completos'
+            self.estado_incidencias = 'pendiente'
             self.save(update_fields=['estado', 'estado_incidencias'])
         
         return self.estado

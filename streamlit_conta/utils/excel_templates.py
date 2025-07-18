@@ -89,9 +89,9 @@ class ExcelTemplateGenerator:
                 'non_controlling_interests': 'Participaciones no Controladoras'
             },
             'en': {
-                'title_esf': 'STATEMENT OF FINANCIAL POSITION',
-                'title_eri': 'STATEMENT OF COMPREHENSIVE INCOME',
-                'title_ecp': 'STATEMENT OF CHANGES IN PATRIMONY',
+                'title_esf': 'STATUS OF FINANCIAL SITUATION',
+                'title_eri': 'STATUS OF COMPREHENSIVE INCOME, BY FUNCTION',
+                'title_ecp': 'STATUS OF CHANGES OF PATRIMONY',
                 'title_movimientos': 'ACCOUNTING TRANSACTIONS',
                 'assets': 'ASSETS',
                 'current_assets': 'Current Assets',

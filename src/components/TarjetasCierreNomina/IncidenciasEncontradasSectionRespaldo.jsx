@@ -130,7 +130,7 @@ const IncidenciasEncontradasSectionRespaldo = ({ cierre }) => {
   };
 
   const puedeGenerarIncidencias = () => {
-    return cierre?.estado === 'datos_consolidados' || cierre?.estado === 'completado';
+    return cierre?.estado === 'revision_inicial' || cierre?.estado === 'validacion_conceptos' || cierre?.estado === 'completado';
   };
 
   return (

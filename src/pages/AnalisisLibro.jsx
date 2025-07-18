@@ -83,7 +83,7 @@ const AnalisisLibro = () => {
   }
 
   // Validar acceso al libro según el estado del cierre
-  const estadosPermitidos = ['sin_incidencias', 'generando_reportes', 'finalizado'];
+  const estadosPermitidos = ['listo_para_entrega', 'entregado', 'completado'];
   const accesoPermitido = estadosPermitidos.includes(cierre.estado);
 
   if (!accesoPermitido || (resumen && Array.isArray(resumen) && resumen.length === 0 && cierre.estado)) {
@@ -105,7 +105,7 @@ const AnalisisLibro = () => {
               <strong>Estado actual:</strong> <span className="font-mono bg-red-800 px-2 py-1 rounded">{cierre.estado}</span>
             </p>
             <p className="text-red-100 text-sm mt-2">
-              <strong>Estados requeridos:</strong> sin_incidencias, generando_reportes, finalizado
+              <strong>Estados requeridos:</strong> listo_para_entrega, entregado, completado
             </p>
           </div>
           <p className="text-red-100 text-sm">

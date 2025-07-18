@@ -10,7 +10,9 @@ from .models import (
     # Modelos de novedades
     EmpleadoCierreNovedades, ConceptoRemuneracionNovedades, RegistroConceptoEmpleadoNovedades,
     # Modelos de incidencias
-    IncidenciaCierre, ResolucionIncidencia
+    IncidenciaCierre, ResolucionIncidencia,
+    # Modelos de análisis y discrepancias
+    AnalisisDatosCierre, IncidenciaVariacionSalarial, DiscrepanciaCierre
 )
 
 
@@ -580,3 +582,441 @@ IncidenciaCierreAdmin.actions = [
     marcar_como_pendientes,
     marcar_como_resueltas
 ]
+
+
+# ========== ADMINISTRACIÓN DE ANÁLISIS DE DATOS ==========
+
+@admin.register(AnalisisDatosCierre)
+class AnalisisDatosCierreAdmin(admin.ModelAdmin):
+    """Administración de análisis de datos de cierre"""
+    list_display = (
+        'cierre_info',
+        'analista_display',
+        'estado_display',
+        'variacion_empleados',
+        'variacion_ingresos',
+        'fecha_analisis',
+        'fecha_completado'
+    )
+    list_filter = (
+        'estado',
+        'cierre__cliente',
+        'cierre__periodo',
+        'fecha_analisis',
+        'analista'
+    )
+    search_fields = (
+        'cierre__cliente__nombre',
+        'cierre__periodo',
+        'analista__correo_bdo',
+        'analista__first_name',
+        'analista__last_name'
+    )
+    readonly_fields = (
+        'fecha_analisis',
+        'fecha_completado',
+        'variacion_empleados',
+        'variacion_ingresos',
+        'variacion_finiquitos',
+        'variacion_ausentismos'
+    )
+    fieldsets = (
+        ('Información General', {
+            'fields': (
+                'cierre',
+                'analista',
+                'tolerancia_variacion_salarial',
+                'estado'
+            )
+        }),
+        ('Datos Actuales', {
+            'fields': (
+                'cantidad_empleados_actual',
+                'cantidad_ingresos_actual',
+                'cantidad_finiquitos_actual',
+                'cantidad_ausentismos_actual'
+            )
+        }),
+        ('Datos Mes Anterior', {
+            'fields': (
+                'cantidad_empleados_anterior',
+                'cantidad_ingresos_anterior',
+                'cantidad_finiquitos_anterior',
+                'cantidad_ausentismos_anterior'
+            )
+        }),
+        ('Variaciones Calculadas', {
+            'fields': (
+                'variacion_empleados',
+                'variacion_ingresos',
+                'variacion_finiquitos',
+                'variacion_ausentismos'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Ausentismos por Tipo', {
+            'fields': (
+                'ausentismos_por_tipo_actual',
+                'ausentismos_por_tipo_anterior'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Fechas', {
+            'fields': (
+                'fecha_analisis',
+                'fecha_completado'
+            )
+        }),
+        ('Notas', {
+            'fields': ('notas',)
+        })
+    )
+    date_hierarchy = 'fecha_analisis'
+    list_per_page = 50
+    
+    def cierre_info(self, obj):
+        """Info básica del cierre"""
+        return f"{obj.cierre.cliente.nombre} - {obj.cierre.periodo}"
+    cierre_info.short_description = 'Cierre'
+    
+    def analista_display(self, obj):
+        """Mostrar analista con formato"""
+        if obj.analista:
+            return f"{obj.analista.get_full_name() or obj.analista.correo_bdo}"
+        return "-"
+    analista_display.short_description = 'Analista'
+    
+    def estado_display(self, obj):
+        """Estado con color"""
+        colors = {
+            'pendiente': '#fbbf24',
+            'procesando': '#3b82f6',
+            'completado': '#10b981',
+            'error': '#ef4444'
+        }
+        color = colors.get(obj.estado, '#6b7280')
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">{}</span>',
+            color,
+            obj.get_estado_display()
+        )
+    estado_display.short_description = 'Estado'
+    
+    def variacion_empleados(self, obj):
+        variaciones = obj.calcular_variaciones()
+        return f"{variaciones['empleados']:.1f}%"
+    variacion_empleados.short_description = "Variación Empleados"
+    
+    def variacion_ingresos(self, obj):
+        variaciones = obj.calcular_variaciones()
+        return f"{variaciones['ingresos']:.1f}%"
+    variacion_ingresos.short_description = "Variación Ingresos"
+    
+    def variacion_finiquitos(self, obj):
+        variaciones = obj.calcular_variaciones()
+        return f"{variaciones['finiquitos']:.1f}%"
+    variacion_finiquitos.short_description = "Variación Finiquitos"
+    
+    def variacion_ausentismos(self, obj):
+        variaciones = obj.calcular_variaciones()
+        return f"{variaciones['ausentismos']:.1f}%"
+    variacion_ausentismos.short_description = "Variación Ausentismos"
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'cierre', 
+            'cierre__cliente', 
+            'analista'
+        )
+
+
+@admin.register(IncidenciaVariacionSalarial)
+class IncidenciaVariacionSalarialAdmin(admin.ModelAdmin):
+    """Administración de incidencias de variación salarial"""
+    list_display = (
+        'empleado_info',
+        'cierre_info',
+        'variacion_display',
+        'tipo_variacion',
+        'estado_display',
+        'analista_asignado',
+        'fecha_deteccion'
+    )
+    list_filter = (
+        'estado',
+        'tipo_variacion',
+        'cierre__cliente',
+        'cierre__periodo',
+        'fecha_deteccion',
+        'analista_asignado',
+        'supervisor_revisor'
+    )
+    search_fields = (
+        'rut_empleado',
+        'nombre_empleado',
+        'justificacion_analista',
+        'comentario_supervisor',
+        'cierre__cliente__nombre'
+    )
+    readonly_fields = (
+        'fecha_deteccion',
+        'fecha_justificacion',
+        'fecha_resolucion_supervisor',
+        'fecha_ultima_accion',
+        'variacion_info_detailed'
+    )
+    fieldsets = (
+        ('Información del Empleado', {
+            'fields': (
+                'rut_empleado',
+                'nombre_empleado',
+                'variacion_info_detailed'
+            )
+        }),
+        ('Detalles de la Variación', {
+            'fields': (
+                'sueldo_base_anterior',
+                'sueldo_base_actual',
+                'porcentaje_variacion',
+                'tipo_variacion'
+            )
+        }),
+        ('Gestión', {
+            'fields': (
+                'estado',
+                'analista_asignado',
+                'supervisor_revisor'
+            )
+        }),
+        ('Justificación y Comentarios', {
+            'fields': (
+                'justificacion_analista',
+                'comentario_supervisor'
+            )
+        }),
+        ('Fechas', {
+            'fields': (
+                'fecha_deteccion',
+                'fecha_justificacion',
+                'fecha_resolucion_supervisor',
+                'fecha_ultima_accion'
+            )
+        }),
+        ('Relaciones', {
+            'fields': (
+                'analisis',
+                'cierre'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    date_hierarchy = 'fecha_deteccion'
+    list_per_page = 100
+    
+    def empleado_info(self, obj):
+        """Información del empleado"""
+        return f"{obj.nombre_empleado} ({obj.rut_empleado})"
+    empleado_info.short_description = 'Empleado'
+    
+    def cierre_info(self, obj):
+        """Info del cierre"""
+        return f"{obj.cierre.cliente.nombre} - {obj.cierre.periodo}"
+    cierre_info.short_description = 'Cierre'
+    
+    def variacion_display(self, obj):
+        """Mostrar variación con formato y color"""
+        porcentaje = obj.porcentaje_variacion or 0
+        if porcentaje >= 30:
+            color = '#ef4444'  # Rojo para variaciones altas
+        elif porcentaje >= 15:
+            color = '#f59e0b'  # Amarillo para variaciones medias
+        else:
+            color = '#10b981'  # Verde para variaciones bajas
+            
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">{:.1f}%</span>',
+            color,
+            porcentaje
+        )
+    variacion_display.short_description = 'Variación %'
+    
+    def estado_display(self, obj):
+        """Estado con color"""
+        colors = {
+            'pendiente': '#f59e0b',
+            'en_analisis': '#3b82f6',
+            'justificado': '#8b5cf6',
+            'aprobado': '#10b981',
+            'rechazado': '#ef4444'
+        }
+        color = colors.get(obj.estado, '#6b7280')
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">{}</span>',
+            color,
+            obj.get_estado_display()
+        )
+    estado_display.short_description = 'Estado'
+    
+    def variacion_info_detailed(self, obj):
+        """Información detallada de la variación"""
+        diferencia = obj.sueldo_base_actual - obj.sueldo_base_anterior
+        return format_html(
+            """
+            <strong>Sueldo Anterior:</strong> ${:,.0f}<br>
+            <strong>Sueldo Actual:</strong> ${:,.0f}<br>
+            <strong>Diferencia:</strong> ${:,.0f}<br>
+            <strong>Porcentaje de Variación:</strong> {:.1f}%<br>
+            <strong>Tipo:</strong> {}
+            """,
+            obj.sueldo_base_anterior,
+            obj.sueldo_base_actual,
+            diferencia,
+            obj.porcentaje_variacion,
+            obj.get_tipo_variacion_display()
+        )
+    variacion_info_detailed.short_description = 'Detalles de la Variación'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'cierre',
+            'cierre__cliente',
+            'analista_asignado',
+            'supervisor_revisor',
+            'analisis'
+        )
+
+
+@admin.register(DiscrepanciaCierre)
+class DiscrepanciaCierreAdmin(admin.ModelAdmin):
+    """Administración de discrepancias de verificación de datos"""
+    list_display = (
+        'cierre_info',
+        'tipo_discrepancia_display',
+        'empleado_info',
+        'descripcion_corta',
+        'concepto_afectado',
+        'fecha_detectada'
+    )
+    list_filter = (
+        'tipo_discrepancia',
+        'cierre__cliente',
+        'cierre__periodo',
+        'fecha_detectada'
+    )
+    search_fields = (
+        'rut_empleado',
+        'descripcion',
+        'concepto_afectado',
+        'cierre__cliente__nombre',
+        'valor_libro',
+        'valor_novedades'
+    )
+    readonly_fields = (
+        'fecha_detectada',
+        'detalles_formatted'
+    )
+    fieldsets = (
+        ('Información General', {
+            'fields': (
+                'cierre',
+                'tipo_discrepancia',
+                'fecha_detectada'
+            )
+        }),
+        ('Empleado Afectado', {
+            'fields': (
+                'rut_empleado',
+                'empleado_libro',
+                'empleado_novedades'
+            )
+        }),
+        ('Descripción de la Discrepancia', {
+            'fields': (
+                'descripcion',
+                'concepto_afectado',
+                'detalles_formatted'
+            )
+        }),
+        ('Valores Comparados', {
+            'fields': (
+                'valor_libro',
+                'valor_novedades',
+                'valor_movimientos',
+                'valor_analista'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    date_hierarchy = 'fecha_detectada'
+    list_per_page = 100
+    
+    def cierre_info(self, obj):
+        """Info básica del cierre"""
+        return f"{obj.cierre.cliente.nombre} - {obj.cierre.periodo}"
+    cierre_info.short_description = 'Cierre'
+    
+    def tipo_discrepancia_display(self, obj):
+        """Tipo de discrepancia con formato"""
+        tipo_map = {
+            'empleado_solo_libro': ('📚', 'Libro vs Novedades'),
+            'empleado_solo_novedades': ('📝', 'Libro vs Novedades'),
+            'diff_datos_personales': ('👤', 'Libro vs Novedades'),
+            'diff_sueldo_base': ('💰', 'Libro vs Novedades'),
+            'diff_concepto_monto': ('💲', 'Libro vs Novedades'),
+            'concepto_solo_libro': ('📊', 'Libro vs Novedades'),
+            'concepto_solo_novedades': ('📋', 'Libro vs Novedades'),
+            'ingreso_no_reportado': ('➕', 'Movimientos vs Analista'),
+            'finiquito_no_reportado': ('➖', 'Movimientos vs Analista'),
+            'ausencia_no_reportada': ('🚫', 'Movimientos vs Analista'),
+            'diff_fechas_ausencia': ('📅', 'Movimientos vs Analista'),
+            'diff_dias_ausencia': ('🗓️', 'Movimientos vs Analista'),
+            'diff_tipo_ausencia': ('🔄', 'Movimientos vs Analista')
+        }
+        
+        icono, grupo = tipo_map.get(obj.tipo_discrepancia, ('⚠️', 'Otro'))
+        tipo_texto = obj.get_tipo_discrepancia_display()
+        
+        return format_html(
+            '<span title="{}">{} {}</span><br><small style="color: #6b7280;">{}</small>',
+            tipo_texto,
+            icono,
+            tipo_texto,
+            grupo
+        )
+    tipo_discrepancia_display.short_description = 'Tipo'
+    
+    def empleado_info(self, obj):
+        """Información del empleado"""
+        return obj.rut_empleado
+    empleado_info.short_description = 'RUT Empleado'
+    
+    def descripcion_corta(self, obj):
+        """Descripción truncada"""
+        if len(obj.descripcion) > 100:
+            return f"{obj.descripcion[:100]}..."
+        return obj.descripcion
+    descripcion_corta.short_description = 'Descripción'
+    
+    def detalles_formatted(self, obj):
+        """Detalles formateados para lectura"""
+        detalles = []
+        
+        if obj.valor_libro:
+            detalles.append(f"Valor en Libro: {obj.valor_libro}")
+        if obj.valor_novedades:
+            detalles.append(f"Valor en Novedades: {obj.valor_novedades}")
+        if obj.valor_movimientos:
+            detalles.append(f"Valor en Movimientos: {obj.valor_movimientos}")
+        if obj.valor_analista:
+            detalles.append(f"Valor por Analista: {obj.valor_analista}")
+            
+        return format_html("<br>".join(detalles)) if detalles else "Sin valores registrados"
+    detalles_formatted.short_description = 'Detalles de Valores'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'cierre',
+            'cierre__cliente',
+            'empleado_libro',
+            'empleado_novedades'
+        )

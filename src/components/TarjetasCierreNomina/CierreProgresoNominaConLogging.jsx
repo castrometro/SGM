@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import LibroRemuneracionesCardConLogging from "./LibroRemuneracionesCardConLogging";
 import MovimientosMesCard from "./MovimientosMesCard";
 import ModalClasificacionHeaders from "../ModalClasificacionHeaders";
@@ -29,6 +29,15 @@ const CierreProgresoNominaConLogging = ({
   const [libro, setLibro] = useState(null);
   const [libroId, setLibroId] = useState(null);
   const [subiendo, setSubiendo] = useState(false);
+  
+  // Logging de renders del componente padre
+  console.log('🔄 CierreProgresoNominaConLogging RENDER:', {
+    timestamp: new Date().toISOString(),
+    cierreId: cierre?.id,
+    clienteId: cliente?.id,
+    libroEstado: libro?.estado,
+    subiendo
+  });
   const [movimientos, setMovimientos] = useState(null);
   const [subiendoMov, setSubiendoMov] = useState(false);
   const [modalAbierto, setModalAbierto] = useState(false);
@@ -40,7 +49,7 @@ const CierreProgresoNominaConLogging = ({
   const [archivoAnalista, setArchivoAnalista] = useState(null);
   const [archivoNovedades, setArchivoNovedades] = useState(null);
 
-  const handleGuardarClasificaciones = async ({ guardar, eliminar }) => {
+  const handleGuardarClasificaciones = useCallback(async ({ guardar, eliminar }) => {
     try {
       // Primero eliminamos las clasificaciones que correspondan
       if (Array.isArray(eliminar) && eliminar.length > 0) {
@@ -68,7 +77,7 @@ const CierreProgresoNominaConLogging = ({
     } catch (error) {
       console.error("Error al guardar clasificaciones:", error);
     }
-  };
+  }, [cliente.id, cierre.id]);
 
   if (!cierre || !cliente) {
     return (
@@ -148,19 +157,40 @@ const CierreProgresoNominaConLogging = ({
     }
   }, [libro, libroListo]);
 
-  const handleSubirArchivo = async (archivo) => {
+  const handleSubirArchivo = useCallback(async (archivo) => {
+    // Agregar logging detallado para diagnosticar múltiples llamadas
+    console.log('🔍 handleSubirArchivo LLAMADO:', {
+      timestamp: new Date().toISOString(),
+      fileName: archivo.name,
+      fileSize: archivo.size,
+      subiendo: subiendo,
+      stackTrace: new Error().stack.split('\n').slice(0, 10).join('\n')
+    });
+    
+    // Prevenir múltiples envíos si ya está subiendo
+    if (subiendo) {
+      console.warn('⚠️ Upload ya en progreso, ignorando nuevo intento');
+      return;
+    }
+
     setSubiendo(true);
+    console.log('📤 Iniciando subida de archivo:', archivo.name);
+    
     try {
       const res = await subirLibroRemuneraciones(cierre.id, archivo);
+      console.log('✅ Respuesta del servidor:', res);
+      
       if (res?.id) {
         setLibroId(res.id);
       }
       
       // Si hay upload_log_id en la respuesta, devolverlo para el monitoreo
       if (res?.upload_log_id) {
+        console.log('🔍 Upload log ID recibido:', res.upload_log_id);
         return { upload_log_id: res.upload_log_id };
       }
       
+      // Refrescar estado después de un breve delay
       setTimeout(() => {
         obtenerEstadoLibroRemuneraciones(cierre.id).then((data) => {
           setLibro(data);
@@ -171,12 +201,16 @@ const CierreProgresoNominaConLogging = ({
       }, 1200);
       
       return res;
+    } catch (error) {
+      console.error('❌ Error en subida:', error);
+      throw error;
     } finally {
+      console.log('🏁 Finalizando handleSubirArchivo, setSubiendo(false)');
       setSubiendo(false);
     }
-  };
+  }, [cierre.id, subiendo]); // Estabilizar dependencias
 
-  const handleSubirMovimientos = async (archivo) => {
+  const handleSubirMovimientos = useCallback(async (archivo) => {
     setSubiendoMov(true);
     try {
       const formData = new FormData();
@@ -188,9 +222,9 @@ const CierreProgresoNominaConLogging = ({
     } finally {
       setSubiendoMov(false);
     }
-  };
+  }, [cierre.id]);
 
-  const handleProcesarLibro = async () => {
+  const handleProcesarLibro = useCallback(async () => {
     console.log('=== PROCESAR LIBRO ===');
     
     const id = libro?.id || libroId;
@@ -223,9 +257,9 @@ const CierreProgresoNominaConLogging = ({
         estado: "con_error" 
       }));
     }
-  };
+  }, [libro?.id, libroId]);
 
-  const handleActualizarEstadoMovimientos = async () => {
+  const handleActualizarEstadoMovimientos = useCallback(async () => {
     try {
       console.log('📡 Consultando estado actual de movimientos...');
       const estadoActual = await obtenerEstadoMovimientosMes(cierre.id);
@@ -240,9 +274,9 @@ const CierreProgresoNominaConLogging = ({
     } catch (error) {
       console.error('❌ Error actualizando estado movimientos:', error);
     }
-  };
+  }, [cierre.id]);
 
-  const handleActualizarEstado = async () => {
+  const handleActualizarEstado = useCallback(async () => {
     try {
       console.log('📡 Consultando estado actual del libro...');
       const estadoActual = await obtenerEstadoLibroRemuneraciones(cierre.id);
@@ -257,28 +291,28 @@ const CierreProgresoNominaConLogging = ({
     } catch (error) {
       console.error('❌ Error actualizando estado:', error);
     }
-  };
+  }, [cierre.id]); // Solo depende de cierre.id, no de libro
 
-  const handleVerClasificacion = (soloLectura = false) => {
+  const handleVerClasificacion = useCallback((soloLectura = false) => {
     setModoSoloLectura(soloLectura);
     setModalAbierto(true);
-  };
+  }, []);
 
-  const handleLibroCompletado = (ready) => {
+  const handleLibroCompletado = useCallback((ready) => {
     setLibroRemuneracionesReady(ready);
-  };
+  }, [setLibroRemuneracionesReady]);
 
-  const handleMovimientosCompletado = (ready) => {
+  const handleMovimientosCompletado = useCallback((ready) => {
     setMovimientosMesReady(ready);
-  };
+  }, [setMovimientosMesReady]);
 
-  const handleAnalistaCompletado = (ready) => {
+  const handleAnalistaCompletado = useCallback((ready) => {
     setArchivoAnalistaReady(ready);
-  };
+  }, [setArchivoAnalistaReady]);
 
-  const handleNovedadesCompletado = (ready) => {
+  const handleNovedadesCompletado = useCallback((ready) => {
     setArchivoNovedadesReady(ready);
-  };
+  }, [setArchivoNovedadesReady]);
 
   let paso = 1;
 

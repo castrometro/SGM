@@ -259,7 +259,7 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado, tipoModulo = "con
         )}
 
         {/* Indicador de cierre finalizado - Solo para contabilidad */}
-        {tipoModulo === "contabilidad" && cierre?.estado === 'finalizado' && (
+        {tipoModulo === "contabilidad" && cierre?.estado === 'completado' && (
           <>
             <div className="bg-green-600 text-white px-4 py-2 rounded-lg font-semibold text-sm flex items-center gap-2">
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

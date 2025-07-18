@@ -233,9 +233,9 @@ TRANSLATIONS = {
     },
     'en': {
         # Títulos principales
-        'title_esf': 'STATEMENT OF FINANCIAL POSITION',
-        'title_eri': 'STATEMENT OF COMPREHENSIVE INCOME',
-        'title_ecp': 'STATEMENT OF CHANGES IN EQUITY',
+        'title_esf': 'STATUS OF FINANCIAL SITUATION',
+        'title_eri': 'STATEMENTS OF COMPREHENSIVE INCOME, BY FUNCTION',
+        'title_ecp': 'STATE OF CHANGE OF PATRIMONY',
         'title_movimientos': 'ACCOUNTING TRANSACTIONS',
         
         # ESF - Statement of Financial Position

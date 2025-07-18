@@ -1,7 +1,6 @@
 from rest_framework import routers
 from .views import (
     CierreNominaViewSet,
-    LibroRemuneracionesUploadViewSet,
     MovimientosMesUploadViewSet,
     ArchivoAnalistaUploadViewSet,
     ArchivoNovedadesUploadViewSet,
@@ -11,6 +10,7 @@ from .views import (
     obtener_hashtags_disponibles,
     ConceptoRemuneracionBatchView,
     eliminar_concepto_remuneracion,
+    obtener_estado_upload_log_nomina,
     # ViewSets para modelos del Analista
     AnalistaFiniquitoViewSet,
     AnalistaIncidenciaViewSet,
@@ -35,6 +35,14 @@ from .views import (
     # ViewSets para Sistema de Discrepancias
     DiscrepanciaCierreViewSet,
     CierreNominaDiscrepanciasViewSet,
+)
+from .views_libro_remuneraciones import LibroRemuneracionesUploadViewSet
+from .api_logging import (
+    ModalActivityView,
+    FileActivityView,
+    ClassificationActivityView,
+    SessionActivityView,
+    get_activity_log
 )
 
 from django.urls import path
@@ -165,9 +173,18 @@ urlpatterns = router.urls + [
     path('conceptos/cierre/<int:cierre_id>/', conceptos_remuneracion_por_cierre, name='conceptos_remuneracion_por_cierre'),
     path('clientes/<int:cliente_id>/hashtags/', obtener_hashtags_disponibles),
     path("conceptos/", ConceptoRemuneracionBatchView.as_view(), name="guardar-conceptos"),
+    
+    # === URLs para Activity Logging ===
+    path('activity-log/modal/', ModalActivityView.as_view(), name='modal_activity_log'),
+    path('activity-log/file/', FileActivityView.as_view(), name='file_activity_log'),
+    path('activity-log/classification/', ClassificationActivityView.as_view(), name='classification_activity_log'),
+    path('activity-log/session/', SessionActivityView.as_view(), name='session_activity_log'),
+    path('activity-log/<int:cierre_id>/<str:tarjeta>/', get_activity_log, name='get_activity_log'),
+    
     path(
         "conceptos/<int:cliente_id>/<path:nombre_concepto>/eliminar/",
         eliminar_concepto_remuneracion,
         name="eliminar-concepto-remuneracion",
     ),
+    path('upload-log/<int:upload_log_id>/estado/', obtener_estado_upload_log_nomina, name='estado_upload_log_nomina'),
 ]

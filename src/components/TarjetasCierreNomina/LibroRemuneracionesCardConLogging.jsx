@@ -3,6 +3,7 @@ import { Download, FileBarChart2, CheckCircle2, Loader2 } from "lucide-react";
 import { descargarPlantillaLibroRemuneraciones, obtenerEstadoUploadLogNomina } from "../../api/nomina";
 import EstadoBadge from "../EstadoBadge";
 import Notificacion from "../Notificacion";
+import { createActivityLogger } from "../../utils/activityLogger";
 
 const LibroRemuneracionesCardConLogging = ({
   estado,
@@ -20,9 +21,34 @@ const LibroRemuneracionesCardConLogging = ({
   libroId,
   onCompletado,
   numeroPaso = 1,
+  cierreId, // Nueva prop necesaria para logging
 }) => {
+  // Logging de renders para detectar re-renders innecesarios
+  console.log('🔄 LibroRemuneracionesCardConLogging RENDER:', {
+    timestamp: new Date().toISOString(),
+    estado,
+    subiendo,
+    disabled,
+    archivoNombre,
+    libroId,
+    headersSinClasificar: headersSinClasificar?.length,
+    headerClasificados: headerClasificados?.length
+  });
+
   const fileInputRef = useRef();
   const pollingRef = useRef(null);
+  
+  // Activity Logger
+  const activityLogger = useRef(null);
+  
+  // Inicializar logger cuando tengamos cierreId
+  useEffect(() => {
+    if (cierreId && !activityLogger.current) {
+      activityLogger.current = createActivityLogger(cierreId, 'libro_remuneraciones');
+      // Registrar inicio de sesión
+      activityLogger.current.logSessionStart();
+    }
+  }, [cierreId]);
 
   // Estado local para errores y procesamiento
   const [error, setError] = useState("");
@@ -63,13 +89,23 @@ const LibroRemuneracionesCardConLogging = ({
         const logData = await obtenerEstadoUploadLogNomina(uploadLogId);
         setUploadEstado(logData);
         
-        // Actualizar el progreso visible
+                // Actualizar el progreso visible
         if (logData.estado === 'procesando') {
           setUploadProgreso("Procesando archivo...");
           
           // Mostrar notificación amarilla solo la primera vez que entra en procesando
           if (uploadEstado?.estado !== 'procesando') {
             mostrarNotificacion("warning", "📊 Procesando archivo... Por favor espere.");
+            
+            // Logging: cambio a estado procesando
+            if (activityLogger.current) {
+              activityLogger.current.logStateChange(
+                uploadEstado?.estado || 'inicial',
+                'procesando',
+                'upload_log_update'
+              );
+              activityLogger.current.logProgressUpdate(50, 'Procesando archivo en segundo plano');
+            }
           }
           
         } else if (logData.estado === 'completado') {
@@ -80,11 +116,22 @@ const LibroRemuneracionesCardConLogging = ({
           
           mostrarNotificacion("success", `✅ Archivo procesado exitosamente. ${logData.resumen?.registros_procesados || 0} registros procesados.`);
           
+          // Logging: completado exitoso
+          if (activityLogger.current) {
+            activityLogger.current.logStateChange('procesando', 'completado', 'upload_log_update');
+            activityLogger.current.logProgressUpdate(100, `Procesamiento completado: ${logData.resumen?.registros_procesados || 0} registros`);
+          }
+          
         } else if (logData.estado === 'error') {
           setUploadProgreso("Error en el procesamiento");
           setError(logData.errores || "Error desconocido en el procesamiento");
           if (onCompletado) onCompletado(false);
           mostrarNotificacion("error", `❌ Error: ${logData.errores || "Error desconocido"}`);
+          
+          // Logging: error en procesamiento
+          if (activityLogger.current) {
+            activityLogger.current.logStateChange('procesando', 'error', 'upload_log_update');
+          }
         }
         
       } catch (err) {
@@ -108,6 +155,11 @@ const LibroRemuneracionesCardConLogging = ({
     if (estado === "procesando" && !pollingRef.current && onActualizarEstado) {
       console.log('🔄 Iniciando polling para monitorear procesamiento...');
       
+      // Logging: inicio de polling
+      if (activityLogger.current) {
+        activityLogger.current.logPollingStart(40);
+      }
+      
       let contadorPolling = 0;
       pollingRef.current = setInterval(async () => {
         contadorPolling++;
@@ -121,6 +173,12 @@ const LibroRemuneracionesCardConLogging = ({
       
     } else if (estado !== "procesando" && pollingRef.current) {
       console.log(`✅ Estado cambió a "${estado}" - deteniendo polling`);
+      
+      // Logging: detención de polling
+      if (activityLogger.current) {
+        activityLogger.current.logPollingStop(`estado cambió a ${estado}`);
+      }
+      
       clearInterval(pollingRef.current);
       pollingRef.current = null;
       setProcesandoLocal(false);
@@ -129,8 +187,38 @@ const LibroRemuneracionesCardConLogging = ({
 
   // Handler de subida con logging
   const handleSeleccionArchivo = async (e) => {
-    const archivo = e.target.files[0];
-    if (!archivo) return;
+    console.log('🎯 handleSeleccionArchivo EJECUTADO:', {
+      timestamp: new Date().toISOString(),
+      hasFile: !!e.target.files[0],
+    });
+
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // Logging: selección de archivo
+    if (activityLogger.current) {
+      await activityLogger.current.logFileSelect(file.name, file.size);
+    }
+
+    console.log('📁 Archivo seleccionado:', {
+      fileName: file.name,
+      size: file.size,
+      subiendo: subiendo,
+      stackTrace: new Error().stack
+    });
+    
+    if (!file) {
+      console.log('❌ No hay archivo seleccionado');
+      return;
+    }
+    
+    // Prevenir dobles uploads
+    if (subiendo) {
+      console.warn('⚠️ Upload ya en progreso, ignorando archivo seleccionado');
+      return;
+    }
+    
+    console.log('📤 Iniciando proceso de upload para:', file.name);
     
     setError("");
     setUploadProgreso("Subiendo archivo...");
@@ -138,13 +226,29 @@ const LibroRemuneracionesCardConLogging = ({
     setUploadEstado(null);
     
     try {
-      const response = await onSubirArchivo(archivo);
+      console.log('🚀 Llamando a onSubirArchivo...');
+      const response = await onSubirArchivo(file);
+      console.log('✅ Respuesta recibida de onSubirArchivo:', response);
+      
+      // Logging: validación del archivo
+      if (activityLogger.current) {
+        const hasErrors = !response?.upload_log_id;
+        await activityLogger.current.logFileValidate(
+          file.name, 
+          hasErrors ? ['Error en la respuesta del servidor'] : []
+        );
+      }
       
       // Obtener el ID del UploadLog para monitoreo
       if (response?.upload_log_id) {
         setUploadLogId(response.upload_log_id);
         setUploadProgreso("Archivo recibido, iniciando procesamiento...");
         mostrarNotificacion("info", "📤 Archivo subido correctamente. Procesando...");
+        
+        // Logging: inicio de procesamiento
+        if (activityLogger.current) {
+          await activityLogger.current.logProgressUpdate(10, 'Archivo subido, iniciando análisis');
+        }
       } else {
         // Si no hay upload_log_id, seguir con el flujo normal
         mostrarNotificacion("success", "✅ Archivo subido correctamente.");
@@ -153,6 +257,18 @@ const LibroRemuneracionesCardConLogging = ({
     } catch (err) {
       setError("Error al subir el archivo.");
       mostrarNotificacion("error", "❌ Error al subir el archivo.");
+      console.error('❌ Error en upload:', err);
+      
+      // Logging: error en upload
+      if (activityLogger.current) {
+        await activityLogger.current.logFileValidate(
+          file.name, 
+          [err.message || 'Error desconocido en upload']
+        );
+      }
+    } finally {
+      // Limpiar el input para permitir reseleccionar el mismo archivo si es necesario
+      e.target.value = '';
     }
   };
 
@@ -262,7 +378,13 @@ const LibroRemuneracionesCardConLogging = ({
         <div className="flex-1 flex flex-col gap-3">
           {/* Botón de descarga de plantilla */}
           <button
-            onClick={() => descargarPlantillaLibroRemuneraciones()}
+            onClick={async () => {
+              // Logging: descarga de plantilla
+              if (activityLogger.current) {
+                await activityLogger.current.logDownloadTemplate('libro_remuneraciones');
+              }
+              descargarPlantillaLibroRemuneraciones();
+            }}
             className="w-full bg-blue-600 hover:bg-blue-700 text-white p-2 rounded flex items-center justify-center gap-2 transition-colors"
             disabled={isDisabled}
           >
@@ -277,13 +399,47 @@ const LibroRemuneracionesCardConLogging = ({
                 ref={fileInputRef}
                 type="file"
                 accept=".xlsx,.xls,.csv"
-                onChange={handleSeleccionArchivo}
+                onChange={(e) => {
+                  console.log('📁 INPUT FILE onChange DISPARADO:', {
+                    timestamp: new Date().toISOString(),
+                    filesLength: e.target.files?.length,
+                    fileName: e.target.files[0]?.name,
+                    currentSubiendo: subiendo
+                  });
+                  handleSeleccionArchivo(e);
+                }}
                 className="hidden"
               />
               <button
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full bg-green-600 hover:bg-green-700 text-white p-2 rounded flex items-center justify-center gap-2 transition-colors"
-                disabled={isDisabled}
+                onClick={async () => {
+                  console.log('🖱️ BOTÓN SELECCIONAR ARCHIVO CLICKEADO:', {
+                    timestamp: new Date().toISOString(),
+                    isDisabled,
+                    subiendo,
+                    canClick: !isDisabled && !subiendo
+                  });
+                  
+                  if (!isDisabled && !subiendo) {
+                    console.log('📂 Abriendo file picker...');
+                    
+                    // Logging: apertura de modal de selección
+                    if (activityLogger.current) {
+                      await activityLogger.current.logModalOpen('file_selector', {
+                        trigger: 'user_click'
+                      });
+                    }
+                    
+                    fileInputRef.current?.click();
+                  } else {
+                    console.log('❌ Click ignorado - botón deshabilitado o subiendo');
+                  }
+                }}
+                className={`w-full p-2 rounded flex items-center justify-center gap-2 transition-colors ${
+                  isDisabled || subiendo 
+                    ? "bg-gray-600 cursor-not-allowed text-gray-400" 
+                    : "bg-green-600 hover:bg-green-700 text-white"
+                }`}
+                disabled={isDisabled || subiendo}
               >
                 <FileBarChart2 size={16} />
                 {subiendo ? "Subiendo..." : "Seleccionar Archivo"}
@@ -310,7 +466,22 @@ const LibroRemuneracionesCardConLogging = ({
               <div className="flex justify-between items-center">
                 <span>Headers sin clasificar: {headersSinClasificar.length}</span>
                 <button
-                  onClick={onVerClasificacion}
+                  onClick={async () => {
+                    // Logging: apertura de modal de clasificación
+                    if (activityLogger.current) {
+                      await activityLogger.current.logModalOpen('classification_modal', {
+                        headers_count: headersSinClasificar?.length,
+                        classified_count: headerClasificados?.length
+                      });
+                      
+                      await activityLogger.current.logViewClassification(
+                        headersSinClasificar?.length,
+                        headerClasificados?.length
+                      );
+                    }
+                    
+                    onVerClasificacion();
+                  }}
                   className="text-blue-400 hover:text-blue-300 text-xs"
                 >
                   Ver Clasificación
@@ -322,7 +493,15 @@ const LibroRemuneracionesCardConLogging = ({
           {/* Botón de procesar */}
           {estado === "clasificado" && (
             <button
-              onClick={handleProcesar}
+              onClick={async () => {
+                // Logging: inicio de procesamiento
+                if (activityLogger.current) {
+                  await activityLogger.current.logStateChange('clasificado', 'procesando', 'user_action');
+                  await activityLogger.current.logProgressUpdate(0, 'Iniciando procesamiento');
+                }
+                
+                handleProcesar();
+              }}
               className="w-full bg-purple-600 hover:bg-purple-700 text-white p-2 rounded flex items-center justify-center gap-2 transition-colors"
               disabled={isDisabled}
             >

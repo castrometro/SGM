@@ -758,7 +758,7 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
             
             # 3. Resetear estado del cierre a pendiente
             cierre.estado = 'pendiente'
-            cierre.estado_incidencias = 'pendiente'
+            cierre.estado_incidencias = 'analisis_pendiente'
             cierre.save(update_fields=['estado', 'estado_incidencias'])
             
             # 4. Eliminar el libro de remuneraciones
@@ -975,17 +975,8 @@ class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='subir/(?P<cierre_id>[^/.]+)')
     def subir(self, request, cierre_id=None):
         """Sube un archivo de movimientos del mes para un cierre específico"""
-        from .utils.mixins import UploadLogNominaMixin, ValidacionArchivoCRUDMixin
-        from .utils.clientes import get_client_ip
-        from .models_logging import registrar_actividad_tarjeta_nomina
-        from django.db import transaction
-        import logging
-        
-        logger = logging.getLogger(__name__)
-        
         try:
             cierre = CierreNomina.objects.get(id=cierre_id)
-            cliente = cierre.cliente
         except CierreNomina.DoesNotExist:
             return Response({"error": "Cierre no encontrado"}, status=404)
         
@@ -993,89 +984,33 @@ class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
         if not archivo:
             return Response({"error": "No se proporcionó archivo"}, status=400)
         
-        # Validar archivo
-        try:
-            validator = ValidacionArchivoCRUDMixin()
-            validator.validar_archivo(archivo)
-            logger.info(f"Archivo {archivo.name} validado correctamente")
-        except ValueError as e:
-            logger.error(f"Error validando archivo: {e}")
-            # Registrar error de validación
-            registrar_actividad_tarjeta_nomina(
-                cierre_id=cierre.id,
-                tarjeta="movimientos_mes",
-                accion="validation_error",
-                descripcion=f"Error de validación en archivo: {str(e)}",
-                usuario=request.user,
-                detalles={
-                    "archivo_nombre": archivo.name,
-                    "error": str(e),
-                    "archivo_size": archivo.size
-                },
-                resultado="error",
-                ip_address=get_client_ip(request)
-            )
-            return Response({"error": str(e)}, status=400)
+        # Validar que sea un archivo Excel
+        if not archivo.name.endswith(('.xlsx', '.xls')):
+            return Response({"error": "El archivo debe ser de tipo Excel (.xlsx o .xls)"}, status=400)
         
-        # Crear UploadLog para tracking completo
-        log_mixin = UploadLogNominaMixin()
-        log_mixin.tipo_upload = "movimientos_mes"
-        log_mixin.usuario = request.user
-        log_mixin.ip_usuario = get_client_ip(request)
-        
-        upload_log = log_mixin.crear_upload_log(cliente, archivo)
-        upload_log.cierre = cierre
-        upload_log.save()
-        
-        logger.info(f"UploadLog creado para MovimientosMes con ID: {upload_log.id}")
-        
-        with transaction.atomic():
-            # Crear o actualizar el registro de movimientos
-            movimiento, created = MovimientosMesUpload.objects.get_or_create(
-                cierre=cierre,
-                defaults={
-                    'archivo': archivo,
-                    'estado': 'pendiente',
-                    'upload_log': upload_log  # Conectar con UploadLog
-                }
-            )
-            
-            if not created:
-                # Si ya existe, actualizar el archivo y upload_log
-                movimiento.archivo = archivo
-                movimiento.estado = 'pendiente'
-                movimiento.upload_log = upload_log
-                movimiento.save()
-        
-        # Registrar actividad de subida
-        registrar_actividad_tarjeta_nomina(
-            cierre_id=cierre.id,
-            tarjeta="movimientos_mes",
-            accion="upload_excel",
-            descripcion=f"Archivo {archivo.name} subido para procesamiento",
-            usuario=request.user,
-            detalles={
-                "archivo_nombre": archivo.name,
-                "archivo_size": archivo.size,
-                "upload_log_id": upload_log.id,
-                "movimiento_id": movimiento.id,
-                "es_resubida": not created
-            },
-            ip_address=get_client_ip(request),
-            upload_log=upload_log
+        # Crear o actualizar el registro de movimientos
+        movimiento, created = MovimientosMesUpload.objects.get_or_create(
+            cierre=cierre,
+            defaults={
+                'archivo': archivo,
+                'estado': 'pendiente'
+            }
         )
         
-        # Disparar tarea de procesamiento con Celery
-        procesar_movimientos_mes.delay(movimiento.id, upload_log.id)
+        if not created:
+            # Si ya existe, actualizar el archivo
+            movimiento.archivo = archivo
+            movimiento.estado = 'pendiente'
+            movimiento.save()
         
-        logger.info(f"Procesamiento iniciado para MovimientosMes {movimiento.id} con UploadLog {upload_log.id}")
+        # Disparar tarea de procesamiento con Celery
+        procesar_movimientos_mes.delay(movimiento.id)
         
         return Response({
             "id": movimiento.id,
             "estado": movimiento.estado,
             "archivo_nombre": archivo.name,
             "fecha_subida": movimiento.fecha_subida,
-            "upload_log_id": upload_log.id,
             "mensaje": "Archivo subido correctamente y enviado a procesamiento"
         }, status=201)
 
@@ -1716,7 +1651,7 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
         deleted_count = IncidenciaCierre.objects.filter(cierre=cierre).delete()[0]
         
         # Actualizar el estado de incidencias del cierre
-        cierre.estado_incidencias = 'resueltas'
+        cierre.estado_incidencias = 'archivos_consolidados'
         cierre.estado = 'completado'
         cierre.save(update_fields=['estado_incidencias', 'estado'])
         
@@ -1743,9 +1678,9 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
                 "error": "El cierre debe estar en estado 'completado' para iniciar análisis"
             }, status=400)
         
-        if cierre.estado_incidencias != 'resueltas':
+        if cierre.estado_incidencias != 'archivos_consolidados':
             return Response({
-                "error": "El cierre debe tener incidencias resueltas (0 incidencias) para iniciar análisis"
+                "error": "El cierre debe tener archivos consolidados (0 incidencias) para iniciar análisis"
             }, status=400)
         
         # Obtener tolerancia de variación (por defecto 30%)
@@ -1911,12 +1846,12 @@ class CierreNominaIncidenciasViewSet(viewsets.ViewSet):
         
         # Actualizar estado automáticamente según las incidencias
         if total_incidencias == 0:
-            if cierre.estado_incidencias != 'resueltas':
-                cierre.estado_incidencias = 'resueltas'
+            if cierre.estado_incidencias != 'archivos_consolidados':
+                cierre.estado_incidencias = 'archivos_consolidados'
                 cierre.save(update_fields=['estado_incidencias'])
         else:
-            if cierre.estado_incidencias != 'detectadas':
-                cierre.estado_incidencias = 'detectadas'
+            if cierre.estado_incidencias != 'incidencias_generadas':
+                cierre.estado_incidencias = 'incidencias_generadas'
                 cierre.save(update_fields=['estado_incidencias'])
         
         return Response({
@@ -1939,9 +1874,9 @@ class CierreNominaIncidenciasViewSet(viewsets.ViewSet):
             return Response({"error": "Cierre no encontrado"}, status=404)
         
         # Verificar que el cierre esté en estado adecuado
-        if cierre.estado not in ['revision_inicial', 'validacion_conceptos', 'completado']:
+        if cierre.estado not in ['datos_consolidados', 'completado']:
             return Response({
-                "error": "El cierre debe estar en estado 'revision_inicial', 'validacion_conceptos' o 'completado' para generar incidencias"
+                "error": "El cierre debe estar en estado 'datos_consolidados' o 'completado' para generar incidencias"
             }, status=400)
         
         # Lanzar tarea
@@ -2147,9 +2082,9 @@ class DiscrepanciaCierreViewSet(viewsets.ModelViewSet):
             return Response({"error": "Usuario no autenticado"}, status=401)
         
         # Verificar que el cierre esté en estado adecuado
-        if cierre.estado not in ['revision_inicial']:
+        if cierre.estado not in ['datos_consolidados']:
             return Response({
-                "error": "El cierre debe estar en estado 'revision_inicial' para generar discrepancias"
+                "error": "El cierre debe estar en estado 'datos_consolidados' para generar discrepancias"
             }, status=400)
         
         # Lanzar tarea de generación de discrepancias
@@ -2336,43 +2271,5 @@ class CierreNominaDiscrepanciasViewSet(viewsets.ViewSet):
             "task_id": task.id,
             "cierre_id": pk
         }, status=202)
-
-
-# ========== UPLOAD LOG ENDPOINTS ==========
-
-@api_view(['GET'])
-def obtener_estado_upload_log_nomina(request, upload_log_id):
-    """
-    Obtiene el estado actual de un UploadLogNomina específico
-    """
-    from .models_logging import UploadLogNomina
-    from rest_framework.response import Response
-    from rest_framework import status
-    
-    try:
-        upload_log = UploadLogNomina.objects.get(id=upload_log_id)
-        
-        data = {
-            'id': upload_log.id,
-            'estado': upload_log.estado,
-            'tipo_upload': upload_log.tipo_upload,
-            'nombre_archivo_original': upload_log.nombre_archivo_original,
-            'fecha_subida': upload_log.fecha_subida,
-            'errores': upload_log.errores,
-            'resumen': upload_log.resumen or {},
-            'registros_procesados': upload_log.registros_procesados,
-            'registros_exitosos': upload_log.registros_exitosos,
-            'registros_fallidos': upload_log.registros_fallidos,
-            'headers_detectados': upload_log.headers_detectados,
-            'tiempo_procesamiento': upload_log.tiempo_procesamiento,
-        }
-        
-        return Response(data, status=status.HTTP_200_OK)
-        
-    except UploadLogNomina.DoesNotExist:
-        return Response(
-            {'error': 'Upload log no encontrado'}, 
-            status=status.HTTP_404_NOT_FOUND
-        )
 
 

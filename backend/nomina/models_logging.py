@@ -299,6 +299,27 @@ class TarjetaActivityLogNomina(models.Model):
         ("classification_complete", "Clasificación Completada"),
         ("reprocesar", "Reprocesamiento"),
         ("delete_all", "Eliminación Total"),
+        ("delete_archivo", "Eliminación de Archivo"),
+        # Nuevas acciones para logging completo
+        ("modal_open", "Apertura de Modal"),
+        ("modal_close", "Cierre de Modal"),
+        ("view_classification", "Ver Clasificación"),
+        ("save_classification", "Guardar Clasificación"),
+        ("download_template", "Descarga de Plantilla"),
+        ("file_select", "Selección de Archivo"),
+        ("file_validate", "Validación de Archivo"),
+        ("state_change", "Cambio de Estado"),
+        ("polling_start", "Inicio de Polling"),
+        ("polling_stop", "Detención de Polling"),
+        ("concept_map", "Mapeo de Concepto"),
+        ("concept_unmap", "Desmapeo de Concepto"),
+        ("auto_classify", "Clasificación Automática"),
+        ("manual_classify", "Clasificación Manual"),
+        ("headers_detected", "Headers Detectados"),
+        ("progress_update", "Actualización de Progreso"),
+        ("error_recovery", "Recuperación de Error"),
+        ("session_start", "Inicio de Sesión de Trabajo"),
+        ("session_end", "Fin de Sesión de Trabajo"),
     ]
     accion = models.CharField(max_length=25, choices=ACCION_CHOICES)
 

@@ -46,6 +46,9 @@ const AdminSistema = () => {
   const [error, setError] = useState('');
   const [showDebug, setShowDebug] = useState(false);
   
+  // Estado para bloqueo de desarrollo
+  const [enDesarrollo] = useState(true); // Cambiar a false cuando esté listo
+  
   // Estados para formularios
   const [showUserForm, setShowUserForm] = useState(false);
   const [showClientForm, setShowClientForm] = useState(false);
@@ -1138,6 +1141,25 @@ const AdminSistema = () => {
           </div>
         )}
       </div>
+
+      {/* Overlay de EN DESARROLLO */}
+      {enDesarrollo && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 backdrop-blur-sm flex items-center justify-center z-[9999]">
+          <div className="bg-gray-900 border-2 border-orange-500 rounded-lg p-8 max-w-md mx-4 text-center shadow-2xl">
+            <div className="flex items-center justify-center mb-4">
+              <Settings className="w-16 h-16 text-orange-500 animate-spin" />
+            </div>
+            <h2 className="text-3xl font-bold text-orange-500 mb-2">EN DESARROLLO</h2>
+            <p className="text-gray-300 mb-4">
+              Esta funcionalidad está actualmente en desarrollo y no está disponible.
+            </p>
+            <div className="flex items-center justify-center text-sm text-gray-400">
+              <Clock className="w-4 h-4 mr-2" />
+              Próximamente disponible
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

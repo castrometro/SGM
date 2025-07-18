@@ -236,15 +236,47 @@ def guardar_registros_nomina(result):
 
 
 @shared_task
-def procesar_movimientos_mes(movimiento_id):
-    """Procesa un archivo de movimientos del mes"""
-    logger.info(f"Procesando archivo movimientos mes id={movimiento_id}")
+def procesar_movimientos_mes(movimiento_id, upload_log_id=None):
+    """Procesa un archivo de movimientos del mes con logging completo"""
+    from .utils.mixins import UploadLogNominaMixin
+    from .models_logging import registrar_actividad_tarjeta_nomina, UploadLogNomina
+    
+    logger.info(f"Procesando archivo movimientos mes id={movimiento_id} con upload_log={upload_log_id}")
+    
+    mixin = UploadLogNominaMixin() if upload_log_id else None
+    upload_log = None
     
     try:
+        # Obtener referencias
         movimiento = MovimientosMesUpload.objects.get(id=movimiento_id)
+        if upload_log_id:
+            upload_log = UploadLogNomina.objects.get(id=upload_log_id)
+        
+        # Cambiar estado a procesando
         movimiento.estado = 'en_proceso'
         movimiento.save()
         
+        if mixin and upload_log:
+            mixin.actualizar_upload_log(upload_log_id, estado='procesando', resumen={
+                'fase': 'procesamiento_iniciado',
+                'movimiento_id': movimiento_id
+            })
+        
+        # Registrar inicio de procesamiento
+        registrar_actividad_tarjeta_nomina(
+            cierre_id=movimiento.cierre.id,
+            tarjeta="movimientos_mes",
+            accion="process_start",
+            descripcion="Iniciando procesamiento de archivo de movimientos del mes",
+            detalles={
+                "movimiento_id": movimiento_id,
+                "upload_log_id": upload_log_id,
+                "archivo_nombre": movimiento.archivo.name if movimiento.archivo else "N/A"
+            },
+            upload_log=upload_log
+        )
+        
+        # Procesar archivo
         resultados = procesar_archivo_movimientos_mes_util(movimiento)
         
         # Guardar resultados
@@ -253,22 +285,91 @@ def procesar_movimientos_mes(movimiento_id):
         # Determinar estado final
         if resultados.get('errores'):
             if any(v > 0 for k, v in resultados.items() if k != 'errores' and isinstance(v, int)):
-                movimiento.estado = 'con_errores_parciales'
+                estado_final = 'con_errores_parciales'
+                resultado_actividad = 'warning'
             else:
-                movimiento.estado = 'con_error'
+                estado_final = 'con_error'
+                resultado_actividad = 'error'
         else:
-            movimiento.estado = 'procesado'
+            estado_final = 'procesado'
+            resultado_actividad = 'exito'
         
+        movimiento.estado = estado_final
         movimiento.save()
-        logger.info(f"Procesamiento exitoso movimientos mes id={movimiento_id}")
+        
+        # Actualizar UploadLog
+        if mixin and upload_log:
+            mixin.actualizar_upload_log(upload_log_id, 
+                estado='completado' if estado_final == 'procesado' else 'error',
+                resumen={
+                    'fase': 'procesamiento_completado',
+                    'estado_final': estado_final,
+                    'resultados': resultados,
+                    'registros_procesados': sum(v for k, v in resultados.items() if k != 'errores' and isinstance(v, int))
+                }
+            )
+        
+        # Registrar finalización
+        descripcion = f"Procesamiento completado con estado: {estado_final}"
+        if resultados.get('errores'):
+            descripcion += f". Errores: {len(resultados['errores'])}"
+        
+        registrar_actividad_tarjeta_nomina(
+            cierre_id=movimiento.cierre.id,
+            tarjeta="movimientos_mes",
+            accion="process_complete",
+            descripcion=descripcion,
+            resultado=resultado_actividad,
+            detalles={
+                "movimiento_id": movimiento_id,
+                "upload_log_id": upload_log_id,
+                "estado_final": estado_final,
+                "resultados": resultados,
+                "registros_totales": sum(v for k, v in resultados.items() if k != 'errores' and isinstance(v, int)),
+                "errores_count": len(resultados.get('errores', []))
+            },
+            upload_log=upload_log
+        )
+        
+        logger.info(f"Procesamiento exitoso movimientos mes id={movimiento_id}, estado: {estado_final}")
         return resultados
         
     except Exception as e:
-        movimiento = MovimientosMesUpload.objects.get(id=movimiento_id)
-        movimiento.estado = 'con_error'
-        movimiento.resultados_procesamiento = {'errores': [str(e)]}
-        movimiento.save()
-        logger.error(f"Error procesando movimientos mes id={movimiento_id}: {e}")
+        error_msg = f"Error procesando movimientos mes id={movimiento_id}: {e}"
+        logger.error(error_msg)
+        
+        # Actualizar estados de error
+        try:
+            movimiento = MovimientosMesUpload.objects.get(id=movimiento_id)
+            movimiento.estado = 'con_error'
+            movimiento.resultados_procesamiento = {'errores': [str(e)]}
+            movimiento.save()
+        except:
+            pass
+        
+        # Marcar UploadLog como error
+        if mixin and upload_log_id:
+            mixin.marcar_como_error(upload_log_id, error_msg)
+        
+        # Registrar error en actividades
+        if upload_log_id:
+            try:
+                registrar_actividad_tarjeta_nomina(
+                    cierre_id=movimiento.cierre.id,
+                    tarjeta="movimientos_mes",
+                    accion="process_complete",
+                    descripcion=f"Error en procesamiento: {str(e)}",
+                    resultado="error",
+                    detalles={
+                        "movimiento_id": movimiento_id,
+                        "upload_log_id": upload_log_id,
+                        "error": str(e)
+                    },
+                    upload_log=upload_log
+                )
+            except Exception:
+                pass  # No fallar si no se puede registrar la actividad
+        
         raise
 
 
@@ -499,7 +600,7 @@ def generar_incidencias_cierre_task(cierre_id):
         logger.error(f"Error generando incidencias para cierre {cierre_id}: {e}")
         try:
             cierre = CierreNomina.objects.get(id=cierre_id)
-            cierre.estado_incidencias = 'analisis_pendiente'
+            cierre.estado_incidencias = 'pendiente'
             cierre.save(update_fields=['estado_incidencias'])
         except:
             pass
@@ -841,12 +942,12 @@ def analizar_datos_cierre_task(cierre_id, tolerancia_variacion=30.0):
         
         if incidencias_variacion_count > 0:
             # Hay incidencias de variación salarial que resolver
-            cierre.estado = 'incidencias_abiertas'
-            cierre.estado_incidencias = 'incidencias_abiertas'
+            cierre.estado = 'validacion_incidencias'
+            cierre.estado_incidencias = 'en_revision'
         else:
             # No hay incidencias de variación salarial
-            cierre.estado = 'sin_incidencias'
-            cierre.estado_incidencias = 'sin_incidencias'
+            cierre.estado = 'listo_para_entrega'
+            cierre.estado_incidencias = 'resueltas'
         
         cierre.save(update_fields=['estado', 'estado_incidencias'])
         
@@ -908,10 +1009,10 @@ def generar_discrepancias_cierre_task(cierre_id):
         # Actualizar estado del cierre
         if resultado['total_discrepancias'] == 0:
             # Sin discrepancias - datos verificados
-            cierre.estado = 'datos_verificados'
+            cierre.estado = 'validacion_conceptos'
         else:
             # Con discrepancias - requiere corrección
-            cierre.estado = 'discrepancias_detectadas'
+            cierre.estado = 'revision_incidencias'
         
         cierre.save(update_fields=['estado'])
         
@@ -922,7 +1023,7 @@ def generar_discrepancias_cierre_task(cierre_id):
         logger.error(f"Error generando discrepancias para cierre {cierre_id}: {e}")
         try:
             cierre = CierreNomina.objects.get(id=cierre_id)
-            cierre.estado = 'datos_consolidados'  # Volver al estado anterior
+            cierre.estado = 'revision_inicial'  # Volver al estado anterior
             cierre.save(update_fields=['estado'])
         except:
             pass

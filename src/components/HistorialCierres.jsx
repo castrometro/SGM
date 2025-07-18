@@ -33,7 +33,7 @@ const HistorialCierres = ({ clienteId, areaActiva }) => {
       );
     }
     
-    if (cierre.estado === 'finalizado') {
+    if (cierre.estado === 'completado') {
       return (
         <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
           📊 Reportes disponibles

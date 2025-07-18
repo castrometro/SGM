@@ -224,6 +224,14 @@ export const obtenerCierresCliente = async (clienteId) => {
 }
 
 export const subirLibroRemuneraciones = async (cierreId, archivo) => {
+  console.log('🌐 API subirLibroRemuneraciones LLAMADA:', {
+    timestamp: new Date().toISOString(),
+    cierreId,
+    fileName: archivo.name,
+    fileSize: archivo.size,
+    stackTrace: new Error().stack.split('\n').slice(0, 8).join('\n')
+  });
+
   const formData = new FormData();
   formData.append("cierre", cierreId); // el nombre debe calzar con tu serializer
   formData.append("archivo", archivo);
@@ -234,6 +242,13 @@ export const subirLibroRemuneraciones = async (cierreId, archivo) => {
       "Content-Type": "multipart/form-data"
     }
   });
+  
+  console.log('🌐 API subirLibroRemuneraciones RESPUESTA:', {
+    timestamp: new Date().toISOString(),
+    status: res.status,
+    data: res.data
+  });
+  
   return res.data;
 };
 export const obtenerEstadoLibroRemuneraciones = async (cierreId) => {
@@ -409,6 +424,14 @@ export const obtenerConceptosRemuneracionNovedades = async (clienteId) => {
   return response.data;
 };
 
+// ========== UPLOAD LOG NÓMINA ==========
+
+// Obtener estado del upload log de nómina
+export const obtenerEstadoUploadLogNomina = async (uploadLogId) => {
+  const response = await api.get(`/nomina/upload-log/${uploadLogId}/estado/`);
+  return response.data;
+};
+
 // ========== ELIMINACIÓN DE ARCHIVOS ==========
 
 // Eliminar libro de remuneraciones
@@ -444,4 +467,43 @@ export const obtenerCategoriasIncidencias = async () => {
 export const obtenerCierresNomina = async () => {
   const res = await api.get('/nomina/cierres/');
   return res.data;
+};
+
+// ========== SISTEMA DE DISCREPANCIAS ==========
+
+// Obtener discrepancias de un cierre
+export const obtenerDiscrepanciasCierre = async (cierreId, filtros = {}) => {
+  const params = { cierre: cierreId, ...filtros };
+  const response = await api.get('/nomina/discrepancias/', { params });
+  return response.data;
+};
+
+// Generar discrepancias para un cierre
+export const generarDiscrepanciasCierre = async (cierreId) => {
+  const response = await api.post(`/nomina/discrepancias/generar/${cierreId}/`);
+  return response.data;
+};
+
+// Obtener resumen de discrepancias de un cierre
+export const obtenerResumenDiscrepancias = async (cierreId) => {
+  const response = await api.get(`/nomina/discrepancias/resumen/${cierreId}/`);
+  return response.data;
+};
+
+// Obtener estado de discrepancias de un cierre
+export const obtenerEstadoDiscrepanciasCierre = async (cierreId) => {
+  const response = await api.get(`/nomina/cierres-discrepancias/${cierreId}/estado_verificacion/`);
+  return response.data;
+};
+
+// Vista previa de discrepancias (sin guardar)
+export const previewDiscrepanciasCierre = async (cierreId) => {
+  const response = await api.get(`/nomina/discrepancias/preview/${cierreId}/`);
+  return response.data;
+};
+
+// Limpiar discrepancias de un cierre
+export const limpiarDiscrepanciasCierre = async (cierreId) => {
+  const response = await api.delete(`/nomina/discrepancias/limpiar/${cierreId}/`);
+  return response.data;
 };

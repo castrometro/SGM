@@ -1,7 +1,6 @@
 from rest_framework import routers
 from .views import (
     CierreNominaViewSet,
-    MovimientosMesUploadViewSet,
     ArchivoAnalistaUploadViewSet,
     ArchivoNovedadesUploadViewSet,
     ChecklistItemViewSet,
@@ -15,12 +14,6 @@ from .views import (
     AnalistaFiniquitoViewSet,
     AnalistaIncidenciaViewSet,
     AnalistaIngresoViewSet,
-    # ViewSets para Movimientos del Mes
-    MovimientoAltaBajaViewSet,
-    MovimientoAusentismoViewSet,
-    MovimientoVacacionesViewSet,
-    MovimientoVariacionSueldoViewSet,
-    MovimientoVariacionContratoViewSet,
     # ViewSets para modelos de Novedades
     EmpleadoCierreNovedadesViewSet,
     ConceptoRemuneracionNovedadesViewSet,
@@ -37,6 +30,14 @@ from .views import (
     CierreNominaDiscrepanciasViewSet,
 )
 from .views_libro_remuneraciones import LibroRemuneracionesUploadViewSet
+from .views_movimientos_mes import (
+    MovimientosMesUploadViewSet,
+    MovimientoAltaBajaViewSet,
+    MovimientoAusentismoViewSet,
+    MovimientoVacacionesViewSet,
+    MovimientoVariacionSueldoViewSet,
+    MovimientoVariacionContratoViewSet,
+)
 from .api_logging import (
     ModalActivityView,
     FileActivityView,

@@ -18,16 +18,10 @@ User = get_user_model()
 from .models import (
     CierreNomina,
     LibroRemuneracionesUpload,
-    MovimientosMesUpload,
     ArchivoAnalistaUpload,
     ArchivoNovedadesUpload,
     ChecklistItem,
     ConceptoRemuneracion,
-    MovimientoAltaBaja,
-    MovimientoAusentismo,
-    MovimientoVacaciones,
-    MovimientoVariacionSueldo,
-    MovimientoVariacionContrato,
     AnalistaFiniquito,
     AnalistaIncidencia,
     AnalistaIngreso,
@@ -45,18 +39,12 @@ from .models import (
 from .serializers import (
     CierreNominaSerializer, 
     LibroRemuneracionesUploadSerializer, 
-    MovimientosMesUploadSerializer,
     ArchivoAnalistaUploadSerializer, 
     ArchivoNovedadesUploadSerializer, 
     CierreNominaCreateSerializer, 
     ChecklistItemUpdateSerializer, 
     ChecklistItemCreateSerializer,
     ConceptoRemuneracionSerializer,
-    MovimientoAltaBajaSerializer,
-    MovimientoAusentismoSerializer,
-    MovimientoVacacionesSerializer,
-    MovimientoVariacionSueldoSerializer,
-    MovimientoVariacionContratoSerializer,
     AnalistaFiniquitoSerializer,
     AnalistaIncidenciaSerializer,
     AnalistaIngresoSerializer,
@@ -82,7 +70,6 @@ from .tasks import (
     clasificar_headers_libro_remuneraciones_con_logging,
     actualizar_empleados_desde_libro,
     guardar_registros_nomina,
-    procesar_movimientos_mes,
     procesar_archivo_analista,
     procesar_archivo_novedades,
     generar_incidencias_cierre_task,
@@ -765,63 +752,6 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
             instance.delete()
             logger.info(f"Libro de remuneraciones {instance.id} eliminado completamente")
 
-# Nuevos ViewSets para Movimientos_Mes
-
-class MovimientoAltaBajaViewSet(viewsets.ModelViewSet):
-    queryset = MovimientoAltaBaja.objects.all()
-    serializer_class = MovimientoAltaBajaSerializer
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        cierre_id = self.request.query_params.get('cierre')
-        if cierre_id:
-            queryset = queryset.filter(cierre_id=cierre_id)
-        return queryset
-
-class MovimientoAusentismoViewSet(viewsets.ModelViewSet):
-    queryset = MovimientoAusentismo.objects.all()
-    serializer_class = MovimientoAusentismoSerializer
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        cierre_id = self.request.query_params.get('cierre')
-        if cierre_id:
-            queryset = queryset.filter(cierre_id=cierre_id)
-        return queryset
-
-class MovimientoVacacionesViewSet(viewsets.ModelViewSet):
-    queryset = MovimientoVacaciones.objects.all()
-    serializer_class = MovimientoVacacionesSerializer
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        cierre_id = self.request.query_params.get('cierre')
-        if cierre_id:
-            queryset = queryset.filter(cierre_id=cierre_id)
-        return queryset
-
-class MovimientoVariacionSueldoViewSet(viewsets.ModelViewSet):
-    queryset = MovimientoVariacionSueldo.objects.all()
-    serializer_class = MovimientoVariacionSueldoSerializer
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        cierre_id = self.request.query_params.get('cierre')
-        if cierre_id:
-            queryset = queryset.filter(cierre_id=cierre_id)
-        return queryset
-
-class MovimientoVariacionContratoViewSet(viewsets.ModelViewSet):
-    queryset = MovimientoVariacionContrato.objects.all()
-    serializer_class = MovimientoVariacionContratoSerializer
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        cierre_id = self.request.query_params.get('cierre')
-        if cierre_id:
-            queryset = queryset.filter(cierre_id=cierre_id)
-        return queryset
-
 # APIs de funciones
 
 @api_view(['GET'])
@@ -940,185 +870,6 @@ def eliminar_concepto_remuneracion(request, cliente_id, nombre_concepto):
     return Response({"status": "ok"})
 
 # ViewSets existentes
-
-class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
-    queryset = MovimientosMesUpload.objects.all()
-    serializer_class = MovimientosMesUploadSerializer
-    
-    @action(detail=False, methods=['get'], url_path='estado/(?P<cierre_id>[^/.]+)')
-    def estado(self, request, cierre_id=None):
-        """Obtiene el estado del archivo de movimientos del mes para un cierre específico"""
-        movimiento = self.get_queryset().filter(cierre_id=cierre_id).order_by('-fecha_subida').first()
-        if movimiento:
-            return Response({
-                "id": movimiento.id,
-                "estado": movimiento.estado,
-                "archivo_nombre": movimiento.archivo.name.split("/")[-1] if movimiento.archivo else "",
-                "archivo_url": request.build_absolute_uri(movimiento.archivo.url) if movimiento.archivo else "",
-                "fecha_subida": movimiento.fecha_subida,
-                "cierre_id": movimiento.cierre.id,
-                "cliente_id": movimiento.cierre.cliente.id,
-                "cliente_nombre": movimiento.cierre.cliente.nombre,
-            })
-        else:
-            return Response({
-                "id": None,
-                "estado": "no_subido",
-                "archivo_nombre": "",
-                "archivo_url": "",
-                "fecha_subida": None,
-                "cierre_id": None,
-                "cliente_id": None,
-                "cliente_nombre": "",
-            })
-    
-    @action(detail=False, methods=['post'], url_path='subir/(?P<cierre_id>[^/.]+)')
-    def subir(self, request, cierre_id=None):
-        """Sube un archivo de movimientos del mes para un cierre específico"""
-        from .utils.mixins import UploadLogNominaMixin, ValidacionArchivoCRUDMixin
-        from .utils.clientes import get_client_ip
-        from .models_logging import registrar_actividad_tarjeta_nomina
-        from django.db import transaction
-        import logging
-        
-        logger = logging.getLogger(__name__)
-        
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-            cliente = cierre.cliente
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        archivo = request.FILES.get('archivo')
-        if not archivo:
-            return Response({"error": "No se proporcionó archivo"}, status=400)
-        
-        # Validar archivo
-        try:
-            validator = ValidacionArchivoCRUDMixin()
-            validator.validar_archivo(archivo)
-            logger.info(f"Archivo {archivo.name} validado correctamente")
-        except ValueError as e:
-            logger.error(f"Error validando archivo: {e}")
-            # Registrar error de validación
-            registrar_actividad_tarjeta_nomina(
-                cierre_id=cierre.id,
-                tarjeta="movimientos_mes",
-                accion="validation_error",
-                descripcion=f"Error de validación en archivo: {str(e)}",
-                usuario=request.user,
-                detalles={
-                    "archivo_nombre": archivo.name,
-                    "error": str(e),
-                    "archivo_size": archivo.size
-                },
-                resultado="error",
-                ip_address=get_client_ip(request)
-            )
-            return Response({"error": str(e)}, status=400)
-        
-        # Crear UploadLog para tracking completo
-        log_mixin = UploadLogNominaMixin()
-        log_mixin.tipo_upload = "movimientos_mes"
-        log_mixin.usuario = request.user
-        log_mixin.ip_usuario = get_client_ip(request)
-        
-        upload_log = log_mixin.crear_upload_log(cliente, archivo)
-        upload_log.cierre = cierre
-        upload_log.save()
-        
-        logger.info(f"UploadLog creado para MovimientosMes con ID: {upload_log.id}")
-        
-        with transaction.atomic():
-            # Crear o actualizar el registro de movimientos
-            movimiento, created = MovimientosMesUpload.objects.get_or_create(
-                cierre=cierre,
-                defaults={
-                    'archivo': archivo,
-                    'estado': 'pendiente',
-                    'upload_log': upload_log  # Conectar con UploadLog
-                }
-            )
-            
-            if not created:
-                # Si ya existe, actualizar el archivo y upload_log
-                movimiento.archivo = archivo
-                movimiento.estado = 'pendiente'
-                movimiento.upload_log = upload_log
-                movimiento.save()
-        
-        # Registrar actividad de subida
-        registrar_actividad_tarjeta_nomina(
-            cierre_id=cierre.id,
-            tarjeta="movimientos_mes",
-            accion="upload_excel",
-            descripcion=f"Archivo {archivo.name} subido para procesamiento",
-            usuario=request.user,
-            detalles={
-                "archivo_nombre": archivo.name,
-                "archivo_size": archivo.size,
-                "upload_log_id": upload_log.id,
-                "movimiento_id": movimiento.id,
-                "es_resubida": not created
-            },
-            ip_address=get_client_ip(request),
-            upload_log=upload_log
-        )
-        
-        # Disparar tarea de procesamiento con Celery
-        procesar_movimientos_mes.delay(movimiento.id, upload_log.id)
-        
-        logger.info(f"Procesamiento iniciado para MovimientosMes {movimiento.id} con UploadLog {upload_log.id}")
-        
-        return Response({
-            "id": movimiento.id,
-            "estado": movimiento.estado,
-            "archivo_nombre": archivo.name,
-            "fecha_subida": movimiento.fecha_subida,
-            "upload_log_id": upload_log.id,
-            "mensaje": "Archivo subido correctamente y enviado a procesamiento"
-        }, status=201)
-
-    def perform_destroy(self, instance):
-        """
-        Eliminar archivo de movimientos del mes y todos sus datos relacionados
-        """
-        from .models_logging import registrar_actividad_tarjeta_nomina
-        from .utils.clientes import get_client_ip
-        from django.db import transaction
-        import logging
-        
-        logger = logging.getLogger(__name__)
-        cierre = instance.cierre
-        
-        # Registrar actividad antes de eliminar
-        registrar_actividad_tarjeta_nomina(
-            cierre_id=cierre.id,
-            tarjeta="movimientos_mes",
-            accion="delete_archivo",
-            descripcion=f"Archivo de movimientos del mes eliminado para resubida",
-            usuario=self.request.user,
-            detalles={
-                "movimiento_id": instance.id,
-                "archivo_nombre": instance.archivo.name if instance.archivo else "N/A",
-                "estado_anterior": instance.estado
-            },
-            ip_address=get_client_ip(self.request)
-        )
-        
-        with transaction.atomic():
-            # Eliminar todos los movimientos relacionados con este cierre
-            cierre.movimientoaltabaja_set.all().delete()
-            cierre.movimientoausentismo_set.all().delete()
-            cierre.movimientovacaciones_set.all().delete()
-            cierre.movimientovariacionsueldo_set.all().delete()
-            cierre.movimientovariacioncontrato_set.all().delete()
-            
-            logger.info(f"Eliminados todos los movimientos del cierre {cierre.id}")
-            
-            # Eliminar el archivo de movimientos
-            instance.delete()
-            logger.info(f"Archivo de movimientos {instance.id} eliminado completamente")
 
 class ArchivoAnalistaUploadViewSet(viewsets.ModelViewSet):
     queryset = ArchivoAnalistaUpload.objects.all()

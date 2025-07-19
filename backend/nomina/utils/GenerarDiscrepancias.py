@@ -196,6 +196,7 @@ def generar_discrepancias_libro_vs_novedades(cierre):
     for rut_norm, emp_novedades in dict_novedades.items():
         if rut_norm not in dict_libro:
             logger.info(f"DISCREPANCIA: Empleado {emp_novedades.nombre} {emp_novedades.apellido_paterno} (RUT: {emp_novedades.rut}) solo en Novedades")
+            
             discrepancias.append(DiscrepanciaCierre(
                 cierre=cierre,
                 tipo_discrepancia=TipoDiscrepancia.EMPLEADO_SOLO_NOVEDADES,
@@ -293,6 +294,7 @@ def _comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades):
             diferencia = abs(reg_libro.monto_numerico - reg_novedades.monto_numerico)
             if diferencia > 0.01:  # Tolerancia de 1 centavo
                 logger.info(f"RUT {emp_libro.rut} - Concepto '{reg_libro.nombre_concepto_original}': discrepancia numérica (Libro: {reg_libro.monto}, Novedades: {reg_novedades.monto}, Diff: {diferencia})")
+                
                 discrepancias.append(DiscrepanciaCierre(
                     cierre=cierre,
                     tipo_discrepancia=TipoDiscrepancia.DIFERENCIA_CONCEPTO_MONTO,
@@ -307,6 +309,7 @@ def _comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades):
         elif str(reg_libro.monto) != str(reg_novedades.monto):
             # Si no son numéricos, comparar como texto
             logger.info(f"RUT {emp_libro.rut} - Concepto '{reg_libro.nombre_concepto_original}': discrepancia textual (Libro: '{reg_libro.monto}', Novedades: '{reg_novedades.monto}')")
+            
             discrepancias.append(DiscrepanciaCierre(
                 cierre=cierre,
                 tipo_discrepancia=TipoDiscrepancia.DIFERENCIA_CONCEPTO_MONTO,

@@ -411,10 +411,9 @@ class DiscrepanciaCierreSerializer(serializers.ModelSerializer):
             'empleado_libro', 'empleado_novedades', 'rut_empleado',
             'descripcion', 'valor_libro', 'valor_novedades', 
             'valor_movimientos', 'valor_analista', 'concepto_afectado',
-            'fecha_detectada', 'empleado_libro_nombre', 'empleado_novedades_nombre',
+            'empleado_libro_nombre', 'empleado_novedades_nombre',
             'grupo_discrepancia'
         ]
-        read_only_fields = ['fecha_detectada']
     
     def get_empleado_libro_nombre(self, obj):
         """Obtiene el nombre completo del empleado del libro"""

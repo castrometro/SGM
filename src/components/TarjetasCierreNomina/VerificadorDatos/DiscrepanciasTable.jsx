@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { AlertTriangle, Calendar, User, FileText, Eye } from "lucide-react";
+import { AlertTriangle, User, FileText, Eye } from "lucide-react";
 import { obtenerDiscrepanciasCierre } from "../../../api/nomina";
 
 const DiscrepanciasTable = ({ cierreId, filtros }) => {
@@ -143,12 +143,6 @@ const DiscrepanciasTable = ({ cierreId, filtros }) => {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                 Descripción
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                Detalles
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                Fecha Detección
-              </th>
             </tr>
           </thead>
           <tbody className="bg-gray-800 divide-y divide-gray-700">
@@ -227,26 +221,6 @@ const DiscrepanciasTable = ({ cierreId, filtros }) => {
                       )}
                     </div>
                   )}
-                </td>
-                <td className="px-6 py-4">
-                  <div className="text-sm text-gray-300">
-                    {discrepancia.detalles && (
-                      <div className="bg-gray-900 rounded p-2 mt-1">
-                        <pre className="text-xs whitespace-pre-wrap overflow-x-auto">
-                          {typeof discrepancia.detalles === 'string' 
-                            ? discrepancia.detalles 
-                            : JSON.stringify(discrepancia.detalles, null, 2)
-                          }
-                        </pre>
-                      </div>
-                    )}
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center text-sm text-gray-400">
-                    <Calendar className="w-4 h-4 mr-2" />
-                    {formatearFecha(discrepancia.fecha_creacion)}
-                  </div>
                 </td>
               </tr>
             ))}

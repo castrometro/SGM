@@ -133,7 +133,17 @@ const VerificadorDatosSection = ({ cierre }) => {
   };
 
   const puedeGenerarDiscrepancias = () => {
-    return cierre?.estado === 'archivos_completos' || cierre?.estado === 'completado';
+    return cierre?.estado === 'archivos_completos' || cierre?.estado === 'verificacion_datos';
+  };
+
+  const mostrarMensajeRestriccion = () => {
+    // Solo mostrar el mensaje si el estado no permite generar discrepancias Y aún no se han generado
+    const estadosQueNoPermiten = !puedeGenerarDiscrepancias();
+    const estadosQueYaTienenDatos = cierre?.estado === 'con_discrepancias' || 
+                                    cierre?.estado === 'verificado_sin_discrepancias' || 
+                                    cierre?.estado === 'completado';
+    
+    return estadosQueNoPermiten && !estadosQueYaTienenDatos;
   };
 
   const obtenerColorEstado = () => {
@@ -280,7 +290,7 @@ const VerificadorDatosSection = ({ cierre }) => {
             </div>
 
             {/* Mensaje de restricción si aplica */}
-            {!puedeGenerarDiscrepancias() && (
+            {mostrarMensajeRestriccion() && (
               <div className="mt-4 p-3 bg-yellow-900/20 border border-yellow-500/30 rounded-lg">
                 <div className="flex items-center gap-2 text-yellow-400 text-sm">
                   <AlertTriangle className="w-4 h-4" />

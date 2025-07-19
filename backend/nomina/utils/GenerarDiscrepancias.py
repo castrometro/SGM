@@ -114,20 +114,20 @@ def generar_discrepancias_libro_vs_novedades(cierre):
     dict_libro = {normalizar_rut(emp.rut): emp for emp in empleados_libro}
     dict_novedades = {normalizar_rut(emp.rut): emp for emp in empleados_novedades}
     
-    # 1. Empleados solo en Libro
-    for rut_norm, emp_libro in dict_libro.items():
-        if rut_norm not in dict_novedades:
-            discrepancias.append(DiscrepanciaCierre(
-                cierre=cierre,
-                tipo_discrepancia=TipoDiscrepancia.EMPLEADO_SOLO_LIBRO,
-                empleado_libro=emp_libro,
-                rut_empleado=emp_libro.rut,
-                descripcion=f"Empleado {emp_libro.nombre} {emp_libro.apellido_paterno} (RUT: {emp_libro.rut}) aparece solo en Libro de Remuneraciones",
-                valor_libro=f"{emp_libro.nombre} {emp_libro.apellido_paterno}",
-                valor_novedades="No encontrado"
-            ))
+    # OMITIDO: 1. Empleados solo en Libro (normal, no es error)
+    # for rut_norm, emp_libro in dict_libro.items():
+    #     if rut_norm not in dict_novedades:
+    #         discrepancias.append(DiscrepanciaCierre(
+    #             cierre=cierre,
+    #             tipo_discrepancia=TipoDiscrepancia.EMPLEADO_SOLO_LIBRO,
+    #             empleado_libro=emp_libro,
+    #             rut_empleado=emp_libro.rut,
+    #             descripcion=f"Empleado {emp_libro.nombre} {emp_libro.apellido_paterno} (RUT: {emp_libro.rut}) aparece solo en Libro de Remuneraciones",
+    #             valor_libro=f"{emp_libro.nombre} {emp_libro.apellido_paterno}",
+    #             valor_novedades="No encontrado"
+    #         ))
     
-    # 2. Empleados solo en Novedades
+    # 2. Empleados solo en Novedades (SÍ es relevante - empleado con novedad pero sin remuneración base)
     for rut_norm, emp_novedades in dict_novedades.items():
         if rut_norm not in dict_libro:
             discrepancias.append(DiscrepanciaCierre(
@@ -140,16 +140,16 @@ def generar_discrepancias_libro_vs_novedades(cierre):
                 valor_novedades=f"{emp_novedades.nombre} {emp_novedades.apellido_paterno}"
             ))
     
-    # 3. Empleados en ambos - comparar datos
+    # 3. Empleados en ambos - comparar solo montos (omitir datos personales y conceptos únicos)
     for rut_norm in dict_libro.keys() & dict_novedades.keys():
         emp_libro = dict_libro[rut_norm]
         emp_novedades = dict_novedades[rut_norm]
         
-        # Comparar datos personales
-        discrepancias.extend(_comparar_datos_personales(cierre, emp_libro, emp_novedades))
+        # OMITIDO: Comparar datos personales (diferencias menores normales)
+        # discrepancias.extend(_comparar_datos_personales(cierre, emp_libro, emp_novedades))
         
-        # Comparar conceptos y montos
-        discrepancias.extend(_comparar_conceptos_empleado(cierre, emp_libro, emp_novedades))
+        # Solo comparar diferencias en montos de conceptos comunes
+        discrepancias.extend(_comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades))
     
     logger.info(f"Generadas {len(discrepancias)} discrepancias Libro vs Novedades")
     return discrepancias
@@ -176,8 +176,8 @@ def _comparar_datos_personales(cierre, emp_libro, emp_novedades):
     
     return discrepancias
 
-def _comparar_conceptos_empleado(cierre, emp_libro, emp_novedades):
-    """Compara conceptos y montos entre empleados del libro y novedades"""
+def _comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades):
+    """Compara solo diferencias en montos de conceptos comunes entre libro y novedades"""
     discrepancias = []
     
     # Obtener registros de conceptos
@@ -188,37 +188,10 @@ def _comparar_conceptos_empleado(cierre, emp_libro, emp_novedades):
     dict_libro = {normalizar_texto(reg.nombre_concepto_original): reg for reg in registros_libro}
     dict_novedades = {normalizar_texto(reg.nombre_concepto_original): reg for reg in registros_novedades}
     
-    # Conceptos solo en Libro
-    for concepto_norm, reg_libro in dict_libro.items():
-        if concepto_norm not in dict_novedades:
-            discrepancias.append(DiscrepanciaCierre(
-                cierre=cierre,
-                tipo_discrepancia=TipoDiscrepancia.CONCEPTO_SOLO_LIBRO,
-                empleado_libro=emp_libro,
-                empleado_novedades=emp_novedades,
-                rut_empleado=emp_libro.rut,
-                descripcion=f"Concepto '{reg_libro.nombre_concepto_original}' aparece solo en Libro para RUT {emp_libro.rut}",
-                valor_libro=f"{reg_libro.nombre_concepto_original}: {reg_libro.monto}",
-                valor_novedades="No encontrado",
-                concepto_afectado=reg_libro.nombre_concepto_original
-            ))
+    # OMITIDO: Conceptos solo en Libro (normal, no es error)
+    # OMITIDO: Conceptos solo en Novedades (normal, comportamiento esperado)
     
-    # Conceptos solo en Novedades
-    for concepto_norm, reg_novedades in dict_novedades.items():
-        if concepto_norm not in dict_libro:
-            discrepancias.append(DiscrepanciaCierre(
-                cierre=cierre,
-                tipo_discrepancia=TipoDiscrepancia.CONCEPTO_SOLO_NOVEDADES,
-                empleado_libro=emp_libro,
-                empleado_novedades=emp_novedades,
-                rut_empleado=emp_libro.rut,
-                descripcion=f"Concepto '{reg_novedades.nombre_concepto_original}' aparece solo en Novedades para RUT {emp_libro.rut}",
-                valor_libro="No encontrado",
-                valor_novedades=f"{reg_novedades.nombre_concepto_original}: {reg_novedades.monto}",
-                concepto_afectado=reg_novedades.nombre_concepto_original
-            ))
-    
-    # Conceptos en ambos - comparar montos
+    # Solo comparar montos de conceptos que aparecen en ambos archivos
     for concepto_norm in dict_libro.keys() & dict_novedades.keys():
         reg_libro = dict_libro[concepto_norm]
         reg_novedades = dict_novedades[concepto_norm]
@@ -414,10 +387,14 @@ def obtener_resumen_discrepancias(cierre):
                 'label': tipo.label
             }
     
-    # Conteo por grupo
+    # Conteo por grupo (actualizado después de omitir tipos no relevantes)
     libro_vs_novedades = [
-        'empleado_solo_libro', 'empleado_solo_novedades', 'diff_datos_personales',
-        'diff_sueldo_base', 'diff_concepto_monto', 'concepto_solo_libro', 'concepto_solo_novedades'
+        'empleado_solo_novedades',  # Omitido: empleado_solo_libro (normal)
+        # Omitido: diff_datos_personales (diferencias menores normales)
+        'diff_sueldo_base', 
+        'diff_concepto_monto'
+        # Omitido: concepto_solo_libro (normal)
+        # Omitido: concepto_solo_novedades (comportamiento esperado)
     ]
     
     total_libro_vs_novedades = discrepancias.filter(tipo_discrepancia__in=libro_vs_novedades).count()

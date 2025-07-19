@@ -996,6 +996,10 @@ def generar_discrepancias_cierre_task(cierre_id):
     try:
         cierre = CierreNomina.objects.get(id=cierre_id)
         
+        # Cambiar estado a verificacion_datos al iniciar
+        cierre.estado = 'verificacion_datos'
+        cierre.save(update_fields=['estado'])
+        
         # Verificar que el cierre tenga los archivos necesarios procesados
         if not _verificar_archivos_listos_para_discrepancias(cierre):
             raise ValueError("No todos los archivos están procesados para generar discrepancias")
@@ -1009,10 +1013,10 @@ def generar_discrepancias_cierre_task(cierre_id):
         # Actualizar estado del cierre
         if resultado['total_discrepancias'] == 0:
             # Sin discrepancias - datos verificados
-            cierre.estado = 'validacion_conceptos'
+            cierre.estado = 'verificado_sin_discrepancias'
         else:
             # Con discrepancias - requiere corrección
-            cierre.estado = 'revision_incidencias'
+            cierre.estado = 'con_discrepancias'
         
         cierre.save(update_fields=['estado'])
         
@@ -1023,7 +1027,7 @@ def generar_discrepancias_cierre_task(cierre_id):
         logger.error(f"Error generando discrepancias para cierre {cierre_id}: {e}")
         try:
             cierre = CierreNomina.objects.get(id=cierre_id)
-            cierre.estado = 'revision_inicial'  # Volver al estado anterior
+            cierre.estado = 'archivos_completos'  # Volver al estado anterior correcto
             cierre.save(update_fields=['estado'])
         except:
             pass

@@ -18,7 +18,6 @@ User = get_user_model()
 from .models import (
     CierreNomina,
     LibroRemuneracionesUpload,
-    ArchivoAnalistaUpload,
     ArchivoNovedadesUpload,
     ChecklistItem,
     ConceptoRemuneracion,
@@ -39,7 +38,6 @@ from .models import (
 from .serializers import (
     CierreNominaSerializer, 
     LibroRemuneracionesUploadSerializer, 
-    ArchivoAnalistaUploadSerializer, 
     ArchivoNovedadesUploadSerializer, 
     CierreNominaCreateSerializer, 
     ChecklistItemUpdateSerializer, 
@@ -871,125 +869,6 @@ def eliminar_concepto_remuneracion(request, cliente_id, nombre_concepto):
 
 # ViewSets existentes
 
-class ArchivoAnalistaUploadViewSet(viewsets.ModelViewSet):
-    queryset = ArchivoAnalistaUpload.objects.all()
-    serializer_class = ArchivoAnalistaUploadSerializer
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        cierre_id = self.request.query_params.get('cierre')
-        tipo_archivo = self.request.query_params.get('tipo_archivo')
-        if cierre_id:
-            queryset = queryset.filter(cierre_id=cierre_id)
-        if tipo_archivo:
-            queryset = queryset.filter(tipo_archivo=tipo_archivo)
-        return queryset
-    
-    @action(detail=False, methods=['post'], url_path='subir/(?P<cierre_id>[^/.]+)/(?P<tipo_archivo>[^/.]+)')
-    def subir(self, request, cierre_id=None, tipo_archivo=None):
-        """Sube un archivo del analista para un cierre específico"""
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        # Validar tipo de archivo
-        tipos_validos = ['finiquitos', 'incidencias', 'ingresos']
-        if tipo_archivo not in tipos_validos:
-            return Response({"error": f"Tipo de archivo inválido. Debe ser uno de: {', '.join(tipos_validos)}"}, status=400)
-        
-        archivo = request.FILES.get('archivo')
-        if not archivo:
-            return Response({"error": "No se proporcionó archivo"}, status=400)
-        
-        # Validar que sea un archivo Excel
-        if not archivo.name.endswith(('.xlsx', '.xls')):
-            return Response({"error": "El archivo debe ser de tipo Excel (.xlsx o .xls)"}, status=400)
-        
-        # Crear el registro del archivo
-        archivo_analista = ArchivoAnalistaUpload.objects.create(
-            cierre=cierre,
-            tipo_archivo=tipo_archivo,
-            archivo=archivo,
-            analista=request.user,
-            estado='pendiente'
-        )
-        
-        # Disparar tarea de procesamiento con Celery
-        procesar_archivo_analista.delay(archivo_analista.id)
-        
-        return Response({
-            "id": archivo_analista.id,
-            "tipo_archivo": archivo_analista.tipo_archivo,
-            "estado": archivo_analista.estado,
-            "archivo_nombre": archivo.name,
-            "fecha_subida": archivo_analista.fecha_subida,
-            "mensaje": "Archivo subido correctamente y enviado a procesamiento"
-        }, status=201)
-    
-    @action(detail=True, methods=['post'])
-    def reprocesar(self, request, pk=None):
-        """Reprocesa un archivo del analista"""
-        archivo = self.get_object()
-        
-        # Reiniciar estado
-        archivo.estado = 'pendiente'
-        archivo.save()
-        
-        # Disparar tarea de procesamiento
-        procesar_archivo_analista.delay(archivo.id)
-        
-        return Response({
-            "mensaje": "Archivo enviado a reprocesamiento",
-            "estado": archivo.estado
-        })
-
-    def perform_destroy(self, instance):
-        """
-        Eliminar archivo del analista y todos sus datos relacionados
-        """
-        from .models_logging import registrar_actividad_tarjeta_nomina
-        from .utils.clientes import get_client_ip
-        from django.db import transaction
-        import logging
-        
-        logger = logging.getLogger(__name__)
-        cierre = instance.cierre
-        tipo = instance.tipo_archivo
-        
-        # Registrar actividad antes de eliminar
-        registrar_actividad_tarjeta_nomina(
-            cierre_id=cierre.id,
-            tarjeta=f"archivo_analista_{tipo}",
-            accion="delete_archivo",
-            descripcion=f"Archivo del analista ({tipo}) eliminado para resubida",
-            usuario=self.request.user,
-            detalles={
-                "archivo_id": instance.id,
-                "tipo_archivo": tipo,
-                "archivo_nombre": instance.archivo.name if instance.archivo else "N/A",
-                "estado_anterior": instance.estado
-            },
-            ip_address=get_client_ip(self.request)
-        )
-        
-        with transaction.atomic():
-            # Contar registros antes de eliminar para logging
-            if tipo == 'finiquitos':
-                count = instance.analistafiniquito_set.count()
-                logger.info(f"Eliminando {count} registros de finiquitos")
-            elif tipo == 'incidencias':
-                count = instance.analistaincidencia_set.count()
-                logger.info(f"Eliminando {count} registros de incidencias")
-            elif tipo == 'ingresos':
-                count = instance.analistaingreso_set.count()
-                logger.info(f"Eliminando {count} registros de ingresos")
-            
-            # El CASCADE automáticamente eliminará los registros relacionados
-            # pero lo hacemos explícito para claridad
-            instance.delete()
-            logger.info(f"Archivo del analista {instance.id} ({tipo}) eliminado completamente")
-
 class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
     queryset = ArchivoNovedadesUpload.objects.all()
     serializer_class = ArchivoNovedadesUploadSerializer
@@ -1690,9 +1569,9 @@ class CierreNominaIncidenciasViewSet(viewsets.ViewSet):
             return Response({"error": "Cierre no encontrado"}, status=404)
         
         # Verificar que el cierre esté en estado adecuado
-        if cierre.estado not in ['revision_inicial', 'validacion_conceptos', 'completado']:
+        if cierre.estado not in ['verificacion_datos', 'verificado_sin_discrepancias', 'con_discrepancias', 'completado']:
             return Response({
-                "error": "El cierre debe estar en estado 'revision_inicial', 'validacion_conceptos' o 'completado' para generar incidencias"
+                "error": f"El cierre debe estar en estado válido para generar incidencias. Estado actual: '{cierre.estado}'"
             }, status=400)
         
         # Lanzar tarea
@@ -1898,9 +1777,9 @@ class DiscrepanciaCierreViewSet(viewsets.ModelViewSet):
             return Response({"error": "Usuario no autenticado"}, status=401)
         
         # Verificar que el cierre esté en estado adecuado
-        if cierre.estado not in ['revision_inicial']:
+        if cierre.estado not in ['archivos_completos', 'verificacion_datos']:
             return Response({
-                "error": "El cierre debe estar en estado 'revision_inicial' para generar discrepancias"
+                "error": f"El cierre debe estar en estado 'archivos_completos' o 'verificacion_datos' para generar discrepancias. Estado actual: '{cierre.estado}'"
             }, status=400)
         
         # Lanzar tarea de generación de discrepancias

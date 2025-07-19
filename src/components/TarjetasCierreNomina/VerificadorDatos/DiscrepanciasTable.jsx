@@ -172,10 +172,10 @@ const DiscrepanciasTable = ({ cierreId, filtros }) => {
                     <User className="w-4 h-4 text-gray-400 mr-2" />
                     <div>
                       <div className="text-sm text-white">
-                        {discrepancia.empleado_nombre || '-'}
+                        {discrepancia.empleado_libro_nombre || discrepancia.empleado_novedades_nombre || 'Sin nombre'}
                       </div>
                       <div className="text-xs text-gray-400">
-                        {discrepancia.empleado_rut || '-'}
+                        RUT: {discrepancia.rut_empleado || '-'}
                       </div>
                     </div>
                   </div>
@@ -184,9 +184,47 @@ const DiscrepanciasTable = ({ cierreId, filtros }) => {
                   <div className="text-sm text-gray-300">
                     {discrepancia.descripcion}
                   </div>
-                  {discrepancia.concepto_codigo && (
+                  
+                  {/* Concepto afectado */}
+                  {discrepancia.concepto_afectado && (
                     <div className="text-xs text-blue-400 mt-1">
-                      Concepto: {discrepancia.concepto_codigo}
+                      <span className="font-medium">Concepto:</span> {discrepancia.concepto_afectado}
+                    </div>
+                  )}
+                  
+                  {/* Valores comparados - Para discrepancias Libro vs Novedades */}
+                  {(discrepancia.valor_libro || discrepancia.valor_novedades) && (
+                    <div className="mt-2 space-y-1">
+                      {discrepancia.valor_libro && (
+                        <div className="text-xs">
+                          <span className="font-medium text-blue-300">📚 Libro:</span> 
+                          <span className="text-gray-300 ml-2">{discrepancia.valor_libro}</span>
+                        </div>
+                      )}
+                      {discrepancia.valor_novedades && (
+                        <div className="text-xs">
+                          <span className="font-medium text-green-300">📝 Novedades:</span>
+                          <span className="text-gray-300 ml-2">{discrepancia.valor_novedades}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Valores comparados - Para discrepancias MovimientosMes vs Analista */}
+                  {(discrepancia.valor_movimientos || discrepancia.valor_analista) && (
+                    <div className="mt-2 space-y-1">
+                      {discrepancia.valor_movimientos && (
+                        <div className="text-xs">
+                          <span className="font-medium text-purple-300">📊 MovimientosMes:</span>
+                          <span className="text-gray-300 ml-2">{discrepancia.valor_movimientos}</span>
+                        </div>
+                      )}
+                      {discrepancia.valor_analista && (
+                        <div className="text-xs">
+                          <span className="font-medium text-yellow-300">👥 Analista:</span>
+                          <span className="text-gray-300 ml-2">{discrepancia.valor_analista}</span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </td>

@@ -1,8 +1,6 @@
 from rest_framework import routers
 from .views import (
     CierreNominaViewSet,
-    ArchivoAnalistaUploadViewSet,
-    ArchivoNovedadesUploadViewSet,
     ChecklistItemViewSet,
     conceptos_remuneracion_por_cliente,
     conceptos_remuneracion_por_cierre,
@@ -10,6 +8,13 @@ from .views import (
     ConceptoRemuneracionBatchView,
     eliminar_concepto_remuneracion,
     obtener_estado_upload_log_nomina,
+)
+
+# Importar ViewSets de archivos específicos desde sus módulos dedicados
+from .views_archivos_analista import ArchivoAnalistaUploadViewSet, cargar_archivo_analista_con_logging
+from .views_archivos_novedades import ArchivoNovedadesUploadViewSet
+
+from .views import (
     # ViewSets para modelos del Analista
     AnalistaFiniquitoViewSet,
     AnalistaIncidenciaViewSet,

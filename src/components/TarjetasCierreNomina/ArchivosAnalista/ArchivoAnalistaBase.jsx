@@ -24,9 +24,10 @@ const ArchivoAnalistaBase = ({
   const isProcesando = estado === "en_proceso" || estado === "procesando";
   const isDisabled = disabled || subiendo || isProcesando;
   const isProcessed = estado === "procesado" || estado === "procesado_parcial";
+  const hasError = estado === "con_error";
   
   const puedeSubirArchivo = !isDisabled && 
-    (estado === "no_subido" || estado === "pendiente" || estado === "con_error");
+    (estado === "no_subido" || estado === "pendiente");
   
   const estadosConArchivoBloqueado = ["en_proceso", "procesando", "procesado"];
   const archivoEsBloqueado = estadosConArchivoBloqueado.includes(estado);
@@ -98,6 +99,28 @@ const ArchivoAnalistaBase = ({
           >
             {isProcesando ? "Procesando..." : subiendo ? "Subiendo..." : "Elegir archivo .xlsx"}
           </button>
+        ) : hasError ? (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={true}
+              className="bg-red-600 px-3 py-1 rounded text-sm font-medium cursor-not-allowed opacity-60 flex-1"
+              title="El archivo tuvo errores durante el procesamiento"
+            >
+              Archivo con error
+            </button>
+            {archivo?.id && onEliminarArchivo && (
+              <button
+                type="button"
+                onClick={handleEliminarArchivo}
+                disabled={eliminando}
+                className="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm font-medium transition"
+                title="Eliminar archivo actual para permitir subir uno nuevo"
+              >
+                {eliminando ? "Eliminando..." : "Resubir"}
+              </button>
+            )}
+          </div>
         ) : (
           <div className="flex gap-2">
             <button
@@ -108,15 +131,6 @@ const ArchivoAnalistaBase = ({
             >
               Archivo bloqueado
             </button>
-            {estado === "con_error" && archivo?.id && onReprocesar && (
-              <button
-                type="button"
-                onClick={() => onReprocesar()}
-                className="bg-yellow-600 hover:bg-yellow-500 px-3 py-1 rounded text-sm font-medium transition"
-              >
-                Reprocesar
-              </button>
-            )}
             {isProcessed && archivo?.id && onEliminarArchivo && (
               <button
                 type="button"

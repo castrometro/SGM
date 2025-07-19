@@ -31,7 +31,12 @@ const CierreDetalleNomina = () => {
   return (
     <>
       <div className="mb-6">
-        <CierreInfoBar cierre={cierre} cliente={cliente} />
+        <CierreInfoBar 
+          cierre={cierre} 
+          cliente={cliente}
+          onCierreActualizado={setCierre}
+          tipoModulo="nomina"
+        />
       </div>
       <CierreProgresoNomina
         cierre={cierre}

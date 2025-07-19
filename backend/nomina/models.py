@@ -50,7 +50,7 @@ class CierreNomina(models.Model):
             ('archivos_completos', 'Archivos Completos'),
             ('verificacion_datos', 'Verificación de Datos'),
             ('verificado_sin_discrepancias', 'Verificado Sin Discrepancias'),
-            ('incidencias_generadas', 'Incidencias Generadas'),
+            ('con_discrepancias', 'Con Discrepancias'),
             ('incidencias_resueltas', 'Incidencias Resueltas'),
             ('validacion_final', 'Validación Final'),
             ('completado', 'Completado'),

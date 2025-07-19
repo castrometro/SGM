@@ -7,6 +7,7 @@ from nomina.models import (
     EmpleadoCierreNovedades, 
     RegistroConceptoEmpleadoNovedades
 )
+from .LibroRemuneraciones import _es_rut_valido
 
 logger = logging.getLogger(__name__)
 
@@ -82,15 +83,20 @@ def actualizar_empleados_desde_novedades(archivo_novedades):
     cierre = archivo_novedades.cierre
     primera_col = df.columns[0]
     count = 0
+    filas_ignoradas = 0
     
     for _, row in df.iterrows():
         if not str(row.get(primera_col, "")).strip():
             continue
         
-        rut = str(row.get(rut_col, "")).strip()
-        if not rut:
+        # NUEVA VALIDACIÓN: Ignorar filas con RUT inválido (NaN, vacío, "total", etc.)
+        rut_raw = row.get(rut_col)
+        if not _es_rut_valido(rut_raw):
+            filas_ignoradas += 1
+            logger.debug(f"Fila ignorada por RUT inválido en novedades: '{rut_raw}' (posible fila de totales de Talana)")
             continue
-            
+        
+        rut = str(rut_raw).strip()
         defaults = {
             "nombre": str(row.get(nombre_col, "")).strip(),
             "apellido_paterno": str(row.get(apellido_pat_col, "")).strip(),
@@ -103,6 +109,9 @@ def actualizar_empleados_desde_novedades(archivo_novedades):
             defaults=defaults,
         )
         count += 1
+    
+    if filas_ignoradas > 0:
+        logger.info(f"Se ignoraron {filas_ignoradas} filas con RUT inválido en novedades (posibles totales de Talana)")
     
     logger.info(f"Actualizados {count} empleados desde archivo novedades {archivo_novedades.id}")
     return count
@@ -133,15 +142,20 @@ def guardar_registros_novedades(archivo_novedades):
 
     primera_col = df.columns[0]
     count = 0
+    filas_ignoradas = 0
     
     for _, row in df.iterrows():
         if not str(row.get(primera_col, "")).strip():
             continue
             
-        rut = str(row.get(rut_col, "")).strip()
-        if not rut:
+        # NUEVA VALIDACIÓN: Ignorar filas con RUT inválido (NaN, vacío, "total", etc.)
+        rut_raw = row.get(rut_col)
+        if not _es_rut_valido(rut_raw):
+            filas_ignoradas += 1
+            logger.debug(f"Fila ignorada por RUT inválido en novedades: '{rut_raw}' (posible fila de totales de Talana)")
             continue
             
+        rut = str(rut_raw).strip()
         empleado = EmpleadoCierreNovedades.objects.filter(
             cierre=archivo_novedades.cierre, rut=rut
         ).first()
@@ -180,6 +194,9 @@ def guardar_registros_novedades(archivo_novedades):
                 logger.error(f"Valor problemático: {row.get(h)}")
                 raise
         count += 1
+    
+    if filas_ignoradas > 0:
+        logger.info(f"Se ignoraron {filas_ignoradas} filas con RUT inválido en novedades (posibles totales de Talana)")
 
     logger.info(f"Registros novedades guardados desde archivo {archivo_novedades.id}: {count}")
     return count

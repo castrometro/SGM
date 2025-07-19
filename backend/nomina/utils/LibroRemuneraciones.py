@@ -5,6 +5,40 @@ from nomina.models import ConceptoRemuneracion, LibroRemuneracionesUpload, Emple
 
 logger = logging.getLogger(__name__)
 
+def _es_rut_valido(valor_rut):
+    """
+    Determina si un valor de RUT es válido para procesamiento.
+    Retorna False para valores NaN, vacíos, o palabras como "total" que usa Talana.
+    """
+    if valor_rut is None:
+        return False
+    
+    # Verificar si es NaN de pandas
+    if pd.isna(valor_rut):
+        return False
+    
+    # Convertir a string y limpiar
+    rut_str = str(valor_rut).strip().lower()
+    
+    # Verificar si está vacío
+    if not rut_str:
+        return False
+    
+    # Verificar si es "nan" como string
+    if rut_str == "nan":
+        return False
+    
+    # Verificar palabras típicas de filas de totales que usa Talana
+    palabras_invalidas = [
+        "total", "totales", "suma", "sumatoria", 
+        "resumen", "consolidado", "subtotal"
+    ]
+    
+    if rut_str in palabras_invalidas:
+        return False
+    
+    return True
+
 def obtener_headers_libro_remuneraciones(path_archivo):
     """Obtiene los encabezados de un libro de remuneraciones.
 
@@ -94,11 +128,20 @@ def actualizar_empleados_desde_libro_util(libro):
     cierre = libro.cierre
     primera_col = df.columns[0]
     count = 0
+    filas_ignoradas = 0
     
     for _, row in df.iterrows():
         if not str(row.get(primera_col, "")).strip():
             continue
-        rut = str(row.get(expected["rut_trabajador"], "")).strip()
+        
+        # NUEVA VALIDACIÓN: Ignorar filas con RUT inválido (NaN, vacío, "total", etc.)
+        rut_raw = row.get(expected["rut_trabajador"])
+        if not _es_rut_valido(rut_raw):
+            filas_ignoradas += 1
+            logger.debug(f"Fila ignorada por RUT inválido: '{rut_raw}' (posible fila de totales de Talana)")
+            continue
+        
+        rut = str(rut_raw).strip()
         defaults = {
             "rut_empresa": str(row.get(expected["rut_empresa"], "")).strip(),
             "nombre": str(row.get(expected["nombre"], "")).strip(),
@@ -111,6 +154,9 @@ def actualizar_empleados_desde_libro_util(libro):
             defaults=defaults,
         )
         count += 1
+    
+    if filas_ignoradas > 0:
+        logger.info(f"Se ignoraron {filas_ignoradas} filas con RUT inválido (posibles totales de Talana)")
     
     logger.info(f"Actualizados {count} empleados desde libro {libro.id}")
     return count
@@ -148,11 +194,20 @@ def guardar_registros_nomina_util(libro):
 
     primera_col = df.columns[0]
     count = 0
+    filas_ignoradas = 0
     
     for _, row in df.iterrows():
         if not str(row.get(primera_col, "")).strip():
             continue
-        rut = str(row.get(expected["rut_trabajador"], "")).strip()
+        
+        # NUEVA VALIDACIÓN: Ignorar filas con RUT inválido (NaN, vacío, "total", etc.)
+        rut_raw = row.get(expected["rut_trabajador"])
+        if not _es_rut_valido(rut_raw):
+            filas_ignoradas += 1
+            logger.debug(f"Fila ignorada por RUT inválido: '{rut_raw}' (posible fila de totales de Talana)")
+            continue
+            
+        rut = str(rut_raw).strip()
         empleado = EmpleadoCierre.objects.filter(
             cierre=libro.cierre, rut=rut
         ).first()
@@ -187,6 +242,9 @@ def guardar_registros_nomina_util(libro):
                 logger.error(f"Valor problemático: {row.get(h)}")
                 raise
         count += 1
+    
+    if filas_ignoradas > 0:
+        logger.info(f"Se ignoraron {filas_ignoradas} filas con RUT inválido (posibles totales de Talana)")
 
     logger.info(f"Registros nómina guardados desde libro {libro.id}: {count}")
     return count

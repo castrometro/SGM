@@ -66,6 +66,55 @@ def ruts_son_equivalentes(rut1, rut2):
     """Compara si dos RUTs son equivalentes después de normalización"""
     return normalizar_rut(rut1) == normalizar_rut(rut2)
 
+def _es_valor_vacio(valor):
+    """
+    Determina si un valor representa "vacío" o "sin novedad"
+    Casos considerados vacíos:
+    - None
+    - String vacío o solo espacios  
+    - Cero (numérico)
+    - Strings que representan cero: "0", "0.0", "0,0"
+    - Guiones o caracteres placeholder: "-", "N/A", "n/a", "NULL"
+    """
+    if valor is None:
+        return True
+    
+    # Convertir a string y limpiar
+    valor_str = str(valor).strip()
+    
+    if not valor_str:  # String vacío
+        return True
+    
+    # Normalizar para comparación
+    valor_lower = valor_str.lower()
+    
+    # Patrones que indican "sin valor" o "sin novedad"
+    patrones_vacios = [
+        '',           # vacío
+        '-',          # guión
+        'n/a',        # not available
+        'null',       # null explícito
+        'none',       # none explícito
+        '0',          # cero como string
+        '0.0',        # cero decimal
+        '0,0',        # cero con coma decimal
+        '0.00',       # cero con dos decimales
+        '0,00',       # cero con coma y dos decimales
+    ]
+    
+    if valor_lower in patrones_vacios:
+        return True
+    
+    # Verificar si es cero numérico
+    try:
+        valor_num = float(valor_str.replace(',', '.'))  # Manejar comas decimales
+        if valor_num == 0:
+            return True
+    except (ValueError, TypeError):
+        pass  # No es numérico, continuar
+    
+    return False
+
 def generar_todas_discrepancias(cierre):
     """Función principal para generar todas las discrepancias de un cierre"""
     logger.info(f"Iniciando generación de discrepancias para cierre {cierre.id}")
@@ -101,7 +150,14 @@ def generar_todas_discrepancias(cierre):
         raise
 
 def generar_discrepancias_libro_vs_novedades(cierre):
-    """Genera discrepancias comparando Libro de Remuneraciones vs Novedades"""
+    """
+    Genera discrepancias comparando Libro de Remuneraciones vs Novedades
+    
+    OPTIMIZACIÓN IMPLEMENTADA:
+    - Solo genera discrepancias para casos críticos y accionables
+    - Omite conceptos donde novedades tiene valores vacíos (sin novedad real)
+    - Enfocado en diferencias reales que requieren acción
+    """
     discrepancias = []
     
     logger.info(f"Generando discrepancias Libro vs Novedades para cierre {cierre.id}")
@@ -113,6 +169,15 @@ def generar_discrepancias_libro_vs_novedades(cierre):
     # Crear diccionarios por RUT normalizado
     dict_libro = {normalizar_rut(emp.rut): emp for emp in empleados_libro}
     dict_novedades = {normalizar_rut(emp.rut): emp for emp in empleados_novedades}
+    
+    # Estadísticas para logging
+    total_empleados_libro = len(dict_libro)
+    total_empleados_novedades = len(dict_novedades)
+    empleados_solo_libro = len(dict_libro.keys() - dict_novedades.keys())
+    empleados_solo_novedades = len(dict_novedades.keys() - dict_libro.keys())
+    empleados_comunes = len(dict_libro.keys() & dict_novedades.keys())
+    
+    logger.info(f"Empleados - Libro: {total_empleados_libro}, Novedades: {total_empleados_novedades}, Solo Libro: {empleados_solo_libro}, Solo Novedades: {empleados_solo_novedades}, Comunes: {empleados_comunes}")
     
     # OMITIDO: 1. Empleados solo en Libro (normal, no es error)
     # for rut_norm, emp_libro in dict_libro.items():
@@ -130,6 +195,7 @@ def generar_discrepancias_libro_vs_novedades(cierre):
     # 2. Empleados solo en Novedades (SÍ es relevante - empleado con novedad pero sin remuneración base)
     for rut_norm, emp_novedades in dict_novedades.items():
         if rut_norm not in dict_libro:
+            logger.info(f"DISCREPANCIA: Empleado {emp_novedades.nombre} {emp_novedades.apellido_paterno} (RUT: {emp_novedades.rut}) solo en Novedades")
             discrepancias.append(DiscrepanciaCierre(
                 cierre=cierre,
                 tipo_discrepancia=TipoDiscrepancia.EMPLEADO_SOLO_NOVEDADES,
@@ -141,6 +207,9 @@ def generar_discrepancias_libro_vs_novedades(cierre):
             ))
     
     # 3. Empleados en ambos - comparar solo montos (omitir datos personales y conceptos únicos)
+    conceptos_comparados_total = 0
+    conceptos_omitidos_total = 0
+    
     for rut_norm in dict_libro.keys() & dict_novedades.keys():
         emp_libro = dict_libro[rut_norm]
         emp_novedades = dict_novedades[rut_norm]
@@ -149,9 +218,10 @@ def generar_discrepancias_libro_vs_novedades(cierre):
         # discrepancias.extend(_comparar_datos_personales(cierre, emp_libro, emp_novedades))
         
         # Solo comparar diferencias en montos de conceptos comunes
-        discrepancias.extend(_comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades))
+        discrepancias_conceptos = _comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades)
+        discrepancias.extend(discrepancias_conceptos)
     
-    logger.info(f"Generadas {len(discrepancias)} discrepancias Libro vs Novedades")
+    logger.info(f"Generadas {len(discrepancias)} discrepancias Libro vs Novedades ({empleados_solo_novedades} empleados solo en Novedades, {len(discrepancias) - empleados_solo_novedades} diferencias en conceptos)")
     return discrepancias
 
 def _comparar_datos_personales(cierre, emp_libro, emp_novedades):
@@ -177,7 +247,14 @@ def _comparar_datos_personales(cierre, emp_libro, emp_novedades):
     return discrepancias
 
 def _comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades):
-    """Compara solo diferencias en montos de conceptos comunes entre libro y novedades"""
+    """
+    Compara solo diferencias en montos de conceptos comunes entre libro y novedades
+    
+    LÓGICA ACTUALIZADA: 
+    - Solo compara conceptos que aparecen en AMBOS archivos
+    - OMITE conceptos donde novedades tiene valor vacío (significa "sin novedad")
+    - Solo considera discrepancia cuando hay valores reales diferentes
+    """
     discrepancias = []
     
     # Obtener registros de conceptos
@@ -188,6 +265,13 @@ def _comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades):
     dict_libro = {normalizar_texto(reg.nombre_concepto_original): reg for reg in registros_libro}
     dict_novedades = {normalizar_texto(reg.nombre_concepto_original): reg for reg in registros_novedades}
     
+    # Estadísticas para logging
+    conceptos_comunes = len(dict_libro.keys() & dict_novedades.keys())
+    conceptos_omitidos_sin_novedad = 0
+    conceptos_comparados = 0
+    
+    logger.debug(f"RUT {emp_libro.rut}: {conceptos_comunes} conceptos comunes entre Libro y Novedades")
+    
     # OMITIDO: Conceptos solo en Libro (normal, no es error)
     # OMITIDO: Conceptos solo en Novedades (normal, comportamiento esperado)
     
@@ -196,9 +280,19 @@ def _comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades):
         reg_libro = dict_libro[concepto_norm]
         reg_novedades = dict_novedades[concepto_norm]
         
+        # FILTRO: Omitir si novedades tiene valor vacío/nulo (significa que no hubo novedad)
+        if _es_valor_vacio(reg_novedades.monto):
+            conceptos_omitidos_sin_novedad += 1
+            logger.debug(f"RUT {emp_libro.rut} - Concepto '{reg_libro.nombre_concepto_original}': omitido (valor vacío en novedades = sin novedad)")
+            continue
+        
+        conceptos_comparados += 1
+        
         # Comparar montos si ambos son numéricos
         if reg_libro.es_numerico and reg_novedades.es_numerico:
-            if abs(reg_libro.monto_numerico - reg_novedades.monto_numerico) > 0.01:  # Tolerancia de 1 centavo
+            diferencia = abs(reg_libro.monto_numerico - reg_novedades.monto_numerico)
+            if diferencia > 0.01:  # Tolerancia de 1 centavo
+                logger.info(f"RUT {emp_libro.rut} - Concepto '{reg_libro.nombre_concepto_original}': discrepancia numérica (Libro: {reg_libro.monto}, Novedades: {reg_novedades.monto}, Diff: {diferencia})")
                 discrepancias.append(DiscrepanciaCierre(
                     cierre=cierre,
                     tipo_discrepancia=TipoDiscrepancia.DIFERENCIA_CONCEPTO_MONTO,
@@ -212,6 +306,7 @@ def _comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades):
                 ))
         elif str(reg_libro.monto) != str(reg_novedades.monto):
             # Si no son numéricos, comparar como texto
+            logger.info(f"RUT {emp_libro.rut} - Concepto '{reg_libro.nombre_concepto_original}': discrepancia textual (Libro: '{reg_libro.monto}', Novedades: '{reg_novedades.monto}')")
             discrepancias.append(DiscrepanciaCierre(
                 cierre=cierre,
                 tipo_discrepancia=TipoDiscrepancia.DIFERENCIA_CONCEPTO_MONTO,
@@ -223,6 +318,10 @@ def _comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades):
                 valor_novedades=str(reg_novedades.monto),
                 concepto_afectado=reg_libro.nombre_concepto_original
             ))
+    
+    # Log estadísticas finales
+    if conceptos_comunes > 0:
+        logger.debug(f"RUT {emp_libro.rut}: {conceptos_omitidos_sin_novedad}/{conceptos_comunes} conceptos omitidos (sin novedad), {conceptos_comparados} comparados, {len(discrepancias)} discrepancias encontradas")
     
     return discrepancias
 

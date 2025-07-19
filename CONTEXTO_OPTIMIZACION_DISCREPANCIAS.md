@@ -93,6 +93,12 @@ MovimientoAusentismo        ← Movimientos (ausentismos)
 
 **Resultado Exitoso**: Reducción de 5,865 → 270 discrepancias (95% de ruido eliminado)
 
+**Mejora Adicional - Valores Vacíos en Novedades**:
+- **Problema Detectado**: Novedades con valores vacíos/nulos generaban discrepancias falsas
+- **Lógica Implementada**: Si Novedades tiene valor vacío = "sin novedad" → OMITIR comparación
+- **Patrones Detectados como "Sin Novedad"**: `null`, `""`, `"-"`, `"0"`, `"N/A"`, etc.
+- **Impacto**: Reducción adicional de falsos positivos por empleados sin novedades reales
+
 ### Fase 3: Mejora Frontend (Resuelto ✅)
 **Problema**: Visualización limitada de discrepancias en frontend
 

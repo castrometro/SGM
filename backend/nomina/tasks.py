@@ -579,32 +579,47 @@ def guardar_registros_novedades_task(result):
 @shared_task
 def generar_incidencias_cierre_task(cierre_id):
     """Task para generar incidencias de un cierre"""
-    from .utils.GenerarIncidencias import generar_todas_incidencias
-    from .models import CierreNomina
+    # 🚫 FUNCIONALIDAD COMENTADA TEMPORALMENTE  
+    # Las incidencias solo deben generarse cuando las discrepancias sean 0
+    # y se implementará la comparación contra el mes anterior
     
-    logger.info(f"Iniciando generación de incidencias para cierre {cierre_id}")
+    logger.info(f"Task de incidencias deshabilitada para cierre {cierre_id}")
+    return {
+        "error": "Funcionalidad de incidencias deshabilitada temporalmente",
+        "message": "Primero debe completar la fase de discrepancias antes de generar incidencias",
+        "cierre_id": cierre_id
+    }
     
-    try:
-        cierre = CierreNomina.objects.get(id=cierre_id)
-        
-        # Verificar que el cierre tenga los archivos necesarios procesados
-        if not _verificar_archivos_listos_para_incidencias(cierre):
-            raise ValueError("No todos los archivos están procesados para generar incidencias")
-        
-        resultado = generar_todas_incidencias(cierre)
-        
-        logger.info(f"Incidencias generadas exitosamente para cierre {cierre_id}: {resultado['total_incidencias']} incidencias")
-        return resultado
-        
-    except Exception as e:
-        logger.error(f"Error generando incidencias para cierre {cierre_id}: {e}")
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-            cierre.estado_incidencias = 'pendiente'
-            cierre.save(update_fields=['estado_incidencias'])
-        except:
-            pass
-        raise
+    # CÓDIGO ORIGINAL COMENTADO:
+    # from .utils.GenerarIncidencias import generar_todas_incidencias
+    # from .models import CierreNomina
+    # 
+    # logger.info(f"Iniciando generación de incidencias para cierre {cierre_id}")
+    # 
+    # try:
+    #     cierre = CierreNomina.objects.get(id=cierre_id)
+    #     
+    #     # Verificar que el cierre tenga los archivos necesarios procesados
+    #     if not _verificar_archivos_listos_para_incidencias(cierre):
+    #         raise ValueError("No todos los archivos están procesados para generar incidencias")
+    #     
+    #     # FALTA: Verificar que discrepancias = 0 antes de continuar
+    #     # FALTA: Implementar comparación contra mes anterior específicamente
+    #     
+    #     resultado = generar_todas_incidencias(cierre)
+    #     
+    #     logger.info(f"Incidencias generadas exitosamente para cierre {cierre_id}: {resultado['total_incidencias']} incidencias")
+    #     return resultado
+    #     
+    # except Exception as e:
+    #     logger.error(f"Error generando incidencias para cierre {cierre_id}: {e}")
+    #     try:
+    #         cierre = CierreNomina.objects.get(id=cierre_id)
+    #         cierre.estado_incidencias = 'pendiente'
+    #         cierre.save(update_fields=['estado_incidencias'])
+    #     except:
+    #         pass
+    #     raise
 
 def _verificar_archivos_listos_para_incidencias(cierre):
     """Verifica que los archivos necesarios estén procesados"""
@@ -1062,3 +1077,75 @@ def _verificar_archivos_listos_para_discrepancias(cierre):
         return False
     
     return True
+
+
+# ===== TAREAS PARA CONSOLIDACIÓN DE INFORMACIÓN =====
+
+@shared_task
+def consolidar_cierre_task(cierre_id, usuario_id=None):
+    """
+    🎯 TASK PARA CONSOLIDAR INFORMACIÓN DE UN CIERRE
+    
+    Ejecuta el proceso de consolidación después de resolver discrepancias.
+    """
+    from .utils.ConsolidarInformacion import consolidar_cierre_completo
+    from .models import CierreNomina
+    from django.contrib.auth import get_user_model
+    
+    User = get_user_model()
+    usuario = None
+    if usuario_id:
+        try:
+            usuario = User.objects.get(id=usuario_id)
+        except User.DoesNotExist:
+            pass
+    
+    logger.info(f"🚀 Iniciando consolidación para cierre {cierre_id}")
+    
+    try:
+        # Ejecutar consolidación
+        resultado = consolidar_cierre_completo(cierre_id, usuario)
+        
+        logger.info(f"✅ Consolidación exitosa para cierre {cierre_id}: {resultado['estadisticas']}")
+        return resultado
+        
+    except Exception as e:
+        logger.error(f"❌ Error en consolidación de cierre {cierre_id}: {e}")
+        
+        # Marcar cierre con error
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            cierre.estado_consolidacion = 'error_consolidacion'
+            cierre.save(update_fields=['estado_consolidacion'])
+        except:
+            pass
+            
+        raise
+
+
+@shared_task
+def generar_incidencias_consolidadas_task(cierre_id):
+    """
+    Tarea para generar incidencias de un cierre consolidado
+    """
+    from .utils.DetectarIncidenciasConsolidadas import generar_incidencias_consolidadas_task as detectar_incidencias
+    
+    logger.info(f"🔍 Iniciando detección de incidencias consolidadas para cierre {cierre_id}")
+    
+    try:
+        # Ejecutar detección de incidencias
+        resultado = detectar_incidencias(cierre_id)
+        
+        if resultado['success']:
+            logger.info(f"✅ Detección exitosa para cierre {cierre_id}: {resultado['total_incidencias']} incidencias")
+        else:
+            logger.error(f"❌ Error en detección para cierre {cierre_id}: {resultado.get('error', 'Error desconocido')}")
+        
+        return resultado
+        
+    except Exception as e:
+        logger.error(f"❌ Error crítico en detección de incidencias para cierre {cierre_id}: {e}")
+        return {
+            'success': False,
+            'error': str(e)
+        }

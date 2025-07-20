@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import ArchivosTalanaSection from "./ArchivosTalanaSection";
 import ArchivosAnalistaSection from "./ArchivosAnalistaSection";
 import VerificadorDatosSection from "./VerificadorDatosSection";
+import IncidenciasEncontradasSection from "./IncidenciasEncontradasSection";
 import ModalClasificacionHeaders from "../ModalClasificacionHeaders";
 import {
   obtenerEstadoLibroRemuneraciones,
@@ -267,8 +268,11 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
         disabled={false}
       />
 
-      {/* Sección 3: Verificación de Datos */}
+      {/* Sección 3: Verificación de Datos (Discrepancias) */}
       <VerificadorDatosSection cierre={cierre} />
+
+      {/* Sección 4: Sistema de Incidencias */}
+      <IncidenciasEncontradasSection cierre={cierre} />
 
       <ModalClasificacionHeaders
         isOpen={modalAbierto}

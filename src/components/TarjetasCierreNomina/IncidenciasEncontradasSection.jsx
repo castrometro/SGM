@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ShieldCheck, ChevronDown, ChevronRight, Play, Loader2, CheckCircle, AlertTriangle, Filter, Users, Eye } from "lucide-react";
+import { AlertOctagon, ChevronDown, ChevronRight, Play, Loader2, CheckCircle, AlertTriangle, Filter, Users, Eye } from "lucide-react";
 import IncidenciasTable from "./IncidenciasEncontradas/IncidenciasTable";
 import ModalResolucionIncidencia from "./IncidenciasEncontradas/ModalResolucionIncidencia";
 import { 
@@ -10,7 +10,7 @@ import {
   previewIncidenciasCierre
 } from "../../api/nomina";
 
-const VerificacionDatosSection = ({ cierre }) => {
+const IncidenciasEncontradasSection = ({ cierre }) => {
   const [expandido, setExpandido] = useState(true);
   const [incidencias, setIncidencias] = useState([]);
   const [resumen, setResumen] = useState(null);
@@ -60,7 +60,7 @@ const VerificacionDatosSection = ({ cierre }) => {
       setResumen(resumenData);
     } catch (err) {
       console.error("Error cargando datos de incidencias:", err);
-      setError("Error al verificar datos");
+      setError("Error al cargar incidencias");
     } finally {
       setCargando(false);
     }
@@ -81,7 +81,7 @@ const VerificacionDatosSection = ({ cierre }) => {
       }, 2000);
     } catch (err) {
       console.error("Error generando incidencias:", err);
-      setError("Error al verificar datos");
+      setError("Error al generar incidencias");
     } finally {
       setGenerando(false);
     }
@@ -99,7 +99,7 @@ const VerificacionDatosSection = ({ cierre }) => {
       setMostrandoPreview(true);
     } catch (err) {
       console.error("Error generando vista previa:", err);
-      setError("Error al generar vista previa de verificación");
+      setError("Error al generar vista previa de incidencias");
     } finally {
       setCargando(false);
     }
@@ -130,7 +130,7 @@ const VerificacionDatosSection = ({ cierre }) => {
   };
 
   const puedeGenerarIncidencias = () => {
-    return cierre?.estado === 'revision_inicial' || cierre?.estado === 'validacion_conceptos' || cierre?.estado === 'completado';
+    return cierre?.estado === 'datos_consolidados' || cierre?.estado === 'con_incidencias' || cierre?.estado === 'sin_incidencias';
   };
 
   return (
@@ -140,20 +140,20 @@ const VerificacionDatosSection = ({ cierre }) => {
         onClick={() => setExpandido(!expandido)}
       >
         <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 bg-orange-600 rounded-lg">
-            <ShieldCheck size={20} className="text-white" />
+          <div className="flex items-center justify-center w-10 h-10 bg-red-600 rounded-lg">
+            <AlertOctagon size={20} className="text-white" />
           </div>
           <div>
             <h2 className="text-xl font-semibold text-white">
-              Verificación de Datos
+              Sistema de Incidencias
             </h2>
             <div className="flex items-center gap-2 text-sm">
               <p className="text-gray-400">
-                Verificación de consistencia y completitud de datos del mes actual
+                Detección automática de inconsistencias respecto al cierre anterior
               </p>
               {estadoIncidencias && (
                 <span className={`${obtenerColorEstado(estadoIncidencias.estado_incidencias)} font-medium`}>
-                  • {estadoIncidencias.total_incidencias || 0} discrepancias
+                  • {estadoIncidencias.total_incidencias || 0} incidencias
                 </span>
               )}
             </div>
@@ -163,7 +163,7 @@ const VerificacionDatosSection = ({ cierre }) => {
           {estadoIncidencias?.tiene_incidencias && (
             <div className="flex items-center gap-2 text-sm">
               <span className="text-gray-400">
-                {estadoIncidencias.incidencias_pendientes} discrepancias pendientes
+                {estadoIncidencias.incidencias_pendientes} incidencias pendientes
               </span>
               <span className="text-gray-400">•</span>
               <span className="text-green-400">
@@ -193,7 +193,7 @@ const VerificacionDatosSection = ({ cierre }) => {
                       ? (estadoIncidencias.incidencias_pendientes > 0 ? 'bg-red-500/20 border-2 border-red-500' : 'bg-green-500/20 border-2 border-green-500')
                       : 'bg-gray-500/20 border-2 border-gray-500'
                   }`}>
-                    <ShieldCheck size={24} className={
+                    <AlertOctagon size={24} className={
                       estadoIncidencias?.tiene_incidencias 
                         ? (estadoIncidencias.incidencias_pendientes > 0 ? 'text-red-400' : 'text-green-400')
                         : 'text-gray-400'
@@ -206,7 +206,7 @@ const VerificacionDatosSection = ({ cierre }) => {
                       : 'text-gray-400'
                   }`}>
                     {estadoIncidencias?.tiene_incidencias 
-                      ? (estadoIncidencias.incidencias_pendientes > 0 ? 'Con Discrepancias' : 'Verificado')
+                      ? (estadoIncidencias.incidencias_pendientes > 0 ? 'Con Incidencias' : 'Resueltas')
                       : 'Pendiente'
                     }
                   </p>
@@ -249,12 +249,12 @@ const VerificacionDatosSection = ({ cierre }) => {
                   {generando ? (
                     <>
                       <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                      Verificando...
+                      Generando incidencias...
                     </>
                   ) : (
                     <>
-                      <ShieldCheck className="w-5 h-5 mr-2" />
-                      Verificar Datos
+                      <AlertOctagon className="w-5 h-5 mr-2" />
+                      Generar Incidencias
                     </>
                   )}
                 </button>
@@ -267,7 +267,7 @@ const VerificacionDatosSection = ({ cierre }) => {
                 <div className="flex items-center gap-2 text-yellow-400 text-sm">
                   <AlertTriangle className="w-4 h-4" />
                   <span>
-                    El cierre debe estar en estado "Datos Consolidados" para verificar datos
+                    El cierre debe estar en estado "Datos Consolidados" para generar incidencias
                   </span>
                 </div>
               </div>
@@ -365,17 +365,17 @@ const VerificacionDatosSection = ({ cierre }) => {
                     <div className="text-sm text-yellow-300">
                       <strong>¿Cómo resolver las incidencias?</strong>
                       <p className="mt-1">
-                        Para resolver las incidencias detectadas, puedes seguir este flujo:
+                        Las incidencias comparan datos actuales vs históricos. Para resolverlas:
                       </p>
                       <ol className="mt-2 space-y-1 list-decimal list-inside">
-                        <li><strong>Revisar incidencias:</strong> Examina las diferencias detectadas en la tabla inferior.</li>
-                        <li><strong>Opción A - Marcar como resueltas:</strong> Si las diferencias son correctas o aceptables, marca las incidencias individuales como resueltas.</li>
-                        <li><strong>Opción B - Corregir y resubir:</strong> Si hay errores en los datos:</li>
+                        <li><strong>Revisar incidencias:</strong> Examina las diferencias temporales detectadas en la tabla inferior.</li>
+                        <li><strong>Opción A - Marcar como resueltas:</strong> Si las diferencias son esperadas o correctas, marca las incidencias como resueltas.</li>
+                        <li><strong>Opción B - Corregir datos actuales:</strong> Si hay errores en los datos del mes actual:</li>
                         <ul className="ml-6 mt-1 space-y-1 list-disc list-inside text-xs">
-                          <li>Usa el botón "Resubir archivo" en las tarjetas de archivos correspondientes</li>
-                          <li>Sube los archivos corregidos</li>
+                          <li>Usa "Resubir archivo" en las tarjetas de <strong>Talana</strong> (Libro de Remuneraciones, MovimientosMes)</li>
+                          <li>Sube los archivos de Talana corregidos</li>
                           <li>Regresa aquí y presiona "Generar Incidencias" nuevamente</li>
-                          <li>Repite hasta llegar a 0 incidencias</li>
+                          <li>Repite hasta resolver todas las inconsistencias temporales</li>
                         </ul>
                       </ol>
                     </div>
@@ -473,8 +473,7 @@ const VerificacionDatosSection = ({ cierre }) => {
                     Lista de Incidencias
                   </h3>
                   <div className="flex items-center gap-2 text-sm text-gray-400">
-                    <Users className="w-4 h-4" />
-                    <span>Resolución por Analista</span>
+                    <span>Análisis temporal - Corrección vía resubida de archivos Talana si necesario</span>
                   </div>
                 </div>
               </div>
@@ -491,7 +490,7 @@ const VerificacionDatosSection = ({ cierre }) => {
               <CheckCircle className="w-12 h-12 mx-auto mb-3 text-green-500" />
               <p className="text-lg">No se encontraron incidencias</p>
               <p className="text-sm">
-                Los archivos están en concordancia o aún no se han generado las incidencias
+                Los archivos están perfectamente sincronizados o aún no se han generado las incidencias
               </p>
             </div>
           )}
@@ -512,4 +511,4 @@ const VerificacionDatosSection = ({ cierre }) => {
   );
 };
 
-export default VerificacionDatosSection;
+export default IncidenciasEncontradasSection;

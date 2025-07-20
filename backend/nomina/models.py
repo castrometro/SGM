@@ -70,9 +70,24 @@ class CierreNomina(models.Model):
         ],
         default='pendiente'
     )
+    total_incidencias = models.PositiveIntegerField(default=0, help_text="Total de incidencias detectadas")
     fecha_ultima_revision = models.DateTimeField(null=True, blank=True)
     revisiones_realizadas = models.PositiveIntegerField(default=0)
     supervisor_asignado = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='cierres_supervisor')
+
+    # === CAMPOS PARA CONSOLIDACIÓN ===
+    estado_consolidacion = models.CharField(
+        max_length=30,
+        choices=[
+            ('pendiente', 'Pendiente de Consolidar'),
+            ('consolidando', 'Consolidando Información'),
+            ('consolidado', 'Información Consolidada'),
+            ('error_consolidacion', 'Error en Consolidación'),
+        ],
+        default='pendiente'
+    )
+    fecha_consolidacion = models.DateTimeField(null=True, blank=True)
+    puede_consolidar = models.BooleanField(default=False, help_text="¿Tiene 0 discrepancias y puede consolidarse?")
 
     class Meta:
         unique_together = ('cliente', 'periodo')
@@ -209,6 +224,20 @@ class CierreNomina(models.Model):
         resultado['todos_listos'] = archivos_requeridos_listos and novedades_ok
         
         return resultado
+
+    def puede_generar_incidencias(self):
+        """
+        Verifica si el cierre está listo para generar incidencias consolidadas
+        """
+        # Debe estar consolidado
+        if self.estado_consolidacion != 'consolidado':
+            return False
+        
+        # No debe tener incidencias ya generadas
+        if self.estado_incidencias in ['incidencias_generadas', 'incidencias_resueltas']:
+            return False
+        
+        return True
 
 
 class EmpleadoCierre(models.Model):
@@ -700,22 +729,13 @@ class EstadoCierreIncidencias(models.TextChoices):
     CIERRE_COMPLETADO = 'cierre_completado', 'Cierre Completado'
 
 class TipoIncidencia(models.TextChoices):
-    # Grupo 1: Libro vs Novedades
-    EMPLEADO_SOLO_LIBRO = 'empleado_solo_libro', 'Empleado solo en Libro'
-    EMPLEADO_SOLO_NOVEDADES = 'empleado_solo_novedades', 'Empleado solo en Novedades'
-    DIFERENCIA_DATOS_PERSONALES = 'diff_datos_personales', 'Diferencia en Datos Personales'
-    DIFERENCIA_SUELDO_BASE = 'diff_sueldo_base', 'Diferencia en Sueldo Base'
-    DIFERENCIA_CONCEPTO_MONTO = 'diff_concepto_monto', 'Diferencia en Monto por Concepto'
-    CONCEPTO_SOLO_LIBRO = 'concepto_solo_libro', 'Concepto solo en Libro'
-    CONCEPTO_SOLO_NOVEDADES = 'concepto_solo_novedades', 'Concepto solo en Novedades'
-    
-    # Grupo 2: MovimientosMes vs Analista
-    INGRESO_NO_REPORTADO = 'ingreso_no_reportado', 'Ingreso no reportado por Analista'
-    FINIQUITO_NO_REPORTADO = 'finiquito_no_reportado', 'Finiquito no reportado por Analista'
-    AUSENCIA_NO_REPORTADA = 'ausencia_no_reportada', 'Ausencia no reportada por Analista'
-    DIFERENCIA_FECHAS_AUSENCIA = 'diff_fechas_ausencia', 'Diferencia en Fechas de Ausencia'
-    DIFERENCIA_DIAS_AUSENCIA = 'diff_dias_ausencia', 'Diferencia en Días de Ausencia'
-    DIFERENCIA_TIPO_AUSENCIA = 'diff_tipo_ausencia', 'Diferencia en Tipo de Ausencia'
+    # Nuevos 6 tipos de incidencias para comparación entre períodos consolidados
+    VARIACION_CONCEPTO = 'variacion_concepto', 'Variación de Concepto (>30%)'
+    CONCEPTO_NUEVO = 'concepto_nuevo', 'Concepto Nuevo'
+    CONCEPTO_PERDIDO = 'concepto_perdido', 'Concepto Perdido'
+    EMPLEADO_DEBERIA_INGRESAR = 'empleado_deberia_ingresar', 'Empleado que Debería Ingresar'
+    EMPLEADO_NO_DEBERIA_ESTAR = 'empleado_no_deberia_estar', 'Empleado que No Debería Estar'
+    AUSENTISMO_CONTINUO = 'ausentismo_continuo', 'Ausentismo Continuo'
 
 class EstadoIncidencia(models.TextChoices):
     PENDIENTE = 'pendiente', 'Pendiente de Resolución'
@@ -783,17 +803,21 @@ class IncidenciaCierre(models.Model):
     def calcular_impacto_monetario(self):
         """Calcula el impacto monetario de la incidencia"""
         try:
-            if self.tipo_incidencia == TipoIncidencia.DIFERENCIA_CONCEPTO_MONTO:
+            if self.tipo_incidencia == TipoIncidencia.VARIACION_CONCEPTO:
                 if self.valor_libro and self.valor_novedades:
                     # Limpiar y convertir valores
-                    monto_libro = float(str(self.valor_libro).replace(',', '').replace('$', '').strip())
-                    monto_novedades = float(str(self.valor_novedades).replace(',', '').replace('$', '').strip())
-                    return abs(monto_libro - monto_novedades)
-            elif self.tipo_incidencia == TipoIncidencia.DIFERENCIA_SUELDO_BASE:
-                if self.valor_libro and self.valor_novedades:
-                    sueldo_libro = float(str(self.valor_libro).replace(',', '').replace('$', '').strip())
-                    sueldo_novedades = float(str(self.valor_novedades).replace(',', '').replace('$', '').strip())
-                    return abs(sueldo_libro - sueldo_novedades)
+                    monto_actual = float(str(self.valor_libro).replace(',', '').replace('$', '').strip())
+                    monto_anterior = float(str(self.valor_novedades).replace(',', '').replace('$', '').strip())
+                    return abs(monto_actual - monto_anterior)
+            elif self.tipo_incidencia in [TipoIncidencia.CONCEPTO_NUEVO, TipoIncidencia.CONCEPTO_PERDIDO]:
+                if self.valor_libro:
+                    monto = float(str(self.valor_libro).replace(',', '').replace('$', '').strip())
+                    return abs(monto)
+            elif self.tipo_incidencia in [TipoIncidencia.EMPLEADO_DEBERIA_INGRESAR, TipoIncidencia.EMPLEADO_NO_DEBERIA_ESTAR]:
+                # Para movimientos de personal, el impacto podría ser el líquido a pagar
+                if self.valor_libro:
+                    liquido = float(str(self.valor_libro).replace(',', '').replace('$', '').strip())
+                    return abs(liquido)
         except (ValueError, TypeError):
             pass
         return 0
@@ -1067,4 +1091,151 @@ class DiscrepanciaCierre(models.Model):
     
     def __str__(self):
         return f"Discrepancia: {self.get_tipo_discrepancia_display()} - {self.rut_empleado} - {self.cierre}"
+
+
+# ==========================================
+# MODELOS CONSOLIDADOS
+# ==========================================
+
+class NominaConsolidada(models.Model):
+    """
+    📋 NÓMINA CONSOLIDADA FINAL
+    
+    Un registro por empleado por cierre con toda su información consolidada.
+    Responde: "Dame todos los empleados activos de este cierre con sus totales"
+    """
+    cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE, related_name='nomina_consolidada')
+    
+    # Información del empleado
+    rut_empleado = models.CharField(max_length=20, db_index=True)
+    nombre_empleado = models.CharField(max_length=200)
+    cargo = models.CharField(max_length=200, null=True, blank=True)
+    centro_costo = models.CharField(max_length=200, null=True, blank=True)
+    
+    # Estado del empleado en este periodo
+    ESTADO_CHOICES = [
+        ('activo', 'Empleado Activo'),
+        ('nueva_incorporacion', 'Nueva Incorporación'),
+        ('finiquito', 'Finiquito'),
+        ('ausente_total', 'Ausente Periodo Completo'),
+        ('ausente_parcial', 'Ausente Parcial'),
+    ]
+    estado_empleado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='activo')
+    
+    # Totales consolidados finales
+    total_haberes = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    total_descuentos = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    liquido_pagar = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    
+    # Días trabajados/ausencias
+    dias_trabajados = models.IntegerField(null=True, blank=True)
+    dias_ausencia = models.IntegerField(default=0)
+    
+    # Metadatos de consolidación
+    fecha_consolidacion = models.DateTimeField(auto_now_add=True)
+    fuente_datos = models.JSONField(default=dict, help_text="Fuentes de datos usadas para consolidar")
+    
+    class Meta:
+        verbose_name = "Nómina Consolidada"
+        verbose_name_plural = "Nóminas Consolidadas"
+        unique_together = ['cierre', 'rut_empleado']
+        indexes = [
+            models.Index(fields=['cierre', 'estado_empleado']),
+            models.Index(fields=['rut_empleado']),
+            models.Index(fields=['liquido_pagar']),
+        ]
+        ordering = ['nombre_empleado']
+    
+    def __str__(self):
+        return f"{self.nombre_empleado} - {self.cierre.periodo} - ${self.liquido_pagar:,.0f}"
+
+
+class ConceptoConsolidado(models.Model):
+    """
+    💰 CONCEPTOS CONSOLIDADOS POR CIERRE
+    
+    Resumen de cada concepto con estadísticas consolidadas.
+    Responde: "¿Cuántos empleados tienen este concepto y cuál es el total?"
+    """
+    nomina_consolidada = models.ForeignKey(NominaConsolidada, on_delete=models.CASCADE, related_name='conceptos')
+    
+    # Información del concepto
+    codigo_concepto = models.CharField(max_length=20, db_index=True, null=True, blank=True)
+    nombre_concepto = models.CharField(max_length=200)
+    
+    TIPO_CONCEPTO_CHOICES = [
+        ('haber_imponible', 'Haber Imponible'),
+        ('haber_no_imponible', 'Haber No Imponible'),
+        ('descuento_legal', 'Descuento Legal'),
+        ('otro_descuento', 'Otro Descuento'),
+        ('aporte_patronal', 'Aporte Patronal'),
+        ('informativo', 'Solo Informativo'),
+    ]
+    tipo_concepto = models.CharField(max_length=20, choices=TIPO_CONCEPTO_CHOICES, null=True, blank=True)
+    
+    # Valor del concepto para este empleado
+    monto_total = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    cantidad = models.DecimalField(max_digits=10, decimal_places=4, default=1, help_text="Cantidad/Horas si aplica")
+    es_numerico = models.BooleanField(default=True, help_text="Si el concepto tiene valor numérico")
+    
+    # Fuente del dato
+    fuente_archivo = models.CharField(max_length=50, default='consolidacion', help_text="libro/movimientos/novedades/analista")
+    
+    # Metadatos
+    fecha_consolidacion = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = "Concepto Consolidado"
+        verbose_name_plural = "Conceptos Consolidados"
+        unique_together = ['nomina_consolidada', 'nombre_concepto']
+        indexes = [
+            models.Index(fields=['nomina_consolidada', 'tipo_concepto']),
+            models.Index(fields=['nombre_concepto']),
+            models.Index(fields=['monto_total']),
+        ]
+        ordering = ['-monto_total', 'nombre_concepto']
+    
+    def __str__(self):
+        return f"{self.nombre_concepto} - {self.nomina_consolidada.nombre_empleado} - ${self.monto_total:,.0f}"
+
+
+class MovimientoPersonal(models.Model):
+    """
+    🔄 MOVIMIENTOS DE PERSONAL DETECTADOS
+    
+    Cambios de personal entre periodos (incorporaciones, finiquitos, ausencias).
+    Responde: "¿Quién entró, salió o faltó este mes?"
+    """
+    nomina_consolidada = models.ForeignKey(NominaConsolidada, on_delete=models.CASCADE, related_name='movimientos')
+    
+    TIPO_MOVIMIENTO_CHOICES = [
+        ('ingreso', 'Nueva Incorporación'),
+        ('finiquito', 'Finiquito'),
+        ('ausentismo', 'Ausencia Periodo'),
+        ('reincorporacion', 'Reincorporación después de Ausencia'),
+        ('cambio_datos', 'Cambio de Datos Personales'),
+    ]
+    tipo_movimiento = models.CharField(max_length=20, choices=TIPO_MOVIMIENTO_CHOICES)
+    
+    # Detalles del movimiento
+    motivo = models.CharField(max_length=300, null=True, blank=True)
+    dias_ausencia = models.IntegerField(null=True, blank=True, help_text="Días de ausencia si aplica")
+    fecha_movimiento = models.DateField(null=True, blank=True)
+    observaciones = models.TextField(null=True, blank=True)
+    
+    # Metadatos
+    fecha_deteccion = models.DateTimeField(auto_now_add=True)
+    detectado_por_sistema = models.CharField(max_length=100, default='consolidacion_automatica')
+    
+    class Meta:
+        verbose_name = "Movimiento de Personal"
+        verbose_name_plural = "Movimientos de Personal"
+        indexes = [
+            models.Index(fields=['nomina_consolidada', 'tipo_movimiento']),
+            models.Index(fields=['fecha_movimiento']),
+        ]
+        ordering = ['-fecha_deteccion']
+    
+    def __str__(self):
+        return f"{self.get_tipo_movimiento_display()} - {self.nomina_consolidada.nombre_empleado}"
 

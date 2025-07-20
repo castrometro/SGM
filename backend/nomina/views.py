@@ -220,6 +220,123 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
             "cambio_estado": estado_anterior != estado_nuevo
         })
 
+    @action(detail=True, methods=['post'], url_path='generar-incidencias-consolidadas')
+    def generar_incidencias_consolidadas(self, request, pk=None):
+        """
+        Genera incidencias comparando información consolidada con el período anterior
+        """
+        from .models_logging import registrar_actividad_tarjeta_nomina
+        from .utils.clientes import get_client_ip
+        from .utils.DetectarIncidenciasConsolidadas import generar_incidencias_consolidadas_task
+        from celery import current_app
+        
+        cierre = self.get_object()
+        
+        # Verificar que el cierre esté consolidado
+        if not cierre.puede_generar_incidencias():
+            return Response({
+                "success": False,
+                "error": f"El cierre debe estar consolidado para generar incidencias. Estado actual: {cierre.estado_consolidacion}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Verificar si ya tiene incidencias generadas
+        if cierre.estado_incidencias in ['incidencias_generadas', 'incidencias_resueltas']:
+            return Response({
+                "success": False,
+                "error": f"Las incidencias ya fueron generadas para este cierre. Estado: {cierre.estado_incidencias}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Ejecutar la tarea de detección de incidencias usando Celery
+            from .tasks import generar_incidencias_consolidadas_task
+            
+            # Enviar tarea a Celery
+            task = generar_incidencias_consolidadas_task.delay(cierre.id)
+            
+            # Actualizar estado del cierre a "generando_incidencias"
+            cierre.estado_incidencias = 'generando_incidencias'
+            cierre.save(update_fields=['estado_incidencias'])
+            
+            # Registrar la actividad
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=cierre.id,
+                tarjeta="incidencias",
+                accion="iniciar_generar_incidencias_consolidadas",
+                descripcion="Iniciada generación de incidencias consolidadas (tarea en background)",
+                usuario=request.user,
+                detalles={
+                    "task_id": task.id,
+                    "metodo": "consolidado_vs_periodo_anterior",
+                    "estado_anterior": "pendiente"
+                },
+                ip_address=get_client_ip(request)
+            )
+            
+            return Response({
+                "success": True,
+                "mensaje": "Generación de incidencias consolidadas iniciada en background",
+                "task_id": task.id,
+                "estado_incidencias": cierre.estado_incidencias
+            })
+                
+        except Exception as e:
+            # Registrar el error
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=cierre.id,
+                tarjeta="incidencias",
+                accion="error_iniciar_generar_incidencias_consolidadas",
+                descripcion=f"Error iniciando generación de incidencias consolidadas: {str(e)}",
+                usuario=request.user,
+                detalles={
+                    "error": str(e),
+                    "metodo": "consolidado_vs_periodo_anterior"
+                },
+                ip_address=get_client_ip(request)
+            )
+            
+            return Response({
+                "success": False,
+                "error": f"Error interno: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'], url_path='estado-incidencias')
+    def estado_incidencias(self, request, pk=None):
+        """
+        Consulta el estado actual de las incidencias del cierre
+        """
+        cierre = self.get_object()
+        
+        # Contar incidencias por estado
+        from .models import IncidenciaCierre
+        incidencias = IncidenciaCierre.objects.filter(cierre=cierre)
+        
+        resumen = {
+            'total_incidencias': incidencias.count(),
+            'por_estado': {
+                'pendiente': incidencias.filter(estado='pendiente').count(),
+                'en_revision': incidencias.filter(estado='en_revision').count(),
+                'aprobada': incidencias.filter(estado='aprobada').count(),
+                'rechazada': incidencias.filter(estado='rechazada').count(),
+            },
+            'por_tipo': {
+                tipo: incidencias.filter(tipo_incidencia=tipo).count()
+                for tipo in ['VARIACION_CONCEPTO', 'CONCEPTO_NUEVO', 'CONCEPTO_PERDIDO', 
+                           'EMPLEADO_DEBERIA_INGRESAR', 'EMPLEADO_NO_DEBERIA_ESTAR', 'AUSENTISMO_CONTINUO']
+            },
+            'por_prioridad': {
+                'alta': incidencias.filter(prioridad='alta').count(),
+                'media': incidencias.filter(prioridad='media').count(),
+                'baja': incidencias.filter(prioridad='baja').count(),
+            }
+        }
+        
+        return Response({
+            'estado_cierre': cierre.estado_incidencias,
+            'estado_consolidacion': cierre.estado_consolidacion,
+            'resumen_incidencias': resumen,
+            'puede_generar_incidencias': cierre.puede_generar_incidencias()
+        })
+
 class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
     queryset = LibroRemuneracionesUpload.objects.all()
     serializer_class = LibroRemuneracionesUploadSerializer
@@ -1260,26 +1377,35 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='generar/(?P<cierre_id>[^/.]+)')
     def generar_incidencias(self, request, cierre_id=None):
         """Endpoint para generar incidencias de un cierre específico"""
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        # Verificar permisos básicos
-        if not request.user.is_authenticated:
-            return Response({"error": "Usuario no autenticado"}, status=401)
-        
-        # Verificar si el usuario tiene acceso al cierre (mismo cliente)
-        # Esto se puede extender con lógica más específica según los requerimientos
-        
-        # Lanzar tarea de generación de incidencias
-        task = generar_incidencias_cierre_task.delay(cierre_id)
-        
+        # 🚫 FUNCIONALIDAD COMENTADA TEMPORALMENTE
+        # Las incidencias solo deben generarse cuando las discrepancias sean 0
+        # y se implementará la comparación contra el mes anterior
         return Response({
-            "message": "Generación de incidencias iniciada",
-            "task_id": task.id,
-            "cierre_id": cierre_id
-        }, status=202)
+            "error": "Funcionalidad de incidencias deshabilitada temporalmente",
+            "message": "Primero debe completar la fase de discrepancias (debe ser 0 discrepancias) antes de generar incidencias contra el mes anterior"
+        }, status=501)
+        
+        # CÓDIGO ORIGINAL COMENTADO:
+        # try:
+        #     cierre = CierreNomina.objects.get(id=cierre_id)
+        # except CierreNomina.DoesNotExist:
+        #     return Response({"error": "Cierre no encontrado"}, status=404)
+        # 
+        # # Verificar permisos básicos
+        # if not request.user.is_authenticated:
+        #     return Response({"error": "Usuario no autenticado"}, status=401)
+        # 
+        # # FALTA: Verificar que discrepancias = 0 antes de generar incidencias
+        # # FALTA: Implementar comparación contra mes anterior
+        # 
+        # # Lanzar tarea de generación de incidencias
+        # task = generar_incidencias_cierre_task.delay(cierre_id)
+        # 
+        # return Response({
+        #     "message": "Generación de incidencias iniciada",
+        #     "task_id": task.id,
+        #     "cierre_id": cierre_id
+        # }, status=202)
     
     @action(detail=False, methods=['get'], url_path='resumen/(?P<cierre_id>[^/.]+)')
     def resumen_incidencias(self, request, cierre_id=None):

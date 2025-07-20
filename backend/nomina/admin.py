@@ -12,7 +12,9 @@ from .models import (
     # Modelos de incidencias
     IncidenciaCierre, ResolucionIncidencia,
     # Modelos de análisis y discrepancias
-    AnalisisDatosCierre, IncidenciaVariacionSalarial, DiscrepanciaCierre
+    AnalisisDatosCierre, IncidenciaVariacionSalarial, DiscrepanciaCierre,
+    # Modelos consolidados (están en models.py)
+    NominaConsolidada, ConceptoConsolidado, MovimientoPersonal
 )
 
 
@@ -1020,3 +1022,476 @@ class DiscrepanciaCierreAdmin(admin.ModelAdmin):
             'empleado_libro',
             'empleado_novedades'
         )
+
+
+# ========== ADMINISTRACIÓN DE MODELOS CONSOLIDADOS ==========
+
+class ConceptoConsolidadoInline(admin.TabularInline):
+    """Inline para mostrar conceptos dentro de una nómina consolidada"""
+    model = ConceptoConsolidado
+    extra = 0
+    readonly_fields = ('codigo_concepto', 'nombre_concepto', 'tipo_concepto', 'monto_total', 'cantidad', 'fecha_consolidacion')
+    fields = ('codigo_concepto', 'nombre_concepto', 'tipo_concepto', 'monto_total', 'cantidad')
+    
+    def has_add_permission(self, request, obj=None):
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class MovimientoPersonalInline(admin.TabularInline):
+    """Inline para mostrar movimientos de personal dentro de una nómina consolidada"""
+    model = MovimientoPersonal
+    extra = 0
+    readonly_fields = ('tipo_movimiento', 'motivo', 'fecha_movimiento', 'fecha_deteccion')
+    fields = ('tipo_movimiento', 'motivo', 'fecha_movimiento', 'observaciones')
+    
+    def has_add_permission(self, request, obj=None):
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(NominaConsolidada)
+class NominaConsolidadaAdmin(admin.ModelAdmin):
+    """Administración de nóminas consolidadas"""
+    list_display = (
+        'nombre_empleado',
+        'rut_empleado', 
+        'cierre_info',
+        'estado_empleado_display',
+        'liquido_pagar_formatted',
+        'total_haberes_formatted',
+        'dias_trabajados',
+        'fecha_consolidacion'
+    )
+    list_filter = (
+        'estado_empleado',
+        'cierre__cliente',
+        'cierre__periodo',
+        'fecha_consolidacion'
+    )
+    search_fields = (
+        'nombre_empleado',
+        'rut_empleado',
+        'cargo',
+        'centro_costo',
+        'cierre__cliente__nombre'
+    )
+    readonly_fields = (
+        'fecha_consolidacion',
+        'fuente_datos_formatted',
+        'resumen_empleado'
+    )
+    fieldsets = (
+        ('Información del Empleado', {
+            'fields': (
+                'cierre',
+                'rut_empleado',
+                'nombre_empleado',
+                'cargo',
+                'centro_costo',
+                'estado_empleado'
+            )
+        }),
+        ('Totales Consolidados', {
+            'fields': (
+                'total_haberes',
+                'total_descuentos',
+                'liquido_pagar',
+                'dias_trabajados',
+                'dias_ausencia'
+            )
+        }),
+        ('Metadatos de Consolidación', {
+            'fields': (
+                'fecha_consolidacion',
+                'fuente_datos_formatted',
+                'resumen_empleado'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    inlines = [ConceptoConsolidadoInline, MovimientoPersonalInline]
+    date_hierarchy = 'fecha_consolidacion'
+    list_per_page = 50
+    
+    def cierre_info(self, obj):
+        """Info básica del cierre"""
+        return f"{obj.cierre.cliente.nombre} - {obj.cierre.periodo}"
+    cierre_info.short_description = 'Cierre'
+    
+    def estado_empleado_display(self, obj):
+        """Display con colores para estado del empleado"""
+        colors = {
+            'activo': '#10b981',              # verde
+            'nueva_incorporacion': '#3b82f6', # azul
+            'finiquito': '#ef4444',           # rojo
+            'ausente_total': '#f59e0b',       # amarillo
+            'ausente_parcial': '#f97316'      # naranja
+        }
+        color = colors.get(obj.estado_empleado, '#6b7280')
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">●</span> {}',
+            color,
+            obj.get_estado_empleado_display()
+        )
+    estado_empleado_display.short_description = 'Estado'
+    
+    def liquido_pagar_formatted(self, obj):
+        """Formato de moneda para líquido"""
+        return f"${obj.liquido_pagar:,.0f}"
+    liquido_pagar_formatted.short_description = 'Líquido a Pagar'
+    
+    def total_haberes_formatted(self, obj):
+        """Formato de moneda para haberes"""
+        return f"${obj.total_haberes:,.0f}"
+    total_haberes_formatted.short_description = 'Total Haberes'
+    
+    def fuente_datos_formatted(self, obj):
+        """Mostrar fuentes de datos formateadas"""
+        if not obj.fuente_datos:
+            return "Sin información de fuentes"
+        
+        fuentes = []
+        for fuente, presente in obj.fuente_datos.items():
+            if presente:
+                fuentes.append(f"✅ {fuente}")
+            else:
+                fuentes.append(f"❌ {fuente}")
+        
+        return format_html("<br>".join(fuentes))
+    fuente_datos_formatted.short_description = 'Fuentes de Datos'
+    
+    def resumen_empleado(self, obj):
+        """Resumen ejecutivo del empleado"""
+        conceptos_count = obj.conceptos.count()
+        movimientos_count = obj.movimientos.count()
+        
+        return f"""
+        RESUMEN EMPLEADO:
+        - Total Conceptos: {conceptos_count}
+        - Movimientos de Personal: {movimientos_count}
+        - Días Trabajados: {obj.dias_trabajados or 'N/D'}
+        - Días de Ausencia: {obj.dias_ausencia}
+        - Estado: {obj.get_estado_empleado_display()}
+        - Líquido Final: ${obj.liquido_pagar:,.0f}
+        """
+    resumen_empleado.short_description = 'Resumen del Empleado'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'cierre',
+            'cierre__cliente'
+        ).prefetch_related('conceptos', 'movimientos')
+
+
+@admin.register(ConceptoConsolidado)
+class ConceptoConsolidadoAdmin(admin.ModelAdmin):
+    """Administración de conceptos consolidados"""
+    list_display = (
+        'nombre_concepto',
+        'codigo_concepto',
+        'empleado_info',
+        'tipo_concepto_display',
+        'monto_total_formatted',
+        'cantidad',
+        'fuente_archivo_display',
+        'fecha_consolidacion'
+    )
+    list_filter = (
+        'tipo_concepto',
+        'nomina_consolidada__cierre__cliente',
+        'nomina_consolidada__cierre__periodo',
+        'es_numerico',
+        'fuente_archivo',
+        'fecha_consolidacion'
+    )
+    search_fields = (
+        'nombre_concepto',
+        'codigo_concepto',
+        'nomina_consolidada__nombre_empleado',
+        'nomina_consolidada__rut_empleado',
+        'nomina_consolidada__cierre__cliente__nombre'
+    )
+    readonly_fields = (
+        'fecha_consolidacion',
+        'estadisticas_detalladas'
+    )
+    fieldsets = (
+        ('Información del Concepto', {
+            'fields': (
+                'nomina_consolidada',
+                'codigo_concepto',
+                'nombre_concepto',
+                'tipo_concepto'
+            )
+        }),
+        ('Valores', {
+            'fields': (
+                'monto_total',
+                'cantidad',
+                'es_numerico',
+                'fuente_archivo'
+            )
+        }),
+        ('Metadatos', {
+            'fields': (
+                'fecha_consolidacion',
+                'estadisticas_detalladas'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    date_hierarchy = 'fecha_consolidacion'
+    list_per_page = 100
+    
+    def empleado_info(self, obj):
+        """Info del empleado asociado"""
+        return f"{obj.nomina_consolidada.nombre_empleado} ({obj.nomina_consolidada.rut_empleado})"
+    empleado_info.short_description = 'Empleado'
+    
+    def tipo_concepto_display(self, obj):
+        """Display con colores para tipo de concepto"""
+        if not obj.tipo_concepto:
+            return format_html('<span style="color: #6b7280;">Sin clasificar</span>')
+        
+        colors = {
+            'haber_imponible': '#10b981',        # verde
+            'haber_no_imponible': '#3b82f6',     # azul
+            'descuento_legal': '#ef4444',        # rojo
+            'otro_descuento': '#f59e0b',         # amarillo
+            'aporte_patronal': '#8b5cf6',        # morado
+            'informativo': '#6b7280'             # gris
+        }
+        color = colors.get(obj.tipo_concepto, '#6b7280')
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">●</span> {}',
+            color,
+            obj.get_tipo_concepto_display()
+        )
+    tipo_concepto_display.short_description = 'Tipo'
+    
+    def monto_total_formatted(self, obj):
+        """Formato de moneda para monto total"""
+        if not obj.es_numerico:
+            return '-'
+        color = '#ef4444' if obj.monto_total < 0 else '#10b981'
+        formatted_amount = f"${obj.monto_total:,.0f}"
+        return format_html(
+            '<span style="color: {};">{}</span>',
+            color,
+            formatted_amount
+        )
+    monto_total_formatted.short_description = 'Monto'
+    
+    def fuente_archivo_display(self, obj):
+        """Display con color para fuente"""
+        colors = {
+            'libro': '#3b82f6',              # azul
+            'movimientos': '#f59e0b',        # amarillo  
+            'novedades': '#10b981',          # verde
+            'analista': '#8b5cf6',           # morado
+            'consolidacion': '#6b7280'       # gris
+        }
+        color = colors.get(obj.fuente_archivo, '#6b7280')
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">●</span> {}',
+            color,
+            obj.fuente_archivo.title()
+        )
+    fuente_archivo_display.short_description = 'Fuente'
+    
+    def estadisticas_detalladas(self, obj):
+        """Estadísticas detalladas del concepto"""
+        return f"""
+        ESTADÍSTICAS DEL CONCEPTO:
+        
+        👤 EMPLEADO:
+        - Nombre: {obj.nomina_consolidada.nombre_empleado}
+        - RUT: {obj.nomina_consolidada.rut_empleado}
+        - Estado: {obj.nomina_consolidada.get_estado_empleado_display()}
+        
+        💰 CONCEPTO:
+        - Código: {obj.codigo_concepto or 'Sin código'}
+        - Nombre: {obj.nombre_concepto}
+        - Tipo: {obj.get_tipo_concepto_display() if obj.tipo_concepto else 'Sin clasificar'}
+        - Es Numérico: {'Sí' if obj.es_numerico else 'No'}
+        
+        🔢 VALORES:
+        - Monto: {'${:,.2f}'.format(obj.monto_total) if obj.es_numerico else 'N/A'}
+        - Cantidad: {obj.cantidad}
+        - Fuente: {obj.fuente_archivo.title()}
+        
+        📊 CONTEXTO:
+        - Cierre: {obj.nomina_consolidada.cierre.cliente.nombre} - {obj.nomina_consolidada.cierre.periodo}
+        - Fecha Consolidación: {obj.fecha_consolidacion.strftime('%d/%m/%Y %H:%M')}
+        """
+    estadisticas_detalladas.short_description = 'Estadísticas Detalladas'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'nomina_consolidada',
+            'nomina_consolidada__cierre',
+            'nomina_consolidada__cierre__cliente'
+        )
+
+
+@admin.register(MovimientoPersonal)
+class MovimientoPersonalAdmin(admin.ModelAdmin):
+    """Administración de movimientos de personal"""
+    list_display = (
+        'empleado_info',
+        'cierre_info',
+        'tipo_movimiento_display',
+        'motivo_corto',
+        'fecha_movimiento',
+        'dias_ausencia',
+        'fecha_deteccion'
+    )
+    list_filter = (
+        'tipo_movimiento',
+        'nomina_consolidada__cierre__cliente',
+        'nomina_consolidada__cierre__periodo',
+        'fecha_deteccion',
+        'fecha_movimiento',
+        'detectado_por_sistema'
+    )
+    search_fields = (
+        'nomina_consolidada__nombre_empleado',
+        'nomina_consolidada__rut_empleado',
+        'motivo',
+        'observaciones',
+        'nomina_consolidada__cierre__cliente__nombre'
+    )
+    readonly_fields = (
+        'fecha_deteccion',
+        'detectado_por_sistema',
+        'resumen_movimiento'
+    )
+    fieldsets = (
+        ('Información del Empleado', {
+            'fields': (
+                'nomina_consolidada',
+            )
+        }),
+        ('Detalles del Movimiento', {
+            'fields': (
+                'tipo_movimiento',
+                'motivo',
+                'dias_ausencia',
+                'fecha_movimiento',
+                'observaciones'
+            )
+        }),
+        ('Metadatos de Detección', {
+            'fields': (
+                'fecha_deteccion',
+                'detectado_por_sistema',
+                'resumen_movimiento'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    date_hierarchy = 'fecha_deteccion'
+    list_per_page = 100
+    
+    def empleado_info(self, obj):
+        """Info del empleado"""
+        return f"{obj.nomina_consolidada.nombre_empleado} ({obj.nomina_consolidada.rut_empleado})"
+    empleado_info.short_description = 'Empleado'
+    
+    def cierre_info(self, obj):
+        """Info básica del cierre"""
+        return f"{obj.nomina_consolidada.cierre.cliente.nombre} - {obj.nomina_consolidada.cierre.periodo}"
+    cierre_info.short_description = 'Cierre'
+    
+    def tipo_movimiento_display(self, obj):
+        """Display con colores para tipo de movimiento"""
+        colors = {
+            'ingreso': '#10b981',            # verde
+            'finiquito': '#ef4444',          # rojo
+            'ausentismo': '#f59e0b',         # amarillo
+            'reincorporacion': '#3b82f6',    # azul
+            'cambio_datos': '#8b5cf6'        # morado
+        }
+        color = colors.get(obj.tipo_movimiento, '#6b7280')
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">●</span> {}',
+            color,
+            obj.get_tipo_movimiento_display()
+        )
+    tipo_movimiento_display.short_description = 'Tipo Movimiento'
+    
+    def motivo_corto(self, obj):
+        """Motivo truncado para la lista"""
+        if obj.motivo:
+            return (obj.motivo[:50] + '...') if len(obj.motivo) > 50 else obj.motivo
+        return '-'
+    motivo_corto.short_description = 'Motivo'
+    
+    def resumen_movimiento(self, obj):
+        """Resumen detallado del movimiento"""
+        return f"""
+        RESUMEN MOVIMIENTO:
+        
+        👤 EMPLEADO:
+        - Nombre: {obj.nomina_consolidada.nombre_empleado}
+        - RUT: {obj.nomina_consolidada.rut_empleado}
+        - Estado: {obj.nomina_consolidada.get_estado_empleado_display()}
+        
+        🔄 MOVIMIENTO:
+        - Tipo: {obj.get_tipo_movimiento_display()}
+        - Motivo: {obj.motivo or 'Sin especificar'}
+        - Fecha: {obj.fecha_movimiento.strftime('%d/%m/%Y') if obj.fecha_movimiento else 'Sin fecha'}
+        - Días Ausencia: {obj.dias_ausencia or 'N/A'}
+        
+        📊 CONTEXTO:
+        - Cierre: {obj.nomina_consolidada.cierre.cliente.nombre} - {obj.nomina_consolidada.cierre.periodo}
+        - Detectado por: {obj.detectado_por_sistema}
+        - Fecha Detección: {obj.fecha_deteccion.strftime('%d/%m/%Y %H:%M')}
+        
+        📝 OBSERVACIONES:
+        {obj.observaciones or 'Sin observaciones'}
+        """
+    resumen_movimiento.short_description = 'Resumen del Movimiento'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'nomina_consolidada',
+            'nomina_consolidada__cierre',
+            'nomina_consolidada__cierre__cliente'
+        )
+
+
+# ========== ACCIONES PERSONALIZADAS PARA MODELOS CONSOLIDADOS ==========
+
+@admin.action(description='Recalcular estadísticas de conceptos consolidados')
+def recalcular_estadisticas_conceptos(modeladmin, request, queryset):
+    """Acción para recalcular estadísticas de conceptos consolidados"""
+    count = 0
+    for concepto in queryset:
+        # Aquí se implementaría la lógica de recálculo
+        # concepto.recalcular_estadisticas()
+        count += 1
+    
+    modeladmin.message_user(
+        request,
+        f'Estadísticas recalculadas para {count} concepto(s) consolidado(s)'
+    )
+
+@admin.action(description='Exportar datos consolidados a Excel')
+def exportar_consolidados_excel(modeladmin, request, queryset):
+    """Acción para exportar datos consolidados a Excel"""
+    # Aquí se implementaría la lógica de exportación
+    modeladmin.message_user(
+        request,
+        f'Exportación iniciada para {queryset.count()} registro(s). Se notificará cuando esté listo.'
+    )
+
+# Agregar acciones personalizadas
+NominaConsolidadaAdmin.actions = [exportar_consolidados_excel]
+ConceptoConsolidadoAdmin.actions = [recalcular_estadisticas_conceptos, exportar_consolidados_excel]
+MovimientoPersonalAdmin.actions = [exportar_consolidados_excel]

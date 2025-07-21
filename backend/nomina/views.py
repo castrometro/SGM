@@ -1,2134 +1,1926 @@
-from rest_framework import viewsets, mixins, status, serializers
-from rest_framework.response import Response
+"""
+Views para Nueva Arquitectura de Nómina SGM
+==========================================
+
+ViewSets para modelos rediseñados centrados en CierreNomina:
+- CierreNomina: CRUD + acciones especiales (consolidar, cerrar, inicializar Redis)
+- EmpleadoNomina: Lista, detalle con búsqueda avanzada
+- Incidencias: Sistema completo de gestión con workflow
+- KPINomina: Métricas y dashboards
+
+Integración con Redis DB 2 para cache y optimizaciones.
+
+Autor: Sistema SGM - Módulo Nómina  
+Fecha: 20 de julio de 2025
+"""
+
+from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
+from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from celery import chain
-from rest_framework.decorators import api_view
-from rest_framework.views import APIView
-from api.models import Cliente, AsignacionClienteUsuario
-from .permissions import SupervisorPuedeVerCierresNominaAnalistas
-from django.contrib.auth import get_user_model
+from django.db import transaction
+from django.db.models import Q, Count, Sum, Avg
 from django.utils import timezone
-import logging
-
-from .utils.LibroRemuneraciones import clasificar_headers_libro_remuneraciones
-
-User = get_user_model()
+from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 
 from .models import (
+    # Modelos principales
     CierreNomina,
-    LibroRemuneracionesUpload,
-    ArchivoNovedadesUpload,
-    ChecklistItem,
-    ConceptoRemuneracion,
-    AnalistaFiniquito,
-    AnalistaIncidencia,
-    AnalistaIngreso,
-    # Modelos de novedades
-    EmpleadoCierreNovedades,
-    ConceptoRemuneracionNovedades,
-    RegistroConceptoEmpleadoNovedades,
-    # Modelos para incidencias
-    IncidenciaCierre,
-    ResolucionIncidencia,
-    # Modelos para discrepancias
-    DiscrepanciaCierre,
+    EmpleadoNomina, 
+    EmpleadoConcepto,
+    Ausentismo,
+    Incidencia,
+    InteraccionIncidencia,
+    
+    # Optimizaciones y KPIs
+    KPINomina,
+    EmpleadoOfuscado,
+    IndiceEmpleadoBusqueda,
+    ComparacionMensual,
+    CacheConsultas,
+    
+    # Mapeos y utilidades
+    MapeoConcepto,
+    MapeoNovedades,
+    LogArchivo,
 )
 
 from .serializers import (
-    CierreNominaSerializer, 
-    LibroRemuneracionesUploadSerializer, 
-    ArchivoNovedadesUploadSerializer, 
-    CierreNominaCreateSerializer, 
-    ChecklistItemUpdateSerializer, 
-    ChecklistItemCreateSerializer,
-    ConceptoRemuneracionSerializer,
-    AnalistaFiniquitoSerializer,
-    AnalistaIncidenciaSerializer,
-    AnalistaIngresoSerializer,
-    # Serializers de novedades
-    EmpleadoCierreNovedadesSerializer,
-    ConceptoRemuneracionNovedadesSerializer,
-    RegistroConceptoEmpleadoNovedadesSerializer,
-    # Serializers de incidencias
-    IncidenciaCierreSerializer,
-    ResolucionIncidenciaSerializer,
-    CrearResolucionSerializer,
-    ResumenIncidenciasSerializer,
-    # Serializers de discrepancias
-    DiscrepanciaCierreSerializer,
-    ResumenDiscrepanciasSerializer,
-    DiscrepanciaCreateSerializer,
+    CierreNominaListSerializer,
+    CierreNominaDetailSerializer,
+    CierreNominaCreateSerializer,
+    EmpleadoNominaListSerializer,
+    EmpleadoNominaDetailSerializer,
+    EmpleadoConceptoSerializer,
+    AusentismoSerializer,
+    IncidenciaListSerializer,
+    IncidenciaDetailSerializer,
+    InteraccionIncidenciaSerializer,
+    KPINominaSerializer,
+    MapeoConceptoSerializer,
+    LogArchivoSerializer,
 )
 
-from .tasks import (
-    analizar_headers_libro_remuneraciones,
-    analizar_headers_libro_remuneraciones_con_logging,
-    clasificar_headers_libro_remuneraciones_task,
-    clasificar_headers_libro_remuneraciones_con_logging,
-    actualizar_empleados_desde_libro,
-    guardar_registros_nomina,
-    procesar_archivo_analista,
-    procesar_archivo_novedades,
-    generar_incidencias_cierre_task,
-    generar_discrepancias_cierre_task,
-)
+from .cache_redis import CacheNominaSGM
+import logging
+import json
 
 logger = logging.getLogger(__name__)
+User = get_user_model()
+
+# ========== VIEWSET ESPECÍFICO PARA LIBRO DE REMUNERACIONES ==========
+
+class LibroRemuneracionesViewSet(viewsets.ViewSet):
+    """
+    ViewSet específico para manejo de libros de remuneraciones.
+    
+    Mantiene compatibilidad con las rutas esperadas por el frontend:
+    - POST /nomina/libros-remuneraciones/
+    - GET /nomina/libros-remuneraciones/estado/{cierreId}/
+    - POST /nomina/libros-remuneraciones/{libroId}/procesar/
+    """
+    
+    permission_classes = [IsAuthenticated]
+    
+    def create(self, request):
+        """
+        POST /nomina/libros-remuneraciones/
+        Subir archivo de libro de remuneraciones.
+        """
+        from .tasks import crear_chain_procesamiento_libro
+        
+        # Validar datos requeridos
+        cierre_id = request.data.get('cierre')
+        if not cierre_id:
+            return Response({
+                'error': 'Debe proporcionar el ID del cierre en el campo "cierre"'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if 'archivo' not in request.FILES:
+            return Response({
+                'error': 'Debe proporcionar un archivo en el campo "archivo"'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        archivo = request.FILES['archivo']
+        
+        try:
+            # Obtener el cierre
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({
+                'error': f'Cierre con ID {cierre_id} no encontrado'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Validar extensión
+        if not archivo.name.lower().endswith(('.xlsx', '.xls')):
+            return Response({
+                'error': 'El archivo debe ser formato Excel (.xlsx, .xls)'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Leer archivo en memoria
+            archivo_content = archivo.read()
+            
+            # Crear chain de Celery
+            chain_task = crear_chain_procesamiento_libro(
+                cierre_id=cierre.id,
+                archivo_data=archivo_content,
+                filename=archivo.name
+            )
+            
+            # Ejecutar chain
+            result = chain_task.apply_async()
+            
+            # Actualizar estado inicial en Redis
+            cache = CacheNominaSGM()
+            cache.actualizar_estado_libro(
+                cliente_id=cierre.cliente.id,
+                cierre_id=cierre.id,
+                estado='subido',
+                info_adicional={
+                    'filename': archivo.name,
+                    'size': len(archivo_content),
+                    'celery_task_id': result.id,
+                    'progreso': 5,
+                    'mensaje': 'Archivo recibido, iniciando análisis...'
+                }
+            )
+            
+            return Response({
+                'success': True,
+                'mensaje': f'Archivo {archivo.name} recibido, procesando en background',
+                'data': {
+                    'libro_id': cierre.id,  # Usamos cierre_id como libro_id
+                    'filename': archivo.name,
+                    'size': len(archivo_content),
+                    'task_id': result.id,
+                    'cierre_id': cierre.id,
+                    'estado': 'subido'
+                }
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            logger.error(f"Error subiendo libro para cierre {cierre.id}: {e}")
+            return Response({
+                'error': f'Error procesando archivo: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'], url_path='estado/(?P<cierre_id>[^/.]+)')
+    def obtener_estado(self, request, cierre_id=None):
+        """
+        GET /nomina/libros-remuneraciones/estado/{cierreId}/
+        Obtener estado del libro de remuneraciones.
+        """
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({
+                'error': f'Cierre con ID {cierre_id} no encontrado'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        try:
+            cache = CacheNominaSGM()
+            
+            # Obtener información completa
+            estado = cache.obtener_estado_libro(cierre.cliente.id, cierre_id)
+            analisis = cache.obtener_analisis_headers(cierre.cliente.id, cierre_id)
+            mapeos_manuales = cache.obtener_mapeos_manuales(cierre.cliente.id, cierre_id)
+            empleados = cache.obtener_empleados_procesados(cierre.cliente.id, cierre_id)
+            
+            # Construir respuesta compatible con frontend
+            respuesta = {
+                'libro_id': cierre_id,
+                'cierre_id': cierre_id,
+                'cliente': cierre.cliente.nombre,
+                'periodo': cierre.periodo,
+                'estado': estado.get('estado', 'pendiente') if estado else 'pendiente',
+                'progreso': self._calcular_progreso_libro(estado, analisis, mapeos_manuales, empleados),
+                'mensaje': estado.get('info', {}).get('mensaje', '') if estado else '',
+                'timestamp': estado.get('timestamp') if estado else None
+            }
+            
+            # Añadir detalles según el estado
+            if analisis:
+                respuesta['headers_analysis'] = {
+                    'headers_mapeados': len(analisis.get('headers_mapeados', [])),
+                    'headers_no_mapeados': len(analisis.get('headers_no_mapeados', [])),
+                    'headers_no_mapeados_lista': analisis.get('headers_no_mapeados', []),
+                    'requiere_mapeo_manual': len(analisis.get('headers_no_mapeados', [])) > 0
+                }
+            
+            if empleados:
+                respuesta['empleados_procesados'] = {
+                    'total_empleados': empleados.get('total_empleados', 0),
+                    'total_conceptos': empleados.get('total_conceptos', 0)
+                }
+            
+            return Response(respuesta)
+            
+        except Exception as e:
+            logger.error(f"Error obteniendo estado libro para cierre {cierre_id}: {e}")
+            return Response({
+                'error': f'Error obteniendo estado: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'], url_path='procesar')
+    def procesar(self, request, pk=None):
+        """
+        POST /nomina/libros-remuneraciones/{libroId}/procesar/
+        Procesar empleados con mapeos aplicados.
+        """
+        from .tasks import procesar_empleados_libro
+        
+        cierre_id = pk  # En nuestro caso, libro_id = cierre_id
+        
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({
+                'error': f'Cierre con ID {cierre_id} no encontrado'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        try:
+            cache = CacheNominaSGM()
+            
+            # Verificar estado actual
+            estado_actual = cache.obtener_estado_libro(cierre.cliente.id, cierre_id)
+            if not estado_actual:
+                return Response({
+                    'error': 'No se encontró información del libro. Debe subir un archivo primero.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            if estado_actual.get('estado') not in ['listo_procesar', 'mapeo_requerido']:
+                return Response({
+                    'error': f'El libro no está listo para procesar. Estado actual: {estado_actual.get("estado")}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Iniciar tarea de procesamiento
+            task_result = procesar_empleados_libro.delay(cierre_id)
+            
+            # Actualizar estado
+            cache.actualizar_estado_libro(
+                cliente_id=cierre.cliente.id,
+                cierre_id=cierre_id,
+                estado='procesando',
+                info_adicional={
+                    'task_id': task_result.id,
+                    'progreso': 60,
+                    'mensaje': 'Procesando empleados con mapeos aplicados...'
+                }
+            )
+            
+            return Response({
+                'success': True,
+                'mensaje': 'Procesamiento iniciado exitosamente',
+                'data': {
+                    'task_id': task_result.id,
+                    'estado': 'procesando',
+                    'libro_id': cierre_id
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Error iniciando procesamiento para cierre {cierre_id}: {e}")
+            return Response({
+                'error': f'Error iniciando procesamiento: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _calcular_progreso_libro(self, estado, analisis, mapeos_manuales, empleados):
+        """Calcula el progreso general de la tarjeta libro"""
+        if not estado:
+            return {'porcentaje': 0, 'fase': 'pendiente'}
+        
+        estado_actual = estado.get('estado', 'pendiente')
+        
+        if estado_actual == 'pendiente':
+            return {'porcentaje': 0, 'fase': 'Esperando archivo'}
+        elif estado_actual in ['subido', 'analizando']:
+            return {'porcentaje': 20, 'fase': 'Analizando archivo'}
+        elif estado_actual == 'mapeo_requerido':
+            return {'porcentaje': 40, 'fase': 'Requiere mapeo manual'}
+        elif estado_actual in ['listo_procesar', 'mapeo_parcial']:
+            return {'porcentaje': 60, 'fase': 'Listo para procesar'}
+        elif estado_actual == 'procesando':
+            return {'porcentaje': 80, 'fase': 'Procesando empleados'}
+        elif estado_actual == 'procesado':
+            return {'porcentaje': 100, 'fase': 'Completado'}
+        elif estado_actual == 'error':
+            return {'porcentaje': 0, 'fase': 'Error', 'error': estado.get('info', {}).get('error')}
+        else:
+            return {'porcentaje': 0, 'fase': estado_actual}
+    
+    @action(detail=False, methods=['get'], url_path='headers/(?P<cierre_id>[^/.]+)')
+    def obtener_headers_clasificacion(self, request, cierre_id=None):
+        """
+        GET /nomina/libros-remuneraciones/headers/{cierreId}/
+        Obtener headers para modal de clasificación.
+        """
+        try:
+            # Obtener el cierre
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            cache = CacheNominaSGM()
+            
+            # Obtener análisis de headers
+            analisis = cache.obtener_analisis_headers(cierre.cliente.id, cierre_id)
+            mapeos_manuales = cache.obtener_mapeos_manuales(cierre.cliente.id, cierre_id)
+            mapeo_final = cache.obtener_mapeo_final(cierre.cliente.id, cierre_id)
+            
+            if not analisis:
+                return Response({
+                    'error': 'No se encontró análisis de headers. Debe subir un archivo primero.'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            headers_no_mapeados = analisis.get('headers_no_mapeados', [])
+            headers_mapeados = analisis.get('headers_mapeados', [])
+            
+            # Construir respuesta para modal
+            respuesta = {
+                'headers_sin_clasificar': headers_no_mapeados,
+                'headers_clasificados': headers_mapeados,
+                'mapeos_automaticos': {h: h for h in headers_mapeados},
+                'mapeos_manuales': mapeos_manuales.get('mapeos', {}) if mapeos_manuales else {},
+                'mapeos_completos': mapeo_final.get('mapeos_completos', {}) if mapeo_final else {},
+                'total_headers': len(headers_no_mapeados) + len(headers_mapeados),
+                'requiere_mapeo_manual': len(headers_no_mapeados) > 0,
+                'estado': 'disponible'
+            }
+            
+            return Response(respuesta)
+            
+        except CierreNomina.DoesNotExist:
+            return Response({
+                'error': f'Cierre con ID {cierre_id} no encontrado'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error obteniendo headers para cierre {cierre_id}: {e}")
+            return Response({
+                'error': f'Error obteniendo headers: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'], url_path='mapeos/(?P<cierre_id>[^/.]+)')
+    def guardar_mapeos_manuales(self, request, cierre_id=None):
+        """
+        POST /nomina/libros-remuneraciones/mapeos/{cierreId}/
+        Guardar mapeos manuales en Redis (PHASE 1) Y en BD (permanente).
+        
+        ESTRATEGIA DUAL:
+        1. Redis → Para procesamiento rápido PHASE 1
+        2. BD → Para memoria permanente del cliente
+        """
+        try:
+            # Obtener el cierre
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            cache = CacheNominaSGM()
+            
+            # Obtener mapeos del request
+            mapeos = request.data.get('mapeos', {})
+            
+            if not mapeos:
+                return Response({
+                    'error': 'Debe proporcionar mapeos para guardar'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # ===== CAPA 1: REDIS (PHASE 1 - Rápido) =====
+            resultado_redis = cache.guardar_mapeos_manuales(
+                cliente_id=cierre.cliente.id,
+                cierre_id=cierre_id,
+                mapeos=mapeos
+            )
+            
+            if not resultado_redis:
+                return Response({
+                    'error': 'Error guardando mapeos en Redis'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            # ===== CAPA 2: BD (Permanente - Memoria eterna) =====
+            mapeos_guardados_bd = 0
+            for header_excel, clasificacion in mapeos.items():
+                # Crear o actualizar mapeo permanente
+                mapeo, created = MapeoConcepto.objects.update_or_create(
+                    cliente=cierre.cliente,
+                    header_excel=header_excel,
+                    defaults={
+                        'clasificacion_sugerida': clasificacion,
+                        'es_automatico': False,  # Es mapeo manual
+                        'fecha_creacion': timezone.now() if created else None
+                    }
+                )
+                mapeos_guardados_bd += 1
+                
+                if created:
+                    logger.info(f"💾 Nuevo mapeo permanente: {header_excel} → {clasificacion} (Cliente {cierre.cliente.id})")
+                else:
+                    logger.info(f"🔄 Mapeo actualizado: {header_excel} → {clasificacion} (Cliente {cierre.cliente.id})")
+            
+            # ===== RECALCULAR MAPEO FINAL =====
+            analisis = cache.obtener_analisis_headers(cierre.cliente.id, cierre_id)
+            mapeos_manuales_actualizados = cache.obtener_mapeos_manuales(cierre.cliente.id, cierre_id)
+            
+            # Generar mapeo final combinando automáticos + manuales
+            headers_mapeados = analisis.get('headers_mapeados', []) if analisis else []
+            mapeos_automaticos = {h: h for h in headers_mapeados}
+            mapeos_manuales = mapeos_manuales_actualizados.get('mapeos', {}) if mapeos_manuales_actualizados else {}
+            
+            mapeos_completos = {**mapeos_automaticos, **mapeos_manuales}
+            
+            # Guardar mapeo final
+            cache.guardar_mapeo_final(
+                cliente_id=cierre.cliente.id,
+                cierre_id=cierre_id,
+                mapeos_completos=mapeos_completos
+            )
+            
+            # ===== DETERMINAR NUEVO ESTADO =====
+            headers_no_mapeados = analisis.get('headers_no_mapeados', []) if analisis else []
+            headers_pendientes = [h for h in headers_no_mapeados if h not in mapeos_manuales]
+            
+            if len(headers_pendientes) == 0:
+                nuevo_estado = 'listo_procesar'
+                mensaje = '✅ Todos los headers han sido mapeados - listo para procesar'
+            else:
+                nuevo_estado = 'mapeo_requerido'
+                mensaje = f'⚠️ {len(headers_pendientes)} headers aún requieren mapeo'
+            
+            # Actualizar estado
+            cache.actualizar_estado_libro(
+                cliente_id=cierre.cliente.id,
+                cierre_id=cierre_id,
+                estado=nuevo_estado,
+                info_adicional={
+                    'progreso': 70 if nuevo_estado == 'listo_procesar' else 50,
+                    'mensaje': mensaje,
+                    'headers_mapeados_total': len(mapeos_completos),
+                    'headers_pendientes': len(headers_pendientes)
+                }
+            )
+            
+            return Response({
+                'success': True,
+                'mensaje': f'✅ Mapeos guardados: Redis (PHASE 1) + BD (permanente)',
+                'data': {
+                    'mapeos_guardados_redis': len(mapeos),
+                    'mapeos_guardados_bd': mapeos_guardados_bd,
+                    'mapeos_completos': len(mapeos_completos),
+                    'headers_pendientes': len(headers_pendientes),
+                    'nuevo_estado': nuevo_estado,
+                    'listo_procesar': nuevo_estado == 'listo_procesar',
+                    'memoria_permanente': True  # ✨ Confirmación de que se guardó en BD
+                }
+            })
+            
+        except CierreNomina.DoesNotExist:
+            return Response({
+                'error': f'Cierre con ID {cierre_id} no encontrado'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error guardando mapeos para cierre {cierre_id}: {e}")
+            return Response({
+                'error': f'Error guardando mapeos: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['delete'], url_path='mapeos/(?P<cierre_id>[^/.]+)/(?P<header_name>[^/.]+)')
+    def eliminar_mapeo_manual(self, request, cierre_id=None, header_name=None):
+        """
+        DELETE /nomina/libros-remuneraciones/mapeos/{cierreId}/{headerName}/
+        Eliminar mapeo manual de Redis y BD.
+        
+        OPERACIÓN CRUD: DELETE
+        - Redis: Elimina del mapeo actual 
+        - BD: Marca como inactivo (soft delete) para mantener historial
+        """
+        try:
+            # Obtener el cierre
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            cache = CacheNominaSGM()
+            
+            # Decodificar nombre del header
+            import urllib.parse
+            header_decodificado = urllib.parse.unquote(header_name)
+            
+            # ===== CAPA 1: REDIS (PHASE 1) =====
+            # Eliminar de mapeos manuales actuales
+            mapeos_manuales = cache.obtener_mapeos_manuales(cierre.cliente.id, cierre_id)
+            mapeos_actuales = mapeos_manuales.get('mapeos', {}) if mapeos_manuales else {}
+            
+            if header_decodificado in mapeos_actuales:
+                del mapeos_actuales[header_decodificado]
+                
+                # Guardar mapeos actualizados
+                cache.guardar_mapeos_manuales(
+                    cliente_id=cierre.cliente.id,
+                    cierre_id=cierre_id,
+                    mapeos=mapeos_actuales
+                )
+                
+                logger.info(f"🗑️ Eliminado mapeo de Redis: {header_decodificado}")
+            
+            # ===== CAPA 2: BD (Soft Delete) =====
+            mapeos_bd = MapeoConcepto.objects.filter(
+                cliente=cierre.cliente,
+                header_excel=header_decodificado
+            )
+            
+            mapeos_eliminados_bd = 0
+            for mapeo in mapeos_bd:
+                mapeo.activo = False  # Soft delete
+                mapeo.fecha_eliminacion = timezone.now()
+                mapeo.save(update_fields=['activo', 'fecha_eliminacion'])
+                mapeos_eliminados_bd += 1
+                
+            logger.info(f"🗑️ Marcados como inactivos {mapeos_eliminados_bd} mapeos en BD para: {header_decodificado}")
+            
+            # ===== RECALCULAR ESTADO =====
+            # Recalcular mapeo final
+            analisis = cache.obtener_analisis_headers(cierre.cliente.id, cierre_id)
+            headers_mapeados = analisis.get('headers_mapeados', []) if analisis else []
+            mapeos_automaticos = {h: h for h in headers_mapeados}
+            
+            mapeos_completos = {**mapeos_automaticos, **mapeos_actuales}
+            
+            # Guardar mapeo final actualizado
+            cache.guardar_mapeo_final(
+                cliente_id=cierre.cliente.id,
+                cierre_id=cierre_id,
+                mapeos_completos=mapeos_completos
+            )
+            
+            # Determinar nuevo estado
+            headers_no_mapeados = analisis.get('headers_no_mapeados', []) if analisis else []
+            headers_pendientes = [h for h in headers_no_mapeados if h not in mapeos_actuales]
+            
+            if len(headers_pendientes) == 0:
+                nuevo_estado = 'listo_procesar'
+                mensaje = '✅ Todos los headers siguen mapeados'
+            else:
+                nuevo_estado = 'mapeo_requerido'
+                mensaje = f'⚠️ {len(headers_pendientes)} headers requieren mapeo tras eliminación'
+            
+            # Actualizar estado
+            cache.actualizar_estado_libro(
+                cliente_id=cierre.cliente.id,
+                cierre_id=cierre_id,
+                estado=nuevo_estado,
+                info_adicional={
+                    'progreso': 70 if nuevo_estado == 'listo_procesar' else 50,
+                    'mensaje': mensaje,
+                    'headers_mapeados_total': len(mapeos_completos),
+                    'headers_pendientes': len(headers_pendientes)
+                }
+            )
+            
+            return Response({
+                'success': True,
+                'mensaje': f'✅ Mapeo eliminado: {header_decodificado}',
+                'data': {
+                    'header_eliminado': header_decodificado,
+                    'mapeos_restantes_redis': len(mapeos_actuales),
+                    'mapeos_desactivados_bd': mapeos_eliminados_bd,
+                    'nuevo_estado': nuevo_estado,
+                    'headers_pendientes': len(headers_pendientes),
+                    'listo_procesar': nuevo_estado == 'listo_procesar'
+                }
+            })
+            
+        except CierreNomina.DoesNotExist:
+            return Response({
+                'error': f'Cierre con ID {cierre_id} no encontrado'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error eliminando mapeo {header_name} para cierre {cierre_id}: {e}")
+            return Response({
+                'error': f'Error eliminando mapeo: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# ========== VIEWSET PRINCIPAL - CIERRE NOMINA ==========
 
 class CierreNominaViewSet(viewsets.ModelViewSet):
     """
-    ViewSet para gestionar los cierres de nómina.
-    Supervisores pueden ver cierres de clientes asignados a sus analistas supervisados.
+    ViewSet principal para gestión de cierres de nómina
+    
+    Funcionalidades:
+    - CRUD básico de cierres
+    - Consolidación automática con Redis
+    - Cálculo de KPIs
+    - Apertura/Cierre workflow
+    - Dashboard con métricas
     """
-    queryset = CierreNomina.objects.all()
-    serializer_class = CierreNominaSerializer
-    permission_classes = [IsAuthenticated, SupervisorPuedeVerCierresNominaAnalistas]
+    
+    queryset = CierreNomina.objects.all().select_related('cliente', 'analista_responsable')
+    permission_classes = [IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['cliente__nombre', 'periodo', 'analista_responsable__correo_bdo']
+    ordering_fields = ['fecha_creacion', 'periodo', 'estado']
+    ordering = ['-fecha_creacion']
+    
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return CierreNominaListSerializer
+        elif self.action == 'create':
+            return CierreNominaCreateSerializer
+        return CierreNominaDetailSerializer
+    
+    def list(self, request, *args, **kwargs):
+        """Lista de cierres con filtros"""
+        
+        # Si hay filtro de cliente, usar ORM normal ahora que está corregido
+        cliente_id = self.request.query_params.get('cliente')
+        
+        if cliente_id:
+            try:
+                # Usar ORM normal con optimizaciones
+                cierres = CierreNomina.objects.filter(
+                    cliente_id=cliente_id
+                ).select_related('cliente', 'analista_responsable').order_by('-periodo')
+                
+                cierres_data = []
+                for cierre in cierres:
+                    analista_info = None
+                    if cierre.analista_responsable:
+                        analista_info = {
+                            'id': cierre.analista_responsable.id,
+                            'correo_bdo': cierre.analista_responsable.correo_bdo,
+                            'full_name': f"{cierre.analista_responsable.nombre} {cierre.analista_responsable.apellido}".strip()
+                        }
+                    
+                    cierres_data.append({
+                        'id': cierre.id,
+                        'periodo': cierre.periodo,
+                        'estado': cierre.estado,
+                        'fecha_creacion': cierre.fecha_creacion,
+                        'fecha_consolidacion': cierre.fecha_consolidacion,
+                        'fecha_cierre': cierre.fecha_cierre,
+                        'total_empleados_activos': cierre.total_empleados_activos or 0,
+                        'discrepancias_detectadas': cierre.discrepancias_detectadas or 0,
+                        'tiene_discrepancias': (cierre.discrepancias_detectadas or 0) > 0,
+                        'cliente': {
+                            'id': cierre.cliente.id,
+                            'nombre': cierre.cliente.nombre
+                        },
+                        'analista_responsable': analista_info
+                    })
+                
+                logger.info(f"Obtenidos {len(cierres_data)} cierres para cliente {cliente_id} con ORM")
+                
+                return Response(cierres_data)
+                
+            except Exception as e:
+                logger.error(f"Error obteniendo cierres para cliente {cliente_id}: {str(e)}", exc_info=True)
+                return Response(
+                    {'error': f'Error obteniendo cierres: {str(e)}'}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        
+        # Para otros casos sin filtro de cliente, usar método original
+        return super().list(request, *args, **kwargs)
     
     def get_queryset(self):
+        """Filtrar cierres según permisos de usuario"""
         queryset = super().get_queryset()
         user = self.request.user
+        
+        # Filtros por parámetros de URL
         cliente_id = self.request.query_params.get('cliente')
         periodo = self.request.query_params.get('periodo')
+        estado = self.request.query_params.get('estado')
         
-        # Filtrar por parámetros URL
         if cliente_id:
-            queryset = queryset.filter(cliente_id=cliente_id)
+            queryset = queryset.filter(cliente=cliente_id)
         if periodo:
             queryset = queryset.filter(periodo=periodo)
-
-        # Aplicar filtros de acceso según tipo de usuario
-        if user.tipo_usuario.lower() == 'gerente':
-            # Gerentes ven todo (sin filtros adicionales)
+        if estado:
+            queryset = queryset.filter(estado=estado)
+        
+        # Control de acceso por tipo de usuario
+        if user.tipo_usuario == 'gerente':
+            # Gerentes ven todo
             pass
-        elif user.tipo_usuario.lower() == 'supervisor':
-            # Supervisores solo ven cierres de clientes asignados a sus analistas supervisados
+        elif user.tipo_usuario == 'supervisor':
+            # Supervisores ven cierres de sus analistas
             analistas_supervisados = user.get_analistas_supervisados()
-            clientes_accesibles = AsignacionClienteUsuario.objects.filter(
-                usuario__in=analistas_supervisados
-            ).values_list('cliente_id', flat=True)
-            queryset = queryset.filter(cliente_id__in=clientes_accesibles)
+            queryset = queryset.filter(analista_responsable__in=analistas_supervisados)
         elif user.tipo_usuario in ['analista', 'senior']:
-            # Analistas solo ven cierres de sus clientes asignados
-            clientes_asignados = AsignacionClienteUsuario.objects.filter(
-                usuario=user
-            ).values_list('cliente_id', flat=True)
-            queryset = queryset.filter(cliente_id__in=clientes_asignados)
-
-        return queryset.select_related("cliente", "usuario_analista").order_by(
-            "-periodo"
-        )
-
-    def get_serializer_class(self):
-        if self.action == 'create':
-            return CierreNominaCreateSerializer
-        return CierreNominaSerializer
-
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        cierre = serializer.save(usuario_analista=request.user)
-        read_serializer = CierreNominaSerializer(cierre, context={'request': request})
-        return Response(read_serializer.data, status=status.HTTP_201_CREATED)
-
+            # Analistas solo ven sus propios cierres
+            queryset = queryset.filter(analista_responsable=user)
+        
+        return queryset
+    
+    def perform_create(self, serializer):
+        """Crear cierre e inicializar en Redis con mapeos del cliente"""
+        # Si no se proporciona analista_responsable, asignar el usuario actual
+        if not serializer.validated_data.get('analista_responsable'):
+            serializer.validated_data['analista_responsable'] = self.request.user
+        
+        cierre = serializer.save()
+        
+        # Crear checklist por defecto
+        try:
+            from .models import ChecklistItem
+            ChecklistItem.crear_checklist_por_defecto(cierre)
+            logger.info(f"Checklist creado para cierre {cierre.id}")
+        except Exception as e:
+            logger.error(f"Error creando checklist para cierre {cierre.id}: {e}")
+        
+        # ✨ NUEVA FUNCIONALIDAD: Pre-cargar mapeos del cliente en Redis
+        try:
+            self._precargar_mapeos_cliente_en_redis(cierre)
+        except Exception as e:
+            logger.error(f"Error precargando mapeos para cierre {cierre.id}: {e}")
+        
+        # Inicializar en Redis (comentado hasta implementar el método)
+        try:
+            # cache = CacheNominaSGM()
+            # cache.inicializar_cierre(cierre.id)
+            
+            logger.info(f"Cierre {cierre.id} creado exitosamente con mapeos precargados")
+        except Exception as e:
+            logger.error(f"Error inicializando cierre {cierre.id} en Redis: {e}")
+    
+    def _precargar_mapeos_cliente_en_redis(self, cierre):
+        """
+        Pre-carga mapeos de BD a Redis para procesamiento eficiente.
+        
+        ESTRATEGIA:
+        1. Obtener todos los mapeos del cliente desde BD
+        2. Cargar en Redis como 'mapeos_conocidos' 
+        3. Análisis posterior usa Redis (no consulta BD concepto x concepto)
+        """
+        try:
+            from .cache_redis import CacheNominaSGM
+            
+            cache = CacheNominaSGM()
+            
+            # Obtener mapeos existentes del cliente desde BD
+            mapeos_bd = MapeoConcepto.objects.filter(cliente=cierre.cliente)
+            
+            if mapeos_bd.exists():
+                # Convertir a diccionario para Redis
+                mapeos_conocidos = {}
+                for mapeo in mapeos_bd:
+                    mapeos_conocidos[mapeo.header_excel] = mapeo.clasificacion_sugerida
+                
+                # Guardar en Redis como "mapeos conocidos" del cliente
+                key_mapeos_conocidos = f"sgm:nomina:{cierre.cliente.id}:{cierre.id}:mapeos_conocidos"
+                cache.redis_client.hset(key_mapeos_conocidos, mapping=mapeos_conocidos)
+                cache.redis_client.expire(key_mapeos_conocidos, 604800)  # 7 días
+                
+                logger.info(f"💾 Pre-cargados {len(mapeos_conocidos)} mapeos conocidos para cliente {cierre.cliente.id} en Redis")
+                
+                # Log de mapeos cargados para debug
+                for header, clasificacion in list(mapeos_conocidos.items())[:5]:  # Solo mostrar primeros 5
+                    logger.info(f"  📋 {header} → {clasificacion}")
+                    
+                if len(mapeos_conocidos) > 5:
+                    logger.info(f"  ... y {len(mapeos_conocidos) - 5} mapeos más")
+                    
+            else:
+                logger.info(f"📝 Cliente {cierre.cliente.id} no tiene mapeos previos - primera vez")
+                
+        except Exception as e:
+            logger.error(f"Error precargando mapeos para cierre {cierre.id}: {e}")
+            raise
+    
     @action(detail=False, methods=['get'], url_path='resumen/(?P<cliente_id>[^/.]+)')
-    def resumen_cliente(self, request, cliente_id=None):
-        user = request.user
+    def resumen(self, request, cliente_id=None):
+        """
+        Obtener resumen de nómina para un cliente específico
         
-        # Verificar si el usuario tiene acceso a este cliente
-        tiene_acceso = False
-        
-        if user.tipo_usuario.lower() == 'gerente':
-            # Gerentes tienen acceso a todos los clientes
-            tiene_acceso = True
-        elif user.tipo_usuario.lower() == 'supervisor':
-            # Supervisores solo ven clientes de sus analistas supervisados
-            analistas_supervisados = user.get_analistas_supervisados()
-            tiene_acceso = AsignacionClienteUsuario.objects.filter(
-                usuario__in=analistas_supervisados,
+        Devuelve información del último cierre y estado actual:
+        - ultimo_cierre: período del último cierre
+        - estado_cierre_actual: estado del cierre más reciente
+        """
+        try:
+            # Log para debug
+            logger.info(f"Obteniendo resumen de nómina para cliente_id: {cliente_id}")
+            
+            # Usar ORM normal ahora que está corregido
+            ultimo_cierre = CierreNomina.objects.filter(
                 cliente_id=cliente_id
-            ).exists()
-        elif user.tipo_usuario in ['analista', 'senior']:
-            # Analistas solo ven sus clientes asignados
-            tiene_acceso = AsignacionClienteUsuario.objects.filter(
-                usuario=user,
-                cliente_id=cliente_id
-            ).exists()
-        
-        if not tiene_acceso:
-            return Response({"detail": "No tienes permisos para ver este cliente."}, 
-                          status=status.HTTP_403_FORBIDDEN)
-        
-        # Trae el último cierre de nómina por fecha para este cliente
-        cierre = (
-            CierreNomina.objects
-            .filter(cliente_id=cliente_id)
-            .order_by('-periodo')
-            .first()
-        )
-        if cierre:
-            return Response({
-                "ultimo_cierre": cierre.periodo,
-                "estado_cierre_actual": cierre.estado,
-            })
-        else:
-            return Response({
-                "ultimo_cierre": None,
-                "estado_cierre_actual": None,
-            })
-
-    @action(detail=True, methods=['post'], url_path='actualizar-estado')
-    def actualizar_estado(self, request, pk=None):
+            ).select_related('analista_responsable').order_by('-periodo').first()
+            
+            if ultimo_cierre:
+                analista_correo = ultimo_cierre.analista_responsable.correo_bdo if ultimo_cierre.analista_responsable else None
+                
+                response_data = {
+                    'ultimo_cierre': ultimo_cierre.periodo,
+                    'estado_cierre_actual': ultimo_cierre.estado,
+                    'fecha_ultima_actividad': ultimo_cierre.fecha_creacion,
+                    'total_empleados': ultimo_cierre.total_empleados_activos or 0,
+                    'tiene_discrepancias': (ultimo_cierre.discrepancias_detectadas or 0) > 0,
+                    'analista_responsable': analista_correo
+                }
+                
+                logger.info(f"Respuesta preparada: {response_data}")
+                return Response(response_data)
+            else:
+                logger.info(f"No se encontraron cierres para cliente {cliente_id}")
+                return Response({
+                    'ultimo_cierre': None,
+                    'estado_cierre_actual': None,
+                    'fecha_ultima_actividad': None,
+                    'total_empleados': 0,
+                    'tiene_discrepancias': False,
+                    'analista_responsable': None
+                })
+                
+        except Exception as e:
+            logger.error(f'Error obteniendo resumen para cliente {cliente_id}: {str(e)}', exc_info=True)
+            return Response(
+                {'error': f'Error obteniendo resumen: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['post'], url_path='consolidar')
+    def consolidar(self, request, pk=None):
         """
-        Actualiza automáticamente el estado del cierre basado en el estado de los archivos
+        Consolidar datos del cierre y calcular KPIs
         """
-        from .models_logging import registrar_actividad_tarjeta_nomina
-        from .utils.clientes import get_client_ip
-        
-        cierre = self.get_object()
-        estado_anterior = cierre.estado
-        
-        # Verificar el estado de los archivos y actualizar
-        estado_nuevo = cierre.actualizar_estado_automatico()
-        detalles_archivos = cierre._verificar_archivos_listos()
-        
-        # Registrar la actividad
-        registrar_actividad_tarjeta_nomina(
-            cierre_id=cierre.id,
-            tarjeta="cierre_general",
-            accion="actualizar_estado",
-            descripcion=f"Estado actualizado de '{estado_anterior}' a '{estado_nuevo}'",
-            usuario=request.user,
-            detalles={
-                "estado_anterior": estado_anterior,
-                "estado_nuevo": estado_nuevo,
-                "archivos_verificados": detalles_archivos['detalles'],
-                "archivos_faltantes": detalles_archivos['archivos_faltantes'],
-                "todos_listos": detalles_archivos['todos_listos']
-            },
-            ip_address=get_client_ip(request)
-        )
-        
-        # Serializar el cierre actualizado
-        serializer = self.get_serializer(cierre)
-        
-        return Response({
-            "success": True,
-            "mensaje": f"Estado actualizado de '{estado_anterior}' a '{estado_nuevo}'",
-            "cierre": serializer.data,
-            "detalles_archivos": detalles_archivos,
-            "cambio_estado": estado_anterior != estado_nuevo
-        })
-
-    @action(detail=True, methods=['post'], url_path='generar-incidencias-consolidadas')
-    def generar_incidencias_consolidadas(self, request, pk=None):
-        """
-        Genera incidencias comparando información consolidada con el período anterior
-        """
-        from .models_logging import registrar_actividad_tarjeta_nomina
-        from .utils.clientes import get_client_ip
-        from .utils.DetectarIncidenciasConsolidadas import generar_incidencias_consolidadas_task
-        from celery import current_app
-        
         cierre = self.get_object()
         
-        # Verificar que el cierre esté consolidado
-        if not cierre.puede_generar_incidencias():
+        if cierre.estado != 'abierto':
             return Response({
-                "success": False,
-                "error": f"El cierre debe estar consolidado para generar incidencias. Estado actual: {cierre.estado_consolidacion}"
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Verificar si ya tiene incidencias generadas
-        if cierre.estado_incidencias in ['incidencias_generadas', 'incidencias_resueltas']:
-            return Response({
-                "success": False,
-                "error": f"Las incidencias ya fueron generadas para este cierre. Estado: {cierre.estado_incidencias}"
+                'error': f'No se puede consolidar un cierre en estado {cierre.estado}'
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Ejecutar la tarea de detección de incidencias usando Celery
-            from .tasks import generar_incidencias_consolidadas_task
-            
-            # Enviar tarea a Celery
-            task = generar_incidencias_consolidadas_task.delay(cierre.id)
-            
-            # Actualizar estado del cierre a "generando_incidencias"
-            cierre.estado_incidencias = 'generando_incidencias'
-            cierre.save(update_fields=['estado_incidencias'])
-            
-            # Registrar la actividad
-            registrar_actividad_tarjeta_nomina(
-                cierre_id=cierre.id,
-                tarjeta="incidencias",
-                accion="iniciar_generar_incidencias_consolidadas",
-                descripcion="Iniciada generación de incidencias consolidadas (tarea en background)",
-                usuario=request.user,
-                detalles={
-                    "task_id": task.id,
-                    "metodo": "consolidado_vs_periodo_anterior",
-                    "estado_anterior": "pendiente"
-                },
-                ip_address=get_client_ip(request)
-            )
-            
-            return Response({
-                "success": True,
-                "mensaje": "Generación de incidencias consolidadas iniciada en background",
-                "task_id": task.id,
-                "estado_incidencias": cierre.estado_incidencias
-            })
+            with transaction.atomic():
+                # 1. Cambiar estado a consolidando
+                cierre.estado = 'consolidando'
+                cierre.save(update_fields=['estado'])
+                
+                # 2. Ejecutar consolidación en Redis
+                cache = CacheNominaSGM()
+                resultado_consolidacion = cache.consolidar_cierre(cierre.id)
+                
+                # 3. Calcular KPIs
+                self._calcular_kpis_cierre(cierre)
+                
+                # 4. Actualizar estado final
+                cierre.estado = 'consolidado'
+                cierre.fecha_consolidacion = timezone.now()
+                cierre.save(update_fields=['estado', 'fecha_consolidacion'])
+                
+                # 5. Actualizar cache con estado final
+                cache.actualizar_estado_cierre(cierre.id, 'consolidado')
+                
+                logger.info(f"Cierre {cierre.id} consolidado exitosamente")
+                
+                return Response({
+                    'success': True,
+                    'mensaje': 'Cierre consolidado exitosamente',
+                    'resultado_consolidacion': resultado_consolidacion,
+                    'estado': cierre.estado,
+                    'fecha_consolidacion': cierre.fecha_consolidacion
+                })
                 
         except Exception as e:
-            # Registrar el error
-            registrar_actividad_tarjeta_nomina(
-                cierre_id=cierre.id,
-                tarjeta="incidencias",
-                accion="error_iniciar_generar_incidencias_consolidadas",
-                descripcion=f"Error iniciando generación de incidencias consolidadas: {str(e)}",
-                usuario=request.user,
-                detalles={
-                    "error": str(e),
-                    "metodo": "consolidado_vs_periodo_anterior"
+            logger.error(f"Error consolidando cierre {cierre.id}: {e}")
+            
+            # Revertir estado si hay error
+            cierre.estado = 'abierto'
+            cierre.save(update_fields=['estado'])
+            
+            return Response({
+                'error': f'Error durante consolidación: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'], url_path='cerrar')
+    def cerrar(self, request, pk=None):
+        """
+        Cerrar definitivamente el cierre de nómina
+        """
+        cierre = self.get_object()
+        
+        if cierre.estado != 'consolidado':
+            return Response({
+                'error': f'Solo se puede cerrar un cierre consolidado. Estado actual: {cierre.estado}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validar que no hay incidencias pendientes críticas
+        incidencias_criticas = cierre.incidencias.filter(
+            estado='pendiente',
+            tipo_incidencia__in=['VARIACION_CRITICA', 'EMPLEADO_DUPLICADO']
+        ).count()
+        
+        if incidencias_criticas > 0:
+            return Response({
+                'error': f'No se puede cerrar. Hay {incidencias_criticas} incidencias críticas pendientes',
+                'incidencias_criticas': incidencias_criticas
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            with transaction.atomic():
+                cierre.estado = 'cerrado'
+                cierre.fecha_cierre = timezone.now()
+                cierre.usuario_cierre = request.user
+                cierre.save(update_fields=['estado', 'fecha_cierre', 'usuario_cierre'])
+                
+                # Actualizar en Redis
+                cache = CacheNominaSGM()
+                cache.actualizar_estado_cierre(cierre.id, 'cerrado')
+                
+                # Archivar datos en Redis (opcional - solo para optimización)
+                cache.archivar_cierre(cierre.id)
+                
+                logger.info(f"Cierre {cierre.id} cerrado por usuario {request.user.id}")
+                
+                return Response({
+                    'success': True,
+                    'mensaje': 'Cierre cerrado exitosamente',
+                    'estado': cierre.estado,
+                    'fecha_cierre': cierre.fecha_cierre,
+                    'usuario_cierre': request.user.get_full_name()
+                })
+                
+        except Exception as e:
+            logger.error(f"Error cerrando cierre {cierre.id}: {e}")
+            return Response({
+                'error': f'Error durante cierre: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'], url_path='reabrir')
+    def reabrir(self, request, pk=None):
+        """
+        Reabrir un cierre cerrado (solo gerentes/supervisores)
+        """
+        cierre = self.get_object()
+        user = request.user
+        motivo = request.data.get('motivo', '')
+        
+        # Solo gerentes y supervisores pueden reabrir
+        if user.tipo_usuario not in ['gerente', 'supervisor']:
+            return Response({
+                'error': 'Solo gerentes y supervisores pueden reabrir cierres'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        if cierre.estado != 'cerrado':
+            return Response({
+                'error': f'Solo se pueden reabrir cierres cerrados. Estado actual: {cierre.estado}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not motivo:
+            return Response({
+                'error': 'Debe proporcionar un motivo para la reapertura'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            with transaction.atomic():
+                cierre.estado = 'consolidado'  # Volver a consolidado
+                cierre.fecha_reapertura = timezone.now()
+                cierre.motivo_reapertura = motivo
+                cierre.save(update_fields=['estado', 'fecha_reapertura', 'motivo_reapertura'])
+                
+                # Actualizar en Redis
+                cache = CacheNominaSGM()
+                cache.actualizar_estado_cierre(cierre.id, 'consolidado')
+                
+                logger.info(f"Cierre {cierre.id} reabierto por {user.id}. Motivo: {motivo}")
+                
+                return Response({
+                    'success': True,
+                    'mensaje': 'Cierre reabierto exitosamente',
+                    'estado': cierre.estado,
+                    'fecha_reapertura': cierre.fecha_reapertura,
+                    'motivo': motivo
+                })
+                
+        except Exception as e:
+            logger.error(f"Error reabriendo cierre {cierre.id}: {e}")
+            return Response({
+                'error': f'Error durante reapertura: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'], url_path='dashboard')
+    def dashboard(self, request, pk=None):
+        """
+        Dashboard con métricas y KPIs del cierre
+        """
+        cierre = self.get_object()
+        
+        try:
+            # Obtener KPIs calculados
+            kpis = KPINomina.objects.filter(cierre=cierre)
+            kpis_data = {}
+            
+            for kpi in kpis:
+                kpis_data[kpi.tipo_kpi] = {
+                    'valor': kpi.valor_numerico,
+                    'valor_anterior': kpi.valor_comparativo_anterior,
+                    'variacion': kpi.variacion_porcentual,
+                    'metadatos': kpi.metadatos_kpi,
+                    'fecha_calculo': kpi.fecha_calculo
+                }
+            
+            # Resumen de empleados
+            resumen_empleados = {
+                'total_empleados': cierre.empleados_nomina.count(),
+                'por_tipo': {
+                    'planta': cierre.empleados_nomina.filter(tipo_empleado='planta').count(),
+                    'honorarios': cierre.empleados_nomina.filter(tipo_empleado='honorarios').count(),
+                    'finiquito': cierre.empleados_nomina.filter(tipo_empleado='finiquito').count(),
+                    'ingreso': cierre.empleados_nomina.filter(tipo_empleado='ingreso').count(),
+                }
+            }
+            
+            # Resumen de incidencias
+            resumen_incidencias = {
+                'total': cierre.incidencias.count(),
+                'por_estado': {
+                    'pendiente': cierre.incidencias.filter(estado='pendiente').count(),
+                    'en_revision': cierre.incidencias.filter(estado='en_revision').count(),
+                    'resuelta': cierre.incidencias.filter(estado='resuelta').count(),
                 },
-                ip_address=get_client_ip(request)
+                'por_tipo': {}
+            }
+            
+            # Contar por tipo de incidencia
+            tipos_incidencia = cierre.incidencias.values('tipo_incidencia').annotate(count=Count('id'))
+            for tipo in tipos_incidencia:
+                resumen_incidencias['por_tipo'][tipo['tipo_incidencia']] = tipo['count']
+            
+            # Estado del cache Redis
+            cache = CacheNominaSGM()
+            estado_cache = cache.obtener_estado_cierre(cierre.id)
+            
+            dashboard_data = {
+                'cierre_info': {
+                    'id': cierre.id,
+                    'periodo': cierre.periodo,
+                    'estado': cierre.estado,
+                    'cliente': cierre.cliente.nombre,
+                    'analista': cierre.analista_responsable.get_full_name(),
+                    'fecha_creacion': cierre.fecha_creacion,
+                    'fecha_consolidacion': cierre.fecha_consolidacion,
+                    'fecha_cierre': cierre.fecha_cierre,
+                },
+                'kpis': kpis_data,
+                'resumen_empleados': resumen_empleados,
+                'resumen_incidencias': resumen_incidencias,
+                'estado_cache': estado_cache,
+                'puede_consolidar': cierre.estado == 'abierto',
+                'puede_cerrar': cierre.estado == 'consolidado',
+                'puede_reabrir': cierre.estado == 'cerrado' and request.user.tipo_usuario in ['gerente', 'supervisor']
+            }
+            
+            return Response(dashboard_data)
+            
+        except Exception as e:
+            logger.error(f"Error generando dashboard para cierre {cierre.id}: {e}")
+            return Response({
+                'error': f'Error generando dashboard: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'], url_path='inicializar-redis')
+    def inicializar_redis(self, request, pk=None):
+        """
+        Inicializar/reinicializar cierre en Redis
+        """
+        cierre = self.get_object()
+        
+        try:
+            cache = CacheNominaSGM()
+            resultado = cache.inicializar_cierre(cierre.id, forzar=True)
+            
+            return Response({
+                'success': True,
+                'mensaje': 'Cierre inicializado en Redis exitosamente',
+                'resultado': resultado
+            })
+            
+        except Exception as e:
+            logger.error(f"Error inicializando cierre {cierre.id} en Redis: {e}")
+            return Response({
+                'error': f'Error inicializando Redis: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    # ===========================================
+    # ENDPOINTS PARA TARJETA LIBRO DE REMUNERACIONES
+    # ===========================================
+    
+    @action(detail=True, methods=['post'], url_path='libro/subir')
+    def subir_libro(self, request, pk=None):
+        """
+        Subir archivo Excel de libro de remuneraciones.
+        
+        Inicia Celery chain: analizar_headers → procesar_empleados (si está todo mapeado)
+        """
+        from .tasks import crear_chain_procesamiento_libro
+        
+        cierre = self.get_object()
+        
+        # Validar archivo
+        if 'archivo' not in request.FILES:
+            return Response({
+                'error': 'Debe proporcionar un archivo en el campo "archivo"'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        archivo = request.FILES['archivo']
+        
+        # Validar extensión
+        if not archivo.name.lower().endswith(('.xlsx', '.xls')):
+            return Response({
+                'error': 'El archivo debe ser formato Excel (.xlsx, .xls)'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Leer archivo en memoria
+            archivo_content = archivo.read()
+            
+            # Crear chain de Celery
+            chain_task = crear_chain_procesamiento_libro(
+                cierre_id=cierre.id,
+                archivo_data=archivo_content,
+                filename=archivo.name
+            )
+            
+            # Ejecutar chain
+            result = chain_task.apply_async()
+            
+            # Actualizar estado inicial en Redis
+            cache = CacheNominaSGM()
+            cache.actualizar_estado_libro(
+                cliente_id=cierre.cliente.id,
+                cierre_id=cierre.id,
+                estado='subido',
+                info_adicional={
+                    'filename': archivo.name,
+                    'size': len(archivo_content),
+                    'celery_task_id': result.id,
+                    'progreso': 5,
+                    'mensaje': 'Archivo recibido, iniciando análisis...'
+                }
             )
             
             return Response({
-                "success": False,
-                "error": f"Error interno: {str(e)}"
+                'success': True,
+                'mensaje': f'Archivo {archivo.name} recibido, procesando en background',
+                'datos': {
+                    'filename': archivo.name,
+                    'size': len(archivo_content),
+                    'task_id': result.id,
+                    'cierre_id': cierre.id,
+                    'estado': 'subido'
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Error subiendo libro para cierre {cierre.id}: {e}")
+            return Response({
+                'error': f'Error procesando archivo: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'], url_path='libro/mapear')
+    def mapear_conceptos_libro(self, request, pk=None):
+        """
+        Guardar mapeos manuales de conceptos no clasificados automáticamente.
+        """
+        cierre = self.get_object()
+        
+        # Validar datos
+        mapeos = request.data.get('mapeos')
+        if not mapeos or not isinstance(mapeos, dict):
+            return Response({
+                'error': 'Debe proporcionar un diccionario de mapeos en el campo "mapeos"'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            cache = CacheNominaSGM()
+            
+            # Verificar que hay análisis previo de headers
+            analisis = cache.obtener_analisis_headers(cierre.cliente.id, cierre.id)
+            if not analisis:
+                return Response({
+                    'error': 'No se encontró análisis de headers. Debe subir un archivo primero.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Guardar mapeos manuales
+            exito = cache.guardar_mapeos_manuales(
+                cliente_id=cierre.cliente.id,
+                cierre_id=cierre.id,
+                mapeos=mapeos
+            )
+            
+            if not exito:
+                return Response({
+                    'error': 'Error guardando mapeos en Redis'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            # Verificar si todos los conceptos están mapeados
+            headers_no_mapeados = analisis.get('headers_no_mapeados', [])
+            conceptos_mapeados = set(mapeos.keys())
+            conceptos_pendientes = set(headers_no_mapeados) - conceptos_mapeados
+            
+            todos_mapeados = len(conceptos_pendientes) == 0
+            
+            # Actualizar estado
+            if todos_mapeados:
+                estado = 'listo_procesar'
+                mensaje = 'Todos los conceptos están mapeados. Listo para procesar.'
+            else:
+                estado = 'mapeo_parcial'
+                mensaje = f'Faltan {len(conceptos_pendientes)} conceptos por mapear'
+            
+            cache.actualizar_estado_libro(
+                cliente_id=cierre.cliente.id,
+                cierre_id=cierre.id,
+                estado=estado,
+                info_adicional={
+                    'mapeos_guardados': len(mapeos),
+                    'conceptos_pendientes': len(conceptos_pendientes),
+                    'todos_mapeados': todos_mapeados,
+                    'mensaje': mensaje
+                }
+            )
+            
+            return Response({
+                'success': True,
+                'mensaje': mensaje,
+                'datos': {
+                    'mapeos_guardados': len(mapeos),
+                    'conceptos_pendientes': list(conceptos_pendientes),
+                    'todos_mapeados': todos_mapeados,
+                    'puede_procesar': todos_mapeados
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Error guardando mapeos para cierre {cierre.id}: {e}")
+            return Response({
+                'error': f'Error guardando mapeos: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'], url_path='libro/procesar')
+    def procesar_libro(self, request, pk=None):
+        """
+        Procesar empleados con todos los mapeos aplicados.
+        Solo funciona si todos los conceptos están mapeados.
+        """
+        from .tasks import procesar_empleados_libro
+        
+        cierre = self.get_object()
+        
+        try:
+            cache = CacheNominaSGM()
+            
+            # Verificar estado actual
+            estado_actual = cache.obtener_estado_libro(cierre.cliente.id, cierre.id)
+            if not estado_actual:
+                return Response({
+                    'error': 'No se encontró información del libro. Debe subir un archivo primero.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            if estado_actual.get('estado') not in ['listo_procesar', 'mapeo_requerido']:
+                return Response({
+                    'error': f'El libro no está listo para procesar. Estado actual: {estado_actual.get("estado")}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Verificar que todos los conceptos estén mapeados
+            analisis = cache.obtener_analisis_headers(cierre.cliente.id, cierre.id)
+            if analisis and analisis.get('headers_no_mapeados'):
+                mapeos_manuales = cache.obtener_mapeos_manuales(cierre.cliente.id, cierre.id)
+                
+                if not mapeos_manuales:
+                    return Response({
+                        'error': 'Hay conceptos sin mapear y no se han proporcionado mapeos manuales'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                conceptos_sin_mapear = set(analisis['headers_no_mapeados']) - set(mapeos_manuales.get('mapeos', {}).keys())
+                if conceptos_sin_mapear:
+                    return Response({
+                        'error': f'Conceptos sin mapear: {list(conceptos_sin_mapear)}'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Iniciar tarea de procesamiento
+            task_result = procesar_empleados_libro.delay(cierre.id)
+            
+            # Actualizar estado
+            cache.actualizar_estado_libro(
+                cliente_id=cierre.cliente.id,
+                cierre_id=cierre.id,
+                estado='procesando',
+                info_adicional={
+                    'task_id': task_result.id,
+                    'progreso': 60,
+                    'mensaje': 'Procesando empleados con mapeos aplicados...'
+                }
+            )
+            
+            return Response({
+                'success': True,
+                'mensaje': 'Procesamiento iniciado exitosamente',
+                'datos': {
+                    'task_id': task_result.id,
+                    'estado': 'procesando',
+                    'cierre_id': cierre.id
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Error iniciando procesamiento para cierre {cierre.id}: {e}")
+            return Response({
+                'error': f'Error iniciando procesamiento: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'], url_path='libro/estado')
+    def estado_libro(self, request, pk=None):
+        """
+        Obtener estado completo de la tarjeta libro de remuneraciones.
+        """
+        cierre = self.get_object()
+        
+        try:
+            cache = CacheNominaSGM()
+            
+            # Obtener información completa
+            estado = cache.obtener_estado_libro(cierre.cliente.id, cierre.id)
+            analisis = cache.obtener_analisis_headers(cierre.cliente.id, cierre.id)
+            mapeos_manuales = cache.obtener_mapeos_manuales(cierre.cliente.id, cierre.id)
+            mapeo_final = cache.obtener_mapeo_final(cierre.cliente.id, cierre.id)
+            empleados = cache.obtener_libro_empleados_conceptos(cierre.cliente.id, cierre.id)
+            
+            # ✅ CONSTRUCCIÓN COMPATIBLE CON FRONTEND
+            # Construir header_json en formato esperado por frontend
+            header_json = {}
+            if analisis:
+                headers_no_mapeados = analisis.get('headers_no_mapeados', [])
+                headers_mapeados = analisis.get('headers_mapeados', [])
+                
+                # Headers sin clasificar son los que no están mapeados
+                header_json['headers_sin_clasificar'] = headers_no_mapeados
+                # Headers clasificados son los que sí están mapeados
+                header_json['headers_clasificados'] = headers_mapeados
+                
+                # Si hay mapeos manuales, incluir info adicional
+                if mapeos_manuales:
+                    header_json['mapeos_manuales'] = mapeos_manuales.get('mapeos', {})
+                
+                # Si hay mapeo final, incluir mapeos completos
+                if mapeo_final:
+                    header_json['mapeos_completos'] = mapeo_final.get('mapeos_completos', {})
+            
+            # Construir respuesta completa
+            respuesta = {
+                'id': cierre.id,  # Agregamos ID para compatibilidad
+                'cierre_id': cierre.id,
+                'cliente': cierre.cliente.nombre,
+                'periodo': cierre.periodo,
+                'estado': estado.get('estado', 'pendiente') if estado else 'pendiente',
+                'estado_libro': estado,
+                'header_json': header_json,  # ✅ FORMATO ESPERADO POR FRONTEND
+                'progreso_completo': self._calcular_progreso_libro(estado, analisis, mapeos_manuales, empleados)
+            }
+            
+            # Añadir detalles según el estado
+            if analisis:
+                respuesta['headers_analysis'] = {
+                    'headers_mapeados': len(analisis.get('headers_mapeados', [])),
+                    'headers_no_mapeados': len(analisis.get('headers_no_mapeados', [])),
+                    'requiere_mapeo_manual': len(analisis.get('headers_no_mapeados', [])) > 0
+                }
+            
+            if mapeos_manuales:
+                respuesta['mapeos_manuales'] = {
+                    'total_mapeos': len(mapeos_manuales.get('mapeos', {})),
+                    'timestamp': mapeos_manuales.get('timestamp')
+                }
+            
+            if empleados:
+                respuesta['empleados_procesados'] = {
+                    'total_empleados': empleados.get('total_empleados', 0),
+                    'total_conceptos': empleados.get('total_conceptos', 0),
+                    'timestamp': empleados.get('timestamp')
+                }
+            
+            return Response(respuesta)
+            
+        except Exception as e:
+            logger.error(f"Error obteniendo estado libro para cierre {cierre.id}: {e}")
+            return Response({
+                'error': f'Error obteniendo estado: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _calcular_progreso_libro(self, estado, analisis, mapeos_manuales, empleados):
+        """Calcula el progreso general de la tarjeta libro"""
+        if not estado:
+            return {'porcentaje': 0, 'fase': 'pendiente'}
+        
+        estado_actual = estado.get('estado', 'pendiente')
+        
+        if estado_actual == 'pendiente':
+            return {'porcentaje': 0, 'fase': 'Esperando archivo'}
+        elif estado_actual in ['subido', 'analizando']:
+            return {'porcentaje': 20, 'fase': 'Analizando archivo'}
+        elif estado_actual == 'mapeo_requerido':
+            return {'porcentaje': 40, 'fase': 'Requiere mapeo manual'}
+        elif estado_actual in ['listo_procesar', 'mapeo_parcial']:
+            return {'porcentaje': 60, 'fase': 'Listo para procesar'}
+        elif estado_actual == 'procesando':
+            return {'porcentaje': 80, 'fase': 'Procesando empleados'}
+        elif estado_actual == 'procesado':
+            return {'porcentaje': 100, 'fase': 'Completado'}
+        elif estado_actual == 'error':
+            return {'porcentaje': 0, 'fase': 'Error', 'error': estado.get('info', {}).get('error')}
+        else:
+            return {'porcentaje': 0, 'fase': estado_actual}
+    
+    def _calcular_kpis_cierre(self, cierre):
+        """Método interno para calcular KPIs del cierre"""
+        try:
+            # Obtener período anterior para comparaciones
+            periodo_anterior = self._obtener_periodo_anterior(cierre.periodo)
+            cierre_anterior = None
+            
+            if periodo_anterior:
+                cierre_anterior = CierreNomina.objects.filter(
+                    cliente=cierre.cliente,
+                    periodo=periodo_anterior,
+                    estado='cerrado'
+                ).first()
+            
+            # KPI: Total empleados
+            total_empleados = cierre.empleados_nomina.count()
+            total_empleados_anterior = cierre_anterior.empleados_nomina.count() if cierre_anterior else None
+            
+            self._crear_actualizar_kpi(
+                cierre=cierre,
+                tipo_kpi='TOTAL_EMPLEADOS',
+                valor_actual=total_empleados,
+                valor_anterior=total_empleados_anterior
+            )
+            
+            # KPI: Total masa salarial (suma de todos los conceptos de sueldo base)
+            masa_salarial = cierre.empleados_nomina.filter(
+                conceptos__concepto__icontains='sueldo'
+            ).aggregate(total=Sum('conceptos__valor_numerico'))['total'] or 0
+            
+            masa_salarial_anterior = None
+            if cierre_anterior:
+                masa_salarial_anterior = cierre_anterior.empleados_nomina.filter(
+                    conceptos__concepto__icontains='sueldo'
+                ).aggregate(total=Sum('conceptos__valor_numerico'))['total'] or 0
+            
+            self._crear_actualizar_kpi(
+                cierre=cierre,
+                tipo_kpi='MASA_SALARIAL',
+                valor_actual=masa_salarial,
+                valor_anterior=masa_salarial_anterior
+            )
+            
+            # KPI: Promedio salarial
+            promedio_salarial = masa_salarial / total_empleados if total_empleados > 0 else 0
+            promedio_salarial_anterior = None
+            
+            if cierre_anterior and total_empleados_anterior and total_empleados_anterior > 0:
+                promedio_salarial_anterior = masa_salarial_anterior / total_empleados_anterior
+            
+            self._crear_actualizar_kpi(
+                cierre=cierre,
+                tipo_kpi='PROMEDIO_SALARIAL',
+                valor_actual=promedio_salarial,
+                valor_anterior=promedio_salarial_anterior
+            )
+            
+            # KPI: Total incidencias
+            total_incidencias = cierre.incidencias.count()
+            total_incidencias_anterior = cierre_anterior.incidencias.count() if cierre_anterior else None
+            
+            self._crear_actualizar_kpi(
+                cierre=cierre,
+                tipo_kpi='TOTAL_INCIDENCIAS',
+                valor_actual=total_incidencias,
+                valor_anterior=total_incidencias_anterior
+            )
+            
+            logger.info(f"KPIs calculados para cierre {cierre.id}")
+            
+        except Exception as e:
+            logger.error(f"Error calculando KPIs para cierre {cierre.id}: {e}")
+            raise
+    
+    def _crear_actualizar_kpi(self, cierre, tipo_kpi, valor_actual, valor_anterior=None):
+        """Crear o actualizar un KPI específico"""
+        variacion = None
+        if valor_anterior is not None and valor_anterior != 0:
+            variacion = ((valor_actual - valor_anterior) / valor_anterior) * 100
+        
+        KPINomina.objects.update_or_create(
+            cierre=cierre,
+            tipo_kpi=tipo_kpi,
+            defaults={
+                'valor_numerico': valor_actual,
+                'valor_comparativo_anterior': valor_anterior,
+                'variacion_porcentual': variacion,
+                'fecha_calculo': timezone.now(),
+                'metadatos_kpi': {
+                    'calculado_por': 'sistema',
+                    'timestamp': timezone.now().isoformat()
+                }
+            }
+        )
+    
+    def _obtener_periodo_anterior(self, periodo):
+        """Obtener período anterior en formato YYYY-MM"""
+        try:
+            year, month = periodo.split('-')
+            year = int(year)
+            month = int(month)
+            
+            if month == 1:
+                return f"{year-1}-12"
+            else:
+                return f"{year}-{month-1:02d}"
+        except:
+            return None
+
+    @action(detail=False, methods=['get'], url_path='conceptos-remuneracion')
+    def obtener_conceptos_remuneracion(self, request):
+        """
+        GET /nomina/cierres/conceptos-remuneracion/?cliente_id=X
+        Obtener conceptos de remuneración clasificados por cliente.
+        """
+        cliente_id = request.query_params.get('cliente_id')
+        
+        if not cliente_id:
+            return Response({
+                'error': 'Parámetro cliente_id es requerido'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Obtener mapeos de conceptos para el cliente
+            mapeos = MapeoConcepto.objects.filter(cliente_id=cliente_id)
+            
+            # Construir respuesta
+            conceptos = []
+            for mapeo in mapeos:
+                concepto = {
+                    'nombre_concepto': mapeo.header_excel,
+                    'clasificacion': mapeo.clasificacion_sugerida or 'pendiente',
+                    'hashtags': []  # Los hashtags se pueden agregar después si es necesario
+                }
+                conceptos.append(concepto)
+            
+            return Response(conceptos)
+            
+        except Exception as e:
+            logger.error(f"Error obteniendo conceptos para cliente {cliente_id}: {e}")
+            return Response({
+                'error': f'Error obteniendo conceptos: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    @action(detail=True, methods=['get'], url_path='estado-incidencias')
-    def estado_incidencias(self, request, pk=None):
-        """
-        Consulta el estado actual de las incidencias del cierre
-        """
-        cierre = self.get_object()
-        
-        # Contar incidencias por estado
-        from .models import IncidenciaCierre
-        incidencias = IncidenciaCierre.objects.filter(cierre=cierre)
-        
-        resumen = {
-            'total_incidencias': incidencias.count(),
-            'por_estado': {
-                'pendiente': incidencias.filter(estado='pendiente').count(),
-                'en_revision': incidencias.filter(estado='en_revision').count(),
-                'aprobada': incidencias.filter(estado='aprobada').count(),
-                'rechazada': incidencias.filter(estado='rechazada').count(),
-            },
-            'por_tipo': {
-                tipo: incidencias.filter(tipo_incidencia=tipo).count()
-                for tipo in ['VARIACION_CONCEPTO', 'CONCEPTO_NUEVO', 'CONCEPTO_PERDIDO', 
-                           'EMPLEADO_DEBERIA_INGRESAR', 'EMPLEADO_NO_DEBERIA_ESTAR', 'AUSENTISMO_CONTINUO']
-            },
-            'por_prioridad': {
-                'alta': incidencias.filter(prioridad='alta').count(),
-                'media': incidencias.filter(prioridad='media').count(),
-                'baja': incidencias.filter(prioridad='baja').count(),
-            }
-        }
-        
-        return Response({
-            'estado_cierre': cierre.estado_incidencias,
-            'estado_consolidacion': cierre.estado_consolidacion,
-            'resumen_incidencias': resumen,
-            'puede_generar_incidencias': cierre.puede_generar_incidencias()
-        })
+# ========== EMPLEADOS NOMINA ==========
 
-class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
-    queryset = LibroRemuneracionesUpload.objects.all()
-    serializer_class = LibroRemuneracionesUploadSerializer
+class EmpleadoNominaViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet para consulta de empleados de nómina
+    """
     
-    def perform_create(self, serializer):
-        """
-        Crear libro de remuneraciones con logging completo integrado
-        """
-        from .utils.mixins import UploadLogNominaMixin, ValidacionArchivoCRUDMixin
-        from .utils.clientes import get_client_ip
-        from .utils.uploads import guardar_temporal
-        from .models_logging import registrar_actividad_tarjeta_nomina
-        from django.db import transaction
-        import logging
-        
-        logger = logging.getLogger(__name__)
-        
-        # 1. OBTENER DATOS DEL REQUEST
-        request = self.request
-        archivo = request.FILES.get('archivo')
-        cierre_id = request.data.get('cierre')
-        
-        if not archivo or not cierre_id:
-            raise ValueError("Archivo y cierre_id son requeridos")
-        
-        # 2. OBTENER CIERRE Y CLIENTE
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-            cliente = cierre.cliente
-        except CierreNomina.DoesNotExist:
-            raise ValueError("Cierre no encontrado")
-        
-        # 3. VALIDAR ARCHIVO
-        try:
-            validator = ValidacionArchivoCRUDMixin()
-            validator.validar_archivo(archivo)
-        except ValueError as e:
-            logger.error(f"Error validando archivo: {e}")
-            raise
-        
-        # 4. CREAR UPLOAD LOG
-        log_mixin = UploadLogNominaMixin()
-        log_mixin.tipo_upload = "libro_remuneraciones"
-        log_mixin.usuario = request.user
-        log_mixin.ip_usuario = get_client_ip(request)
-        
-        upload_log = log_mixin.crear_upload_log(cliente, archivo)
-        logger.info(f"Upload log creado con ID: {upload_log.id}")
-        
-        # 5. GUARDAR ARCHIVO TEMPORAL
-        nombre_temporal = f"libro_remuneraciones_cierre_{cierre_id}_{upload_log.id}.xlsx"
-        ruta = guardar_temporal(nombre_temporal, archivo)
-        upload_log.ruta_archivo = ruta
-        upload_log.save()
-        
-        # 6. CREAR/ACTUALIZAR REGISTRO DE LIBRO
-        libro_existente = LibroRemuneracionesUpload.objects.filter(cierre=cierre).first()
-        
-        if libro_existente:
-            # Actualizar existente
-            libro_existente.archivo = archivo
-            libro_existente.estado = 'pendiente'
-            libro_existente.header_json = []
-            libro_existente.upload_log = upload_log
-            libro_existente.save()
-            instance = libro_existente
-            logger.info(f"Libro actualizado con ID: {instance.id}")
-        else:
-            # Crear nuevo
-            instance = serializer.save(upload_log=upload_log)
-            logger.info(f"Libro creado con ID: {instance.id}")
-        
-        # 7. REGISTRAR ACTIVIDAD
-        registrar_actividad_tarjeta_nomina(
-            cierre_id=cierre.id,
-            tarjeta="libro_remuneraciones",
-            accion="upload_excel",
-            descripcion=f"Archivo {archivo.name} subido para procesamiento",
-            usuario=request.user,
-            detalles={
-                "nombre_archivo": archivo.name,
-                "tamaño_archivo": archivo.size,
-                "upload_log_id": upload_log.id
-            },
-            ip_address=get_client_ip(request),
-            upload_log=upload_log
-        )
-        
-        # 8. GUARDAR LIBRO_ID EN RESUMEN DEL UPLOAD_LOG
-        upload_log.resumen = {"libro_id": instance.id}
-        upload_log.save(update_fields=['resumen'])
-        
-        # 9. INICIAR PROCESAMIENTO CON CELERY
-        with transaction.atomic():
-            try:
-                chain(
-                    analizar_headers_libro_remuneraciones_con_logging.s(instance.id, upload_log.id),
-                    clasificar_headers_libro_remuneraciones_con_logging.s(),
-                ).apply_async()
-                logger.info(f"Chain de Celery iniciado para libro {instance.id} y upload_log {upload_log.id}")
-            except Exception as e:
-                logger.error(f"Error iniciando procesamiento: {e}")
-                upload_log.marcar_como_error(f"Error iniciando procesamiento: {str(e)}")
-                raise
-        validator = ValidacionArchivoCRUDMixin()
-        validator.validar_archivo(archivo)
-        
-        # 4. CREAR UPLOAD LOG
-        mixin = UploadLogNominaMixin()
-        mixin.tipo_upload = "libro_remuneraciones"
-        mixin.usuario = request.user
-        mixin.ip_usuario = get_client_ip(request)
-        
-        upload_log = mixin.crear_upload_log(cliente, archivo)
-        logger.info(f"Upload log creado con ID: {upload_log.id}")
-        
-        # 5. GUARDAR ARCHIVO TEMPORAL
-        nombre_temporal = f"libro_remuneraciones_cierre_{cierre_id}_{upload_log.id}.xlsx"
-        ruta = guardar_temporal(nombre_temporal, archivo)
-        upload_log.ruta_archivo = ruta
-        upload_log.cierre = cierre
-        upload_log.save()
-        
-        # 6. CREAR REGISTRO DEL LIBRO
-        with transaction.atomic():
-            # Marcar como no principal cualquier iteración anterior
-            LibroRemuneracionesUpload.objects.filter(
-                cierre=cierre
-            ).update(estado='con_error')  # Marcar anteriores como error
-            
-            # Crear nueva instancia
-            serializer.save(
-                cierre=cierre,
-                upload_log=upload_log,
-                estado='pendiente'
-            )
-            instance = serializer.instance
-            
-            # Registrar actividad
-            registrar_actividad_tarjeta_nomina(
-                cierre_id=cierre.id,
-                tarjeta="libro_remuneraciones",
-                accion="upload_excel",
-                descripcion=f"Archivo {archivo.name} subido para procesamiento",
-                usuario=request.user,
-                detalles={
-                    "nombre_archivo": archivo.name,
-                    "tamaño_archivo": archivo.size,
-                    "upload_log_id": upload_log.id,
-                    "libro_id": instance.id
-                },
-                ip_address=get_client_ip(request),
-                upload_log=upload_log
-            )
-        
-        # 7. EJECUTAR CHAIN DE CELERY CON LOGGING
-        try:
-            chain(
-                analizar_headers_libro_remuneraciones_con_logging.s(
-                    instance.id, upload_log.id
-                ),
-            ).apply_async()
-            
-            logger.info(f"Chain iniciado para libro {instance.id} con upload_log {upload_log.id}")
-            
-        except Exception as e:
-            logger.error(f"Error iniciando chain: {e}")
-            upload_log.marcar_como_error(f"Error iniciando procesamiento: {str(e)}")
-            raise
-        try:
-            validator.validar_archivo(archivo)
-        except ValueError as e:
-            raise ValueError(f"Error de validación: {e}")
-        
-        # 4. CREAR UPLOAD_LOG
-        mixin = UploadLogNominaMixin()
-        mixin.tipo_upload = "libro_remuneraciones"
-        mixin.usuario = request.user
-        mixin.ip_usuario = get_client_ip(request)
-        
-        upload_log = mixin.crear_upload_log(cliente, archivo)
-        logger.info(f"Upload log creado con ID: {upload_log.id}")
-        
-        # 5. GUARDAR ARCHIVO TEMPORAL
-        nombre_temporal = f"libro_remuneraciones_cierre_{cierre_id}_{upload_log.id}.xlsx"
-        ruta = guardar_temporal(nombre_temporal, archivo)
-        upload_log.ruta_archivo = ruta
-        upload_log.save()
-        
-        # 6. CREAR/ACTUALIZAR LIBRO REMUNERACIONES
-        instance = serializer.save()
-        instance.upload_log = upload_log
-        instance.save()
-        
-        # 7. REGISTRAR ACTIVIDAD
-        mixin.registrar_actividad(
-            tarjeta_tipo="libro_remuneraciones",
-            tarjeta_id=instance.id,
-            accion="upload_excel",
-            descripcion=f"Archivo {archivo.name} subido para procesamiento",
-            datos_adicionales={
-                "nombre_archivo": archivo.name,
-                "tamaño_archivo": archivo.size,
-                "upload_log_id": upload_log.id
-            }
-        )
-        
-        # 8. INICIAR CHAIN DE CELERY CON LOGGING
-        try:
-            with transaction.atomic():
-                chain(
-                    analizar_headers_libro_remuneraciones_con_logging.s(instance.id, upload_log.id),
-                    clasificar_headers_libro_remuneraciones_con_logging.s(),
-                ).apply_async()
-                
-                logger.info(f"Chain iniciado para libro {instance.id} con upload_log {upload_log.id}")
-                
-        except Exception as e:
-            # Marcar upload como error si falla el chain
-            upload_log.estado = 'error'
-            upload_log.errores = f"Error iniciando procesamiento: {str(e)}"
-            upload_log.save()
-            logger.error(f"Error iniciando chain: {e}")
-            raise
-        validador = ValidacionArchivoCRUDMixin()
-        try:
-            validador.validar_archivo(archivo)
-        except ValueError as e:
-            logger.error(f"Validación de archivo falló: {e}")
-            raise ValueError(f"Archivo no válido: {e}")
-        
-        # 3. CREAR UPLOAD LOG ANTES DE GUARDAR
-        mixin = UploadLogNominaMixin()
-        mixin.tipo_upload = "libro_remuneraciones"
-        mixin.usuario = self.request.user
-        mixin.ip_usuario = get_client_ip(self.request)
-        
-        upload_log = mixin.crear_upload_log(cliente, archivo)
-        logger.info(f"Upload log creado con ID: {upload_log.id}")
-        
-        # 4. GUARDAR ARCHIVO TEMPORAL
-        nombre_temporal = f"libro_remuneraciones_cierre_{cierre_id}_{upload_log.id}.xlsx"
-        ruta = guardar_temporal(nombre_temporal, archivo)
-        upload_log.ruta_archivo = ruta
-        upload_log.save()
-        
-        # 5. CREAR/ACTUALIZAR REGISTRO Y ENLAZAR CON UPLOAD_LOG
-        with transaction.atomic():
-            # Verificar si ya existe un libro para este cierre
-            libro_existente = LibroRemuneracionesUpload.objects.filter(cierre=cierre).first()
-            
-            if libro_existente:
-                # Actualizar archivo existente
-                libro_existente.archivo = serializer.validated_data.get('archivo')
-                libro_existente.fecha_subida = timezone.now()
-                libro_existente.estado = 'pendiente'
-                libro_existente.upload_log = upload_log
-                libro_existente.save()
-                instance = libro_existente
-                logger.info(f"Archivo actualizado para cierre {cierre_id}")
-            else:
-                # Crear nuevo registro
-                instance = serializer.save(upload_log=upload_log)
-                logger.info(f"Nuevo archivo creado para cierre {cierre_id}")
-        
-        # 6. REGISTRAR ACTIVIDAD
-        mixin.registrar_actividad(
-            tarjeta_tipo="libro_remuneraciones",
-            tarjeta_id=instance.id,
-            accion="upload_excel",
-            descripcion=f"Archivo {archivo.name} subido correctamente",
-            datos_adicionales={
-                "nombre_archivo": archivo.name,
-                "tamaño_archivo": archivo.size,
-                "upload_log_id": upload_log.id,
-                "ruta_temporal": ruta
-            }
-        )
-        
-        # 7. GUARDAR INSTANCIA_ID EN EL RESUMEN DEL UPLOAD_LOG
-        upload_log.resumen = {
-            "libro_id": instance.id,
-            "cierre_id": cierre_id,
-            "cliente_id": cliente.id
-        }
-        upload_log.save(update_fields=['resumen'])
-        
-        # 8. INICIAR PROCESAMIENTO CELERY CON LOGGING
-        try:
-            # Usar la nueva tarea que incluye logging
-            chain(
-                analizar_headers_libro_remuneraciones_con_logging.s(instance.id, upload_log.id),
-                clasificar_headers_libro_remuneraciones_con_logging.s()
-            ).apply_async()
-            
-            logger.info(f"Chain de procesamiento iniciado para libro {instance.id} con upload_log {upload_log.id}")
-            
-        except Exception as e:
-            logger.error(f"Error iniciando chain de procesamiento: {e}")
-            # Marcar upload_log como error
-            mixin.marcar_como_error(upload_log.id, f"Error iniciando procesamiento: {str(e)}")
-            raise
-        mixin = UploadLogNominaMixin()
-        mixin.tipo_upload = "libro_remuneraciones"
-        mixin.usuario = self.request.user
-        mixin.ip_usuario = get_client_ip(self.request)
-        
-        upload_log = mixin.crear_upload_log(cliente, archivo)
-        
-        # 4. GUARDAR ARCHIVO TEMPORAL
-        nombre_temporal = f"libro_remuneraciones_cierre_{cierre_id}_{upload_log.id}.xlsx"
-        ruta_temporal = guardar_temporal(nombre_temporal, archivo)
-        upload_log.ruta_archivo = ruta_temporal
-        upload_log.cierre = cierre
-        upload_log.save()
-        
-        logger.info(f"Upload log creado: {upload_log.id} para cierre {cierre_id}")
-        
-        # 5. CREAR INSTANCIA DE LIBRO
-        instance = serializer.save(upload_log=upload_log)
-        
-        # 6. REGISTRAR ACTIVIDAD
-        try:
-            mixin.registrar_actividad(
-                tarjeta_tipo="libro_remuneraciones",
-                tarjeta_id=instance.id,
-                accion="upload_excel",
-                descripcion=f"Archivo {archivo.name} subido para procesamiento",
-                datos_adicionales={
-                    "nombre_archivo": archivo.name,
-                    "tamaño_archivo": archivo.size,
-                    "upload_log_id": upload_log.id,
-                    "cierre_id": cierre_id,
-                }
-            )
-        except Exception as e:
-            logger.warning(f"No se pudo registrar actividad: {e}")
-        
-        # 7. ACTUALIZAR RESUMEN DEL UPLOAD LOG
-        upload_log.resumen = {
-            "libro_id": instance.id,
-            "cierre_id": cierre_id,
-            "cliente_id": cliente.id,
-            "archivo_original": archivo.name
-        }
-        upload_log.save(update_fields=['resumen'])
-        
-        # 8. EJECUTAR CHAIN DE CELERY CON LOGGING
-        try:
-            with transaction.atomic():
-                # Forzar commit antes del chain
-                transaction.on_commit(lambda: self._ejecutar_procesamiento_con_logging(instance.id, upload_log.id))
-                
-        except Exception as e:
-            logger.error(f"Error iniciando procesamiento: {e}")
-            # Marcar upload_log como error
-            mixin.marcar_como_error(upload_log.id, f"Error iniciando procesamiento: {e}")
-            raise
-    
-    def _ejecutar_procesamiento_con_logging(self, libro_id, upload_log_id):
-        """
-        Ejecuta el chain de procesamiento con logging integrado
-        """
-        import logging
-        
-        logger = logging.getLogger(__name__)
-        
-        try:
-            # Chain mejorado con logging
-            chain(
-                analizar_headers_libro_remuneraciones_con_logging.s(libro_id, upload_log_id),
-                clasificar_headers_libro_remuneraciones_task.s(),
-            ).apply_async()
-            
-            logger.info(f"Chain iniciado para libro {libro_id} con upload_log {upload_log_id}")
-            
-        except Exception as e:
-            logger.error(f"Error ejecutando chain: {e}")
-            # Marcar como error
-            from .utils.mixins import UploadLogNominaMixin
-            mixin = UploadLogNominaMixin()
-            mixin.marcar_como_error(upload_log_id, f"Error en chain: {e}")
-
-    @action(detail=False, methods=['get'], url_path='estado/(?P<cierre_id>[^/.]+)')
-    def estado(self, request, cierre_id=None):
-        """
-        Obtiene el estado del libro con información de logging
-        """
-        libro = self.get_queryset().filter(cierre_id=cierre_id).order_by('-fecha_subida').first()
-        if libro:
-            # Información básica del libro
-            response_data = {
-                "id": libro.id,
-                "estado": libro.estado,
-                "archivo_nombre": libro.archivo.name.split("/")[-1],
-                "archivo_url": request.build_absolute_uri(libro.archivo.url),
-                "header_json": libro.header_json,
-                "fecha_subida": libro.fecha_subida,
-                "cliente_id": libro.cierre.cliente.id,
-                "cliente_nombre": libro.cierre.cliente.nombre,
-            }
-            
-            # Agregar información de logging si existe
-            if libro.upload_log:
-                response_data.update({
-                    "upload_log": {
-                        "id": libro.upload_log.id,
-                        "estado_upload": libro.upload_log.estado,
-                        "registros_procesados": libro.upload_log.registros_procesados,
-                        "registros_exitosos": libro.upload_log.registros_exitosos,
-                        "registros_fallidos": libro.upload_log.registros_fallidos,
-                        "errores": libro.upload_log.errores,
-                        "usuario": libro.upload_log.usuario.correo_bdo if libro.upload_log.usuario else None,
-                        "iteracion": libro.upload_log.iteracion,
-                    }
-                })
-            
-            return Response(response_data)
-        else:
-            return Response({
-                "id": None,
-                "estado": "no_subido",
-                "archivo_nombre": "",
-                "archivo_url": "",
-                "header_json": [],
-                "fecha_subida": None,
-                "cliente_id": None,
-                "cliente_nombre": "",
-                "upload_log": None,
-            })
-    
-    @action(detail=True, methods=['get'], url_path='log-actividades')
-    def log_actividades(self, request, pk=None):
-        """
-        Obtiene el log de actividades para este libro específico
-        """
-        libro = self.get_object()
-        
-        from .models_logging import TarjetaActivityLogNomina
-        
-        actividades = TarjetaActivityLogNomina.objects.filter(
-            cierre=libro.cierre,
-            tarjeta="libro_remuneraciones"
-        ).order_by('-timestamp')[:20]  # Últimas 20 actividades
-        
-        data = []
-        for actividad in actividades:
-            data.append({
-                "id": actividad.id,
-                "accion": actividad.accion,
-                "descripcion": actividad.descripcion,
-                "usuario": actividad.usuario.correo_bdo if actividad.usuario else None,
-                "timestamp": actividad.timestamp,
-                "resultado": actividad.resultado,
-                "detalles": actividad.detalles,
-            })
-        
-        return Response({
-            "libro_id": libro.id,
-            "actividades": data,
-            "total": len(data)
-        })
-
-    @action(detail=True, methods=['post'])
-    def procesar(self, request, pk=None):
-        """Procesar libro completo: actualizar empleados y guardar registros"""
-        libro = self.get_object()
-        libro.estado = 'procesando'
-        libro.save(update_fields=['estado'])
-        
-        # Chain de procesamiento completo
-        result = chain(
-            actualizar_empleados_desde_libro.s(libro.id),
-            guardar_registros_nomina.s(),
-        )()
-        
-        return Response({
-            'task_id': result.id if hasattr(result, 'id') else str(result), 
-            'mensaje': 'Procesamiento iniciado'
-        }, status=status.HTTP_202_ACCEPTED)
-    
-    def perform_destroy(self, instance):
-        """
-        Eliminar libro de remuneraciones y todos sus datos relacionados
-        """
-        from .models_logging import registrar_actividad_tarjeta_nomina
-        from .utils.clientes import get_client_ip
-        from django.db import transaction
-        import logging
-        
-        logger = logging.getLogger(__name__)
-        cierre = instance.cierre
-        
-        # Registrar actividad antes de eliminar
-        registrar_actividad_tarjeta_nomina(
-            cierre_id=cierre.id,
-            tarjeta="libro_remuneraciones",
-            accion="delete_archivo",
-            descripcion=f"Libro de remuneraciones eliminado para resubida",
-            usuario=self.request.user,
-            detalles={
-                "libro_id": instance.id,
-                "archivo_nombre": instance.archivo.name if instance.archivo else "N/A",
-                "estado_anterior": instance.estado
-            },
-            ip_address=get_client_ip(self.request)
-        )
-        
-        with transaction.atomic():
-            # 1. Eliminar todos los registros de conceptos de empleados del cierre
-            # (estos están vinculados a EmpleadoCierre, que está vinculado al cierre)
-            empleados_cierre = cierre.empleados.all()
-            for empleado in empleados_cierre:
-                empleado.registroconceptoempleado_set.all().delete()
-                logger.info(f"Eliminados registros de conceptos para empleado {empleado.rut}")
-            
-            # 2. Eliminar todos los empleados del cierre
-            count_empleados = empleados_cierre.count()
-            empleados_cierre.delete()
-            logger.info(f"Eliminados {count_empleados} empleados del cierre {cierre.id}")
-            
-            # 3. Resetear estado del cierre a pendiente
-            cierre.estado = 'pendiente'
-            cierre.estado_incidencias = 'pendiente'
-            cierre.save(update_fields=['estado', 'estado_incidencias'])
-            
-            # 4. Eliminar el libro de remuneraciones
-            instance.delete()
-            logger.info(f"Libro de remuneraciones {instance.id} eliminado completamente")
-
-# APIs de funciones
-
-@api_view(['GET'])
-def conceptos_remuneracion_por_cliente(request):
-    cliente_id = request.query_params.get('cliente_id')
-    if not cliente_id:
-        return Response({"error": "Se requiere cliente_id"}, status=400)
-
-    conceptos = ConceptoRemuneracion.objects.filter(cliente_id=cliente_id, vigente=True)
-    serializer = ConceptoRemuneracionSerializer(conceptos, many=True)
-    return Response(serializer.data)
-
-@api_view(['GET'])
-def conceptos_remuneracion_por_cierre(request, cierre_id):
-    """Obtiene los conceptos de remuneración del libro del cierre especificado"""
-    try:
-        cierre = CierreNomina.objects.get(id=cierre_id)
-        conceptos = ConceptoRemuneracion.objects.filter(
-            cliente=cierre.cliente, 
-            vigente=True
-        ).order_by('nombre_concepto')
-        
-        serializer = ConceptoRemuneracionSerializer(conceptos, many=True)
-        return Response(serializer.data)
-    except CierreNomina.DoesNotExist:
-        return Response({"error": "Cierre no encontrado"}, status=404)
-    except Exception as e:
-        return Response({"error": str(e)}, status=500)
-
-class ConceptoRemuneracionBatchView(APIView):
-    def post(self, request):
-        data = request.data
-        cliente_id = data.get("cliente_id")
-        cierre_id = data.get("cierre_id")
-        conceptos = data.get("conceptos", {})
-
-        if not cliente_id or not isinstance(conceptos, dict):
-            return Response({"error": "Datos incompletos"}, status=400)
-
-        cliente = Cliente.objects.filter(id=cliente_id).first()
-        if not cliente:
-            return Response({"error": "Cliente no encontrado"}, status=404)
-
-        usuario = request.user
-
-        for nombre, info in conceptos.items():
-            clasificacion = info.get("clasificacion")
-            hashtags = info.get("hashtags", [])
-
-            if not clasificacion:
-                continue  # Ignora si falta clasificación
-
-            obj, _ = ConceptoRemuneracion.objects.update_or_create(
-                cliente=cliente,
-                nombre_concepto=nombre,
-                defaults={
-                    "clasificacion": clasificacion,
-                    "hashtags": hashtags,
-                    "usuario_clasifica": usuario,
-                    "vigente": True
-                }
-            )
-
-        # Si se especificó un cierre, actualiza el JSON de headers
-        if cierre_id:
-            try:
-                libro = (
-                    LibroRemuneracionesUpload.objects
-                    .filter(cierre_id=cierre_id)
-                    .order_by('-fecha_subida')
-                    .first()
-                )
-                if libro:
-                    if isinstance(libro.header_json, dict):
-                        headers = (
-                            libro.header_json.get("headers_clasificados", [])
-                            + libro.header_json.get("headers_sin_clasificar", [])
-                        )
-                    else:
-                        headers = libro.header_json or []
-                    headers_c, headers_s = clasificar_headers_libro_remuneraciones(headers, cliente)
-                    libro.header_json = {
-                        "headers_clasificados": headers_c,
-                        "headers_sin_clasificar": headers_s,
-                    }
-                    libro.estado = 'clasif_pendiente' if headers_s else 'clasificado'
-                    libro.save()
-            except Exception as e:
-                logger.error(f"Error actualizando libro tras clasificacion: {e}")
-
-        return Response({"status": "ok", "actualizados": len(conceptos)}, status=status.HTTP_200_OK)
-
-@api_view(['GET'])
-def obtener_hashtags_disponibles(request, cliente_id):
-    conceptos = ConceptoRemuneracion.objects.filter(cliente_id=cliente_id)
-    hashtags = set()
-    for c in conceptos:
-        hashtags.update(c.hashtags or [])
-    return Response(sorted(list(hashtags)))
-
-@api_view(['DELETE'])
-def eliminar_concepto_remuneracion(request, cliente_id, nombre_concepto):
-    try:
-        concepto = ConceptoRemuneracion.objects.get(
-            cliente_id=cliente_id,
-            nombre_concepto=nombre_concepto
-        )
-    except ConceptoRemuneracion.DoesNotExist:
-        return Response(
-            {"error": "No encontrado"},
-            status=status.HTTP_404_NOT_FOUND
-        )
-
-    concepto.vigente = False
-    concepto.save()
-    return Response({"status": "ok"})
-
-# ViewSets existentes
-
-class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
-    queryset = ArchivoNovedadesUpload.objects.all()
-    serializer_class = ArchivoNovedadesUploadSerializer
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        cierre_id = self.request.query_params.get('cierre')
-        if cierre_id:
-            queryset = queryset.filter(cierre_id=cierre_id)
-        return queryset
-    
-    @action(detail=False, methods=['get'], url_path='estado/(?P<cierre_id>[^/.]+)')
-    def estado(self, request, cierre_id=None):
-        """Obtiene el estado del archivo de novedades para un cierre específico"""
-        archivo = self.get_queryset().filter(cierre_id=cierre_id).order_by('-fecha_subida').first()
-        if archivo:
-            return Response({
-                "id": archivo.id,
-                "estado": archivo.estado,
-                "archivo_nombre": archivo.archivo.name.split("/")[-1] if archivo.archivo else "",
-                "archivo_url": request.build_absolute_uri(archivo.archivo.url) if archivo.archivo else "",
-                "fecha_subida": archivo.fecha_subida,
-                "cierre_id": archivo.cierre.id,
-                "cliente_id": archivo.cierre.cliente.id,
-                "cliente_nombre": archivo.cierre.cliente.nombre,
-            })
-        else:
-            return Response({
-                "id": None,
-                "estado": "no_subido",
-                "archivo_nombre": "",
-                "archivo_url": "",
-                "fecha_subida": None,
-                "cierre_id": None,
-                "cliente_id": None,
-                "cliente_nombre": "",
-            })
-    
-    @action(detail=False, methods=['post'], url_path='subir/(?P<cierre_id>[^/.]+)')
-    def subir(self, request, cierre_id=None):
-        """Sube un archivo de novedades para un cierre específico"""
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        archivo = request.FILES.get('archivo')
-        if not archivo:
-            return Response({"error": "No se proporcionó archivo"}, status=400)
-        
-        # Validar que sea un archivo Excel
-        if not archivo.name.endswith(('.xlsx', '.xls')):
-            return Response({"error": "El archivo debe ser de tipo Excel (.xlsx o .xls)"}, status=400)
-        
-        # Crear o actualizar el registro de novedades
-        archivo_novedades, created = ArchivoNovedadesUpload.objects.get_or_create(
-            cierre=cierre,
-            defaults={
-                'archivo': archivo,
-                'analista': request.user,
-                'estado': 'pendiente'
-            }
-        )
-        
-        if not created:
-            # Si ya existe, actualizar el archivo
-            archivo_novedades.archivo = archivo
-            archivo_novedades.analista = request.user
-            archivo_novedades.estado = 'pendiente'
-            archivo_novedades.save()
-        
-        # Disparar tarea de procesamiento con Celery
-        procesar_archivo_novedades.delay(archivo_novedades.id)
-        
-        return Response({
-            "id": archivo_novedades.id,
-            "estado": archivo_novedades.estado,
-            "archivo_nombre": archivo.name,
-            "fecha_subida": archivo_novedades.fecha_subida,
-            "mensaje": "Archivo subido correctamente y enviado a procesamiento"
-        }, status=201)
-
-    @action(detail=True, methods=['post'])
-    def reprocesar(self, request, pk=None):
-        """Reprocesa un archivo de novedades desde el inicio"""
-        from nomina.tasks import procesar_archivo_novedades
-        
-        archivo = self.get_object()
-        
-        if archivo.estado == 'en_proceso':
-            return Response({
-                "error": "El archivo ya está siendo procesado"
-            }, status=400)
-        
-        try:
-            # Resetear estado y limpiar datos previos
-            archivo.estado = 'en_proceso'
-            archivo.header_json = None
-            archivo.save()
-            
-            # Iniciar procesamiento asíncrono
-            procesar_archivo_novedades.delay(archivo.id)
-            
-            return Response({
-                "mensaje": "Reprocesamiento iniciado",
-                "estado": archivo.estado
-            })
-            
-        except Exception as e:
-            archivo.estado = 'con_error'
-            archivo.save()
-            return Response({"error": str(e)}, status=500)
-
-    @action(detail=True, methods=['get'])
-    def headers(self, request, pk=None):
-        """Obtiene los headers de un archivo de novedades para clasificación"""
-        archivo = self.get_object()
-        
-        if archivo.estado not in ['clasif_pendiente', 'clasificado', 'procesado']:
-            return Response({
-                "error": "El archivo debe estar en estado 'clasif_pendiente', 'clasificado' o 'procesado' para obtener headers"
-            }, status=400)
-        
-        headers_data = archivo.header_json
-        if isinstance(headers_data, dict):
-            headers_clasificados = headers_data.get("headers_clasificados", [])
-            headers_sin_clasificar = headers_data.get("headers_sin_clasificar", [])
-        else:
-            headers_clasificados = []
-            headers_sin_clasificar = headers_data if isinstance(headers_data, list) else []
-        
-        # Si el archivo está procesado, incluir los mapeos existentes
-        mapeos_existentes = {}
-        if archivo.estado == 'procesado':
-            from nomina.models import ConceptoRemuneracionNovedades
-            mapeos = ConceptoRemuneracionNovedades.objects.filter(
-                cliente=archivo.cierre.cliente,
-                activo=True,
-                nombre_concepto_novedades__in=headers_clasificados
-            ).select_related('concepto_libro')
-
-            for mapeo in mapeos:
-                if mapeo.concepto_libro:
-                    mapeos_existentes[mapeo.nombre_concepto_novedades] = {
-                        'concepto_libro_id': mapeo.concepto_libro.id,
-                        'concepto_libro_nombre': mapeo.concepto_libro.nombre_concepto,
-                        'concepto_libro_clasificacion': mapeo.concepto_libro.clasificacion,
-                    }
-                else:
-                    mapeos_existentes[mapeo.nombre_concepto_novedades] = {
-                        'concepto_libro_id': None,
-                    }
-        
-        return Response({
-            "headers_clasificados": headers_clasificados,
-            "headers_sin_clasificar": headers_sin_clasificar,
-            "mapeos_existentes": mapeos_existentes
-        })
-
-    @action(detail=True, methods=['post'])
-    def clasificar_headers(self, request, pk=None):
-        """Mapea headers pendientes de un archivo de novedades con conceptos del libro de remuneraciones"""
-        from nomina.models import ConceptoRemuneracionNovedades, ConceptoRemuneracion
-        
-        archivo = self.get_object()
-        
-        if archivo.estado != 'clasif_pendiente':
-            return Response({
-                "error": "El archivo debe estar en estado 'clasif_pendiente' para mapear headers"
-            }, status=400)
-        
-        mapeos = request.data.get('mapeos', [])
-        if not mapeos:
-            return Response({"error": "No se proporcionaron mapeos"}, status=400)
-        
-        try:
-            # Obtener headers actuales
-            headers_data = archivo.header_json
-            headers_clasificados = headers_data.get("headers_clasificados", [])
-            headers_sin_clasificar = headers_data.get("headers_sin_clasificar", [])
-            
-            # Procesar mapeos
-            for mapeo in mapeos:
-                header_novedades = mapeo.get('header_novedades')
-                concepto_libro_id = mapeo.get('concepto_libro_id')
-
-                if header_novedas in headers_sin_clasificar:
-                    if concepto_libro_id:
-                        try:
-                            concepto_libro = ConceptoRemuneracion.objects.get(
-                                id=concepto_libro_id,
-                                cliente=archivo.cierre.cliente,
-                                vigente=True
-                            )
-                        except ConceptoRemuneracion.DoesNotExist:
-                            continue
-                    else:
-                        concepto_libro = None
-
-                    # Crear o actualizar mapeo
-                    mapeo_concepto, created = ConceptoRemuneracionNovedades.objects.get_or_create(
-                        cliente=archivo.cierre.cliente,
-                        nombre_concepto_novedas=header_novedas,
-                        defaults={
-                            'concepto_libro': concepto_libro,
-                            'usuario_mapea': request.user,
-                            'activo': True,
-                        }
-                    )
-
-                    if not created:
-                        mapeo_concepto.concepto_libro = concepto_libro
-                        mapeo_concepto.usuario_mapea = request.user
-                        mapeo_concepto.activo = True
-                        mapeo_concepto.save()
-
-                    # Mover de sin clasificar a clasificados
-                    headers_sin_clasificar.remove(header_novedas)
-                    headers_clasificados.append(header_novedas)
-            
-            # Actualizar archivo
-            archivo.header_json = {
-                "headers_clasificados": headers_clasificados,
-                "headers_sin_clasificar": headers_sin_clasificar,
-            }
-            
-            # Cambiar estado si ya no hay headers sin clasificar
-            if not headers_sin_clasificar:
-                archivo.estado = "clasificado"
-            
-            archivo.save()
-            
-            return Response({
-                "mensaje": "Headers mapeados correctamente",
-                "headers_clasificados": len(headers_clasificados),
-                "headers_sin_clasificar": len(headers_sin_clasificar),
-                "estado": archivo.estado
-            })
-            
-        except Exception as e:
-            return Response({"error": str(e)}, status=500)
-
-    @action(detail=True, methods=['post'])
-    def procesar_final(self, request, pk=None):
-        """Procesa finalmente un archivo de novedades (actualiza empleados y guarda registros)"""
-        from nomina.tasks import actualizar_empleados_desde_novedades_task, guardar_registros_novedades_task
-        
-        archivo = self.get_object()
-        
-        if archivo.estado != 'clasificado':
-            return Response({
-                "error": "El archivo debe estar clasificado completamente para procesamiento final"
-            }, status=400)
-        
-        try:
-            # Crear cadena de tareas finales
-            workflow = chain(
-                actualizar_empleados_desde_novedades_task.s({"archivo_id": archivo.id}),
-                guardar_registros_novedades_task.s()
-            )
-            
-            # Ejecutar la cadena
-            workflow.apply_async()
-            
-            return Response({
-                "mensaje": "Procesamiento final iniciado",
-                "estado": archivo.estado
-            })
-            
-        except Exception as e:
-            return Response({"error": str(e)}, status=500)
-
-class ChecklistItemViewSet(mixins.UpdateModelMixin,
-                           mixins.RetrieveModelMixin,
-                           viewsets.GenericViewSet):
-    queryset = ChecklistItem.objects.all()
-    serializer_class = ChecklistItemUpdateSerializer
-
-
-# Nuevos ViewSets para los modelos del Analista
-
-class AnalistaFiniquitoViewSet(viewsets.ModelViewSet):
-    queryset = AnalistaFiniquito.objects.all()
-    serializer_class = AnalistaFiniquitoSerializer
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        cierre_id = self.request.query_params.get('cierre')
-        archivo_origen_id = self.request.query_params.get('archivo_origen')
-        if cierre_id:
-            queryset = queryset.filter(cierre_id=cierre_id)
-        if archivo_origen_id:
-            queryset = queryset.filter(archivo_origen_id=archivo_origen_id)
-        return queryset
-
-
-class AnalistaIncidenciaViewSet(viewsets.ModelViewSet):
-    queryset = AnalistaIncidencia.objects.all()
-    serializer_class = AnalistaIncidenciaSerializer
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        cierre_id = self.request.query_params.get('cierre')
-        archivo_origen_id = self.request.query_params.get('archivo_origen')
-        tipo_ausentismo = self.request.query_params.get('tipo_ausentismo')
-        if cierre_id:
-            queryset = queryset.filter(cierre_id=cierre_id)
-        if archivo_origen_id:
-            queryset = queryset.filter(archivo_origen_id=archivo_origen_id)
-        if tipo_ausentismo:
-            queryset = queryset.filter(tipo_ausentismo__icontains=tipo_ausentismo)
-        return queryset
-
-
-class AnalistaIngresoViewSet(viewsets.ModelViewSet):
-    queryset = AnalistaIngreso.objects.all()
-    serializer_class = AnalistaIngresoSerializer
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        cierre_id = self.request.query_params.get('cierre')
-        if cierre_id:
-            queryset = queryset.filter(cierre_id=cierre_id)
-        return queryset
-
-
-# ViewSets para modelos de Novedades
-
-class EmpleadoCierreNovedadesViewSet(viewsets.ModelViewSet):
-    queryset = EmpleadoCierreNovedades.objects.all()
-    serializer_class = EmpleadoCierreNovedadesSerializer
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        cierre_id = self.request.query_params.get('cierre')
-        if cierre_id:
-            queryset = queryset.filter(cierre_id=cierre_id)
-        return queryset
-
-
-class ConceptoRemuneracionNovedadesViewSet(viewsets.ModelViewSet):
-    queryset = ConceptoRemuneracionNovedades.objects.all()
-    serializer_class = ConceptoRemuneracionNovedadesSerializer
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        cliente_id = self.request.query_params.get('cliente')
-        if cliente_id:
-            queryset = queryset.filter(cliente_id=cliente_id)
-        return queryset
-
-
-class RegistroConceptoEmpleadoNovedadesViewSet(viewsets.ModelViewSet):
-    queryset = RegistroConceptoEmpleadoNovedades.objects.all()
-    serializer_class = RegistroConceptoEmpleadoNovedadesSerializer
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        cierre_id = self.request.query_params.get('cierre')
-        if cierre_id:
-            queryset = queryset.filter(empleado__cierre_id=cierre_id)
-        return queryset
-
-# ======== VIEWSETS PARA SISTEMA DE INCIDENCIAS ========
-
-class IncidenciaCierreViewSet(viewsets.ModelViewSet):
-    """ViewSet para gestionar incidencias de cierre de nómina"""
-    queryset = IncidenciaCierre.objects.all()
-    serializer_class = IncidenciaCierreSerializer
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        cierre_id = self.request.query_params.get('cierre')
-        estado = self.request.query_params.get('estado')
-        prioridad = self.request.query_params.get('prioridad')
-        asignado_a = self.request.query_params.get('asignado_a')
-        
-        if cierre_id:
-            queryset = queryset.filter(cierre_id=cierre_id)
-        if estado:
-            queryset = queryset.filter(estado=estado)
-        if prioridad:
-            queryset = queryset.filter(prioridad=prioridad)
-        if asignado_a:
-            queryset = queryset.filter(asignado_a_id=asignado_a)
-            
-        return queryset.select_related('cierre', 'empleado_libro', 'empleado_novedades', 'asignado_a')
-    
-    @action(detail=False, methods=['post'], url_path='generar/(?P<cierre_id>[^/.]+)')
-    def generar_incidencias(self, request, cierre_id=None):
-        """Endpoint para generar incidencias de un cierre específico"""
-        # 🚫 FUNCIONALIDAD COMENTADA TEMPORALMENTE
-        # Las incidencias solo deben generarse cuando las discrepancias sean 0
-        # y se implementará la comparación contra el mes anterior
-        return Response({
-            "error": "Funcionalidad de incidencias deshabilitada temporalmente",
-            "message": "Primero debe completar la fase de discrepancias (debe ser 0 discrepancias) antes de generar incidencias contra el mes anterior"
-        }, status=501)
-        
-        # CÓDIGO ORIGINAL COMENTADO:
-        # try:
-        #     cierre = CierreNomina.objects.get(id=cierre_id)
-        # except CierreNomina.DoesNotExist:
-        #     return Response({"error": "Cierre no encontrado"}, status=404)
-        # 
-        # # Verificar permisos básicos
-        # if not request.user.is_authenticated:
-        #     return Response({"error": "Usuario no autenticado"}, status=401)
-        # 
-        # # FALTA: Verificar que discrepancias = 0 antes de generar incidencias
-        # # FALTA: Implementar comparación contra mes anterior
-        # 
-        # # Lanzar tarea de generación de incidencias
-        # task = generar_incidencias_cierre_task.delay(cierre_id)
-        # 
-        # return Response({
-        #     "message": "Generación de incidencias iniciada",
-        #     "task_id": task.id,
-        #     "cierre_id": cierre_id
-        # }, status=202)
-    
-    @action(detail=False, methods=['get'], url_path='resumen/(?P<cierre_id>[^/.]+)')
-    def resumen_incidencias(self, request, cierre_id=None):
-        """Obtiene un resumen estadístico de incidencias de un cierre"""
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        from .utils.GenerarIncidencias import obtener_resumen_incidencias
-        resumen = obtener_resumen_incidencias(cierre)
-        
-        serializer = ResumenIncidenciasSerializer(resumen)
-        return Response(serializer.data)
-    
-    @action(detail=True, methods=['patch'])
-    def cambiar_estado(self, request, pk=None):
-        """Cambiar el estado de una incidencia específica"""
-        incidencia = self.get_object()
-        nuevo_estado = request.data.get('estado')
-        
-        if nuevo_estado not in ['pendiente', 'resuelta_analista', 'aprobada_supervisor', 'rechazada_supervisor']:
-            return Response({"error": "Estado inválido"}, status=400)
-        
-        incidencia.estado = nuevo_estado
-        incidencia.save(update_fields=['estado'])
-        
-        return Response({"message": "Estado actualizado", "estado": nuevo_estado})
-    
-    @action(detail=True, methods=['patch'])
-    def asignar_usuario(self, request, pk=None):
-        """Asignar una incidencia a un usuario específico"""
-        incidencia = self.get_object()
-        usuario_id = request.data.get('usuario_id')
-        
-        if usuario_id:
-            try:
-                from django.contrib.auth import get_user_model
-                User = get_user_model()
-                usuario = User.objects.get(id=usuario_id)
-                incidencia.asignado_a = usuario
-                incidencia.save(update_fields=['asignado_a'])
-                return Response({"message": "Incidencia asignada correctamente"})
-            except User.DoesNotExist:
-                return Response({"error": "Usuario no encontrado"}, status=404)
-        else:
-            incidencia.asignado_a = None
-            incidencia.save(update_fields=['asignado_a'])
-            return Response({"message": "Asignación removida"})
-    
-    @action(detail=False, methods=['post'], url_path='dev-clear/(?P<cierre_id>[^/.]+)')
-    def dev_clear_incidencias(self, request, cierre_id=None):
-        """
-        ⚠️ ENDPOINT DE DESARROLLO ÚNICAMENTE ⚠️
-        Elimina todas las incidencias de un cierre para testing del flujo de consolidación.
-        ¡¡¡REMOVER ANTES DE PRODUCCIÓN!!!
-        """
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        # Eliminar todas las incidencias del cierre
-        deleted_count = IncidenciaCierre.objects.filter(cierre=cierre).delete()[0]
-        
-        # Actualizar el estado de incidencias del cierre
-        cierre.estado_incidencias = 'resueltas'
-        cierre.estado = 'completado'
-        cierre.save(update_fields=['estado_incidencias', 'estado'])
-        
-        logger.info(f"DEV: Eliminadas {deleted_count} incidencias del cierre {cierre_id}")
-        
-        return Response({
-            "message": f"⚠️ DEV: Eliminadas {deleted_count} incidencias. Estado: {cierre.estado}, Incidencias: {cierre.estado_incidencias}",
-            "incidencias_eliminadas": deleted_count,
-            "nuevo_estado": cierre.estado,
-            "estado_incidencias": cierre.estado_incidencias
-        })
-
-    @action(detail=False, methods=['post'], url_path='analizar-datos/(?P<cierre_id>[^/.]+)')
-    def analizar_datos(self, request, cierre_id=None):
-        """Endpoint para iniciar análisis de datos del cierre"""
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        # Verificar que el cierre esté en estado completado y archivos consolidados
-        if cierre.estado != 'completado':
-            return Response({
-                "error": "El cierre debe estar en estado 'completado' para iniciar análisis"
-            }, status=400)
-        
-        if cierre.estado_incidencias != 'resueltas':
-            return Response({
-                "error": "El cierre debe tener incidencias resueltas (0 incidencias) para iniciar análisis"
-            }, status=400)
-        
-        # Obtener tolerancia de variación (por defecto 30%)
-        tolerancia_variacion = float(request.data.get('tolerancia_variacion', 30.0))
-        
-        # Validar tolerancia
-        if tolerancia_variacion < 0 or tolerancia_variacion > 100:
-            return Response({
-                "error": "La tolerancia de variación debe estar entre 0 y 100"
-            }, status=400)
-        
-        # Lanzar tarea de análisis
-        from .tasks import analizar_datos_cierre_task
-        task = analizar_datos_cierre_task.delay(cierre_id, tolerancia_variacion)
-        
-        return Response({
-            "message": "Análisis de datos iniciado",
-            "task_id": task.id,
-            "cierre_id": cierre_id,
-            "tolerancia_variacion": tolerancia_variacion
-        }, status=202)
-
-    @action(detail=False, methods=['get'], url_path='preview/(?P<cierre_id>[^/.]+)')
-    def preview_incidencias(self, request, cierre_id=None):
-        """Endpoint para previsualizar qué incidencias se generarían sin crearlas"""
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        from .utils.GenerarIncidencias import (
-            generar_incidencias_libro_vs_novedades,
-            generar_incidencias_movimientos_vs_analista
-        )
-        
-        try:
-            # Generar incidencias preview sin guardarlas
-            incidencias_libro_novedades = generar_incidencias_libro_vs_novedades(cierre)
-            incidencias_movimientos_analista = generar_incidencias_movimientos_vs_analista(cierre)
-            
-            todas_incidencias = incidencias_libro_novedades + incidencias_movimientos_analista
-            
-            # Convertir incidencias a formato serializable
-            incidencias_preview = []
-            for incidencia in todas_incidencias:
-                incidencias_preview.append({
-                    'tipo_incidencia': incidencia.tipo_incidencia,
-                    'rut_empleado': incidencia.rut_empleado,
-                    'descripcion': incidencia.descripcion,
-                    'prioridad': incidencia.prioridad,
-                    'concepto_afectado': incidencia.concepto_afectado,
-                    'valor_libro': incidencia.valor_libro,
-                    'valor_novedades': incidencia.valor_novedades,
-                    'impacto_monetario': float(incidencia.impacto_monetario or 0),
-                })
-            
-            return Response({
-                'total_incidencias': len(todas_incidencias),
-                'libro_vs_novedades': len(incidencias_libro_novedades),
-                'movimientos_vs_analista': len(incidencias_movimientos_analista),
-                'incidencias': incidencias_preview,
-                'mensaje': 'Vista previa generada - no se guardaron incidencias'
-            })
-            
-        except Exception as e:
-            logger.error(f"Error generando preview de incidencias: {e}")
-            return Response({
-                "error": f"Error generando preview: {str(e)}"
-            }, status=500)
-
-class ResolucionIncidenciaViewSet(viewsets.ModelViewSet):
-    """ViewSet para gestionar resoluciones de incidencias"""
-    queryset = ResolucionIncidencia.objects.all()
-    serializer_class = ResolucionIncidenciaSerializer
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        incidencia_id = self.request.query_params.get('incidencia')
-        usuario_id = self.request.query_params.get('usuario')
-        
-        if incidencia_id:
-            queryset = queryset.filter(incidencia_id=incidencia_id)
-        if usuario_id:
-            queryset = queryset.filter(usuario_id=usuario_id)
-            
-        return queryset.select_related('incidencia', 'usuario').order_by('-fecha_resolucion')
+    queryset = EmpleadoNomina.objects.all().select_related('cierre__cliente').prefetch_related('conceptos')
+    permission_classes = [IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['rut_empleado', 'nombre_empleado', 'cierre__periodo']
+    ordering_fields = ['nombre_empleado', 'fecha_ingreso', 'fecha_consolidacion']
+    ordering = ['nombre_empleado']
     
     def get_serializer_class(self):
-        if self.action == 'create':
-            return CrearResolucionSerializer
-        return ResolucionIncidenciaSerializer
-    
-    def perform_create(self, serializer):
-        """Crear una nueva resolución para una incidencia"""
-        incidencia_id = self.request.data.get('incidencia_id')
-        
-        if not incidencia_id:
-            raise serializers.ValidationError("incidencia_id es requerido")
-        
-        try:
-            incidencia = IncidenciaCierre.objects.get(id=incidencia_id)
-        except IncidenciaCierre.DoesNotExist:
-            raise serializers.ValidationError("Incidencia no encontrada")
-        
-        # Crear la resolución
-        resolucion = serializer.save(
-            incidencia=incidencia,
-            usuario=self.request.user
-        )
-        
-        # Actualizar estado de la incidencia según el tipo de resolución y rol del usuario
-        tipo_resolucion = resolucion.tipo_resolucion
-        if tipo_resolucion == 'solucion':
-            # Si el usuario es staff o superuser, puede aprobar directamente
-            if self.request.user.is_staff or self.request.user.is_superuser:
-                incidencia.estado = 'aprobada_supervisor'
-            else:
-                incidencia.estado = 'resuelta_analista'
-        elif tipo_resolucion == 'rechazo':
-            incidencia.estado = 'rechazada_supervisor'
-        
-        incidencia.save(update_fields=['estado'])
-        
-        return resolucion
-    
-    @action(detail=False, methods=['get'], url_path='historial/(?P<incidencia_id>[^/.]+)')
-    def historial_incidencia(self, request, incidencia_id=None):
-        """Obtiene el historial completo de resoluciones de una incidencia"""
-        try:
-            incidencia = IncidenciaCierre.objects.get(id=incidencia_id)
-        except IncidenciaCierre.DoesNotExist:
-            return Response({"error": "Incidencia no encontrada"}, status=404)
-        
-        resoluciones = ResolucionIncidencia.objects.filter(
-            incidencia=incidencia
-        ).select_related('usuario').order_by('fecha_resolucion')
-        
-        serializer = ResolucionIncidenciaSerializer(resoluciones, many=True)
-        return Response({
-            "incidencia_id": incidencia_id,
-            "resoluciones": serializer.data,
-            "total_resoluciones": resoluciones.count()
-        })
-
-
-# ======== ENDPOINTS ADICIONALES PARA CIERRE NOMINA ========
-
-# Agregar action al CierreNominaViewSet existente para manejo de incidencias
-# (Se puede agregar como mixin o extender el ViewSet existente)
-
-class CierreNominaIncidenciasViewSet(viewsets.ViewSet):
-    """ViewSet adicional para operaciones de incidencias en cierres"""
-    
-    @action(detail=True, methods=['get'])
-    def estado_incidencias(self, request, pk=None):
-        """Obtiene el estado de incidencias de un cierre"""
-        try:
-            cierre = CierreNomina.objects.get(id=pk)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        total_incidencias = cierre.incidencias.count()
-        
-        # Actualizar estado automáticamente según las incidencias
-        if total_incidencias == 0:
-            if cierre.estado_incidencias != 'resueltas':
-                cierre.estado_incidencias = 'resueltas'
-                cierre.save(update_fields=['estado_incidencias'])
-        else:
-            if cierre.estado_incidencias != 'detectadas':
-                cierre.estado_incidencias = 'detectadas'
-                cierre.save(update_fields=['estado_incidencias'])
-        
-        return Response({
-            "cierre_id": cierre.id,
-            "estado_incidencias": cierre.estado_incidencias,
-            "tiene_incidencias": total_incidencias > 0,
-            "total_incidencias": total_incidencias,
-            "incidencias_pendientes": cierre.incidencias.filter(estado='pendiente').count(),
-            "incidencias_resueltas": cierre.incidencias.filter(
-                estado__in=['aprobada_supervisor', 'resuelta_analista']
-            ).count()
-        })
-    
-    @action(detail=True, methods=['post'])
-    def lanzar_generacion_incidencias(self, request, pk=None):
-        """Lanza la tarea de generación de incidencias para un cierre"""
-        try:
-            cierre = CierreNomina.objects.get(id=pk)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        # Verificar que el cierre esté en estado adecuado
-        if cierre.estado not in ['verificacion_datos', 'verificado_sin_discrepancias', 'con_discrepancias', 'completado']:
-            return Response({
-                "error": f"El cierre debe estar en estado válido para generar incidencias. Estado actual: '{cierre.estado}'"
-            }, status=400)
-        
-        # Lanzar tarea
-        task = generar_incidencias_cierre_task.delay(pk)
-        
-        return Response({
-            "message": "Generación de incidencias iniciada",
-            "task_id": task.id,
-            "cierre_id": pk
-        }, status=202)
-
-# ======== VIEWSETS PARA ANÁLISIS DE DATOS ========
-
-class AnalisisDatosCierreViewSet(viewsets.ModelViewSet):
-    """ViewSet para gestionar análisis de datos de cierre"""
-    from .models import AnalisisDatosCierre
-    from .serializers import AnalisisDatosCierreSerializer
-    
-    queryset = AnalisisDatosCierre.objects.all()
-    serializer_class = AnalisisDatosCierreSerializer
+        if self.action == 'list':
+            return EmpleadoNominaListSerializer
+        return EmpleadoNominaDetailSerializer
     
     def get_queryset(self):
+        """Filtrar empleados según acceso del usuario"""
         queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Filtros por parámetros
         cierre_id = self.request.query_params.get('cierre')
+        tipo_empleado = self.request.query_params.get('tipo_empleado')
+        
         if cierre_id:
             queryset = queryset.filter(cierre_id=cierre_id)
-        return queryset.select_related('cierre', 'analista')
-
-
-class IncidenciaVariacionSalarialViewSet(viewsets.ModelViewSet):
-    """ViewSet para gestionar incidencias de variación salarial"""
-    from .models import IncidenciaVariacionSalarial
-    from .serializers import IncidenciaVariacionSalarialSerializer
+        if tipo_empleado:
+            queryset = queryset.filter(tipo_empleado=tipo_empleado)
+        
+        # Control de acceso por usuario
+        if user.tipo_usuario == 'gerente':
+            pass  # Gerentes ven todo
+        elif user.tipo_usuario == 'supervisor':
+            # Supervisores ven empleados de cierres de sus analistas
+            analistas_supervisados = user.get_analistas_supervisados()
+            queryset = queryset.filter(cierre__analista_responsable__in=analistas_supervisados)
+        elif user.tipo_usuario in ['analista', 'senior']:
+            # Analistas solo ven empleados de sus propios cierres
+            queryset = queryset.filter(cierre__analista_responsable=user)
+        
+        return queryset
     
-    queryset = IncidenciaVariacionSalarial.objects.all()
-    serializer_class = IncidenciaVariacionSalarialSerializer
+    @action(detail=False, methods=['get'], url_path='buscar-avanzada')
+    def buscar_avanzada(self, request):
+        """
+        Búsqueda avanzada de empleados con múltiples criterios
+        """
+        try:
+            # Parámetros de búsqueda
+            rut = request.query_params.get('rut', '').strip()
+            nombre = request.query_params.get('nombre', '').strip()
+            concepto = request.query_params.get('concepto', '').strip()
+            valor_min = request.query_params.get('valor_min')
+            valor_max = request.query_params.get('valor_max')
+            cliente_id = request.query_params.get('cliente_id')
+            periodo = request.query_params.get('periodo')
+            
+            queryset = self.get_queryset()
+            
+            # Aplicar filtros
+            if rut:
+                queryset = queryset.filter(rut_empleado__icontains=rut)
+            
+            if nombre:
+                queryset = queryset.filter(nombre_empleado__icontains=nombre)
+            
+            if cliente_id:
+                queryset = queryset.filter(cierre__cliente_id=cliente_id)
+            
+            if periodo:
+                queryset = queryset.filter(cierre__periodo=periodo)
+            
+            if concepto:
+                queryset = queryset.filter(conceptos__concepto__icontains=concepto)
+            
+            if valor_min or valor_max:
+                if valor_min:
+                    queryset = queryset.filter(conceptos__valor_numerico__gte=float(valor_min))
+                if valor_max:
+                    queryset = queryset.filter(conceptos__valor_numerico__lte=float(valor_max))
+            
+            # Aplicar paginación
+            queryset = queryset.distinct()[:50]  # Limitar a 50 resultados
+            
+            serializer = self.get_serializer(queryset, many=True)
+            
+            return Response({
+                'resultados': serializer.data,
+                'total_encontrados': len(serializer.data),
+                'limitado_a_50': len(serializer.data) == 50
+            })
+            
+        except Exception as e:
+            logger.error(f"Error en búsqueda avanzada: {e}")
+            return Response({
+                'error': f'Error en búsqueda: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# ========== INCIDENCIAS ==========
+
+class IncidenciaViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestión de incidencias
+    """
+    
+    queryset = Incidencia.objects.all().select_related(
+        'cierre', 'analista_asignado', 'supervisor_asignado'
+    )
+    permission_classes = [IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['empleado_rut', 'empleado_nombre', 'concepto_afectado']
+    ordering_fields = ['fecha_deteccion', 'fecha_resolucion', 'diferencia_absoluta']
+    ordering = ['-fecha_deteccion']
+    
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return IncidenciaListSerializer
+        return IncidenciaDetailSerializer
     
     def get_queryset(self):
+        """Filtrar incidencias según acceso del usuario"""
         queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Filtros por parámetros
         cierre_id = self.request.query_params.get('cierre')
         estado = self.request.query_params.get('estado')
-        analista_id = self.request.query_params.get('analista')
-        supervisor_id = self.request.query_params.get('supervisor')
+        tipo_incidencia = self.request.query_params.get('tipo')
+        asignado_a_mi = self.request.query_params.get('asignado_a_mi') == 'true'
         
         if cierre_id:
             queryset = queryset.filter(cierre_id=cierre_id)
         if estado:
             queryset = queryset.filter(estado=estado)
-        if analista_id:
-            queryset = queryset.filter(analista_asignado_id=analista_id)
-        if supervisor_id:
-            queryset = queryset.filter(supervisor_revisor_id=supervisor_id)
-            
-        return queryset.select_related('cierre', 'analista_asignado', 'supervisor_revisor')
+        if tipo_incidencia:
+            queryset = queryset.filter(tipo_incidencia=tipo_incidencia)
+        if asignado_a_mi:
+            queryset = queryset.filter(
+                Q(analista_asignado=user) | Q(supervisor_asignado=user)
+            )
+        
+        # Control de acceso por usuario
+        if user.tipo_usuario == 'gerente':
+            pass  # Gerentes ven todo
+        elif user.tipo_usuario == 'supervisor':
+            # Supervisores ven incidencias de sus analistas
+            analistas_supervisados = user.get_analistas_supervisados()
+            queryset = queryset.filter(
+                Q(cierre__analista_responsable__in=analistas_supervisados) |
+                Q(supervisor_asignado=user)
+            )
+        elif user.tipo_usuario in ['analista', 'senior']:
+            # Analistas ven sus propias incidencias
+            queryset = queryset.filter(
+                Q(cierre__analista_responsable=user) |
+                Q(analista_asignado=user)
+            )
+        
+        return queryset
     
-    @action(detail=True, methods=['post'])
-    def justificar(self, request, pk=None):
-        """Justificar una incidencia de variación salarial"""
+    @action(detail=True, methods=['post'], url_path='asignar')
+    def asignar(self, request, pk=None):
+        """Asignar incidencia a analista/supervisor"""
         incidencia = self.get_object()
-        justificacion = request.data.get('justificacion', '').strip()
+        analista_id = request.data.get('analista_id')
+        supervisor_id = request.data.get('supervisor_id')
         
-        if not justificacion:
-            return Response({"error": "La justificación es requerida"}, status=400)
-        
-        if not incidencia.puede_justificar(request.user):
-            return Response({"error": "No tiene permisos para justificar esta incidencia"}, status=403)
-        
-        # Justificar la incidencia
-        success = incidencia.marcar_como_justificada(request.user, justificacion)
-        
-        if success:
-            return Response({
-                "message": "Incidencia justificada correctamente",
-                "estado": incidencia.estado,
-                "fecha_justificacion": incidencia.fecha_justificacion
-            })
-        else:
-            return Response({"error": "No se pudo justificar la incidencia"}, status=400)
-    
-    @action(detail=True, methods=['post'])
-    def aprobar(self, request, pk=None):
-        """Aprobar una incidencia de variación salarial"""
-        incidencia = self.get_object()
-        comentario = request.data.get('comentario', '').strip()
-        
-        if not incidencia.puede_resolver(request.user):
-            return Response({"error": "No tiene permisos para aprobar esta incidencia"}, status=403)
-        
-        # Aprobar la incidencia
-        success = incidencia.aprobar(request.user, comentario)
-        
-        if success:
-            return Response({
-                "message": "Incidencia aprobada correctamente",
-                "estado": incidencia.estado,
-                "fecha_resolucion": incidencia.fecha_resolucion_supervisor
-            })
-        else:
-            return Response({"error": "No se pudo aprobar la incidencia"}, status=400)
-    
-    @action(detail=True, methods=['post'])
-    def rechazar(self, request, pk=None):
-        """Rechazar una incidencia de variación salarial"""
-        incidencia = self.get_object()
-        comentario = request.data.get('comentario', '').strip()
-        
-        if not comentario:
-            return Response({"error": "El comentario es requerido para rechazar"}, status=400)
-        
-        if not incidencia.puede_resolver(request.user):
-            return Response({"error": "No tiene permisos para rechazar esta incidencia"}, status=403)
-        
-        # Rechazar la incidencia
-        success = incidencia.rechazar(request.user, comentario)
-        
-        if success:
-            return Response({
-                "message": "Incidencia rechazada correctamente",
-                "estado": incidencia.estado,
-                "fecha_resolucion": incidencia.fecha_resolucion_supervisor
-            })
-        else:
-            return Response({"error": "No se pudo rechazar la incidencia"}, status=400)
-    
-    @action(detail=False, methods=['get'], url_path='resumen/(?P<cierre_id>[^/.]+)')
-    def resumen_variaciones(self, request, cierre_id=None):
-        """Obtiene un resumen de las incidencias de variación salarial"""
         try:
-            from .models import CierreNomina
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
+            if analista_id:
+                analista = User.objects.get(id=analista_id)
+                incidencia.analista_asignado = analista
+            
+            if supervisor_id:
+                supervisor = User.objects.get(id=supervisor_id)
+                incidencia.supervisor_asignado = supervisor
+            
+            incidencia.save(update_fields=['analista_asignado', 'supervisor_asignado'])
+            
+            # Crear interacción
+            InteraccionIncidencia.objects.create(
+                incidencia=incidencia,
+                usuario=request.user,
+                tipo_interaccion='asignacion',
+                mensaje=f"Incidencia asignada. Analista: {analista.get_full_name() if analista_id else 'N/A'}, Supervisor: {supervisor.get_full_name() if supervisor_id else 'N/A'}"
+            )
+            
+            serializer = self.get_serializer(incidencia)
+            return Response(serializer.data)
+            
+        except User.DoesNotExist:
+            return Response({
+                'error': 'Usuario no encontrado'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'error': f'Error asignando incidencia: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'], url_path='resolver')
+    def resolver(self, request, pk=None):
+        """Resolver una incidencia"""
+        incidencia = self.get_object()
+        observaciones = request.data.get('observaciones', '')
         
-        # Contar incidencias por estado
-        incidencias = self.get_queryset().filter(cierre=cierre)
+        if incidencia.estado == 'resuelta':
+            return Response({
+                'error': 'La incidencia ya está resuelta'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
-        resumen = {
-            "total": incidencias.count(),
-            "por_estado": {
-                "pendiente": incidencias.filter(estado='pendiente').count(),
-                "en_analisis": incidencias.filter(estado='en_analisis').count(),
-                "justificado": incidencias.filter(estado='justificado').count(),
-                "aprobado": incidencias.filter(estado='aprobado').count(),
-                "rechazado": incidencias.filter(estado='rechazado').count(),
-            },
-            "por_tipo": {
-                "aumento": incidencias.filter(tipo_variacion='aumento').count(),
-                "disminucion": incidencias.filter(tipo_variacion='disminucion').count(),
-            }
-        }
+        try:
+            incidencia.estado = 'resuelta'
+            incidencia.fecha_resolucion = timezone.now()
+            incidencia.usuario_resolucion = request.user
+            incidencia.observaciones_resolucion = observaciones
+            incidencia.save(update_fields=[
+                'estado', 'fecha_resolucion', 'usuario_resolucion', 'observaciones_resolucion'
+            ])
+            
+            # Crear interacción
+            InteraccionIncidencia.objects.create(
+                incidencia=incidencia,
+                usuario=request.user,
+                tipo_interaccion='resolucion',
+                mensaje=f"Incidencia resuelta: {observaciones}"
+            )
+            
+            serializer = self.get_serializer(incidencia)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            return Response({
+                'error': f'Error resolviendo incidencia: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'], url_path='comentar')
+    def comentar(self, request, pk=None):
+        """Agregar comentario a incidencia"""
+        incidencia = self.get_object()
+        mensaje = request.data.get('mensaje', '')
         
-        return Response(resumen)
+        if not mensaje:
+            return Response({
+                'error': 'El mensaje es requerido'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            interaccion = InteraccionIncidencia.objects.create(
+                incidencia=incidencia,
+                usuario=request.user,
+                tipo_interaccion='comentario',
+                mensaje=mensaje
+            )
+            
+            serializer = InteraccionIncidenciaSerializer(interaccion)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            return Response({
+                'error': f'Error agregando comentario: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+# ========== KPIS ==========
 
-
-
-# ===== VIEWSETS PARA SISTEMA DE DISCREPANCIAS (VERIFICACIÓN DE DATOS) =====
-
-class DiscrepanciaCierreViewSet(viewsets.ModelViewSet):
-    """ViewSet para gestionar discrepancias de verificación de datos"""
-    queryset = DiscrepanciaCierre.objects.all()
-    serializer_class = DiscrepanciaCierreSerializer
+class KPINominaViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet para consulta de KPIs de nómina
+    """
+    
+    queryset = KPINomina.objects.all().select_related('cierre')
+    serializer_class = KPINominaSerializer
     permission_classes = [IsAuthenticated]
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ['fecha_calculo', 'tipo_kpi']
+    ordering = ['-fecha_calculo']
     
     def get_queryset(self):
+        """Filtrar KPIs según acceso del usuario"""
         queryset = super().get_queryset()
+        user = self.request.user
         
-        # Filtros disponibles
+        # Filtros por parámetros
         cierre_id = self.request.query_params.get('cierre')
-        tipo_discrepancia = self.request.query_params.get('tipo')
-        rut_empleado = self.request.query_params.get('rut')
-        grupo = self.request.query_params.get('grupo')
+        tipo_kpi = self.request.query_params.get('tipo')
+        cliente_id = self.request.query_params.get('cliente')
         
         if cierre_id:
             queryset = queryset.filter(cierre_id=cierre_id)
-        if tipo_discrepancia:
-            queryset = queryset.filter(tipo_discrepancia=tipo_discrepancia)
-        if rut_empleado:
-            queryset = queryset.filter(rut_empleado__icontains=rut_empleado)
-        if grupo:
-            # Filtrar por grupo de discrepancias
-            libro_vs_novedades = [
-                'empleado_solo_libro', 'empleado_solo_novedades', 'diff_datos_personales',
-                'diff_sueldo_base', 'diff_concepto_monto', 'concepto_solo_libro', 'concepto_solo_novedades'
-            ]
-            if grupo == 'libro_vs_novedades':
-                queryset = queryset.filter(tipo_discrepancia__in=libro_vs_novedades)
-            elif grupo == 'movimientos_vs_analista':
-                queryset = queryset.exclude(tipo_discrepancia__in=libro_vs_novedades)
-            
-        return queryset.select_related('cierre', 'empleado_libro', 'empleado_novedades').order_by('-fecha_detectada')
+        if tipo_kpi:
+            queryset = queryset.filter(tipo_kpi=tipo_kpi)
+        if cliente_id:
+            queryset = queryset.filter(cierre__cliente_id=cliente_id)
+        
+        # Control de acceso por usuario
+        if user.tipo_usuario == 'gerente':
+            pass  # Gerentes ven todo
+        elif user.tipo_usuario == 'supervisor':
+            # Supervisores ven KPIs de sus analistas
+            analistas_supervisados = user.get_analistas_supervisados()
+            queryset = queryset.filter(cierre__analista_responsable__in=analistas_supervisados)
+        elif user.tipo_usuario in ['analista', 'senior']:
+            # Analistas ven KPIs de sus propios cierres
+            queryset = queryset.filter(cierre__analista_responsable=user)
+        
+        return queryset
     
-    @action(detail=False, methods=['post'], url_path='generar/(?P<cierre_id>[^/.]+)')
-    def generar_discrepancias(self, request, cierre_id=None):
-        """Endpoint para generar discrepancias de un cierre específico"""
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
+    @action(detail=False, methods=['get'], url_path='comparacion-mensual')
+    def comparacion_mensual(self, request):
+        """Comparación de KPIs entre meses para un cliente"""
+        cliente_id = request.query_params.get('cliente_id')
+        tipo_kpi = request.query_params.get('tipo_kpi')
+        meses = request.query_params.get('meses', '6')  # Últimos 6 meses por defecto
         
-        # Verificar permisos básicos
-        if not request.user.is_authenticated:
-            return Response({"error": "Usuario no autenticado"}, status=401)
-        
-        # Verificar que el cierre esté en estado adecuado
-        if cierre.estado not in ['archivos_completos', 'verificacion_datos']:
+        if not cliente_id:
             return Response({
-                "error": f"El cierre debe estar en estado 'archivos_completos' o 'verificacion_datos' para generar discrepancias. Estado actual: '{cierre.estado}'"
-            }, status=400)
-        
-        # Lanzar tarea de generación de discrepancias
-        task = generar_discrepancias_cierre_task.delay(cierre_id)
-        
-        return Response({
-            "message": "Generación de discrepancias iniciada",
-            "task_id": task.id,
-            "cierre_id": cierre_id
-        }, status=202)
-    
-    @action(detail=False, methods=['get'], url_path='resumen/(?P<cierre_id>[^/.]+)')
-    def resumen_discrepancias(self, request, cierre_id=None):
-        """Obtiene un resumen estadístico de discrepancias de un cierre"""
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        from .utils.GenerarDiscrepancias import obtener_resumen_discrepancias
-        resumen = obtener_resumen_discrepancias(cierre)
-        
-        serializer = ResumenDiscrepanciasSerializer(resumen)
-        return Response(serializer.data)
-    
-    @action(detail=False, methods=['get'], url_path='estado/(?P<cierre_id>[^/.]+)')
-    def estado_discrepancias(self, request, cierre_id=None):
-        """Obtiene el estado de discrepancias de un cierre"""
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        total_discrepancias = cierre.discrepancias.count()
-        
-        # Clasificar por grupos
-        libro_vs_novedades_tipos = [
-            'empleado_solo_libro', 'empleado_solo_novedades', 'diff_datos_personales',
-            'diff_sueldo_base', 'diff_concepto_monto', 'concepto_solo_libro', 'concepto_solo_novedades'
-        ]
-        
-        total_libro_vs_novedades = cierre.discrepancias.filter(tipo_discrepancia__in=libro_vs_novedades_tipos).count()
-        total_movimientos_vs_analista = total_discrepancias - total_libro_vs_novedades
-        
-        return Response({
-            "cierre_id": cierre.id,
-            "estado_cierre": cierre.estado,
-            "tiene_discrepancias": total_discrepancias > 0,
-            "total_discrepancias": total_discrepancias,
-            "discrepancias_por_grupo": {
-                "libro_vs_novedades": total_libro_vs_novedades,
-                "movimientos_vs_analista": total_movimientos_vs_analista
-            },
-            "empleados_afectados": cierre.discrepancias.values('rut_empleado').distinct().count(),
-            "fecha_ultima_verificacion": cierre.discrepancias.first().fecha_detectada if total_discrepancias > 0 else None
-        })
-    
-    @action(detail=False, methods=['post'], url_path='preview/(?P<cierre_id>[^/.]+)')
-    def preview_discrepancias(self, request, cierre_id=None):
-        """Endpoint para previsualizar qué discrepancias se generarían sin crearlas"""
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        from .utils.GenerarDiscrepancias import (
-            generar_discrepancias_libro_vs_novedades,
-            generar_discrepancias_movimientos_vs_analista
-        )
+                'error': 'cliente_id es requerido'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Generar discrepancias preview sin guardarlas
-            discrepancias_libro_novedades = generar_discrepancias_libro_vs_novedades(cierre)
-            discrepancias_movimientos_analista = generar_discrepancias_movimientos_vs_analista(cierre)
+            queryset = self.get_queryset().filter(
+                cierre__cliente_id=cliente_id
+            ).order_by('-cierre__periodo')
             
-            todas_discrepancias = discrepancias_libro_novedades + discrepancias_movimientos_analista
+            if tipo_kpi:
+                queryset = queryset.filter(tipo_kpi=tipo_kpi)
             
-            # Convertir discrepancias a formato serializable
-            discrepancias_preview = []
-            for discrepancia in todas_discrepancias:
-                discrepancias_preview.append({
-                    'tipo_discrepancia': discrepancia.tipo_discrepancia,
-                    'tipo_discrepancia_display': discrepancia.get_tipo_discrepancia_display(),
-                    'rut_empleado': discrepancia.rut_empleado,
-                    'descripcion': discrepancia.descripcion,
-                    'concepto_afectado': discrepancia.concepto_afectado,
-                    'valor_libro': discrepancia.valor_libro,
-                    'valor_novedades': discrepancia.valor_novedades,
-                    'valor_movimientos': discrepancia.valor_movimientos,
-                    'valor_analista': discrepancia.valor_analista,
-                })
+            # Limitar a los últimos N meses
+            queryset = queryset[:int(meses)]
+            
+            # Agrupar por período
+            datos_comparacion = {}
+            for kpi in queryset:
+                periodo = kpi.cierre.periodo
+                if periodo not in datos_comparacion:
+                    datos_comparacion[periodo] = {}
+                
+                datos_comparacion[periodo][kpi.tipo_kpi] = {
+                    'valor': kpi.valor_numerico,
+                    'valor_anterior': kpi.valor_comparativo_anterior,
+                    'variacion': kpi.variacion_porcentual,
+                    'fecha_calculo': kpi.fecha_calculo
+                }
             
             return Response({
-                'total_discrepancias': len(todas_discrepancias),
-                'libro_vs_novedades': len(discrepancias_libro_novedades),
-                'movimientos_vs_analista': len(discrepancias_movimientos_analista),
-                'discrepancias': discrepancias_preview,
-                'mensaje': 'Vista previa generada - no se guardaron discrepancias'
+                'cliente_id': cliente_id,
+                'meses_analizados': len(datos_comparacion),
+                'datos': datos_comparacion
             })
             
         except Exception as e:
-            logger.error(f"Error generando preview de discrepancias: {e}")
+            logger.error(f"Error en comparación mensual: {e}")
             return Response({
-                "error": f"Error generando preview: {str(e)}"
-            }, status=500)
-    
-    @action(detail=False, methods=['delete'], url_path='limpiar/(?P<cierre_id>[^/.]+)')
-    def limpiar_discrepancias(self, request, cierre_id=None):
-        """
-        Limpia todas las discrepancias de un cierre.
-        Útil para re-ejecutar la verificación después de corregir archivos.
-        """
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        # Eliminar todas las discrepancias del cierre
-        deleted_count = cierre.discrepancias.all().delete()[0]
-        
-        # Resetear estado del cierre
-        cierre.estado = 'datos_consolidados'
-        cierre.save(update_fields=['estado'])
-        
-        logger.info(f"Eliminadas {deleted_count} discrepancias del cierre {cierre_id}")
-        
-        return Response({
-            "message": f"Eliminadas {deleted_count} discrepancias. Cierre listo para nueva verificación.",
-            "discrepancias_eliminadas": deleted_count,
-            "nuevo_estado": cierre.estado
-        })
-
-
-class CierreNominaDiscrepanciasViewSet(viewsets.ViewSet):
-    """ViewSet adicional para operaciones de verificación de datos en cierres"""
-    
-    @action(detail=True, methods=['get'])
-    def estado_verificacion(self, request, pk=None):
-        """Obtiene el estado de verificación de datos de un cierre"""
-        try:
-            cierre = CierreNomina.objects.get(id=pk)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        total_discrepancias = cierre.discrepancias.count()
-        
-        # Determinar estado automáticamente
-        if total_discrepancias == 0:
-            if cierre.estado in ['discrepancias_detectadas']:
-                cierre.estado = 'datos_verificados'
-                cierre.save(update_fields=['estado'])
-        else:
-            if cierre.estado in ['datos_consolidados', 'datos_verificados']:
-                cierre.estado = 'discrepancias_detectadas'
-                cierre.save(update_fields=['estado'])
-        
-        return Response({
-            "cierre_id": cierre.id,
-            "estado_verificacion": cierre.estado,
-            "requiere_correccion": total_discrepancias > 0,
-            "total_discrepancias": total_discrepancias,
-            "mensaje": "Sin discrepancias - datos verificados" if total_discrepancias == 0 else f"Se encontraron {total_discrepancias} discrepancias que requieren corrección"
-        })
-    
-    @action(detail=True, methods=['post'])
-    def lanzar_verificacion(self, request, pk=None):
-        """Lanza la verificación de datos para un cierre"""
-        try:
-            cierre = CierreNomina.objects.get(id=pk)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        # Verificar que el cierre esté en estado adecuado
-        if cierre.estado not in ['datos_consolidados', 'discrepancias_detectadas']:
-            return Response({
-                "error": "El cierre debe estar en estado 'datos_consolidados' para verificar datos"
-            }, status=400)
-        
-        # Lanzar tarea
-        task = generar_discrepancias_cierre_task.delay(pk)
-        
-        return Response({
-            "message": "Verificación de datos iniciada",
-            "task_id": task.id,
-            "cierre_id": pk
-        }, status=202)
-
-
-# ========== UPLOAD LOG ENDPOINTS ==========
-
-@api_view(['GET'])
-def obtener_estado_upload_log_nomina(request, upload_log_id):
-    """
-    Obtiene el estado actual de un UploadLogNomina específico
-    """
-    from .models_logging import UploadLogNomina
-    from rest_framework.response import Response
-    from rest_framework import status
-    
-    try:
-        upload_log = UploadLogNomina.objects.get(id=upload_log_id)
-        
-        data = {
-            'id': upload_log.id,
-            'estado': upload_log.estado,
-            'tipo_upload': upload_log.tipo_upload,
-            'nombre_archivo_original': upload_log.nombre_archivo_original,
-            'fecha_subida': upload_log.fecha_subida,
-            'errores': upload_log.errores,
-            'resumen': upload_log.resumen or {},
-            'registros_procesados': upload_log.registros_procesados,
-            'registros_exitosos': upload_log.registros_exitosos,
-            'registros_fallidos': upload_log.registros_fallidos,
-            'headers_detectados': upload_log.headers_detectados,
-            'tiempo_procesamiento': upload_log.tiempo_procesamiento,
-        }
-        
-        return Response(data, status=status.HTTP_200_OK)
-        
-    except UploadLogNomina.DoesNotExist:
-        return Response(
-            {'error': 'Upload log no encontrado'}, 
-            status=status.HTTP_404_NOT_FOUND
-        )
-
-
+                'error': f'Error generando comparación: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

@@ -25,12 +25,18 @@ const ArchivosTalanaSection = ({
 }) => {
   const [expandido, setExpandido] = useState(true);
   
-  // Calcular estado general de la sección
-  const estadoLibro = libro?.estado === "procesando" || libro?.estado === "procesado"
-    ? libro?.estado
-    : libroListo
-    ? "clasificado"
-    : libro?.estado || "no_subido";
+  // Calcular estado general de la sección - simplificar lógica
+  const estadoLibro = libroListo 
+    ? "clasificado" 
+    : (libro?.estado || "pendiente");
+  
+  // Debug: verificar estados
+  console.log('🔍 DEBUG ArchivosTalanaSection:', {
+    libroEstadoOriginal: libro?.estado,
+    libroListo,
+    estadoLibroFinal: estadoLibro,
+    timestamp: new Date().toISOString()
+  });
     
   const estadoMovimientos = movimientos?.estado || "pendiente";
   

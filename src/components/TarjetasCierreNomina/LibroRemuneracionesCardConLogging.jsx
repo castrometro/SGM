@@ -319,9 +319,20 @@ const LibroRemuneracionesCardConLogging = ({
 
   // Determinar si se puede subir archivo
   const puedeSubirArchivo = !isDisabled && 
-    (estado === "no_subido" || estado === "con_error");
+    (estado === "no_subido" || estado === "con_error" || estado === "pendiente");
   
-  // Estados donde NO se puede cambiar el archivo
+  // Debug: log para diagnosticar el estado del botón
+  console.log('🔍 DEBUG - Estado del botón de subida:', {
+    estado,
+    isDisabled,
+    disabled,
+    subiendo,
+    procesandoLocal,
+    puedeSubirArchivo,
+    timestamp: new Date().toISOString()
+  });
+  
+  // Estados donde NO se puede cambiar el archivo (excluyendo pendiente que es estado inicial)
   const estadosConArchivoBloqueado = [
     "analizando_hdrs",
     "hdrs_analizados", 

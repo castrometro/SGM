@@ -6,6 +6,9 @@ import IncidenciasEncontradasSection from "./IncidenciasEncontradasSection";
 import ModalClasificacionHeaders from "../ModalClasificacionHeaders";
 import {
   obtenerEstadoLibroRemuneraciones,
+  obtenerHeadersClasificacion,
+  guardarMapeosManualesRedis,
+  eliminarMapeoManualRedis,
   subirLibroRemuneraciones,
   procesarLibroRemuneraciones,
   eliminarLibroRemuneraciones,
@@ -26,34 +29,54 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
   const [libroListo, setLibroListo] = useState(false);
   const [mensajeLibro, setMensajeLibro] = useState("");
   const [modoSoloLectura, setModoSoloLectura] = useState(false);
+  const [headersParaModal, setHeadersParaModal] = useState([]);
 
   const handleGuardarClasificaciones = async ({ guardar, eliminar }) => {
     try {
-      // Primero eliminamos las clasificaciones que correspondan
+      console.log('💾 Operación CRUD en mapeos: Redis (PHASE 1) + BD (permanente):', { guardar, eliminar });
+      
+      // ===== OPERACIÓN CREATE/UPDATE =====
+      const mapeosPorGuardar = guardar || {};
+      if (Object.keys(mapeosPorGuardar).length > 0) {
+        // Usar el nuevo endpoint que guarda en Redis + BD
+        const resultado = await guardarMapeosManualesRedis(cierre.id, mapeosPorGuardar);
+        console.log('✅ Mapeos guardados exitosamente:', resultado);
+        
+        // Mostrar confirmación de memoria permanente
+        if (resultado.data?.memoria_permanente) {
+          console.log(`🧠 MEMORIA PERMANENTE: ${resultado.data.mapeos_guardados_bd} mapeos guardados en BD para futuros cierres`);
+        }
+      }
+      
+      // ===== OPERACIÓN DELETE =====
       if (Array.isArray(eliminar) && eliminar.length > 0) {
-        await Promise.all(
-          eliminar.map((h) => eliminarConceptoRemuneracion(cliente.id, h))
-        );
+        console.log(`🗑️ Eliminando ${eliminar.length} mapeos...`);
+        
+        for (const headerName of eliminar) {
+          try {
+            const resultadoEliminar = await eliminarMapeoManualRedis(cierre.id, headerName);
+            console.log(`✅ Eliminado: ${headerName}`, resultadoEliminar);
+          } catch (error) {
+            console.error(`❌ Error eliminando ${headerName}:`, error);
+          }
+        }
       }
-
-      const tieneGuardar = guardar && Object.keys(guardar).length > 0;
-
-      // Luego guardamos las nuevas clasificaciones
-      if (tieneGuardar) {
-        await guardarConceptosRemuneracion(cliente.id, guardar, cierre.id);
-      } else if (Array.isArray(eliminar) && eliminar.length > 0) {
-        // Si sólo se eliminaron conceptos, indicamos al backend que recalcule
-        await guardarConceptosRemuneracion(cliente.id, {}, cierre.id);
-      }
-
-      // Refrescamos los conteos consultando nuevamente el backend
+      
+      // ===== ACTUALIZAR ESTADO =====
+      // Actualizar estado del libro después de todas las operaciones
       const nuevoEstado = await obtenerEstadoLibroRemuneraciones(cierre.id);
       setLibro(nuevoEstado);
-      if (nuevoEstado?.id) {
-        setLibroId(nuevoEstado.id);
+      
+      // Mostrar información del progreso
+      if (nuevoEstado?.estado === 'listo_procesar') {
+        console.log('🎯 ¡Todos los headers mapeados! Libro listo para procesar');
+      } else if (nuevoEstado?.estado === 'mapeo_requerido') {
+        console.log(`⚠️ Aún quedan headers por mapear`);
       }
+      
     } catch (error) {
-      console.error("Error al guardar clasificaciones:", error);
+      console.error("❌ Error en operaciones CRUD de mapeos:", error);
+      throw error; // Re-lanzar para que el modal pueda manejar el error
     }
   };
 
@@ -189,9 +212,31 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
     }
   };
 
-  const handleVerClasificacion = (soloLectura = false) => {
+  const handleVerClasificacion = async (soloLectura = false) => {
     // Si el libro ya está procesado, forzar modo solo lectura
     const esSoloLectura = soloLectura || libro?.estado === "procesado";
+    
+    // Si el libro fue analizado (tiene análisis en Redis), obtener headers del endpoint
+    const tieneAnalisis = libro?.estado && ['mapeo_requerido', 'listo_procesar', 'procesando', 'procesado', 'fase1_completa'].includes(libro.estado);
+    
+    if (tieneAnalisis) {
+      try {
+        console.log(`🔄 Obteniendo headers de Redis para estado: ${libro.estado}`);
+        const headersData = await obtenerHeadersClasificacion(cierre.id);
+        console.log('🔄 Headers obtenidos del endpoint:', headersData);
+        
+        // Usar headers_sin_clasificar para el modal (tanto en modo edición como solo lectura)
+        setHeadersParaModal(headersData.headers_sin_clasificar || []);
+      } catch (error) {
+        console.error('Error obteniendo headers para modal:', error);
+        // Fallback a headers locales si hay error
+        setHeadersParaModal(headersSinClasificar);
+      }
+    } else {
+      // Si no hay análisis aún, usar headers locales (no debería suceder normalmente)
+      console.log('📝 Usando headers locales - no hay análisis en Redis aún');
+      setHeadersParaModal(headersSinClasificar);
+    }
     
     setModalAbierto(true);
     setModoSoloLectura(esSoloLectura);
@@ -278,7 +323,8 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
         isOpen={modalAbierto}
         onClose={() => setModalAbierto(false)}
         clienteId={cliente.id}
-        headersSinClasificar={headersSinClasificar}
+        cierreId={cierre.id}
+        headersSinClasificar={headersParaModal}
         onGuardarClasificaciones={handleGuardarClasificaciones}
         soloLectura={modoSoloLectura}
       />

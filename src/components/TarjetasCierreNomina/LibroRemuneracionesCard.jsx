@@ -116,19 +116,30 @@ const LibroRemuneracionesCard = ({
   // Determinar si está procesando (estado del servidor O estado local)
   const isProcesando = estado === "procesando" || procesandoLocal;
 
-  // ✅ NUEVA LÓGICA: Determinar si se puede subir archivo
+  // ✅ LÓGICA CORREGIDA: Determinar si se puede subir archivo
   const puedeSubirArchivo = !isDisabled && 
-    (estado === "no_subido" || estado === "con_error");
+    (estado === "no_subido" || estado === "con_error" || estado === "pendiente" || 
+     estado === "procesado" || estado === "fase1_completa");
   
-  // Estados donde NO se puede cambiar el archivo
+  // ✅ LÓGICA CORREGIDA: Mostrar si puede reprocesar
+  const puedeReprocesar = (estado === "procesado" || estado === "fase1_completa") && !isDisabled;
+  
+  // Debug: log para diagnosticar el estado del botón
+  console.log('🔍 DEBUG LibroRemuneracionesCard - Estado del botón de subida:', {
+    estado,
+    isDisabled,
+    disabled,
+    subiendo,
+    procesandoLocal,
+    puedeSubirArchivo,
+    timestamp: new Date().toISOString()
+  });
+  
+  // ✅ CORREGIDO: Estados donde NO se puede cambiar archivo (solo durante procesamiento)
   const estadosConArchivoBloqueado = [
     "analizando_hdrs",
-    "hdrs_analizados", 
-    "clasif_pendiente",
-    "clasif_en_proceso",
-    "clasificado",
-    "procesando",
-    "procesado"
+    "clasif_en_proceso", 
+    "procesando"  // Solo bloquear durante procesamiento activo
   ];
   
   const archivoEsBloqueado = estadosConArchivoBloqueado.includes(estado);
@@ -189,15 +200,15 @@ const LibroRemuneracionesCard = ({
           {archivoNombre || "Ningún archivo seleccionado"}
         </span>
         
-        {/* ✅ BOTÓN DE ELIMINAR/RESUBIR SOLO SI ESTÁ PROCESADO */}
-        {isProcessed && onEliminarArchivo && (
+        {/* ✅ BOTÓN DE REPROCESAR MEJORADO */}
+        {puedeReprocesar && onEliminarArchivo && (
           <button
             onClick={handleEliminarArchivo}
             disabled={eliminando || isDisabled}
-            className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white ml-2"
-            title="Eliminar archivo actual para permitir subir uno nuevo"
+            className="text-xs px-3 py-1 rounded bg-orange-600 hover:bg-orange-700 text-white ml-2"
+            title="Reprocesar archivo - permite subir nuevo archivo o modificar clasificaciones"
           >
-            {eliminando ? "Eliminando..." : "Resubir archivo"}
+            {eliminando ? "Reprocesando..." : "Reprocesar"}
           </button>
         )}
       </div>

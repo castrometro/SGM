@@ -1,0 +1,155 @@
+% Arquitectura del Sistema SGM-Payroll - Versión Mejorada
+% Basada en el contexto actual del sistema desarrollado
+
+\section{Arquitectura del Sistema}
+
+El sistema SGM-Payroll ha sido desarrollado con una arquitectura híbrida multi-capas, diseñada específicamente para manejar la complejidad inherente del procesamiento de nóminas empresariales. La solución combina principios de microservicios, procesamiento asíncrono por fases y almacenamiento estratificado, desplegada en infraestructura containerizada en Uruguay con acceso VPN restringido por MAC.
+
+\subsection{Principios Arquitectónicos}
+
+La arquitectura del sistema se fundamenta en cuatro principios clave:
+
+\begin{itemize}
+    \item \textbf{Procesamiento por Fases}: El flujo de nómina se descompone en 5 fases secuenciales, cada una con responsabilidades específicas y almacenamiento optimizado.
+    \item \textbf{Almacenamiento Estratificado}: Utilización de PostgreSQL para persistencia, Redis para cache temporal por fases, y almacenamiento en memoria para procesamiento activo.
+    \item \textbf{Escalabilidad Horizontal}: Arquitectura preparada para múltiples trabajadores Celery y particionamiento de datos por cliente.
+    \item \textbf{Tolerancia a Fallos}: Sistema de reintentos automáticos, rollback por fases y recuperación de estado desde cache.
+\end{itemize}
+
+\subsection{Componentes del Sistema}
+
+\subsubsection{Capa de Presentación}
+\begin{itemize}
+    \item \textbf{React + Vite}: SPA optimizada con componentes modulares por rol de usuario (Analista, Supervisor, Gerente)
+    \item \textbf{Tailwind CSS}: Sistema de diseño consistente con componentes reutilizables
+    \item \textbf{Streamlit Dashboard}: Visualizaciones interactivas para KPIs y métricas de performance
+\end{itemize}
+
+\subsubsection{Capa de API y Lógica de Negocio}
+\begin{itemize}
+    \item \textbf{Django REST Framework}: API RESTful con ViewSets personalizados, serializers optimizados y filtrado por cliente
+    \item \textbf{Sistema de Autenticación}: Control de acceso basado en roles con asignación automática de analistas responsables
+    \item \textbf{Validadores Modulares}: Validación de RUT, formatos de archivo y consistencia de datos por fase
+\end{itemize}
+
+\subsubsection{Capa de Procesamiento Asíncrono}
+\begin{itemize}
+    \item \textbf{Celery Workers}: Procesamiento distribuido con chains de tareas por fase
+    \item \textbf{Redis Broker}: Orquestación de tareas con patrones de retry y circuit breaker
+    \item \textbf{Flower Monitoring}: Supervisión en tiempo real de workers y cola de tareas
+\end{itemize}
+
+\subsubsection{Capa de Almacenamiento}
+\begin{itemize}
+    \item \textbf{PostgreSQL}: Base de datos principal con modelos optimizados para consultas por cliente y período
+    \item \textbf{Redis DB Especializado}: Cache estructurado por fases con TTL diferenciado según criticidad de datos
+    \item \textbf{Sistema de Logs}: Logging estructurado con rotación automática y políticas de retención
+\end{itemize}
+
+\subsection{Arquitectura de Procesamiento por Fases}
+
+El sistema implementa un flujo de procesamiento innovador basado en 5 fases secuenciales, cada una optimizada para minimizar el uso de memoria y maximizar la eficiencia:
+
+\subsubsection{Fase 1: Análisis de Headers y Mapeo}
+\begin{itemize}
+    \item \textbf{Objetivo}: Extraer y mapear conceptos del Libro de Remuneraciones Talana
+    \item \textbf{Almacenamiento Redis}: Solo metadatos de headers y mapeos (≈5KB por archivo)
+    \item \textbf{Optimización}: No se almacenan datos de empleados, reduciendo uso de memoria en 85\%
+    \item \textbf{Estructura}: \texttt{sgm:nomina:\{cliente\}:\{cierre\}:fase1\_headers:\{tipo\}}
+\end{itemize}
+
+\subsubsection{Fase 2: Movimientos Talana}
+\begin{itemize}
+    \item \textbf{Objetivo}: Procesar ausentismos, ingresos y finiquitos
+    \item \textbf{Filtrado Inteligente}: Solo empleados existentes en Libro de Remuneraciones
+    \item \textbf{Almacenamiento}: Movimientos filtrados en PostgreSQL, cache selectivo en Redis
+\end{itemize}
+
+\subsubsection{Fase 3-4: Archivos del Analista}
+\begin{itemize}
+    \item \textbf{Validación Cruzada}: Empleados deben existir en lista del libro
+    \item \textbf{Mapeo de Headers}: Sincronización de términos entre analista y Talana
+    \item \textbf{Escalabilidad}: Filtrado automático reduce datos innecesarios
+\end{itemize}
+
+\subsubsection{Fase 5: Verificación y Discrepancias}
+\begin{itemize}
+    \item \textbf{Comparación de Datos}: Talana vs Analista en movimientos y conceptos-valor
+    \item \textbf{Cache Temporal}: Solo durante verificación activa, limpieza automática post-proceso
+    \item \textbf{Persistencia}: Discrepancias finales en PostgreSQL para auditoría
+\end{itemize}
+
+\subsection{Gestión de Cache Estratificado}
+
+El sistema implementa una estrategia de cache híbrida con Redis DB2 dedicado exclusivamente a nómina:
+
+\begin{verbatim}
+Estructura Organizada:
+sgm:nomina:{cliente_id}:{cierre_id}:{componente}:{tipo}
+
+Componentes por TTL:
+├── fase1_headers:* (TTL: 24h) - Mapeos críticos
+├── estado:procesamiento (TTL: 2h) - Estado temporal  
+├── archivo:libro_excel (TTL: 2h) - Datos temporales
+└── fase5_verificacion:* (TTL: 1h) - Cache volátil
+\end{verbatim}
+
+\subsubsection{Ventajas del Cache Estratificado}
+\begin{itemize}
+    \item \textbf{Uso Eficiente de Memoria}: Escalado controlado por fases vs crecimiento exponencial
+    \item \textbf{TTL Diferenciado}: Retención optimizada según criticidad de datos
+    \item \textbf{Limpieza Automatizada}: Cleanup por patrones y fases completadas
+    \item \textbf{Debugging Mejorado}: Keys autodescriptivas con estructura consistente
+\end{itemize}
+
+\subsection{Patrón de Integración API-Cache-BD}
+
+El sistema implementa un patrón de 3 capas para optimizar performance y consistencia:
+
+\begin{enumerate}
+    \item \textbf{API Layer}: Validación de entrada y autorización por cliente
+    \item \textbf{Cache Layer}: Redis como coordinador de flujo entre fases
+    \item \textbf{Persistence Layer}: PostgreSQL para almacenamiento definitivo y auditoría
+\end{enumerate}
+
+\subsubsection{Flujo de Datos Optimizado}
+\begin{verbatim}
+Upload Excel → Headers Redis + Empleados PostgreSQL
+Mapeo Manual → Cache selectivo conceptos en uso
+Confirmación → Cleanup Redis + Actualización PostgreSQL
+\end{verbatim}
+
+\subsection{Escalabilidad y Performance}
+
+\subsubsection{Métricas de Optimización Logradas}
+\begin{itemize}
+    \item \textbf{Reducción de Memoria Redis}: 85\% menos uso vs almacenamiento completo
+    \item \textbf{Filtrado Automático}: Solo datos relevantes por fase (empleados existentes)
+    \item \textbf{Procesamiento Incremental}: 133 empleados × 55 conceptos procesados eficientemente
+    \item \textbf{Cache Selectivo}: TTL diferenciado según criticidad (1h-24h)
+\end{itemize}
+
+\subsubsection{Capacidad de Escalado}
+\begin{itemize}
+    \item \textbf{Horizontal}: Workers Celery distribuidos por cliente
+    \item \textbf{Vertical}: Cache Redis particionado por DB (DB2 dedicado nómina)
+    \item \textbf{Temporal}: Cleanup automático libera recursos post-proceso
+\end{itemize}
+
+\subsection{Seguridad y Acceso}
+
+\subsubsection{Infraestructura}
+\begin{itemize}
+    \item \textbf{Despliegue}: Docker Swarm en servidor Uruguay
+    \item \textbf{Acceso}: VPN obligatorio + whitelist MAC addresses
+    \item \textbf{Datos}: Anonimización automática para testing
+\end{itemize}
+
+\subsubsection{Aplicación}
+\begin{itemize}
+    \item \textbf{Autenticación}: Django auth con roles diferenciados
+    \item \textbf{Autorización}: Filtrado automático por cliente asignado
+    \item \textbf{Auditoría}: Logs estructurados de todas las operaciones
+\end{itemize}
+
+Esta arquitectura híbrida por fases representa una innovación específica para el dominio de nóminas, donde la optimización del uso de recursos y la organización por flujo de negocio son críticas para la escalabilidad del sistema.

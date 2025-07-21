@@ -256,6 +256,24 @@ export const obtenerEstadoLibroRemuneraciones = async (cierreId) => {
   return res.data;
 };
 
+export const obtenerHeadersClasificacion = async (cierreId) => {
+  const res = await api.get(`/nomina/libros-remuneraciones/headers/${cierreId}/`);
+  return res.data;
+};
+
+export const guardarMapeosManualesRedis = async (cierreId, mapeos) => {
+  const res = await api.post(`/nomina/libros-remuneraciones/mapeos/${cierreId}/`, {
+    mapeos
+  });
+  return res.data;
+};
+
+export const eliminarMapeoManualRedis = async (cierreId, headerName) => {
+  const encodedHeaderName = encodeURIComponent(headerName);
+  const res = await api.delete(`/nomina/libros-remuneraciones/mapeos/${cierreId}/${encodedHeaderName}/`);
+  return res.data;
+};
+
 export const procesarLibroRemuneraciones = async (libroId) => {
   const res = await api.post(
     `/nomina/libros-remuneraciones/${libroId}/procesar/`
@@ -338,7 +356,7 @@ export const reprocesarArchivoAnalista = async (archivoId) => {
 };
 //esto se cacheará en redis
 export const obtenerClasificacionesCliente = async (clienteId) => {
-  const response = await api.get(`/nomina/conceptos-remuneracion/?cliente_id=${clienteId}`);
+  const response = await api.get(`/nomina/cierres/conceptos-remuneracion/?cliente_id=${clienteId}`);
   return response.data; // Devuelve array de { nombre_concepto, clasificacion, hashtags }
 };
 //--------------------------

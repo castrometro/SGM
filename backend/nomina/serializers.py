@@ -1,471 +1,409 @@
+"""
+Serializers para Nueva Arquitectura de Nómina SGM
+================================================
+
+Serializers para modelos rediseñados centrados en CierreNomina:
+- CierreNomina: Modelo principal con integración Redis
+- EmpleadoNomina/EmpleadoConcepto: Lista empleados y conceptos
+- Ausentismos, Incidencias: Datos adicionales del cierre
+- KPINomina: Métricas pre-calculadas para dashboards
+- Sistema de ofuscación y optimizaciones
+
+Autor: Sistema SGM - Módulo Nómina  
+Fecha: 20 de julio de 2025
+"""
+
 from rest_framework import serializers
+from django.contrib.auth import get_user_model
+from api.models import Cliente
 from .models import (
-    CierreNomina, EmpleadoCierre, ConceptoRemuneracion, RegistroConceptoEmpleado,
-    MovimientoAltaBaja, MovimientoAusentismo, MovimientoVacaciones,
-    MovimientoVariacionSueldo, MovimientoVariacionContrato,
-    LibroRemuneracionesUpload, MovimientosMesUpload,
-    ArchivoAnalistaUpload, ArchivoNovedadesUpload,
-    ChecklistItem, AnalistaFiniquito, AnalistaIncidencia, AnalistaIngreso,
-    # Nuevos modelos para novedades
-    EmpleadoCierreNovedades, ConceptoRemuneracionNovedades, RegistroConceptoEmpleadoNovedades,
-    # Modelos para el sistema de incidencias
-    IncidenciaCierre, ResolucionIncidencia,
-    # Modelos para análisis de datos
-    AnalisisDatosCierre, IncidenciaVariacionSalarial,
-    # Modelos para sistema de discrepancias
-    DiscrepanciaCierre, TipoDiscrepancia
+    # Modelos principales
+    CierreNomina,
+    EmpleadoNomina, 
+    EmpleadoConcepto,
+    Ausentismo,
+    Incidencia,
+    InteraccionIncidencia,
+    
+    # Optimizaciones y KPIs
+    KPINomina,
+    EmpleadoOfuscado,
+    IndiceEmpleadoBusqueda,
+    ComparacionMensual,
+    CacheConsultas,
+    
+    # Mapeos y utilidades
+    MapeoConcepto,
+    MapeoNovedades,
+    LogArchivo,
 )
 
-class ChecklistItemSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ChecklistItem
-        fields = ['id', 'descripcion', 'estado', 'comentario']
+User = get_user_model()
 
-class ChecklistItemUpdateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ChecklistItem
-        fields = ['estado', 'comentario']
+# ========== SERIALIZERS PRINCIPALES ==========
 
-class ChecklistItemCreateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ChecklistItem
-        fields = ['descripcion']
-
-class CierreNominaSerializer(serializers.ModelSerializer):
-    checklist = ChecklistItemSerializer(many=True, read_only=True)
-
+class CierreNominaListSerializer(serializers.ModelSerializer):
+    """Serializer para lista de cierres (datos mínimos)"""
+    
+    cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
+    analista_nombre = serializers.CharField(
+        source='analista_responsable.get_full_name', 
+        read_only=True
+    )
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    
+    # Contadores rápidos
+    total_empleados = serializers.IntegerField(
+        source='total_empleados_activos',
+        read_only=True
+    )
+    
     class Meta:
         model = CierreNomina
         fields = [
-            'id', 'cliente', 'periodo', 'usuario_analista',
-            'estado', 'fecha_creacion', 'checklist'
+            'id', 'periodo', 'estado', 'estado_display',
+            'cliente', 'cliente_nombre',
+            'analista_responsable', 'analista_nombre',
+            'fecha_creacion', 'fecha_consolidacion', 'fecha_cierre',
+            'total_empleados', 'total_finiquitos', 'total_ingresos',
+            'discrepancias_detectadas'
         ]
 
-class CierreNominaCreateSerializer(serializers.ModelSerializer):
-    checklist = ChecklistItemCreateSerializer(many=True, write_only=True)
-
+class CierreNominaDetailSerializer(serializers.ModelSerializer):
+    """Serializer completo para detalle de cierre"""
+    
+    cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
+    analista_nombre = serializers.CharField(
+        source='analista_responsable.get_full_name', 
+        read_only=True
+    )
+    usuario_cierre_nombre = serializers.CharField(
+        source='usuario_cierre.get_full_name', 
+        read_only=True
+    )
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    
+    # Contadores de empleados
+    empleados_count = serializers.SerializerMethodField()
+    incidencias_count = serializers.SerializerMethodField()
+    kpis_disponibles = serializers.SerializerMethodField()
+    
     class Meta:
         model = CierreNomina
-        fields = ['cliente', 'periodo', 'checklist']
+        fields = [
+            'id', 'periodo', 'estado', 'estado_display', 'version',
+            
+            # Relaciones
+            'cliente', 'cliente_nombre',
+            'analista_responsable', 'analista_nombre',
+            'usuario_cierre', 'usuario_cierre_nombre',
+            
+            # Fechas del ciclo de vida
+            'fecha_creacion', 'fecha_consolidacion', 'fecha_cierre',
+            
+            # Metadatos
+            'total_empleados_activos', 'total_finiquitos', 'total_ingresos',
+            'discrepancias_detectadas', 'cache_key_redis',
+            'archivos_procesados',
+            
+            # Control de reaperturas
+            'fecha_reapertura', 'motivo_reapertura',
+            
+            # Observaciones
+            'observaciones',
+            
+            # Campos calculados
+            'empleados_count', 'incidencias_count', 'kpis_disponibles'
+        ]
+        
+    def get_empleados_count(self, obj):
+        return obj.empleados_nomina.count()
+    
+    def get_incidencias_count(self, obj):
+        return obj.incidencias.count()
+    
+    def get_kpis_disponibles(self, obj):
+        return obj.kpis_calculados.count()
 
+class CierreNominaCreateSerializer(serializers.ModelSerializer):
+    """Serializer para crear nuevos cierres"""
+    
+    class Meta:
+        model = CierreNomina
+        fields = [
+            'id', 'cliente', 'periodo', 'analista_responsable', 'observaciones'
+        ]
+    
     def validate(self, data):
         cliente = data.get('cliente')
         periodo = data.get('periodo')
+        
+        # Validar que no exista otro cierre para el mismo cliente/período
         if CierreNomina.objects.filter(cliente=cliente, periodo=periodo).exists():
-            raise serializers.ValidationError("Ya existe un cierre para este cliente en ese periodo.")
+            raise serializers.ValidationError({
+                'periodo': f'Ya existe un cierre para {cliente.nombre} en el período {periodo}'
+            })
+        
+        # Validar formato del período (YYYY-MM)
+        try:
+            year, month = periodo.split('-')
+            if len(year) != 4 or len(month) != 2:
+                raise ValueError
+            int(year)
+            month_int = int(month)
+            if not 1 <= month_int <= 12:
+                raise ValueError
+        except (ValueError, AttributeError):
+            raise serializers.ValidationError({
+                'periodo': 'El período debe tener formato YYYY-MM (ej: 2025-07)'
+            })
+        
         return data
-
+    
     def create(self, validated_data):
-        checklist_data = validated_data.pop('checklist', [])
+        # Ahora que el ORM funciona, usar creación normal
         cierre = CierreNomina.objects.create(**validated_data)
-        for item in checklist_data:
-            ChecklistItem.objects.create(
-                cierre=cierre,
-                descripcion=item['descripcion'],
-                estado='pendiente'
-            )
+        
+        # Inicializar en Redis si es necesario (comentado por ahora)
+        # cierre.inicializar_en_redis()
+        
         return cierre
 
-class EmpleadoCierreSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = EmpleadoCierre
-        fields = '__all__'
+# ========== EMPLEADOS Y CONCEPTOS ==========
 
-class ConceptoRemuneracionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ConceptoRemuneracion
-        fields = ['id', 'nombre_concepto', 'clasificacion', 'hashtags', 'usuario_clasifica']
-
-class RegistroConceptoEmpleadoSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = RegistroConceptoEmpleado
-        fields = '__all__'
-
-# Nuevos serializers para los modelos de Movimientos_Mes
-
-class MovimientoAltaBajaSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = MovimientoAltaBaja
-        fields = '__all__'
-
-class MovimientoAusentismoSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = MovimientoAusentismo
-        fields = '__all__'
-
-class MovimientoVacacionesSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = MovimientoVacaciones
-        fields = '__all__'
-
-class MovimientoVariacionSueldoSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = MovimientoVariacionSueldo
-        fields = '__all__'
-
-class MovimientoVariacionContratoSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = MovimientoVariacionContrato
-        fields = '__all__'
-
-class LibroRemuneracionesUploadSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = LibroRemuneracionesUpload
-        fields = '__all__'
-
-class MovimientosMesUploadSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = MovimientosMesUpload
-        fields = '__all__'
-
-class ArchivoAnalistaUploadSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ArchivoAnalistaUpload
-        fields = '__all__'
-
-class ArchivoNovedadesUploadSerializer(serializers.ModelSerializer):
-    analista_nombre = serializers.CharField(source='analista.correo_bdo', read_only=True)
+class EmpleadoConceptoSerializer(serializers.ModelSerializer):
+    """Serializer para conceptos de empleados"""
+    
+    concepto_clasificacion = serializers.SerializerMethodField()
     
     class Meta:
-        model = ArchivoNovedadesUpload
-        fields = ['id', 'archivo', 'fecha_subida', 'estado', 'analista', 'analista_nombre']
-        read_only_fields = ['fecha_subida', 'estado', 'analista']
-
-
-# Nuevos serializers para los modelos del Analista
-
-class AnalistaFiniquitoSerializer(serializers.ModelSerializer):
-    empleado_nombre = serializers.CharField(source='empleado.nombre', read_only=True)
-    archivo_origen_id = serializers.IntegerField(source='archivo_origen.id', read_only=True)
-    
-    class Meta:
-        model = AnalistaFiniquito
+        model = EmpleadoConcepto
         fields = [
-            'id', 'rut', 'nombre', 'fecha_retiro', 'motivo',
-            'cierre', 'empleado', 'empleado_nombre', 'archivo_origen', 'archivo_origen_id'
+            'id', 'concepto', 'valor', 'valor_numerico',
+            'fecha_consolidacion', 'concepto_clasificacion'
         ]
-        read_only_fields = ['cierre', 'empleado', 'archivo_origen']
+    
+    def get_concepto_clasificacion(self, obj):
+        return obj.get_clasificacion()
 
-
-class AnalistaIncidenciaSerializer(serializers.ModelSerializer):
-    empleado_nombre = serializers.CharField(source='empleado.nombre', read_only=True)
-    archivo_origen_id = serializers.IntegerField(source='archivo_origen.id', read_only=True)
+class EmpleadoNominaListSerializer(serializers.ModelSerializer):
+    """Serializer para lista de empleados (datos mínimos)"""
+    
+    tipo_empleado_display = serializers.CharField(source='get_tipo_empleado_display', read_only=True)
+    conceptos_count = serializers.SerializerMethodField()
     
     class Meta:
-        model = AnalistaIncidencia
+        model = EmpleadoNomina
         fields = [
-            'id', 'rut', 'nombre', 'fecha_inicio_ausencia', 'fecha_fin_ausencia', 
-            'dias', 'tipo_ausentismo', 'cierre', 'empleado', 'empleado_nombre', 
-            'archivo_origen', 'archivo_origen_id'
+            'id', 'rut_empleado', 'nombre_empleado', 
+            'tipo_empleado', 'tipo_empleado_display',
+            'fecha_ingreso', 'fecha_finiquito', 'motivo_finiquito',
+            'fecha_consolidacion', 'conceptos_count'
         ]
-        read_only_fields = ['cierre', 'empleado', 'archivo_origen']
+    
+    def get_conceptos_count(self, obj):
+        return obj.conceptos.count()
 
-
-class AnalistaIngresoSerializer(serializers.ModelSerializer):
-    empleado_nombre = serializers.CharField(source='empleado.nombre', read_only=True)
-    archivo_origen_id = serializers.IntegerField(source='archivo_origen.id', read_only=True)
+class EmpleadoNominaDetailSerializer(serializers.ModelSerializer):
+    """Serializer completo para detalle de empleado"""
+    
+    conceptos = EmpleadoConceptoSerializer(many=True, read_only=True)
+    tipo_empleado_display = serializers.CharField(source='get_tipo_empleado_display', read_only=True)
+    cierre_periodo = serializers.CharField(source='cierre.periodo', read_only=True)
+    cierre_cliente = serializers.CharField(source='cierre.cliente.nombre', read_only=True)
+    
+    # Estadísticas calculadas
+    resumen_conceptos = serializers.SerializerMethodField()
     
     class Meta:
-        model = AnalistaIngreso
+        model = EmpleadoNomina
         fields = [
-            'id', 'rut', 'nombre', 'fecha_ingreso', 'cierre', 
-            'empleado', 'empleado_nombre', 'archivo_origen', 'archivo_origen_id'
+            'id', 'rut_empleado', 'nombre_empleado',
+            'tipo_empleado', 'tipo_empleado_display',
+            'fecha_ingreso', 'fecha_finiquito', 'motivo_finiquito',
+            'fecha_consolidacion', 'cierre_periodo', 'cierre_cliente',
+            'conceptos', 'resumen_conceptos'
         ]
-        read_only_fields = ['cierre', 'empleado', 'archivo_origen']
-
-
-# Serializers para modelos de Novedades
-
-class EmpleadoCierreNovedadesSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = EmpleadoCierreNovedades
-        fields = ['id', 'rut', 'nombre', 'apellido_paterno', 'apellido_materno', 'cierre']
-        read_only_fields = ['cierre']
-
-
-class ConceptoRemuneracionNovedadesSerializer(serializers.ModelSerializer):
-    usuario_mapea_nombre = serializers.CharField(source='usuario_mapea.correo_bdo', read_only=True)
-    concepto_libro_nombre = serializers.CharField(source='concepto_libro.nombre_concepto', read_only=True)
-    clasificacion = serializers.CharField(read_only=True)  # Viene del concepto del libro
-    hashtags = serializers.JSONField(read_only=True)  # Viene del concepto del libro
     
-    concepto_libro = serializers.PrimaryKeyRelatedField(
-        queryset=ConceptoRemuneracion.objects.all(), allow_null=True, required=False
-    )
+    def get_resumen_conceptos(self, obj):
+        """Resumen agrupado por clasificación"""
+        try:
+            resumen = {}
+            
+            # Mapear conceptos a clasificaciones
+            mapeos = MapeoConcepto.objects.filter(
+                cliente=obj.cierre.cliente,
+                activo=True
+            ).select_related()
+            
+            conceptos_clasificados = {}
+            for mapeo in mapeos:
+                conceptos_clasificados[mapeo.concepto_original] = mapeo.clasificacion
+            
+            # Agrupar por clasificación
+            for concepto_obj in obj.conceptos.all():
+                clasificacion = conceptos_clasificados.get(concepto_obj.concepto, 'sin_clasificar')
+                
+                if clasificacion not in resumen:
+                    resumen[clasificacion] = {
+                        'total': 0,
+                        'conceptos': []
+                    }
+                
+                resumen[clasificacion]['total'] += float(concepto_obj.valor_numerico)
+                resumen[clasificacion]['conceptos'].append({
+                    'concepto': concepto_obj.concepto,
+                    'valor': concepto_obj.valor,
+                    'valor_numerico': float(concepto_obj.valor_numerico)
+                })
+            
+            return resumen
+        except Exception as e:
+            return {'error': str(e)}
 
-    class Meta:
-        model = ConceptoRemuneracionNovedades
-        fields = [
-            'id', 'nombre_concepto_novedades', 'concepto_libro', 'concepto_libro_nombre',
-            'clasificacion', 'hashtags', 'activo', 'cliente', 'usuario_mapea',
-            'usuario_mapea_nombre', 'fecha_mapeo'
-        ]
-        read_only_fields = ['cliente', 'usuario_mapea', 'fecha_mapeo', 'clasificacion', 'hashtags']
+# ========== AUSENTISMOS ==========
 
-
-class RegistroConceptoEmpleadoNovedadesSerializer(serializers.ModelSerializer):
-    empleado_rut = serializers.CharField(source='empleado.rut', read_only=True)
-    empleado_nombre = serializers.CharField(source='empleado.nombre', read_only=True)
-    concepto_nombre = serializers.CharField(source='concepto.nombre_concepto', read_only=True)
-    concepto_clasificacion = serializers.CharField(source='concepto.clasificacion', read_only=True)
+class AusentismoSerializer(serializers.ModelSerializer):
+    """Serializer para ausentismos"""
+    
+    cierre_periodo = serializers.CharField(source='cierre.periodo', read_only=True)
+    dias_calculados = serializers.SerializerMethodField()
     
     class Meta:
-        model = RegistroConceptoEmpleadoNovedades
+        model = Ausentismo
         fields = [
-            'id', 'nombre_concepto_original', 'monto', 'fecha_registro',
-            'empleado', 'empleado_rut', 'empleado_nombre',
-            'concepto', 'concepto_nombre', 'concepto_clasificacion'
+            'id', 'rut_empleado', 'nombre_empleado', 'tipo_ausentismo',
+            'fecha_inicio', 'fecha_fin', 'dias_ausentismo', 'dias_calculados',
+            'observaciones', 'fecha_consolidacion', 'cierre_periodo'
         ]
-        read_only_fields = ['empleado', 'concepto', 'fecha_registro']
+    
+    def get_dias_calculados(self, obj):
+        """Calcular días entre fechas automáticamente"""
+        if obj.fecha_inicio and obj.fecha_fin:
+            return (obj.fecha_fin - obj.fecha_inicio).days + 1
+        return obj.dias_ausentismo
 
+# ========== INCIDENCIAS ==========
 
-# ===== SERIALIZERS PARA SISTEMA DE INCIDENCIAS =====
-
-class ResolucionIncidenciaSerializer(serializers.ModelSerializer):
+class InteraccionIncidenciaSerializer(serializers.ModelSerializer):
+    """Serializer para interacciones de incidencias"""
+    
     usuario_nombre = serializers.CharField(source='usuario.get_full_name', read_only=True)
-    usuario_correo = serializers.CharField(source='usuario.correo_bdo', read_only=True)
-    usuarios_mencionados_nombres = serializers.SerializerMethodField()
+    tipo_interaccion_display = serializers.CharField(source='get_tipo_interaccion_display', read_only=True)
     
     class Meta:
-        model = ResolucionIncidencia
+        model = InteraccionIncidencia
         fields = [
-            'id', 'tipo_resolucion', 'comentario', 'adjunto',
-            'fecha_resolucion', 'estado_anterior', 'estado_nuevo',
-            'valor_corregido', 'campo_corregido', 'usuario',
-            'usuario_nombre', 'usuario_correo', 'usuarios_mencionados',
-            'usuarios_mencionados_nombres'
+            'id', 'usuario', 'usuario_nombre', 'fecha_interaccion',
+            'mensaje', 'tipo_interaccion', 'tipo_interaccion_display'
         ]
-        read_only_fields = ['usuario', 'fecha_resolucion', 'estado_anterior', 'estado_nuevo']
-    
-    def get_usuarios_mencionados_nombres(self, obj):
-        return [user.get_full_name() or user.correo_bdo for user in obj.usuarios_mencionados.all()]
 
-class IncidenciaCierreSerializer(serializers.ModelSerializer):
-    empleado_libro_nombre = serializers.SerializerMethodField()
-    empleado_novedades_nombre = serializers.SerializerMethodField()
+class IncidenciaListSerializer(serializers.ModelSerializer):
+    """Serializer para lista de incidencias"""
+    
     tipo_incidencia_display = serializers.CharField(source='get_tipo_incidencia_display', read_only=True)
     estado_display = serializers.CharField(source='get_estado_display', read_only=True)
-    prioridad_display = serializers.CharField(source='get_prioridad_display', read_only=True)
-    resoluciones = ResolucionIncidenciaSerializer(many=True, read_only=True)
-    asignado_a_nombre = serializers.CharField(source='asignado_a.get_full_name', read_only=True)
-    tiempo_sin_resolver = serializers.SerializerMethodField()
+    analista_nombre = serializers.CharField(source='analista_asignado.get_full_name', read_only=True)
+    supervisor_nombre = serializers.CharField(source='supervisor_asignado.get_full_name', read_only=True)
+    cierre_periodo = serializers.CharField(source='cierre.periodo', read_only=True)
     
     class Meta:
-        model = IncidenciaCierre
+        model = Incidencia
         fields = [
-            'id', 'tipo_incidencia', 'tipo_incidencia_display', 'rut_empleado',
-            'descripcion', 'valor_libro', 'valor_novedades', 'valor_movimientos',
-            'valor_analista', 'concepto_afectado', 'fecha_detectada',
-            'estado', 'estado_display', 'prioridad', 'prioridad_display',
-            'impacto_monetario', 'asignado_a', 'asignado_a_nombre',
-            'fecha_primera_resolucion', 'fecha_ultima_accion',
-            'empleado_libro', 'empleado_novedades', 'empleado_libro_nombre',
-            'empleado_novedades_nombre', 'resoluciones', 'tiempo_sin_resolver'
+            'id', 'empleado_rut', 'empleado_nombre', 'concepto_afectado',
+            'valor_periodo_actual', 'valor_periodo_anterior',
+            'diferencia_absoluta', 'diferencia_porcentual',
+            'tipo_incidencia', 'tipo_incidencia_display',
+            'estado', 'estado_display',
+            'fecha_deteccion', 'fecha_resolucion',
+            'analista_asignado', 'analista_nombre',
+            'supervisor_asignado', 'supervisor_nombre',
+            'cierre_periodo'
         ]
-        read_only_fields = [
-            'fecha_detectada', 'fecha_primera_resolucion', 'fecha_ultima_accion',
-            'tiempo_sin_resolver'
-        ]
-    
-    def get_empleado_libro_nombre(self, obj):
-        if obj.empleado_libro:
-            return f"{obj.empleado_libro.nombre} {obj.empleado_libro.apellido_paterno}"
-        return None
-    
-    def get_empleado_novedades_nombre(self, obj):
-        if obj.empleado_novedades:
-            return f"{obj.empleado_novedades.nombre} {obj.empleado_novedades.apellido_paterno}"
-        return None
-    
-    def get_tiempo_sin_resolver(self, obj):
-        if obj.estado == 'pendiente':
-            from django.utils import timezone
-            diff = timezone.now() - obj.fecha_detectada
-            return diff.days
-        return None
 
-class CrearResolucionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ResolucionIncidencia
-        fields = [
-            'tipo_resolucion', 'comentario', 'adjunto',
-            'valor_corregido', 'campo_corregido', 'usuarios_mencionados'
-        ]
+class IncidenciaDetailSerializer(serializers.ModelSerializer):
+    """Serializer completo para detalle de incidencia"""
     
-    def validate(self, data):
-        # Validaciones específicas según tipo de resolución
-        tipo = data.get('tipo_resolucion')
-        
-        if tipo == 'correccion' and not data.get('valor_corregido'):
-            raise serializers.ValidationError({
-                'valor_corregido': 'El valor corregido es requerido para correcciones.'
-            })
-        
-        if not data.get('comentario', '').strip():
-            raise serializers.ValidationError({
-                'comentario': 'El comentario es requerido.'
-            })
-        
-        return data
-
-class ResumenIncidenciasSerializer(serializers.Serializer):
-    total = serializers.IntegerField()
-    por_prioridad = serializers.DictField()
-    por_estado = serializers.DictField()
-    impacto_monetario_total = serializers.DecimalField(max_digits=15, decimal_places=2)
-    
-    # Estadísticas adicionales
-    pendientes_criticas = serializers.IntegerField(required=False)
-    tiempo_promedio_resolucion = serializers.FloatField(required=False)
-    porcentaje_resueltas = serializers.FloatField(required=False)
-
-
-# ======== SERIALIZERS PARA ANÁLISIS DE DATOS ========
-
-class AnalisisDatosCierreSerializer(serializers.ModelSerializer):
-    variaciones = serializers.SerializerMethodField()
-    # Campos con nombres compatibles con el frontend
-    empleados_actual = serializers.IntegerField(source='cantidad_empleados_actual', read_only=True)
-    empleados_anterior = serializers.IntegerField(source='cantidad_empleados_anterior', read_only=True)
-    ingresos_actual = serializers.IntegerField(source='cantidad_ingresos_actual', read_only=True)
-    ingresos_anterior = serializers.IntegerField(source='cantidad_ingresos_anterior', read_only=True)
-    finiquitos_actual = serializers.IntegerField(source='cantidad_finiquitos_actual', read_only=True)
-    finiquitos_anterior = serializers.IntegerField(source='cantidad_finiquitos_anterior', read_only=True)
-    ausentismos_actual = serializers.IntegerField(source='cantidad_ausentismos_actual', read_only=True)
-    ausentismos_anterior = serializers.IntegerField(source='cantidad_ausentismos_anterior', read_only=True)
-    tolerancia_variacion = serializers.DecimalField(source='tolerancia_variacion_salarial', max_digits=5, decimal_places=2, read_only=True)
-    periodo_actual = serializers.CharField(source='cierre.periodo', read_only=True)
-    periodo_anterior = serializers.SerializerMethodField()
-    incidencias_generadas = serializers.SerializerMethodField()
+    interacciones = InteraccionIncidenciaSerializer(many=True, read_only=True)
+    tipo_incidencia_display = serializers.CharField(source='get_tipo_incidencia_display', read_only=True)
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    analista_nombre = serializers.CharField(source='analista_asignado.get_full_name', read_only=True)
+    supervisor_nombre = serializers.CharField(source='supervisor_asignado.get_full_name', read_only=True)
+    usuario_resolucion_nombre = serializers.CharField(source='usuario_resolucion.get_full_name', read_only=True)
     
     class Meta:
-        model = AnalisisDatosCierre
+        model = Incidencia
         fields = [
-            'id', 'cierre', 'empleados_actual', 'empleados_anterior',
-            'ingresos_actual', 'ingresos_anterior', 'finiquitos_actual', 'finiquitos_anterior',
-            'ausentismos_actual', 'ausentismos_anterior', 'tolerancia_variacion',
-            'periodo_actual', 'periodo_anterior', 'incidencias_generadas',
-            'estado', 'fecha_analisis', 'fecha_completado', 'analista', 'notas', 'variaciones'
+            'id', 'empleado_rut', 'empleado_nombre', 'concepto_afectado',
+            'valor_periodo_actual', 'valor_periodo_anterior',
+            'diferencia_absoluta', 'diferencia_porcentual',
+            'tipo_incidencia', 'tipo_incidencia_display',
+            'estado', 'estado_display',
+            'fecha_deteccion', 'fecha_resolucion',
+            'analista_asignado', 'analista_nombre',
+            'supervisor_asignado', 'supervisor_nombre',
+            'usuario_resolucion', 'usuario_resolucion_nombre',
+            'observaciones_resolucion', 'interacciones'
         ]
-    
-    def get_variaciones(self, obj):
-        """Calcula las variaciones porcentuales"""
-        return obj.calcular_variaciones()
-    
-    def get_periodo_anterior(self, obj):
-        """Calcula el periodo anterior basado en el periodo actual"""
-        try:
-            from datetime import datetime
-            periodo_actual = datetime.strptime(obj.cierre.periodo, '%Y-%m')
-            if periodo_actual.month == 1:
-                periodo_anterior = periodo_actual.replace(year=periodo_actual.year - 1, month=12)
-            else:
-                periodo_anterior = periodo_actual.replace(month=periodo_actual.month - 1)
-            return periodo_anterior.strftime('%Y-%m')
-        except:
-            return None
-    
-    def get_incidencias_generadas(self, obj):
-        """Cuenta las incidencias de variación salarial generadas"""
-        return obj.incidencias_variacion.count()
 
-class IncidenciaVariacionSalarialSerializer(serializers.ModelSerializer):
-    analista_asignado_nombre = serializers.SerializerMethodField()
-    supervisor_revisor_nombre = serializers.SerializerMethodField()
-    diferencia_salarial = serializers.SerializerMethodField()
+# ========== KPIS Y OPTIMIZACIONES ==========
+
+class KPINominaSerializer(serializers.ModelSerializer):
+    """Serializer para KPIs de nómina"""
+    
+    tipo_kpi_display = serializers.CharField(source='get_tipo_kpi_display', read_only=True)
+    cierre_periodo = serializers.CharField(source='cierre.periodo', read_only=True)
+    cliente_nombre = serializers.CharField(source='cierre.cliente.nombre', read_only=True)
+    tiene_comparacion = serializers.SerializerMethodField()
     
     class Meta:
-        model = IncidenciaVariacionSalarial
+        model = KPINomina
         fields = [
-            'id', 'analisis', 'cierre', 'rut_empleado', 'nombre_empleado',
-            'sueldo_base_actual', 'sueldo_base_anterior', 'porcentaje_variacion',
-            'tipo_variacion', 'estado', 'analista_asignado', 'supervisor_revisor',
-            'justificacion_analista', 'fecha_justificacion', 'comentario_supervisor',
-            'fecha_resolucion_supervisor', 'fecha_deteccion', 'fecha_ultima_accion',
-            'analista_asignado_nombre', 'supervisor_revisor_nombre', 'diferencia_salarial'
+            'id', 'tipo_kpi', 'tipo_kpi_display', 'valor_numerico',
+            'valor_comparativo_anterior', 'variacion_porcentual',
+            'metadatos_kpi', 'fecha_calculo', 'hash_verificacion',
+            'cierre_periodo', 'cliente_nombre', 'tiene_comparacion'
         ]
     
-    def get_analista_asignado_nombre(self, obj):
-        return obj.analista_asignado.get_full_name() if obj.analista_asignado else None
+    def get_tiene_comparacion(self, obj):
+        return obj.valor_comparativo_anterior is not None
+
+# ========== MAPEOS Y CONFIGURACIÓN ==========
+
+class MapeoConceptoSerializer(serializers.ModelSerializer):
+    """Serializer para mapeos de conceptos"""
     
-    def get_supervisor_revisor_nombre(self, obj):
-        return obj.supervisor_revisor.get_full_name() if obj.supervisor_revisor else None
-    
-    def get_diferencia_salarial(self, obj):
-        return obj.sueldo_base_actual - obj.sueldo_base_anterior
-
-
-# ===== SERIALIZERS PARA SISTEMA DE DISCREPANCIAS =====
-
-class DiscrepanciaCierreSerializer(serializers.ModelSerializer):
-    """Serializer para las discrepancias de verificación de datos"""
-    tipo_discrepancia_display = serializers.CharField(source='get_tipo_discrepancia_display', read_only=True)
-    empleado_libro_nombre = serializers.SerializerMethodField()
-    empleado_novedades_nombre = serializers.SerializerMethodField()
-    grupo_discrepancia = serializers.SerializerMethodField()
+    cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
+    clasificacion_display = serializers.SerializerMethodField()
     
     class Meta:
-        model = DiscrepanciaCierre
+        model = MapeoConcepto
         fields = [
-            'id', 'cierre', 'tipo_discrepancia', 'tipo_discrepancia_display',
-            'empleado_libro', 'empleado_novedades', 'rut_empleado',
-            'descripcion', 'valor_libro', 'valor_novedades', 
-            'valor_movimientos', 'valor_analista', 'concepto_afectado',
-            'empleado_libro_nombre', 'empleado_novedades_nombre',
-            'grupo_discrepancia'
+            'id', 'cliente', 'cliente_nombre', 'concepto_original',
+            'concepto_normalizado', 'clasificacion', 'clasificacion_display',
+            'activo', 'usuario_actualiza', 'fecha_actualizacion'
         ]
     
-    def get_empleado_libro_nombre(self, obj):
-        """Obtiene el nombre completo del empleado del libro"""
-        if obj.empleado_libro:
-            return f"{obj.empleado_libro.nombre} {obj.empleado_libro.apellido_paterno} {obj.empleado_libro.apellido_materno}".strip()
-        return None
-    
-    def get_empleado_novedades_nombre(self, obj):
-        """Obtiene el nombre completo del empleado de novedades"""
-        if obj.empleado_novedades:
-            return f"{obj.empleado_novedades.nombre} {obj.empleado_novedades.apellido_paterno} {obj.empleado_novedades.apellido_materno}".strip()
-        return None
-    
-    def get_grupo_discrepancia(self, obj):
-        """Determina el grupo de la discrepancia"""
-        libro_vs_novedades = [
-            'empleado_solo_libro', 'empleado_solo_novedades', 'diff_datos_personales',
-            'diff_sueldo_base', 'diff_concepto_monto', 'concepto_solo_libro', 'concepto_solo_novedades'
-        ]
-        
-        if obj.tipo_discrepancia in libro_vs_novedades:
-            return 'libro_vs_novedades'
-        else:
-            return 'movimientos_vs_analista'
+    def get_clasificacion_display(self, obj):
+        # Buscar en CLASIFICACION_CHOICES
+        from .models import CLASIFICACION_CHOICES
+        for choice_value, choice_display in CLASIFICACION_CHOICES:
+            if choice_value == obj.clasificacion:
+                return choice_display
+        return obj.clasificacion
 
+# ========== LOGS Y AUDITORÍA ==========
 
-class ResumenDiscrepanciasSerializer(serializers.Serializer):
-    """Serializer para el resumen estadístico de discrepancias"""
-    total_discrepancias = serializers.IntegerField()
-    discrepancias_por_tipo = serializers.DictField()
-    discrepancias_por_grupo = serializers.DictField()
-    empleados_afectados = serializers.IntegerField()
-    conceptos_afectados = serializers.ListField(child=serializers.CharField(), required=False)
-    fecha_ultimo_analisis = serializers.DateTimeField(required=False)
+class LogArchivoSerializer(serializers.ModelSerializer):
+    """Serializer para logs de archivos"""
     
-    # Totales por grupo
-    total_libro_vs_novedades = serializers.IntegerField()
-    total_movimientos_vs_analista = serializers.IntegerField()
+    usuario_nombre = serializers.CharField(source='usuario.get_full_name', read_only=True)
+    cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
     
-    # Top discrepancias por tipo
-    top_tipos_discrepancia = serializers.ListField(
-        child=serializers.DictField(),
-        required=False
-    )
-
-
-class DiscrepanciaCreateSerializer(serializers.ModelSerializer):
-    """Serializer para crear discrepancias (usado internamente por los algoritmos)"""
     class Meta:
-        model = DiscrepanciaCierre
+        model = LogArchivo
         fields = [
-            'cierre', 'tipo_discrepancia', 'empleado_libro', 'empleado_novedades',
-            'rut_empleado', 'descripcion', 'valor_libro', 'valor_novedades',
-            'valor_movimientos', 'valor_analista', 'concepto_afectado'
+            'id', 'cliente', 'cliente_nombre', 'periodo', 'tipo_archivo',
+            'nombre_archivo', 'usuario', 'usuario_nombre', 'fecha_subida',
+            'procesado_exitoso', 'errores', 'resumen_procesamiento'
         ]

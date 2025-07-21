@@ -113,6 +113,10 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         
         return bool(supervisor_areas.intersection(analista_areas))
 
+    def get_full_name(self):
+        """Retorna el nombre completo del usuario"""
+        return f"{self.nombre} {self.apellido}".strip()
+
     def __str__(self):
         return self.correo_bdo
 

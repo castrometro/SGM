@@ -1,196 +1,162 @@
-from rest_framework import routers
-from .views import (
-    CierreNominaViewSet,
-    ChecklistItemViewSet,
-    conceptos_remuneracion_por_cliente,
-    conceptos_remuneracion_por_cierre,
-    obtener_hashtags_disponibles,
-    ConceptoRemuneracionBatchView,
-    eliminar_concepto_remuneracion,
-    obtener_estado_upload_log_nomina,
-)
+"""
+URLs para la API de Nómina - Nueva Arquitectura
+=============================================
 
-# Importar ViewSets de archivos específicos desde sus módulos dedicados
-from .views_archivos_analista import ArchivoAnalistaUploadViewSet, cargar_archivo_analista_con_logging
-from .views_archivos_novedades import ArchivoNovedadesUploadViewSet
+Configuración de URLs para la API REST de nómina usando Django REST Framework.
+Implementa endpoints para:
 
-from .views import (
-    # ViewSets para modelos del Analista
-    AnalistaFiniquitoViewSet,
-    AnalistaIncidenciaViewSet,
-    AnalistaIngresoViewSet,
-    # ViewSets para modelos de Novedades
-    EmpleadoCierreNovedadesViewSet,
-    ConceptoRemuneracionNovedadesViewSet,
-    RegistroConceptoEmpleadoNovedadesViewSet,
-    # ViewSets para Sistema de Incidencias
-    IncidenciaCierreViewSet,
-    ResolucionIncidenciaViewSet,
-    CierreNominaIncidenciasViewSet,
-    # ViewSets para Análisis de Datos
-    AnalisisDatosCierreViewSet,
-    IncidenciaVariacionSalarialViewSet,
-    # ViewSets para Sistema de Discrepancias
-    DiscrepanciaCierreViewSet,
-    CierreNominaDiscrepanciasViewSet,
-)
-from .views_libro_remuneraciones import LibroRemuneracionesUploadViewSet
-from .views_movimientos_mes import (
-    MovimientosMesUploadViewSet,
-    MovimientoAltaBajaViewSet,
-    MovimientoAusentismoViewSet,
-    MovimientoVacacionesViewSet,
-    MovimientoVariacionSueldoViewSet,
-    MovimientoVariacionContratoViewSet,
-)
-from .api_logging import (
-    ModalActivityView,
-    FileActivityView,
-    ClassificationActivityView,
-    SessionActivityView,
-    get_activity_log
-)
+- CierreNomina: CRUD + acciones especiales (consolidar, cerrar, dashboard)
+- EmpleadoNomina: Gestión de empleados por cierre
+- Incidencias: Sistema colaborativo de incidencias
+- KPIs: Métricas pre-calculadas y comparaciones
+- Utilidades: Mapeos, búsquedas, cache
 
-from django.urls import path
-from django.conf import settings
-from django.views.static import serve
+Autor: Sistema SGM - Módulo Nómina
+Fecha: 20 de julio de 2025
+"""
 
-router = routers.DefaultRouter()
-router.register(r'cierres', CierreNominaViewSet)
-router.register(r'libros-remuneraciones', LibroRemuneracionesUploadViewSet)
-router.register(r'movimientos-mes', MovimientosMesUploadViewSet)
-router.register(r'archivos-analista', ArchivoAnalistaUploadViewSet)
-router.register(r'archivos-novedades', ArchivoNovedadesUploadViewSet)
-router.register(r'checklist-items', ChecklistItemViewSet)
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from . import views
 
-# ViewSets para modelos del Analista
-router.register(r'analista-finiquitos', AnalistaFiniquitoViewSet)
-router.register(r'analista-incidencias', AnalistaIncidenciaViewSet)
-router.register(r'analista-ingresos', AnalistaIngresoViewSet)
+# Configurar router principal
+router = DefaultRouter()
 
-# ViewSets para Movimientos del Mes
-router.register(r'movimientos-altas-bajas', MovimientoAltaBajaViewSet)
-router.register(r'movimientos-ausentismos', MovimientoAusentismoViewSet)
-router.register(r'movimientos-vacaciones', MovimientoVacacionesViewSet)
-router.register(r'movimientos-variacion-sueldo', MovimientoVariacionSueldoViewSet)
-router.register(r'movimientos-variacion-contrato', MovimientoVariacionContratoViewSet)
+# ========== REGISTRO DE VIEWSETS ==========
 
-# ViewSets para modelos de Novedades
-router.register(r'empleados-cierre-novedades', EmpleadoCierreNovedadesViewSet)
-router.register(r'conceptos-remuneracion-novedades', ConceptoRemuneracionNovedadesViewSet)
-router.register(r'registros-concepto-empleado-novedades', RegistroConceptoEmpleadoNovedadesViewSet)
+# ViewSets principales disponibles
+router.register(r'cierres', views.CierreNominaViewSet, basename='cierre')
+router.register(r'empleados', views.EmpleadoNominaViewSet, basename='empleado')
+router.register(r'libros-remuneraciones', views.LibroRemuneracionesViewSet, basename='libro-remuneraciones')
 
-# ViewSets para Sistema de Incidencias
-router.register(r'incidencias', IncidenciaCierreViewSet)
-router.register(r'resoluciones-incidencias', ResolucionIncidenciaViewSet)
-router.register(r'cierres-incidencias', CierreNominaIncidenciasViewSet, basename='cierre-incidencias')
+# ViewSets de incidencias y colaboración
+router.register(r'incidencias', views.IncidenciaViewSet, basename='incidencia')
 
-# ViewSets para Análisis de Datos
-router.register(r'analisis-datos', AnalisisDatosCierreViewSet)
-router.register(r'incidencias-variacion', IncidenciaVariacionSalarialViewSet)
+# ViewSets de KPIs y análisis
+router.register(r'kpis', views.KPINominaViewSet, basename='kpi')
 
-# ViewSets para Sistema de Discrepancias (Verificación de Datos)
-router.register(r'discrepancias', DiscrepanciaCierreViewSet)
-router.register(r'cierres-discrepancias', CierreNominaDiscrepanciasViewSet, basename='cierre-discrepancias')
+# NOTA: Los siguientes ViewSets están pendientes de implementación:
+# - EmpleadoConceptoViewSet
+# - InteraccionIncidenciaViewSet
+# - ComparacionMensualViewSet
+# - MapeoConceptoViewSet
+# - AusentismoViewSet
 
-urlpatterns = router.urls + [
-    path(
-        'libros-remuneraciones/<int:pk>/procesar/',
-        LibroRemuneracionesUploadViewSet.as_view({'post': 'procesar'}),
-        name='procesar-libro-remuneraciones',
-    ),
-    path(
-        'movimientos/estado/<int:cierre_id>/',
-        MovimientosMesUploadViewSet.as_view({'get': 'estado'}),
-        name='estado-movimientos-mes',
-    ),
-    path(
-        'movimientos/subir/<int:cierre_id>/',
-        MovimientosMesUploadViewSet.as_view({'post': 'subir'}),
-        name='subir-movimientos-mes',
-    ),
-    # URLs para archivos del analista
-    path(
-        'archivos-analista/subir/<int:cierre_id>/<str:tipo_archivo>/',
-        ArchivoAnalistaUploadViewSet.as_view({'post': 'subir'}),
-        name='subir-archivo-analista',
-    ),
-    path(
-        'archivos-analista/<int:pk>/reprocesar/',
-        ArchivoAnalistaUploadViewSet.as_view({'post': 'reprocesar'}),
-        name='reprocesar-archivo-analista',
-    ),
-    path(
-        'plantilla-libro-remuneraciones/',
-        serve,
-        {
-            'document_root': settings.BASE_DIR / 'static/plantillas/nomina',
-            'path': '202503_libro_remuneraciones_completo.xlsx'
-        },
-        name='descargar_plantilla_libro_remuneraciones'
-    ),
-    path(
-        'plantilla-movimientos-mes/',
-        serve,
-        {
-            'document_root': settings.BASE_DIR / 'static/plantillas/nomina',
-            'path': 'plantilla_movimientos_mes.xlsx'
-        },
-        name='descargar_plantilla_movimientos_mes'
-    ),
-    # Plantillas para archivos del analista
-    path(
-        'plantilla-finiquitos/',
-        serve,
-        {
-            'document_root': settings.BASE_DIR / 'static/plantillas/nomina',
-            'path': 'plantilla_finiquitos.xlsx'
-        },
-        name='descargar_plantilla_finiquitos'
-    ),
-    path(
-        'plantilla-incidencias/',
-        serve,
-        {
-            'document_root': settings.BASE_DIR / 'static/plantillas/nomina',
-            'path': 'plantilla_incidencias.xlsx'
-        },
-        name='descargar_plantilla_incidencias'
-    ),
-    path(
-        'plantilla-ingresos/',
-        serve,
-        {
-            'document_root': settings.BASE_DIR / 'static/plantillas/nomina',
-            'path': 'plantilla_ingresos.xlsx'
-        },
-        name='descargar_plantilla_ingresos'
-    ),
-    path(
-        'plantilla-novedades/',
-        serve,
-        {
-            'document_root': settings.BASE_DIR / 'static/plantillas/nomina',
-            'path': 'plantilla_novedades.xlsx'
-        },
-        name='descargar_plantilla_novedades'
-    ),
-    path('conceptos-remuneracion/', conceptos_remuneracion_por_cliente, name='conceptos_remuneracion_por_cliente'),
-    path('conceptos/cierre/<int:cierre_id>/', conceptos_remuneracion_por_cierre, name='conceptos_remuneracion_por_cierre'),
-    path('clientes/<int:cliente_id>/hashtags/', obtener_hashtags_disponibles),
-    path("conceptos/", ConceptoRemuneracionBatchView.as_view(), name="guardar-conceptos"),
+# ========== PATRONES DE URL ==========
+
+urlpatterns = [
+    # Incluir todas las rutas del router
+    path('', include(router.urls)),
     
-    # === URLs para Activity Logging ===
-    path('activity-log/modal/', ModalActivityView.as_view(), name='modal_activity_log'),
-    path('activity-log/file/', FileActivityView.as_view(), name='file_activity_log'),
-    path('activity-log/classification/', ClassificationActivityView.as_view(), name='classification_activity_log'),
-    path('activity-log/session/', SessionActivityView.as_view(), name='session_activity_log'),
-    path('activity-log/<int:cierre_id>/<str:tarjeta>/', get_activity_log, name='get_activity_log'),
-    
-    path(
-        "conceptos/<int:cliente_id>/<path:nombre_concepto>/eliminar/",
-        eliminar_concepto_remuneracion,
-        name="eliminar-concepto-remuneracion",
-    ),
-    path('upload-log/<int:upload_log_id>/estado/', obtener_estado_upload_log_nomina, name='estado_upload_log_nomina'),
+    # Endpoints adicionales específicos (si los necesitas)
+    # path('dashboard/', views.DashboardView.as_view(), name='dashboard'),
+    # path('reportes/', views.ReportesView.as_view(), name='reportes'),
 ]
+
+# ========== DOCUMENTACIÓN DE ENDPOINTS ==========
+
+"""
+ENDPOINTS DISPONIBLES:
+
+📋 CIERRES DE NÓMINA:
+- GET /api/cierres/                    → Listar todos los cierres
+- POST /api/cierres/                   → Crear nuevo cierre
+- GET /api/cierres/{id}/               → Detalle de un cierre
+- PUT /api/cierres/{id}/               → Actualizar cierre completo
+- PATCH /api/cierres/{id}/             → Actualizar cierre parcial
+- DELETE /api/cierres/{id}/            → Eliminar cierre
+
+ACCIONES ESPECIALES:
+- POST /api/cierres/{id}/consolidar/   → Consolidar datos del cierre
+- POST /api/cierres/{id}/cerrar/       → Cerrar período de nómina
+- POST /api/cierres/{id}/reabrir/      → Reabrir período cerrado
+- GET /api/cierres/{id}/dashboard/     → Dashboard con KPIs del cierre
+- GET /api/cierres/{id}/validar/       → Validar integridad de datos
+- POST /api/cierres/{id}/procesar/     → Procesar archivos pendientes
+
+👥 EMPLEADOS:
+- GET /api/empleados/                  → Listar empleados
+- POST /api/empleados/                 → Crear empleado
+- GET /api/empleados/{id}/             → Detalle de empleado
+- PUT/PATCH /api/empleados/{id}/       → Actualizar empleado
+- DELETE /api/empleados/{id}/          → Eliminar empleado
+
+ACCIONES ESPECIALES:
+- GET /api/empleados/{id}/conceptos/   → Conceptos del empleado
+- GET /api/empleados/{id}/historico/   → Histórico salarial
+- POST /api/empleados/buscar/          → Búsqueda avanzada
+- POST /api/empleados/comparar/        → Comparar períodos
+
+💰 CONCEPTOS:
+- GET /api/conceptos/                  → Listar conceptos
+- POST /api/conceptos/                 → Crear concepto
+- GET /api/conceptos/{id}/             → Detalle de concepto
+- PUT/PATCH /api/conceptos/{id}/       → Actualizar concepto
+- DELETE /api/conceptos/{id}/          → Eliminar concepto
+
+⚠️ INCIDENCIAS:
+- GET /api/incidencias/                → Listar incidencias
+- POST /api/incidencias/               → Crear incidencia
+- GET /api/incidencias/{id}/           → Detalle de incidencia
+- PUT/PATCH /api/incidencias/{id}/     → Actualizar incidencia
+- DELETE /api/incidencias/{id}/        → Eliminar incidencia
+
+ACCIONES ESPECIALES:
+- POST /api/incidencias/{id}/asignar/  → Asignar incidencia
+- POST /api/incidencias/{id}/resolver/ → Resolver incidencia
+- POST /api/incidencias/{id}/escalar/  → Escalar a supervisor
+- GET /api/incidencias/{id}/historial/ → Ver historial de resolución
+
+💬 INTERACCIONES:
+- GET /api/interacciones/              → Listar interacciones
+- POST /api/interacciones/             → Crear interacción
+- GET /api/interacciones/{id}/         → Detalle de interacción
+
+📊 KPIs:
+- GET /api/kpis/                       → Listar KPIs
+- POST /api/kpis/                      → Crear KPI
+- GET /api/kpis/{id}/                  → Detalle de KPI
+
+ACCIONES ESPECIALES:
+- POST /api/kpis/calcular/             → Calcular KPIs para período
+- GET /api/kpis/tendencias/            → Tendencias históricas
+- GET /api/kpis/comparativas/          → Comparativas entre clientes
+
+🔄 COMPARACIONES:
+- GET /api/comparaciones/              → Listar comparaciones mensuales
+- POST /api/comparaciones/             → Crear comparación
+- GET /api/comparaciones/{id}/         → Detalle de comparación
+
+🔧 UTILIDADES:
+- GET /api/mapeos/                     → Listar mapeos de conceptos
+- POST /api/mapeos/                    → Crear mapeo
+- GET /api/mapeos/{id}/                → Detalle de mapeo
+- PUT/PATCH /api/mapeos/{id}/          → Actualizar mapeo
+
+- GET /api/ausentismos/                → Listar ausentismos
+- POST /api/ausentismos/               → Crear ausentismo
+- GET /api/ausentismos/{id}/           → Detalle de ausentismo
+
+FILTROS DISPONIBLES:
+- ?cliente=ID                          → Filtrar por cliente
+- ?periodo=YYYY-MM                     → Filtrar por período
+- ?estado=estado                       → Filtrar por estado
+- ?search=término                      → Búsqueda texto libre
+- ?page=N                             → Paginación
+- ?page_size=N                        → Tamaño de página
+- ?ordering=campo                     → Ordenamiento
+
+FORMATOS SOPORTADOS:
+- JSON (por defecto)
+- XML (agregar ?format=xml)
+- API navegable (desde navegador)
+
+AUTENTICACIÓN:
+- Token authentication
+- Session authentication (para desarrollo)
+
+PERMISOS:
+- IsAuthenticated para todas las operaciones
+- Permisos específicos por modelo en admin
+- Validaciones de integridad en ViewSets
+"""

@@ -1,1151 +1,804 @@
-# nomina/tasks.py
-from .utils.LibroRemuneraciones import (
-    obtener_headers_libro_remuneraciones,
-    clasificar_headers_libro_remuneraciones,
-    actualizar_empleados_desde_libro_util,
-    guardar_registros_nomina_util,
-)
-from .utils.NovedadesRemuneraciones import (
-    obtener_headers_archivo_novedades,
-    clasificar_headers_archivo_novedades,
-    actualizar_empleados_desde_novedades,
-    guardar_registros_novedades,
-)
-from .utils.MovimientoMes import procesar_archivo_movimientos_mes_util
-from .utils.ArchivosAnalista import procesar_archivo_analista_util
-from celery import shared_task, chain
-from .models import (
-    LibroRemuneracionesUpload,
-    MovimientosMesUpload,
-    ArchivoAnalistaUpload,
-    ArchivoNovedadesUpload,
-)
-import logging
+"""
+Tasks Celery para Procesamiento de Libro de Remuneraciones - Nueva Arquitectura
+============================================================================
+
+Implementación de Celery chains para el procesamiento del libro:
+
+Chain automático (al subir archivo):
+1. analizar_headers_libro → Analiza headers y mapea automáticamente
+2. extraer_cierre_id → Extrae ID para siguiente paso
+
+Task manual (cuando usuario hace click "Procesar"):
+3. procesar_empleados_libro → Procesa empleados cuando mapeos están completos
+
+Autor: Sistema SGM - Módulo Nómina
+Fecha: 21 de julio de 2025
+"""
+
 import pandas as pd
+import logging
+import json
+import tempfile
+import os
+from datetime import datetime
+from celery import shared_task, chain
+from django.conf import settings
+
+from .models import CierreNomina, MapeoConcepto
+from .cache_redis import CacheNominaSGM
+# Importamos solo las funciones que necesitamos, evitando el problema de importación
+# from .utils.LibroRemuneraciones import obtener_headers_libro_remuneraciones, _es_rut_valido
+from .utils.uploads import guardar_temporal, limpiar_archivo_temporal
 
 logger = logging.getLogger(__name__)
 
+# ========== FUNCIONES AUXILIARES ADAPTADAS ==========
 
-@shared_task
-def analizar_headers_libro_remuneraciones(libro_id):
-    logger.info(f"Procesando libro de remuneraciones id={libro_id}")
-    libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-    libro.estado = "analizando_hdrs"
-    libro.save()
+def _es_rut_valido(valor_rut):
+    """
+    Determina si un valor de RUT es válido para procesamiento.
+    Retorna False para valores NaN, vacíos, o palabras como "total" que usa Talana.
+    """
+    if valor_rut is None:
+        return False
+    
+    # Verificar si es NaN de pandas
+    if pd.isna(valor_rut):
+        return False
+    
+    # Convertir a string y limpiar
+    rut_str = str(valor_rut).strip().lower()
+    
+    # Verificar si está vacío
+    if not rut_str:
+        return False
+    
+    # Verificar si es "nan" como string
+    if rut_str == "nan":
+        return False
+    
+    # Verificar palabras típicas de filas de totales que usa Talana
+    palabras_invalidas = [
+        "total", "totales", "suma", "sumatoria", 
+        "resumen", "consolidado", "subtotal"
+    ]
+    
+    if rut_str in palabras_invalidas:
+        return False
+    
+    return True
 
+def obtener_headers_libro_remuneraciones_adaptado(path_archivo):
+    """
+    Obtiene los encabezados de un libro de remuneraciones.
+    Versión adaptada que filtra las columnas básicas de empleado.
+    """
+    logger.info(f"Abriendo archivo de libro de remuneraciones: {path_archivo}")
     try:
-        headers = obtener_headers_libro_remuneraciones(libro.archivo.path)
-        libro.header_json = headers
-        libro.estado = "hdrs_analizados"
-        libro.save()
-        logger.info(f"Procesamiento exitoso libro id={libro_id}")
-        # ¡Retornamos libro_id y headers!
-        return {"libro_id": libro_id, "headers": headers}
+        df = pd.read_excel(path_archivo, engine="openpyxl")
+        headers = list(df.columns)
+
+        # --- Heuristics for common employee columns ---
+        rut_col = next((c for c in headers if 'rut' in c.lower() and 'trab' in c.lower()), None)
+        dv_col = next((c for c in headers if 'dv' in c.lower() and 'trab' in c.lower()), None)
+        ape_pat_col = next((c for c in headers if 'apellido' in c.lower() and 'pater' in c.lower()), None)
+        ape_mat_col = next((c for c in headers if 'apellido' in c.lower() and 'mater' in c.lower()), None)
+        nombres_col = next((c for c in headers if 'nombre' in c.lower()), None)
+        ingreso_col = next((c for c in headers if 'ingreso' in c.lower()), None)
+
+        heuristic_cols = {c for c in [rut_col, dv_col, ape_pat_col, ape_mat_col, nombres_col, ingreso_col] if c}
+
+        # --- Explicit columns to drop regardless of heuristics ---
+        explicit_drop = {
+            'año',
+            'mes',
+            'rut de la empresa',
+            'rut del trabajador',
+            'nombre',
+            'apellido paterno',
+            'apellido materno',
+        }
+        explicit_cols = {h for h in headers if h.strip().lower() in explicit_drop}
+
+        empleado_cols = heuristic_cols.union(explicit_cols)
+        filtered_headers = [h for h in headers if h not in empleado_cols]
+
+        logger.info(f"Headers encontrados: {filtered_headers}")
+        return filtered_headers
     except Exception as e:
-        libro.estado = "con_error"
-        libro.save()
-        logger.error(f"Error procesando libro id={libro_id}: {e}")
+        logger.error(f"Error al leer el archivo: {e}")
         raise
 
+# ========== TASK 1: ANALIZAR HEADERS DEL EXCEL ==========
 
-@shared_task
-def clasificar_headers_libro_remuneraciones_task(result):
+@shared_task(bind=True, name='nomina.analizar_headers_libro')
+def analizar_headers_libro(self, cierre_id, archivo_data, filename):
     """
-    Tarea de clasificación de headers mejorada con logging
-    Mantiene compatibilidad con el resultado de la tarea anterior
-    """
-    from .utils.mixins import UploadLogNominaMixin
-    from .models_logging import registrar_actividad_tarjeta_nomina
+    Primera tarea del chain: Analiza headers del Excel y mapea automáticamente.
     
-    # Extraer datos del resultado
-    libro_id = result["libro_id"]
-    upload_log_id = result.get("upload_log_id", None)
+    Args:
+        cierre_id: ID del cierre
+        archivo_data: Datos del archivo (base64 o path)
+        filename: Nombre del archivo
+    
+    Returns:
+        Dict con resultado del análisis
+    """
+    logger.info(f"🔍 Iniciando análisis headers para cierre {cierre_id} - {filename}")
     
     try:
-        libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-        cierre = libro.cierre
-        cliente = cierre.cliente
+        # Obtener instancia del cierre
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        cache = CacheNominaSGM()
         
-        # Inicializar mixin solo si tenemos upload_log_id
-        mixin = UploadLogNominaMixin() if upload_log_id else None
-
-        # 1. Marcamos estado "en proceso de clasificación"
-        libro.estado = "clasif_en_proceso"
-        libro.save()
+        # Actualizar estado inicial
+        cache.actualizar_estado_libro(cierre.cliente.id, cierre_id, 'analizando', {
+            'filename': filename,
+            'progreso': 10,
+            'mensaje': 'Analizando headers del Excel...'
+        })
         
-        if mixin and upload_log_id:
-            mixin.actualizar_upload_log(upload_log_id, estado='clasif_en_proceso')
-
-        # 2. Registrar inicio de clasificación
-        if upload_log_id:
-            from .models_logging import UploadLogNomina
-            upload_log = UploadLogNomina.objects.get(id=upload_log_id)
-            registrar_actividad_tarjeta_nomina(
-                cierre_id=cierre.id,
-                tarjeta="libro_remuneraciones",
-                accion="classification_start",
-                descripcion="Inicio de clasificación de conceptos",
-                upload_log=upload_log
-            )
-
-        # 3. Obtener headers
-        headers = (
-            libro.header_json
-            if isinstance(libro.header_json, list)
-            else result["headers"]
+        # Guardar archivo temporal para procesamiento
+        temp_path = None
+        try:
+            # Crear archivo temporal
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+                if isinstance(archivo_data, str):
+                    # Si viene como base64, decodificar
+                    import base64
+                    tmp_file.write(base64.b64decode(archivo_data))
+                else:
+                    # Si viene como bytes directos
+                    tmp_file.write(archivo_data)
+                temp_path = tmp_file.name
+            
+            # Usar la función adaptada para obtener headers
+            headers_filtrados = obtener_headers_libro_remuneraciones_adaptado(temp_path)
+            
+            # Leer el Excel para obtener datos completos
+            df = pd.read_excel(temp_path, engine="openpyxl")
+            
+            # Convertir datos a formato serializable
+            datos_archivo = []
+            total_filas = len(df)
+            filas_validas = 0
+            
+            for _, row in df.iterrows():
+                # Validar si la fila tiene un RUT válido
+                rut_col = next((col for col in df.columns if 'rut' in col.lower() and 'trab' in col.lower()), None)
+                if rut_col and _es_rut_valido(row.get(rut_col)):
+                    # Convertir fila a dict, manejando valores NaN
+                    row_dict = {}
+                    for col, val in row.items():
+                        if pd.isna(val):
+                            row_dict[col] = ""
+                        else:
+                            row_dict[col] = str(val).strip()
+                    datos_archivo.append(row_dict)
+                    filas_validas += 1
+            
+            logger.info(f"📊 Archivo procesado: {filas_validas} filas válidas de {total_filas} totales")
+            
+        finally:
+            # Limpiar archivo temporal
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+        
+        # ✨ NUEVA FUNCIONALIDAD: Clasificar headers usando mapeos precargados en Redis
+        headers_mapeados, headers_no_mapeados = clasificar_headers_con_mapeo_concepto_redis(
+            headers_filtrados, cierre.cliente.id, cierre_id
         )
-
-        # 4. Ejecutar clasificación
-        headers_clasificados, headers_sin_clasificar = (
-            clasificar_headers_libro_remuneraciones(headers, cliente)
+        
+        # Guardar archivo y análisis en Redis
+        archivo_guardado = cache.guardar_libro_excel(
+            cliente_id=cierre.cliente.id,
+            cierre_id=cierre_id,
+            archivo_data=datos_archivo,
+            filename=filename
         )
-
-        # 5. Guardar resultados
-        libro.header_json = {
-            "headers_clasificados": headers_clasificados,
-            "headers_sin_clasificar": headers_sin_clasificar,
+        
+        if not archivo_guardado:
+            raise Exception("Error guardando archivo en Redis")
+        
+        # Guardar análisis de headers
+        analisis_headers = {
+            'headers_mapeados': headers_mapeados,
+            'headers_no_mapeados': headers_no_mapeados,
+            'total_headers': len(headers_filtrados),
+            'mapeados_automaticamente': len(headers_mapeados),
+            'pendientes_mapeo': len(headers_no_mapeados),
+            'timestamp': datetime.now().isoformat()
         }
-
-        # 6. Determinar estado final
-        if headers_sin_clasificar:
-            libro.estado = "clasif_pendiente"
-            estado_desc = f"Clasificación parcial: {len(headers_clasificados)} clasificados, {len(headers_sin_clasificar)} pendientes"
+        
+        headers_guardados = cache.guardar_analisis_headers(
+            cliente_id=cierre.cliente.id,
+            cierre_id=cierre_id,
+            analisis=analisis_headers
+        )
+        
+        if not headers_guardados:
+            raise Exception("Error guardando análisis headers en Redis")
+        
+        # Determinar siguiente estado
+        if headers_no_mapeados:
+            # Hay headers sin mapear, requiere intervención manual
+            nuevo_estado = 'mapeo_requerido'
+            mensaje = f'{len(headers_no_mapeados)} conceptos requieren mapeo manual'
         else:
-            libro.estado = "clasificado"
-            estado_desc = f"Clasificación completa: {len(headers_clasificados)} conceptos clasificados"
-
-        libro.save()
+            # Todos mapeados, puede proceder automáticamente
+            nuevo_estado = 'listo_procesar'
+            mensaje = 'Todos los conceptos fueron mapeados automáticamente'
         
-        # 7. Actualizar upload log con estadísticas
-        if mixin and upload_log_id:
-            mixin.actualizar_upload_log(
-                upload_log_id, 
-                estado=libro.estado,
-                resumen={
-                    **libro.upload_log.resumen,
-                    "headers_clasificados": len(headers_clasificados),
-                    "headers_sin_clasificar": len(headers_sin_clasificar),
-                    "fase": "clasificacion_completada"
-                }
-            )
-
-        # 8. Registrar resultado
-        if upload_log_id:
-            registrar_actividad_tarjeta_nomina(
-                cierre_id=cierre.id,
-                tarjeta="libro_remuneraciones",
-                accion="classification_complete",
-                descripcion=estado_desc,
-                resultado="exito",
-                detalles={
-                    "headers_clasificados": len(headers_clasificados),
-                    "headers_sin_clasificar": len(headers_sin_clasificar),
-                    "clasificacion_completa": len(headers_sin_clasificar) == 0
-                },
-                upload_log=upload_log
-            )
-
-        logger.info(
-            f"Libro {libro_id}: {len(headers_clasificados)} headers clasificados, "
-            f"{len(headers_sin_clasificar)} sin clasificar"
-        )
+        # Actualizar estado final
+        cache.actualizar_estado_libro(cierre.cliente.id, cierre_id, nuevo_estado, {
+            'filename': filename,
+            'progreso': 50,
+            'mensaje': mensaje,
+            'headers_analysis': analisis_headers,
+            'empleados_detectados': filas_validas
+        })
         
-        return {
-            "libro_id": libro_id,
-            "upload_log_id": upload_log_id,
-            "headers_clasificados": len(headers_clasificados),
-            "headers_sin_clasificar": len(headers_sin_clasificar),
+        resultado = {
+            'success': True,
+            'cierre_id': cierre_id,
+            'filename': filename,
+            'headers_mapeados': headers_mapeados,
+            'headers_no_mapeados': headers_no_mapeados,
+            'empleados_detectados': filas_validas,
+            'estado_siguiente': nuevo_estado,
+            'mensaje': mensaje
         }
         
-    except Exception as e:
-        error_msg = f"Error clasificando headers para libro id={libro_id}: {e}"
-        logger.error(error_msg)
+        logger.info(f"✅ Análisis completado para cierre {cierre_id}: {len(headers_mapeados)} mapeados, {len(headers_no_mapeados)} pendientes")
+        return resultado
         
-        # Actualizar estados de error
+    except Exception as e:
+        error_msg = f"Error analizando headers para cierre {cierre_id}: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        
         try:
-            libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-            libro.estado = "con_error"
-            libro.save()
-        except Exception as ex:
-            logger.error(f"Error guardando estado 'con_error' para libro id={libro_id}: {ex}")
-        
-        # Actualizar upload log si existe
-        if mixin and upload_log_id:
-            mixin.marcar_como_error(upload_log_id, error_msg)
-        
-        # Registrar error en actividades si tenemos upload_log_id
-        if upload_log_id:
-            try:
-                registrar_actividad_tarjeta_nomina(
-                    cierre_id=libro.cierre.id,
-                    tarjeta="libro_remuneraciones",
-                    accion="classification_complete",
-                    descripcion=f"Error en clasificación: {str(e)}",
-                    resultado="error",
-                    detalles={"error": str(e)},
-                    upload_log=upload_log if upload_log_id else None
-                )
-            except Exception:
-                pass  # No fallar si no se puede registrar la actividad
-        
-        raise
-        raise
-
-
-@shared_task
-def actualizar_empleados_desde_libro(result):
-    """Task para actualizar empleados desde libro - solo maneja try/except"""
-    libro_id = result.get("libro_id") if isinstance(result, dict) else result
-    try:
-        libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-        count = actualizar_empleados_desde_libro_util(libro)
-        logger.info(f"Actualizados {count} empleados desde libro {libro_id}")
-        return {"libro_id": libro_id, "empleados_actualizados": count}
-    except Exception as e:
-        logger.error(f"Error actualizando empleados para libro id={libro_id}: {e}")
-        raise
-
-
-@shared_task
-def guardar_registros_nomina(result):
-    """Task para guardar registros de nómina - solo maneja try/except"""
-    libro_id = result.get("libro_id") if isinstance(result, dict) else result
-    try:
-        libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-        count = guardar_registros_nomina_util(libro)
-        
-        # ✅ ACTUALIZAR ESTADO AL FINAL
-        libro.estado = "procesado"
-        libro.save()
-        
-        return {
-            "libro_id": libro_id, 
-            "registros_actualizados": count,
-            "estado": "procesado"
-        }
-    except Exception as e:
-        logger.error(f"Error guardando registros de nómina para libro id={libro_id}: {e}")
-        # Marcar como error
-        try:
-            libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-            libro.estado = "con_error"
-            libro.save()
-        except:
-            pass
-        raise
-
-
-@shared_task
-def procesar_movimientos_mes(movimiento_id, upload_log_id=None):
-    """Procesa un archivo de movimientos del mes con logging completo"""
-    from .utils.mixins import UploadLogNominaMixin
-    from .models_logging import registrar_actividad_tarjeta_nomina, UploadLogNomina
-    
-    logger.info(f"Procesando archivo movimientos mes id={movimiento_id} con upload_log={upload_log_id}")
-    
-    mixin = UploadLogNominaMixin() if upload_log_id else None
-    upload_log = None
-    
-    try:
-        # Obtener referencias
-        movimiento = MovimientosMesUpload.objects.get(id=movimiento_id)
-        if upload_log_id:
-            upload_log = UploadLogNomina.objects.get(id=upload_log_id)
-        
-        # Cambiar estado a procesando
-        movimiento.estado = 'en_proceso'
-        movimiento.save()
-        
-        if mixin and upload_log:
-            mixin.actualizar_upload_log(upload_log_id, estado='procesando', resumen={
-                'fase': 'procesamiento_iniciado',
-                'movimiento_id': movimiento_id
+            cache = CacheNominaSGM()
+            cache.actualizar_estado_libro(cierre.cliente.id, cierre_id, 'error', {
+                'filename': filename,
+                'error': str(e),
+                'timestamp': datetime.now().isoformat()
             })
-        
-        # Registrar inicio de procesamiento
-        registrar_actividad_tarjeta_nomina(
-            cierre_id=movimiento.cierre.id,
-            tarjeta="movimientos_mes",
-            accion="process_start",
-            descripcion="Iniciando procesamiento de archivo de movimientos del mes",
-            detalles={
-                "movimiento_id": movimiento_id,
-                "upload_log_id": upload_log_id,
-                "archivo_nombre": movimiento.archivo.name if movimiento.archivo else "N/A"
-            },
-            upload_log=upload_log
-        )
-        
-        # Procesar archivo
-        resultados = procesar_archivo_movimientos_mes_util(movimiento)
-        
-        # Guardar resultados
-        movimiento.resultados_procesamiento = resultados
-        
-        # Determinar estado final
-        if resultados.get('errores'):
-            if any(v > 0 for k, v in resultados.items() if k != 'errores' and isinstance(v, int)):
-                estado_final = 'con_errores_parciales'
-                resultado_actividad = 'warning'
-            else:
-                estado_final = 'con_error'
-                resultado_actividad = 'error'
-        else:
-            estado_final = 'procesado'
-            resultado_actividad = 'exito'
-        
-        movimiento.estado = estado_final
-        movimiento.save()
-        
-        # Actualizar UploadLog
-        if mixin and upload_log:
-            mixin.actualizar_upload_log(upload_log_id, 
-                estado='completado' if estado_final == 'procesado' else 'error',
-                resumen={
-                    'fase': 'procesamiento_completado',
-                    'estado_final': estado_final,
-                    'resultados': resultados,
-                    'registros_procesados': sum(v for k, v in resultados.items() if k != 'errores' and isinstance(v, int))
-                }
-            )
-        
-        # Registrar finalización
-        descripcion = f"Procesamiento completado con estado: {estado_final}"
-        if resultados.get('errores'):
-            descripcion += f". Errores: {len(resultados['errores'])}"
-        
-        registrar_actividad_tarjeta_nomina(
-            cierre_id=movimiento.cierre.id,
-            tarjeta="movimientos_mes",
-            accion="process_complete",
-            descripcion=descripcion,
-            resultado=resultado_actividad,
-            detalles={
-                "movimiento_id": movimiento_id,
-                "upload_log_id": upload_log_id,
-                "estado_final": estado_final,
-                "resultados": resultados,
-                "registros_totales": sum(v for k, v in resultados.items() if k != 'errores' and isinstance(v, int)),
-                "errores_count": len(resultados.get('errores', []))
-            },
-            upload_log=upload_log
-        )
-        
-        logger.info(f"Procesamiento exitoso movimientos mes id={movimiento_id}, estado: {estado_final}")
-        return resultados
-        
-    except Exception as e:
-        error_msg = f"Error procesando movimientos mes id={movimiento_id}: {e}"
-        logger.error(error_msg)
-        
-        # Actualizar estados de error
-        try:
-            movimiento = MovimientosMesUpload.objects.get(id=movimiento_id)
-            movimiento.estado = 'con_error'
-            movimiento.resultados_procesamiento = {'errores': [str(e)]}
-            movimiento.save()
         except:
             pass
         
-        # Marcar UploadLog como error
-        if mixin and upload_log_id:
-            mixin.marcar_como_error(upload_log_id, error_msg)
+        # En Celery, lanzamos la excepción para que se maneje apropiadamente
+        raise self.retry(exc=e, countdown=60, max_retries=3)
+
+# ========== TASK 2: PROCESAR EMPLEADOS DEL LIBRO ==========
+
+@shared_task(bind=True, name='nomina.procesar_empleados_libro')
+def procesar_empleados_libro(self, cierre_id):
+    """
+    Procesa empleados del libro de remuneraciones con mapeos completos.
+    Solo se ejecuta cuando todos los headers están mapeados.
+    
+    Args:
+        cierre_id: ID del cierre
         
-        # Registrar error en actividades
-        if upload_log_id:
+    Returns:
+        Dict con resultado del procesamiento de empleados
+    """
+    logger.info(f"👥 LIBRO: Procesando empleados con conceptos para cierre {cierre_id}")
+    
+    try:
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        cache = CacheNominaSGM()
+        
+        # Actualizar estado
+        cache.actualizar_estado_libro(cierre.cliente.id, cierre_id, 'procesando_empleados', {
+            'progreso': 80,
+            'mensaje': 'Procesando empleados del libro con mapeos aplicados...'
+        })
+        
+        # Obtener datos del archivo temporal
+        datos_archivo = cache.obtener_libro_excel(cierre.cliente.id, cierre_id)
+        if not datos_archivo:
+            raise Exception("No se encontraron datos del archivo temporal en Redis")
+        
+        # Obtener mapeo final
+        mapeo_final = cache.obtener_mapeo_final(cierre.cliente.id, cierre_id)
+        if not mapeo_final:
+            raise Exception("No se encontró mapeo final - headers deben estar mapeados primero")
+        
+        mapeos_completos = mapeo_final.get('mapeos_completos', {})
+        
+        # Procesar cada empleado
+        empleados_procesados = []
+        filas_procesadas = 0
+        errores_procesamiento = []
+        
+        for fila_data in datos_archivo.get('data', []):
             try:
-                registrar_actividad_tarjeta_nomina(
-                    cierre_id=movimiento.cierre.id,
-                    tarjeta="movimientos_mes",
-                    accion="process_complete",
-                    descripcion=f"Error en procesamiento: {str(e)}",
-                    resultado="error",
-                    detalles={
-                        "movimiento_id": movimiento_id,
-                        "upload_log_id": upload_log_id,
-                        "error": str(e)
-                    },
-                    upload_log=upload_log
-                )
-            except Exception:
-                pass  # No fallar si no se puede registrar la actividad
+                # Identificar datos básicos del empleado
+                empleado_data = _extraer_datos_empleado(fila_data, cierre.cliente)
+                
+                if not empleado_data:
+                    continue  # Saltar filas sin datos válidos de empleado
+                
+                # Procesar conceptos aplicando mapeos
+                conceptos_empleado = {}
+                for header_original, valor in fila_data.items():
+                    if header_original in mapeos_completos:
+                        concepto_estandar = mapeos_completos[header_original]
+                        # Limpiar y validar valor
+                        valor_limpio = _limpiar_valor_concepto(valor)
+                        if valor_limpio is not None:  # Solo agregar si hay valor válido
+                            conceptos_empleado[concepto_estandar] = valor_limpio
+                
+                # Crear estructura final del empleado
+                empleado_final = {
+                    **empleado_data,
+                    'conceptos': conceptos_empleado,
+                    'total_conceptos': len(conceptos_empleado),
+                    'origen': 'libro_remuneraciones'
+                }
+                
+                empleados_procesados.append(empleado_final)
+                filas_procesadas += 1
+                
+            except Exception as e:
+                error_fila = {
+                    'fila': filas_procesadas + 1,
+                    'error': str(e),
+                    'datos_fila': fila_data
+                }
+                errores_procesamiento.append(error_fila)
+                logger.warning(f"⚠️ Error procesando empleado fila {filas_procesadas + 1}: {e}")
         
-        raise
-
-
-# Nuevas tasks para archivos del analista
-
-@shared_task
-def procesar_archivo_analista(archivo_id):
-    """Procesa un archivo subido por el analista (finiquitos, incidencias o ingresos)"""
-    logger.info(f"Procesando archivo analista id={archivo_id}")
-    
-    try:
-        archivo = ArchivoAnalistaUpload.objects.get(id=archivo_id)
-        archivo.estado = 'en_proceso'
-        archivo.save()
-        
-        resultados = procesar_archivo_analista_util(archivo)
-        
-        # Determinar estado final
-        if resultados.get('errores'):
-            if resultados.get('procesados', 0) > 0:
-                archivo.estado = 'procesado'  # Parcialmente exitoso
-            else:
-                archivo.estado = 'con_error'  # Totalmente fallido
-        else:
-            archivo.estado = 'procesado'
-        
-        archivo.save()
-        
-        logger.info(f"Procesamiento exitoso archivo analista id={archivo_id}: {resultados['procesados']} registros procesados")
-        return resultados
-        
-    except Exception as e:
-        archivo = ArchivoAnalistaUpload.objects.get(id=archivo_id)
-        archivo.estado = 'con_error'
-        archivo.save()
-        logger.error(f"Error procesando archivo analista id={archivo_id}: {e}")
-        raise
-
-
-@shared_task
-def procesar_archivo_novedades(archivo_id):
-    """Procesa un archivo de novedades - solo hasta clasificación inicial"""
-    logger.info(f"Iniciando procesamiento inicial archivo de novedades id={archivo_id}")
-    
-    try:
-        archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
-        
-        # ✅ SOLO ejecutar análisis y clasificación inicial - NO las tareas finales
-        workflow = chain(
-            analizar_headers_archivo_novedades.s(archivo_id),
-            clasificar_headers_archivo_novedades_task.s()
+        # Guardar empleados procesados en Redis
+        empleados_guardados = cache.guardar_libro_empleados_conceptos(
+            cliente_id=cierre.cliente.id,
+            cierre_id=cierre_id,
+            empleados=empleados_procesados
         )
         
-        # Ejecutar la cadena parcial
-        workflow.apply_async()
+        if not empleados_guardados:
+            raise Exception("Error guardando empleados procesados en Redis")
         
-        logger.info(f"Cadena de análisis y clasificación iniciada para archivo novedades id={archivo_id}")
-        return {"archivo_id": archivo_id, "estado": "cadena_iniciada"}
+        # Limpiar archivo temporal (ya no necesario)
+        cache.limpiar_archivo_temporal_libro(cierre.cliente.id, cierre_id)
         
-    except Exception as e:
-        try:
-            archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
-            archivo.estado = 'con_error'
-            archivo.save()
-        except Exception as ex:
-            logger.error(f"Error guardando estado 'con_error' para archivo novedades id={archivo_id}: {ex}")
+        # Calcular estadísticas
+        total_conceptos = sum(emp.get('total_conceptos', 0) for emp in empleados_procesados)
+        promedio_conceptos = total_conceptos / len(empleados_procesados) if empleados_procesados else 0
         
-        logger.error(f"Error iniciando procesamiento archivo de novedades id={archivo_id}: {e}")
-        raise
-
-
-@shared_task
-def analizar_headers_archivo_novedades(archivo_id):
-    """Analiza headers de un archivo de novedades"""
-    logger.info(f"Procesando archivo de novedades id={archivo_id}")
-    archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
-    archivo.estado = "analizando_hdrs"
-    archivo.save()
-
-    try:
-        headers = obtener_headers_archivo_novedades(archivo.archivo.path)
-        archivo.header_json = headers
-        archivo.estado = "hdrs_analizados"
-        archivo.save()
-        logger.info(f"Procesamiento exitoso archivo novedades id={archivo_id}")
-        # Retornamos archivo_id y headers
-        return {"archivo_id": archivo_id, "headers": headers}
-    except Exception as e:
-        archivo.estado = "con_error"
-        archivo.save()
-        logger.error(f"Error procesando archivo novedades id={archivo_id}: {e}")
-        raise
-
-
-@shared_task
-def clasificar_headers_archivo_novedades_task(result):
-    """Clasifica headers de un archivo de novedades"""
-    archivo_id = result["archivo_id"]
-    try:
-        archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
-        cierre = archivo.cierre
-        cliente = cierre.cliente
-
-        # Marcamos estado "en proceso de clasificación"
-        archivo.estado = "clasif_en_proceso"
-        archivo.save()
-
-        headers = (
-            archivo.header_json
-            if isinstance(archivo.header_json, list)
-            else result["headers"]
-        )
-
-        headers_clasificados, headers_sin_clasificar = (
-            clasificar_headers_archivo_novedades(headers, cliente)
-        )
-
-        # Escribe el resultado final en el campo JSON
-        archivo.header_json = {
-            "headers_clasificados": headers_clasificados,
-            "headers_sin_clasificar": headers_sin_clasificar,
-        }
-
-        # Cambia el estado según si quedan pendientes o no
-        if headers_sin_clasificar:
-            archivo.estado = "clasif_pendiente"
-        else:
-            archivo.estado = "clasificado"
-            
-            # ✅ Si todos los headers se clasificaron automáticamente, continuar con las tareas finales
-            from celery import chain
-            workflow_final = chain(
-                actualizar_empleados_desde_novedades_task.s({"archivo_id": archivo_id}),
-                guardar_registros_novedades_task.s()
-            )
-            workflow_final.apply_async()
-            logger.info(f"Todos los headers se clasificaron automáticamente. Iniciando procesamiento final para archivo {archivo_id}")
-
-        archivo.save()
-        logger.info(
-            f"Archivo novedades {archivo_id}: {len(headers_clasificados)} headers clasificados, "
-            f"{len(headers_sin_clasificar)} sin clasificar"
-        )
-        return {
-            "archivo_id": archivo_id,
-            "headers_clasificados": len(headers_clasificados),
-            "headers_sin_clasificar": len(headers_sin_clasificar),
-        }
-    except Exception as e:
-        logger.error(f"Error clasificando headers para archivo novedades id={archivo_id}: {e}")
-        try:
-            archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
-            archivo.estado = "con_error"
-            archivo.save()
-        except Exception as ex:
-            logger.error(
-                f"Error guardando estado 'con_error' para archivo novedades id={archivo_id}: {ex}"
-            )
-        raise
-
-
-@shared_task
-def actualizar_empleados_desde_novedades_task(result):
-    """Task para actualizar empleados desde archivo de novedades"""
-    archivo_id = result.get("archivo_id") if isinstance(result, dict) else result
-    try:
-        archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
-        count = actualizar_empleados_desde_novedades(archivo)
-        logger.info(f"Actualizados {count} empleados desde archivo novedades {archivo_id}")
-        return {"archivo_id": archivo_id, "empleados_actualizados": count}
-    except Exception as e:
-        logger.error(f"Error actualizando empleados para archivo novedades id={archivo_id}: {e}")
-        raise
-
-
-@shared_task
-def guardar_registros_novedades_task(result):
-    """Task para guardar registros de novedades"""
-    archivo_id = result.get("archivo_id") if isinstance(result, dict) else result
-    try:
-        archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
-        count = guardar_registros_novedades(archivo)
+        # Actualizar estado final
+        cache.actualizar_estado_libro(cierre.cliente.id, cierre_id, 'libro_procesado', {
+            'progreso': 100,
+            'mensaje': 'Libro de remuneraciones procesado exitosamente',
+            'empleados_procesados': len(empleados_procesados),
+            'total_conceptos': total_conceptos,
+            'promedio_conceptos_por_empleado': round(promedio_conceptos, 2),
+            'errores': len(errores_procesamiento),
+            'listo_verificacion': True,
+            'timestamp_completado': datetime.now().isoformat()
+        })
         
-        # ✅ ACTUALIZAR ESTADO AL FINAL
-        archivo.estado = "procesado"
-        archivo.save()
-        
-        return {
-            "archivo_id": archivo_id, 
-            "registros_actualizados": count,
-            "estado": "procesado"
-        }
-    except Exception as e:
-        logger.error(f"Error guardando registros de novedades para archivo id={archivo_id}: {e}")
-        # Marcar como error
-        try:
-            archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
-            archivo.estado = "con_error"
-            archivo.save()
-        except:
-            pass
-        raise
-
-
-# ===== TAREAS PARA SISTEMA DE INCIDENCIAS =====
-
-@shared_task
-def generar_incidencias_cierre_task(cierre_id):
-    """Task para generar incidencias de un cierre"""
-    # 🚫 FUNCIONALIDAD COMENTADA TEMPORALMENTE  
-    # Las incidencias solo deben generarse cuando las discrepancias sean 0
-    # y se implementará la comparación contra el mes anterior
-    
-    logger.info(f"Task de incidencias deshabilitada para cierre {cierre_id}")
-    return {
-        "error": "Funcionalidad de incidencias deshabilitada temporalmente",
-        "message": "Primero debe completar la fase de discrepancias antes de generar incidencias",
-        "cierre_id": cierre_id
-    }
-    
-    # CÓDIGO ORIGINAL COMENTADO:
-    # from .utils.GenerarIncidencias import generar_todas_incidencias
-    # from .models import CierreNomina
-    # 
-    # logger.info(f"Iniciando generación de incidencias para cierre {cierre_id}")
-    # 
-    # try:
-    #     cierre = CierreNomina.objects.get(id=cierre_id)
-    #     
-    #     # Verificar que el cierre tenga los archivos necesarios procesados
-    #     if not _verificar_archivos_listos_para_incidencias(cierre):
-    #         raise ValueError("No todos los archivos están procesados para generar incidencias")
-    #     
-    #     # FALTA: Verificar que discrepancias = 0 antes de continuar
-    #     # FALTA: Implementar comparación contra mes anterior específicamente
-    #     
-    #     resultado = generar_todas_incidencias(cierre)
-    #     
-    #     logger.info(f"Incidencias generadas exitosamente para cierre {cierre_id}: {resultado['total_incidencias']} incidencias")
-    #     return resultado
-    #     
-    # except Exception as e:
-    #     logger.error(f"Error generando incidencias para cierre {cierre_id}: {e}")
-    #     try:
-    #         cierre = CierreNomina.objects.get(id=cierre_id)
-    #         cierre.estado_incidencias = 'pendiente'
-    #         cierre.save(update_fields=['estado_incidencias'])
-    #     except:
-    #         pass
-    #     raise
-
-def _verificar_archivos_listos_para_incidencias(cierre):
-    """Verifica que los archivos necesarios estén procesados"""
-    from .models import LibroRemuneracionesUpload, MovimientosMesUpload
-    
-    # Verificar libro de remuneraciones procesado
-    libro = LibroRemuneracionesUpload.objects.filter(cierre=cierre).first()
-    if not libro or libro.estado != 'procesado':
-        logger.warning(f"Libro de remuneraciones no procesado para cierre {cierre.id}")
-        return False
-    
-    # Verificar movimientos del mes procesados
-    movimientos = MovimientosMesUpload.objects.filter(cierre=cierre).first()
-    if not movimientos or movimientos.estado != 'procesado':
-        logger.warning(f"Movimientos del mes no procesados para cierre {cierre.id}")
-        return False
-    
-    return True
-
-
-# ===== NUEVAS TAREAS CON SISTEMA DE LOGGING INTEGRADO =====
-
-@shared_task
-def analizar_headers_libro_remuneraciones_con_logging(libro_id, upload_log_id):
-    """
-    Analiza headers del libro de remuneraciones con logging integrado
-    """
-    from .models_logging import UploadLogNomina
-    logger.info(f"Procesando libro de remuneraciones id={libro_id} con upload_log={upload_log_id}")
-    
-    try:
-        # Obtener upload_log y actualizar estado
-        upload_log = UploadLogNomina.objects.get(id=upload_log_id)
-        upload_log.estado = "analizando_hdrs"
-        upload_log.save()
-        
-        # Obtener libro
-        libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-        libro.estado = "analizando_hdrs"
-        libro.save()
-        
-        # Procesar headers
-        headers = obtener_headers_libro_remuneraciones(libro.archivo.path)
-        libro.header_json = headers
-        libro.estado = "hdrs_analizados"
-        libro.save()
-        
-        # Actualizar upload_log
-        upload_log.estado = "hdrs_analizados"
-        upload_log.headers_detectados = headers
-        upload_log.save()
-        
-        logger.info(f"Headers analizados exitosamente para libro {libro_id}")
-        return {
-            "libro_id": libro_id, 
-            "upload_log_id": upload_log_id,
-            "headers": headers
-        }
-        
-    except Exception as e:
-        logger.error(f"Error analizando headers libro {libro_id}: {e}")
-        
-        # Marcar errores en ambos modelos
-        try:
-            libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-            libro.estado = "con_error"
-            libro.save()
-        except:
-            pass
-            
-        try:
-            upload_log = UploadLogNomina.objects.get(id=upload_log_id)
-            upload_log.marcar_como_error(f"Error analizando headers: {str(e)}")
-        except:
-            pass
-            
-        raise
-
-
-@shared_task  
-def clasificar_headers_libro_remuneraciones_con_logging(result):
-    """
-    Clasifica headers del libro de remuneraciones con logging integrado
-    """
-    from .models_logging import UploadLogNomina
-    
-    libro_id = result["libro_id"]
-    upload_log_id = result["upload_log_id"]
-    
-    logger.info(f"Clasificando headers para libro {libro_id} con upload_log {upload_log_id}")
-    
-    try:
-        # Obtener modelos
-        libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-        upload_log = UploadLogNomina.objects.get(id=upload_log_id)
-        cierre = libro.cierre
-        cliente = cierre.cliente
-        
-        # Actualizar estados
-        libro.estado = "clasif_en_proceso"
-        libro.save()
-        upload_log.estado = "clasif_en_proceso"
-        upload_log.save()
-        
-        # Obtener headers
-        headers = (
-            libro.header_json
-            if isinstance(libro.header_json, list)
-            else result["headers"]
-        )
-        
-        # Clasificar headers
-        headers_clasificados, headers_sin_clasificar = (
-            clasificar_headers_libro_remuneraciones(headers, cliente)
-        )
-        
-        # Actualizar libro
-        libro.header_json = {
-            "headers_clasificados": headers_clasificados,
-            "headers_sin_clasificar": headers_sin_clasificar,
-        }
-        
-        # Determinar estado final
-        if headers_sin_clasificar:
-            libro.estado = "clasif_pendiente"
-            upload_log.estado = "clasif_pendiente"
-        else:
-            libro.estado = "clasificado"
-            upload_log.estado = "clasificado"
-        
-        libro.save()
-        
-        # Actualizar upload_log con resumen
-        resumen_final = {
-            "libro_id": libro_id,
-            "headers_total": len(headers),
-            "headers_clasificados": len(headers_clasificados),
-            "headers_sin_clasificar": len(headers_sin_clasificar),
-            "clasificados": headers_clasificados,
-            "sin_clasificar": headers_sin_clasificar
-        }
-        
-        upload_log.resumen = resumen_final
-        upload_log.save()
-        
-        logger.info(
-            f"Libro {libro_id}: {len(headers_clasificados)} headers clasificados, "
-            f"{len(headers_sin_clasificar)} sin clasificar"
-        )
-        
-        return {
-            "libro_id": libro_id,
-            "upload_log_id": upload_log_id,
-            "headers_clasificados": len(headers_clasificados),
-            "headers_sin_clasificar": len(headers_sin_clasificar),
-            "estado_final": libro.estado
-        }
-        
-    except Exception as e:
-        logger.error(f"Error clasificando headers para libro {libro_id}: {e}")
-        
-        # Marcar errores en ambos modelos
-        try:
-            libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-            libro.estado = "con_error"
-            libro.save()
-        except:
-            pass
-            
-        try:
-            upload_log = UploadLogNomina.objects.get(id=upload_log_id)
-            upload_log.marcar_como_error(f"Error clasificando headers: {str(e)}")
-        except:
-            pass
-            
-        raise
-
-
-# ======== TAREAS DE ANÁLISIS DE DATOS ========
-
-@shared_task
-def analizar_datos_cierre_task(cierre_id, tolerancia_variacion=30.0):
-    """
-    Tarea para analizar datos del cierre actual vs mes anterior
-    y generar incidencias de variación salarial
-    """
-    from .models import CierreNomina, AnalisisDatosCierre, IncidenciaVariacionSalarial
-    from .models import EmpleadoCierre, AnalistaIngreso, AnalistaFiniquito, AnalistaIncidencia
-    from django.utils import timezone
-    from decimal import Decimal
-    import logging
-    
-    logger = logging.getLogger(__name__)
-    logger.info(f"Iniciando análisis de datos para cierre {cierre_id}")
-    
-    try:
-        # Obtener cierre actual
-        cierre = CierreNomina.objects.get(id=cierre_id)
-        
-        # Crear o actualizar análisis
-        analisis, created = AnalisisDatosCierre.objects.get_or_create(
-            cierre=cierre,
-            defaults={
-                'tolerancia_variacion_salarial': Decimal(str(tolerancia_variacion)),
-                'estado': 'procesando',
-                'analista': cierre.analista_asignado if hasattr(cierre, 'analista_asignado') else None
+        resultado = {
+            'success': True,
+            'cierre_id': cierre_id,
+            'empleados_procesados': len(empleados_procesados),
+            'total_conceptos': total_conceptos,
+            'errores': errores_procesamiento,
+            'listo_verificacion': True,
+            'estadisticas': {
+                'filas_procesadas': filas_procesadas,
+                'promedio_conceptos': promedio_conceptos,
+                'mapeos_aplicados': len(mapeos_completos)
             }
-        )
-        
-        if not created:
-            analisis.estado = 'procesando'
-            analisis.tolerancia_variacion_salarial = Decimal(str(tolerancia_variacion))
-            analisis.save()
-        
-        # 1. ANÁLISIS DE DATOS ACTUALES
-        logger.info(f"Analizando datos actuales del cierre {cierre_id}")
-        
-        # Contar empleados actuales
-        empleados_actuales = EmpleadoCierre.objects.filter(cierre=cierre).count()
-        
-        # Contar ingresos actuales
-        ingresos_actuales = AnalistaIngreso.objects.filter(cierre=cierre).count()
-        
-        # Contar finiquitos actuales
-        finiquitos_actuales = AnalistaFiniquito.objects.filter(cierre=cierre).count()
-        
-        # Contar ausentismos actuales por tipo
-        ausentismos_actuales = AnalistaIncidencia.objects.filter(cierre=cierre)
-        ausentismos_por_tipo_actual = {}
-        ausentismos_total_actual = 0
-        
-        for ausentismo in ausentismos_actuales:
-            tipo = ausentismo.tipo_ausentismo or 'Sin especificar'
-            ausentismos_por_tipo_actual[tipo] = ausentismos_por_tipo_actual.get(tipo, 0) + 1
-            ausentismos_total_actual += 1
-        
-        # 2. ANÁLISIS DE DATOS MES ANTERIOR
-        logger.info(f"Analizando datos del mes anterior para cliente {cierre.cliente.id}")
-        
-        # Obtener cierre del mes anterior
-        cierre_anterior = CierreNomina.objects.filter(
-            cliente=cierre.cliente,
-            periodo__lt=cierre.periodo
-        ).order_by('-periodo').first()
-        
-        empleados_anterior = 0
-        ingresos_anterior = 0
-        finiquitos_anterior = 0
-        ausentismos_por_tipo_anterior = {}
-        ausentismos_total_anterior = 0
-        
-        if cierre_anterior:
-            empleados_anterior = EmpleadoCierre.objects.filter(cierre=cierre_anterior).count()
-            ingresos_anterior = AnalistaIngreso.objects.filter(cierre=cierre_anterior).count()
-            finiquitos_anterior = AnalistaFiniquito.objects.filter(cierre=cierre_anterior).count()
-            
-            ausentismos_anteriores = AnalistaIncidencia.objects.filter(cierre=cierre_anterior)
-            for ausentismo in ausentismos_anteriores:
-                tipo = ausentismo.tipo_ausentismo or 'Sin especificar'
-                ausentismos_por_tipo_anterior[tipo] = ausentismos_por_tipo_anterior.get(tipo, 0) + 1
-                ausentismos_total_anterior += 1
-        
-        # 3. ACTUALIZAR ANÁLISIS CON DATOS RECOPILADOS
-        analisis.cantidad_empleados_actual = empleados_actuales
-        analisis.cantidad_ingresos_actual = ingresos_actuales
-        analisis.cantidad_finiquitos_actual = finiquitos_actuales
-        analisis.cantidad_ausentismos_actual = ausentismos_total_actual
-        
-        analisis.cantidad_empleados_anterior = empleados_anterior
-        analisis.cantidad_ingresos_anterior = ingresos_anterior
-        analisis.cantidad_finiquitos_anterior = finiquitos_anterior
-        analisis.cantidad_ausentismos_anterior = ausentismos_total_anterior
-        
-        analisis.ausentismos_por_tipo_actual = ausentismos_por_tipo_actual
-        analisis.ausentismos_por_tipo_anterior = ausentismos_por_tipo_anterior
-        
-        analisis.save()
-        
-        logger.info(f"Datos recopilados - Empleados: {empleados_actuales}, "
-                   f"Ingresos: {ingresos_actuales}, Finiquitos: {finiquitos_actuales}, "
-                   f"Ausentismos: {ausentismos_total_actual}")
-        
-        # 4. GENERAR INCIDENCIAS DE VARIACIÓN SALARIAL
-        logger.info(f"Generando incidencias de variación salarial con tolerancia {tolerancia_variacion}%")
-        
-        # Limpiar incidencias existentes
-        IncidenciaVariacionSalarial.objects.filter(cierre=cierre).delete()
-        
-        if cierre_anterior:
-            # Obtener empleados de ambos meses
-            empleados_actual = EmpleadoCierre.objects.filter(cierre=cierre).select_related('empleado')
-            empleados_anterior = EmpleadoCierre.objects.filter(cierre=cierre_anterior).select_related('empleado')
-            
-            # Crear mapas por RUT
-            empleados_actual_map = {emp.rut: emp for emp in empleados_actual}
-            empleados_anterior_map = {emp.rut: emp for emp in empleados_anterior}
-            
-            incidencias_creadas = 0
-            
-            # Comparar empleados que existen en ambos meses
-            for rut, empleado_actual in empleados_actual_map.items():
-                if rut in empleados_anterior_map:
-                    empleado_anterior = empleados_anterior_map[rut]
-                    
-                    sueldo_actual = empleado_actual.sueldo_base or 0
-                    sueldo_anterior = empleado_anterior.sueldo_base or 0
-                    
-                    if sueldo_anterior > 0:  # Evitar división por cero
-                        variacion = ((sueldo_actual - sueldo_anterior) / sueldo_anterior) * 100
-                        
-                        if abs(variacion) > tolerancia_variacion:
-                            # Crear incidencia
-                            IncidenciaVariacionSalarial.objects.create(
-                                analisis=analisis,
-                                cierre=cierre,
-                                rut_empleado=rut,
-                                nombre_empleado=empleado_actual.nombre_completo,
-                                sueldo_base_actual=sueldo_actual,
-                                sueldo_base_anterior=sueldo_anterior,
-                                porcentaje_variacion=Decimal(str(round(variacion, 2))),
-                                tipo_variacion='aumento' if variacion > 0 else 'disminucion',
-                                estado='pendiente'
-                            )
-                            incidencias_creadas += 1
-            
-            logger.info(f"Creadas {incidencias_creadas} incidencias de variación salarial")
-        
-        # 5. FINALIZAR ANÁLISIS
-        analisis.estado = 'completado'
-        analisis.fecha_completado = timezone.now()
-        analisis.save()
-        
-        # 6. ACTUALIZAR ESTADO DEL CIERRE
-        incidencias_variacion_count = IncidenciaVariacionSalarial.objects.filter(cierre=cierre).count()
-        
-        if incidencias_variacion_count > 0:
-            # Hay incidencias de variación salarial que resolver
-            cierre.estado = 'validacion_incidencias'
-            cierre.estado_incidencias = 'en_revision'
-        else:
-            # No hay incidencias de variación salarial
-            cierre.estado = 'listo_para_entrega'
-            cierre.estado_incidencias = 'resueltas'
-        
-        cierre.save(update_fields=['estado', 'estado_incidencias'])
-        
-        logger.info(f"Análisis completado para cierre {cierre_id}. Estado: {cierre.estado}, Estado incidencias: {cierre.estado_incidencias}")
-        
-        return {
-            "cierre_id": cierre_id,
-            "analisis_id": analisis.id,
-            "empleados_actual": empleados_actuales,
-            "empleados_anterior": empleados_anterior,
-            "ingresos_actual": ingresos_actuales,
-            "finiquitos_actual": finiquitos_actuales,
-            "ausentismos_actual": ausentismos_total_actual,
-            "incidencias_variacion_creadas": incidencias_variacion_count,
-            "estado": "completado",
-            "estado_incidencias": cierre.estado_incidencias
         }
         
-    except Exception as e:
-        logger.error(f"Error en análisis de datos para cierre {cierre_id}: {e}")
+        logger.info(f"✅ LIBRO: Procesamiento completado - {len(empleados_procesados)} empleados, {total_conceptos} conceptos")
+        return resultado
         
-        # Marcar análisis como error
+    except Exception as e:
+        error_msg = f"Error procesando empleados libro para cierre {cierre_id}: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        
         try:
-            analisis = AnalisisDatosCierre.objects.get(cierre_id=cierre_id)
-            analisis.estado = 'error'
-            analisis.save()
+            cache = CacheNominaSGM()
+            cache.actualizar_estado_libro(cierre.cliente.id, cierre_id, 'error', {
+                'error': str(e),
+                'fase': 'procesamiento_empleados_libro',
+                'timestamp': datetime.now().isoformat()
+            })
         except:
             pass
-            
-        raise
+        
+        raise self.retry(exc=e, countdown=60, max_retries=3)
 
-
-# ===== TAREAS PARA SISTEMA DE DISCREPANCIAS (VERIFICACIÓN DE DATOS) =====
-
-@shared_task
-def generar_discrepancias_cierre_task(cierre_id):
+@shared_task(bind=True, name='nomina.procesar_empleados_libro')
+def procesar_empleados_libro(self, cierre_id):
     """
-    Tarea para generar discrepancias en la verificación de datos de un cierre.
-    Sistema simplificado - solo detecta y registra diferencias.
-    """
-    from .utils.GenerarDiscrepancias import generar_todas_discrepancias
-    from .models import CierreNomina
+    FASE 1: Solo procesa headers y mapeo - NO empleados (optimización de escalabilidad).
+    Los empleados se procesarán en fases posteriores según flujo del negocio.
     
-    logger.info(f"Iniciando generación de discrepancias para cierre {cierre_id}")
+    Args:
+        cierre_id: ID del cierre
+        
+    Returns:
+        Dict con resultado del procesamiento de headers
+    """
+    logger.info(f"📋 FASE 1: Procesando headers y mapeo para cierre {cierre_id} (sin empleados)")
     
     try:
         cierre = CierreNomina.objects.get(id=cierre_id)
+        cache = CacheNominaSGM()
         
-        # Cambiar estado a verificacion_datos al iniciar
-        cierre.estado = 'verificacion_datos'
-        cierre.save(update_fields=['estado'])
+        # Actualizar estado
+        cache.actualizar_estado_libro(cierre.cliente.id, cierre_id, 'procesando_headers', {
+            'progreso': 70,
+            'mensaje': 'FASE 1: Procesando mapeo de conceptos (sin empleados)...'
+        })
         
-        # Verificar que el cierre tenga los archivos necesarios procesados
-        if not _verificar_archivos_listos_para_discrepancias(cierre):
-            raise ValueError("No todos los archivos están procesados para generar discrepancias")
+        # Obtener análisis de headers
+        analisis_headers = cache.obtener_analisis_headers(cierre.cliente.id, cierre_id)
+        if not analisis_headers:
+            raise Exception("No se encontró análisis de headers en Redis")
         
-        # Eliminar discrepancias anteriores si existen
-        cierre.discrepancias.all().delete()
+        # Obtener mapeos manuales (si los hay)
+        mapeos_manuales = cache.obtener_mapeos_manuales(cierre.cliente.id, cierre_id)
         
-        # Generar nuevas discrepancias
-        resultado = generar_todas_discrepancias(cierre)
+        # Combinar todos los mapeos
+        mapeos_completos = {}
         
-        # Actualizar estado del cierre
-        if resultado['total_discrepancias'] == 0:
-            # Sin discrepancias - datos verificados
-            cierre.estado = 'verificado_sin_discrepancias'
-        else:
-            # Con discrepancias - requiere corrección
-            cierre.estado = 'con_discrepancias'
+        # 1. Mapeos automáticos (basados en ConceptoRemuneracion)
+        for header in analisis_headers.get('headers_mapeados', []):
+            concepto = MapeoConcepto.objects.filter(
+                cliente=cierre.cliente,
+                concepto_original=header,
+                activo=True
+            ).first()
+            if concepto:
+                mapeos_completos[header] = concepto.concepto_estandar
+            else:
+                # Usar el header como está si no hay mapeo específico
+                mapeos_completos[header] = header
         
-        cierre.save(update_fields=['estado'])
+        # 2. Mapeos manuales (sobrescriben automáticos si hay conflicto)
+        if mapeos_manuales:
+            mapeos_completos.update(mapeos_manuales.get('mapeos', {}))
         
-        logger.info(f"Discrepancias generadas exitosamente para cierre {cierre_id}: {resultado['total_discrepancias']} discrepancias")
-        return resultado
-        
-    except Exception as e:
-        logger.error(f"Error generando discrepancias para cierre {cierre_id}: {e}")
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-            cierre.estado = 'archivos_completos'  # Volver al estado anterior correcto
-            cierre.save(update_fields=['estado'])
-        except:
-            pass
-        raise
-
-def _verificar_archivos_listos_para_discrepancias(cierre):
-    """Verifica que los archivos necesarios estén procesados para generar discrepancias"""
-    from .models import LibroRemuneracionesUpload, MovimientosMesUpload
-    
-    # Verificar libro de remuneraciones procesado
-    libro = LibroRemuneracionesUpload.objects.filter(cierre=cierre).first()
-    if not libro or libro.estado not in ['clasificado', 'procesado']:
-        logger.warning(f"Libro de remuneraciones no procesado para cierre {cierre.id}")
-        return False
-    
-    # Verificar movimientos del mes procesados
-    movimientos = MovimientosMesUpload.objects.filter(cierre=cierre).first()
-    if not movimientos or movimientos.estado != 'procesado':
-        logger.warning(f"Movimientos del mes no procesados para cierre {cierre.id}")
-        return False
-    
-    # Verificar al menos un archivo del analista procesado
-    archivos_analista = cierre.archivos_analista.filter(estado='procesado')
-    if archivos_analista.count() == 0:
-        logger.warning(f"No hay archivos del analista procesados para cierre {cierre.id}")
-        return False
-    
-    # Archivo de novedades es opcional - si existe debe estar procesado
-    archivo_novedades = cierre.archivos_novedades.first()
-    if archivo_novedades and archivo_novedades.estado not in ['clasificado', 'procesado']:
-        logger.warning(f"Archivo de novedades no procesado para cierre {cierre.id}")
-        return False
-    
-    return True
-
-
-# ===== TAREAS PARA CONSOLIDACIÓN DE INFORMACIÓN =====
-
-@shared_task
-def consolidar_cierre_task(cierre_id, usuario_id=None):
-    """
-    🎯 TASK PARA CONSOLIDAR INFORMACIÓN DE UN CIERRE
-    
-    Ejecuta el proceso de consolidación después de resolver discrepancias.
-    """
-    from .utils.ConsolidarInformacion import consolidar_cierre_completo
-    from .models import CierreNomina
-    from django.contrib.auth import get_user_model
-    
-    User = get_user_model()
-    usuario = None
-    if usuario_id:
-        try:
-            usuario = User.objects.get(id=usuario_id)
-        except User.DoesNotExist:
-            pass
-    
-    logger.info(f"🚀 Iniciando consolidación para cierre {cierre_id}")
-    
-    try:
-        # Ejecutar consolidación
-        resultado = consolidar_cierre_completo(cierre_id, usuario)
-        
-        logger.info(f"✅ Consolidación exitosa para cierre {cierre_id}: {resultado['estadisticas']}")
-        return resultado
-        
-    except Exception as e:
-        logger.error(f"❌ Error en consolidación de cierre {cierre_id}: {e}")
-        
-        # Marcar cierre con error
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-            cierre.estado_consolidacion = 'error_consolidacion'
-            cierre.save(update_fields=['estado_consolidacion'])
-        except:
-            pass
-            
-        raise
-
-
-@shared_task
-def generar_incidencias_consolidadas_task(cierre_id):
-    """
-    Tarea para generar incidencias de un cierre consolidado
-    """
-    from .utils.DetectarIncidenciasConsolidadas import generar_incidencias_consolidadas_task as detectar_incidencias
-    
-    logger.info(f"🔍 Iniciando detección de incidencias consolidadas para cierre {cierre_id}")
-    
-    try:
-        # Ejecutar detección de incidencias
-        resultado = detectar_incidencias(cierre_id)
-        
-        if resultado['success']:
-            logger.info(f"✅ Detección exitosa para cierre {cierre_id}: {resultado['total_incidencias']} incidencias")
-        else:
-            logger.error(f"❌ Error en detección para cierre {cierre_id}: {resultado.get('error', 'Error desconocido')}")
-        
-        return resultado
-        
-    except Exception as e:
-        logger.error(f"❌ Error crítico en detección de incidencias para cierre {cierre_id}: {e}")
-        return {
-            'success': False,
-            'error': str(e)
+        # FASE 1: Solo guardar mapeos finales - NO procesar empleados
+        mapeo_final = {
+            'mapeos_automaticos': analisis_headers.get('headers_mapeados', []),
+            'mapeos_manuales': mapeos_manuales.get('mapeos', {}) if mapeos_manuales else {},
+            'mapeos_completos': mapeos_completos,
+            'total_conceptos_mapeados': len(mapeos_completos),
+            'fase_completada': 'headers_y_mapeo',
+            'timestamp': datetime.now().isoformat()
         }
+        
+        # Guardar mapeo final en Redis (estructura optimizada)
+        mapeo_guardado = cache.guardar_mapeo_final(
+            cliente_id=cierre.cliente.id,
+            cierre_id=cierre_id,
+            mapeo=mapeo_final
+        )
+        
+        if not mapeo_guardado:
+            raise Exception("Error guardando mapeo final en Redis")
+        
+        # Obtener información básica del archivo solo para estadísticas
+        datos_archivo = cache.obtener_libro_excel(cierre.cliente.id, cierre_id)
+        empleados_detectados = len(datos_archivo.get('data', [])) if datos_archivo else 0
+        
+        # Actualizar estado final - FASE 1 completa
+        cache.actualizar_estado_libro(cierre.cliente.id, cierre_id, 'fase1_completa', {
+            'progreso': 100,
+            'mensaje': 'FASE 1 completada: Headers mapeados, listo para siguientes fases',
+            'conceptos_mapeados': len(mapeos_completos),
+            'empleados_detectados': empleados_detectados,
+            'fase_completada': 'headers_y_mapeo',
+            'siguiente_fase': 'movimientos_talana',
+            'timestamp_completado': datetime.now().isoformat()
+        })
+        
+        resultado = {
+            'success': True,
+            'fase': 1,
+            'cierre_id': cierre_id,
+            'conceptos_mapeados': len(mapeos_completos),
+            'empleados_detectados': empleados_detectados,
+            'mapeos_aplicados': mapeos_completos,
+            'siguiente_fase': 'movimientos_talana',
+            'optimizacion': 'empleados_no_procesados_aun',
+            'estadisticas': {
+                'mapeos_automaticos': len(analisis_headers.get('headers_mapeados', [])),
+                'mapeos_manuales': len(mapeos_manuales.get('mapeos', {})) if mapeos_manuales else 0,
+                'total_mapeos': len(mapeos_completos)
+            }
+        }
+        
+        logger.info(f"✅ FASE 1 completada para cierre {cierre_id}: {len(mapeos_completos)} conceptos mapeados, {empleados_detectados} empleados detectados")
+        return resultado
+        
+    except Exception as e:
+        error_msg = f"Error en FASE 1 para cierre {cierre_id}: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        
+        try:
+            cache = CacheNominaSGM()
+            cache.actualizar_estado_libro(cierre.cliente.id, cierre_id, 'error', {
+                'fase': 1,
+                'error': str(e),
+                'timestamp': datetime.now().isoformat()
+            })
+        except:
+            pass
+        
+        raise self.retry(exc=e, countdown=60, max_retries=3)
+
+# ========== FUNCIONES AUXILIARES ==========
+
+def _extraer_datos_empleado(fila_data, cliente):
+    """
+    Extrae datos básicos del empleado de una fila del Excel.
+    Usa heurísticas para encontrar columnas de RUT, nombre, etc.
+    """
+    # Buscar columna de RUT
+    rut_col = None
+    for col in fila_data.keys():
+        if 'rut' in col.lower() and 'trab' in col.lower():
+            rut_col = col
+            break
+    
+    if not rut_col:
+        return None
+    
+    rut_value = fila_data.get(rut_col)
+    if not _es_rut_valido(rut_value):
+        return None
+    
+    # Buscar columnas de nombre
+    nombre_completo = ""
+    
+    # Buscar nombre
+    nombre_col = next((col for col in fila_data.keys() if 'nombre' in col.lower()), None)
+    if nombre_col:
+        nombre_completo += fila_data.get(nombre_col, "").strip()
+    
+    # Buscar apellidos
+    apellido_pat_col = next((col for col in fila_data.keys() 
+                           if 'apellido' in col.lower() and 'pater' in col.lower()), None)
+    apellido_mat_col = next((col for col in fila_data.keys() 
+                           if 'apellido' in col.lower() and 'mater' in col.lower()), None)
+    
+    if apellido_pat_col:
+        apellido_pat = fila_data.get(apellido_pat_col, "").strip()
+        if apellido_pat:
+            nombre_completo += f" {apellido_pat}"
+    
+    if apellido_mat_col:
+        apellido_mat = fila_data.get(apellido_mat_col, "").strip()
+        if apellido_mat:
+            nombre_completo += f" {apellido_mat}"
+    
+    return {
+        'rut': str(rut_value).strip(),
+        'nombre': nombre_completo.strip(),
+        'cliente_id': cliente.id
+    }
+
+def _limpiar_valor_concepto(valor):
+    """
+    Limpia y valida valores de conceptos.
+    Retorna None si el valor no es válido.
+    """
+    if pd.isna(valor) or valor == '' or str(valor).lower() == 'nan':
+        return None
+    
+    valor_str = str(valor).strip()
+    if not valor_str:
+        return None
+    
+    # Intentar convertir a numérico si es posible
+    try:
+        # Limpiar caracteres de formato
+        valor_limpio = valor_str.replace(',', '').replace('$', '').replace(' ', '')
+        if valor_limpio:
+            return float(valor_limpio)
+    except:
+        pass
+    
+    # Retornar como string si no es numérico
+    return valor_str
+
+# ========== FUNCIONES DE CLASIFICACIÓN ==========
+
+def clasificar_headers_con_mapeo_concepto_redis(headers, cliente_id, cierre_id):
+    """
+    Clasifica los headers usando mapeos precargados en Redis (más eficiente).
+    Retorna dos listas: clasificados y sin clasificar.
+    
+    NUEVA ESTRATEGIA:
+    1. Usar mapeos precargados en Redis (no consulta BD concepto x concepto)
+    2. Fallback a BD solo si no hay cache Redis
+    
+    Args:
+        headers: Lista de headers del Excel
+        cliente_id: ID del cliente
+        cierre_id: ID del cierre
+        
+    Returns:
+        Tuple: (headers_clasificados, headers_sin_clasificar)
+    """
+    from .cache_redis import CacheNominaSGM
+    
+    try:
+        cache = CacheNominaSGM()
+        
+        # 1. Intentar obtener mapeos precargados de Redis
+        key_mapeos_conocidos = f"sgm:nomina:{cliente_id}:{cierre_id}:mapeos_conocidos"
+        mapeos_conocidos = cache.redis_client.hgetall(key_mapeos_conocidos)
+        
+        # Convertir bytes a string si es necesario
+        if mapeos_conocidos:
+            mapeos_conocidos = {
+                k.decode() if isinstance(k, bytes) else k: 
+                v.decode() if isinstance(v, bytes) else v
+                for k, v in mapeos_conocidos.items()
+            }
+            logger.info(f"📋 Usando {len(mapeos_conocidos)} mapeos precargados desde Redis")
+        else:
+            # 2. Fallback: obtener desde BD si no hay cache
+            logger.info(f"⚠️ No hay mapeos precargados, consultando BD como fallback")
+            from nomina.models import MapeoConcepto
+            mapeos_bd = MapeoConcepto.objects.filter(cliente_id=cliente_id, activo=True)
+            mapeos_conocidos = {
+                mapeo.header_excel: mapeo.clasificacion_sugerida
+                for mapeo in mapeos_bd
+            }
+        
+        # 3. Clasificar headers usando mapeos
+        headers_clasificados = []
+        headers_sin_clasificar = []
+        
+        for header in headers:
+            # Normalizar para comparación
+            header_normalizado = header.strip().lower()
+            
+            # Buscar mapeo (comparación case-insensitive)
+            mapeo_encontrado = None
+            for header_conocido, clasificacion in mapeos_conocidos.items():
+                if header_conocido.strip().lower() == header_normalizado:
+                    mapeo_encontrado = clasificacion
+                    break
+            
+            if mapeo_encontrado:
+                headers_clasificados.append(header)
+                logger.debug(f"✅ {header} → {mapeo_encontrado} (automático)")
+            else:
+                headers_sin_clasificar.append(header)
+                logger.debug(f"❓ {header} → requiere mapeo manual")
+        
+        logger.info(f"🎯 Clasificación: {len(headers_clasificados)} automáticos, {len(headers_sin_clasificar)} manuales")
+        return headers_clasificados, headers_sin_clasificar
+        
+    except Exception as e:
+        logger.error(f"Error en clasificación con Redis: {e}")
+        # Fallback completo a función original
+        return clasificar_headers_con_mapeo_concepto_original(headers, cliente_id)
+
+def clasificar_headers_con_mapeo_concepto_original(headers, cliente_id):
+    """
+    Función original como fallback en caso de error con Redis.
+    """
+    try:
+        from nomina.models import MapeoConcepto
+        
+        # Obtén los conceptos vigentes del cliente, normalizados a lower y sin espacios
+        conceptos_vigentes = set(
+            c.header_excel.strip().lower()
+            for c in MapeoConcepto.objects.filter(cliente_id=cliente_id, activo=True)
+        )
+        
+        headers_clasificados = []
+        headers_sin_clasificar = []
+
+        for h in headers:
+            if h.strip().lower() in conceptos_vigentes:
+                headers_clasificados.append(h)
+            else:
+                headers_sin_clasificar.append(h)
+
+        logger.info(f"📊 Clasificación BD fallback: {len(headers_clasificados)} clasificados, {len(headers_sin_clasificar)} sin clasificar")
+        return headers_clasificados, headers_sin_clasificar
+        
+    except Exception as e:
+        logger.error(f"Error en clasificación BD fallback: {e}")
+        # En caso de error total, todos requieren mapeo manual
+        return [], headers
+
+def clasificar_headers_con_mapeo_concepto(headers, cliente):
+    """
+    Función original mantenida para compatibilidad.
+    DEPRECATED: Usar clasificar_headers_con_mapeo_concepto_redis para nuevos desarrollos.
+    """
+    # Obtén los conceptos vigentes del cliente, normalizados a lower y sin espacios
+    conceptos_vigentes = set(
+        c.concepto_original.strip().lower()
+        for c in MapeoConcepto.objects.filter(cliente=cliente, activo=True)
+    )
+    
+    headers_clasificados = []
+    headers_sin_clasificar = []
+
+    for h in headers:
+        if h.strip().lower() in conceptos_vigentes:
+            headers_clasificados.append(h)
+        else:
+            headers_sin_clasificar.append(h)
+
+    logger.info(
+        f"Clasificación automática: {len(headers_clasificados)} clasificados, {len(headers_sin_clasificar)} sin clasificar"
+    )
+    return headers_clasificados, headers_sin_clasificar
+
+# ========== HELPER TASK: EXTRAER CIERRE_ID ==========
+
+@shared_task(name='nomina.extraer_cierre_id')
+def extraer_cierre_id(resultado_anterior):
+    """
+    Tarea helper para extraer cierre_id del resultado de analizar_headers_libro.
+    
+    Args:
+        resultado_anterior: Dict resultado de analizar_headers_libro
+        
+    Returns:
+        int: cierre_id extraído
+    """
+    if isinstance(resultado_anterior, dict) and 'cierre_id' in resultado_anterior:
+        return resultado_anterior['cierre_id']
+    else:
+        # Si no es dict o no tiene cierre_id, asumir que ya es el cierre_id
+        return resultado_anterior
+
+# ========== CHAIN FACTORY ==========
+
+def crear_chain_procesamiento_libro(cierre_id, archivo_data, filename):
+    """
+    Crea el chain de procesamiento inicial de libro de remuneraciones.
+    
+    Chain: analizar_headers_libro → extraer_cierre_id
+    
+    NOTA: procesar_empleados_libro se ejecuta por separado cuando el usuario hace click en "Procesar"
+    
+    Args:
+        cierre_id: ID del cierre
+        archivo_data: Datos del archivo
+        filename: Nombre del archivo
+    
+    Returns:
+        Celery chain ready to execute
+    """
+    return chain(
+        analizar_headers_libro.s(cierre_id, archivo_data, filename),
+        extraer_cierre_id.s()  # Extrae solo cierre_id del resultado
+        # procesar_empleados_libro.s() se ejecuta por separado via endpoint /procesar/
+    )
+
+# ========== TASK DE LIMPIEZA ==========
+
+@shared_task(name='nomina.limpiar_archivos_temporales')
+def limpiar_archivos_temporales():
+    """
+    Tarea periódica para limpiar archivos temporales expirados.
+    """
+    logger.info("🧹 Iniciando limpieza de archivos temporales")
+    
+    try:
+        cache = CacheNominaSGM()
+        archivos_limpiados = cache.limpiar_archivos_expirados()
+        
+        logger.info(f"✅ Limpieza completada: {archivos_limpiados} archivos eliminados")
+        return {'archivos_limpiados': archivos_limpiados}
+        
+    except Exception as e:
+        logger.error(f"❌ Error en limpieza de archivos: {e}")
+        return {'error': str(e)}

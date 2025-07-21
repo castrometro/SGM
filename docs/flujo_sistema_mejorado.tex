@@ -1,0 +1,167 @@
+% Flujo General del Sistema - Versión Técnica Mejorada
+% Refleja la implementación real con procesamiento por fases
+
+\section{Flujo General del Sistema}
+
+El sistema SGM-Payroll implementa un flujo de procesamiento secuencial por fases, diseñado específicamente para optimizar el manejo de grandes volúmenes de datos de nómina mientras mantiene la integridad y trazabilidad del proceso.
+
+\subsection{Arquitectura del Flujo}
+
+El procesamiento se organiza en un pipeline de 5 fases secuenciales, donde cada fase tiene responsabilidades específicas y utiliza estrategias de almacenamiento optimizadas:
+
+\begin{enumerate}
+    \item \textbf{Fase 1}: Análisis de Headers y Mapeo de Conceptos
+    \item \textbf{Fase 2}: Procesamiento de Movimientos Talana  
+    \item \textbf{Fase 3}: Integración de Archivos del Analista
+    \item \textbf{Fase 4}: Mapeo y Sincronización de Novedades
+    \item \textbf{Fase 5}: Verificación de Discrepancias y Consolidación
+\end{enumerate}
+
+\subsection{Flujo Detallado por Fases}
+
+\subsubsection{Acceso y Gestión Inicial}
+
+\begin{enumerate}
+    \item \textbf{Autenticación}: Login con roles diferenciados (Analista, Supervisor, Gerente)
+    \item \textbf{Asignación Automática}: El sistema asigna analista\_responsable automáticamente durante creación de cierres
+    \item \textbf{Filtrado por Cliente}: Cada usuario ve solo los clientes y cierres asignados
+    \item \textbf{Gestión de Estados}: Los cierres transicionan por estados: pendiente → en\_proceso → completado
+\end{enumerate}
+
+\subsubsection{Fase 1: Análisis de Headers y Mapeo}
+
+\textbf{Objetivo}: Extraer conceptos del Libro de Remuneraciones y mapearlos sin procesar empleados aún.
+
+\begin{itemize}
+    \item \textbf{Input}: Libro de Remuneraciones Talana (Excel)
+    \item \textbf{Procesamiento}:
+    \begin{enumerate}
+        \item Celery Task \texttt{analizar\_headers\_libro} extrae 55 conceptos detectados
+        \item Filtrado automático de columnas de empleado (RUT, nombres, etc.)
+        \item Mapeo automático usando tabla \texttt{MapeoConcepto} del cliente
+        \item Identificación de conceptos pendientes de mapeo manual
+    \end{enumerate}
+    \item \textbf{Almacenamiento Redis}:
+    \begin{verbatim}
+    sgm:nomina:{cliente}:{cierre}:fase1_headers:analisis
+    sgm:nomina:{cliente}:{cierre}:fase1_headers:mapeo_final
+    sgm:nomina:{cliente}:{cierre}:estado:procesamiento
+    \end{verbatim}
+    \item \textbf{Optimización}: Solo 5KB de metadatos vs 365KB de datos completos (85\% reducción)
+    \item \textbf{Output}: Mapeo consolidado listo para siguientes fases
+\end{itemize}
+
+\subsubsection{Fase 2: Movimientos Talana}
+
+\textbf{Objetivo}: Procesar ausentismos, ingresos y finiquitos de empleados.
+
+\begin{itemize}
+    \item \textbf{Filtrado Inteligente}: Solo empleados que existen en Libro de Remuneraciones
+    \item \textbf{Validaciones}: Empleados fuera del scope se excluyen automáticamente
+    \item \textbf{Almacenamiento}: PostgreSQL para persistencia, cache selectivo en Redis
+    \item \textbf{Estructura Redis}:
+    \begin{verbatim}
+    sgm:nomina:{cliente}:{cierre}:fase2_movimientos:talana
+    \end{verbatim}
+\end{itemize}
+
+\subsubsection{Fase 3: Archivos del Analista}
+
+\textbf{Objetivo}: Integrar archivos del analista aplicando filtrado por empleados existentes.
+
+\begin{itemize}
+    \item \textbf{Archivos}: Finiquitos, Ingresos, Ausentismos del analista
+    \item \textbf{Validación Cruzada}: Solo empleados presentes en lista del Libro
+    \item \textbf{Scope Control}: Datos fuera del proyecto se excluyen automáticamente
+\end{itemize}
+
+\subsubsection{Fase 4: Novedades y Mapeo de Headers}
+
+\textbf{Objetivo}: Sincronizar términos entre archivos del analista y Talana.
+
+\begin{itemize}
+    \item \textbf{Mapeo de Headers}: Conceptos del analista ↔ conceptos del Libro
+    \item \textbf{Lista de Empleados}: Nueva lista de empleados + mapeo de headers
+    \item \textbf{Sincronización}: Normalización de terminología entre fuentes
+\end{itemize}
+
+\subsubsection{Fase 5: Verificación de Discrepancias}
+
+\textbf{Objetivo}: Comparar datos entre fuentes y detectar inconsistencias.
+
+\begin{itemize}
+    \item \textbf{Comparaciones Realizadas}:
+    \begin{enumerate}
+        \item Movimientos (Talana) vs Datos de Analista (ingresos, finiquitos, ausentismos)
+        \item Concepto-Valor (Libro Talana) vs Concepto-Valor (Novedades Analista)
+        \item Empleados que pueden no coincidir entre fuentes
+    \end{enumerate}
+    \item \textbf{Cache Temporal}: Solo durante comparación activa
+    \item \textbf{Cleanup Automático}: Redis se limpia post-verificación
+    \item \textbf{Persistencia}: Discrepancias finales en PostgreSQL para auditoría
+\end{itemize}
+
+\subsection{Gestión de Estados y Transiciones}
+
+El sistema implementa una máquina de estados sofisticada para tracking del progreso:
+
+\begin{verbatim}
+Estados del Cierre:
+pendiente → headers_mapeados → listo_procesar → fase1_completa 
+→ movimientos_cargados → analista_cargado → verificacion_completada
+
+Estados de Error:
+mapeo_requerido → error → reintentar
+\end{verbatim}
+
+\subsection{Optimizaciones de Performance}
+
+\subsubsection{Procesamiento Asíncrono}
+\begin{itemize}
+    \item \textbf{Celery Chains}: Tareas encadenadas con passing de resultados optimizado
+    \item \textbf{Retry Logic}: Reintentos automáticos con backoff exponencial
+    \item \textbf{Circuit Breaker}: Prevención de cascading failures
+\end{itemize}
+
+\subsubsection{Gestión de Memoria}
+\begin{itemize}
+    \item \textbf{Cache Selectivo}: Solo datos necesarios para fase activa
+    \item \textbf{TTL Diferenciado}: 1h para verificación, 24h para mapeos críticos
+    \item \textbf{Cleanup Automático}: Liberación de recursos post-proceso
+\end{itemize}
+
+\subsubsection{Escalabilidad por Fases}
+\begin{itemize}
+    \item \textbf{Filtrado Automático}: Reduce volumen de datos por fase
+    \item \textbf{Procesamiento Incremental}: Sin duplicación de datos entre fases
+    \item \textbf{Particionamiento}: Por cliente y período para distribución eficiente
+\end{itemize}
+
+\subsection{Validaciones y Control de Calidad}
+
+\subsubsection{Validaciones por Fase}
+\begin{itemize}
+    \item \textbf{Fase 1}: Formato Excel, estructura de headers, RUTs válidos
+    \item \textbf{Fase 2-4}: Empleados existentes, consistencia de fechas
+    \item \textbf{Fase 5}: Integridad referencial, rangos de valores
+\end{itemize}
+
+\subsubsection{Manejo de Errores}
+\begin{itemize}
+    \item \textbf{Rollback por Fases}: Reversión granular sin afectar fases completadas
+    \item \textbf{Logging Estructurado}: Trazabilidad completa de errores y decisiones
+    \item \textbf{Recovery State}: Recuperación desde cache en caso de fallos
+\end{itemize}
+
+\subsection{Generación de KPIs y Reporting}
+
+Una vez completadas todas las fases, el sistema calcula automáticamente:
+
+\begin{itemize}
+    \item \textbf{KPIs Operacionales}: Dotación, haberes, descuentos, aportes patronales
+    \item \textbf{Métricas de Performance}: Tiempo por fase, empleados procesados, discrepancias detectadas
+    \item \textbf{Análisis Comparativo}: Variaciones respecto al período anterior
+    \item \textbf{Dashboards Ejecutivos}: Consolidación para gerentes y supervisores
+\end{itemize}
+
+Este enfoque por fases representa una innovación metodológica específica para el procesamiento de nóminas, donde la optimización de recursos y la organización secuencial son fundamentales para manejar la complejidad inherente del dominio.

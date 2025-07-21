@@ -1,0 +1,164 @@
+% Stack Tecnológico - Tabla Detallada con Justificaciones
+% Versión actualizada con las tecnologías realmente implementadas
+
+\section{Descripción del Stack Tecnológico}
+
+\subsection{Justificación de Selección Tecnológica}
+
+La selección del stack tecnológico se basó en tres criterios principales: \textbf{escalabilidad} para manejar múltiples clientes simultáneamente, \textbf{performance} para procesar archivos de gran tamaño, y \textbf{mantenibilidad} considerando el contexto organizacional de BDO Chile.
+
+\begin{longtable}{|p{3cm}|p{3cm}|p{7cm}|}
+\hline
+\textbf{Tecnología} & \textbf{Versión} & \textbf{Justificación y Uso} \\
+\hline
+\endhead
+
+\multicolumn{3}{|c|}{\textbf{Backend y API}} \\
+\hline
+
+Django & 4.2 LTS & Framework web robusto con ORM avanzado. Seleccionado por su ecosistema maduro, autenticación integrada y capacidad de manejar lógica de negocio compleja. La versión LTS garantiza soporte a largo plazo. \\
+\hline
+
+Django REST Framework & 3.14+ & Extensión para APIs RESTful con ViewSets personalizados, serializers optimizados y filtrado automático por cliente. Permite construir APIs escalables con documentación automática. \\
+\hline
+
+Python & 3.11+ & Lenguaje principal del backend. Seleccionado por su ecosistema robusto para análisis de datos (pandas, numpy), facilidad de integración con Excel, y amplia disponibilidad de desarrolladores en BDO. \\
+\hline
+
+\multicolumn{3}{|c|}{\textbf{Procesamiento Asíncrono}} \\
+\hline
+
+Celery & 5.3+ & Sistema de cola de tareas distribuidas. Crítico para procesar archivos Excel de gran tamaño (133 empleados × 55 conceptos) sin bloquear el servidor web. Implementa chains para procesamiento por fases. \\
+\hline
+
+Redis & 7.0+ & Broker para Celery y cache estratificado. Se utiliza DB2 dedicado para nómina con estructura organizacional por fases. TTL diferenciado según criticidad de datos (1h-24h). \\
+\hline
+
+Flower & 2.0+ & Interfaz web para monitoreo de workers Celery. Esencial para debugging de tareas asíncronas y monitoreo de performance en producción. \\
+\hline
+
+\multicolumn{3}{|c|}{\textbf{Base de Datos}} \\
+\hline
+
+PostgreSQL & 15+ & Base de datos relacional principal. Seleccionado por su robustez, soporte para JSON, índices avanzados y capacidad de manejar consultas complejas por cliente y período. \\
+\hline
+
+\multicolumn{3}{|c|}{\textbf{Frontend}} \\
+\hline
+
+React & 18+ & Biblioteca para interfaces de usuario. Permite componentes reutilizables por rol (Analista, Supervisor, Gerente) y gestión de estado compleja para flujos multi-paso. \\
+\hline
+
+Vite & 4.4+ & Build tool moderno que reemplaza Create React App. Significativamente más rápido para desarrollo y optimizado para builds de producción. \\
+\hline
+
+Tailwind CSS & 3.3+ & Framework CSS utility-first. Acelera el desarrollo de interfaces consistentes y permite customización rápida sin CSS personalizado complejo. \\
+\hline
+
+Axios & 1.5+ & Cliente HTTP para comunicación con API Django. Maneja interceptors para autenticación automática y retry logic para requests fallidos. \\
+\hline
+
+\multicolumn{3}{|c|}{\textbf{Análisis y Visualización}} \\
+\hline
+
+Streamlit & 1.28+ & Framework para dashboards interactivos. Permite crear visualizaciones de KPIs sin desarrollo frontend complejo. Ideal para dashboards ejecutivos y análisis ad-hoc. \\
+\hline
+
+Pandas & 2.0+ & Librería para manipulación de datos. Crítica para procesamiento de archivos Excel, validación de RUTs, filtrado de empleados y cálculos de nómina. \\
+\hline
+
+NumPy & 1.24+ & Computación numérica de alto rendimiento. Soporte para operaciones matemáticas en cálculos de haberes, descuentos y aportes patronales. \\
+\hline
+
+Openpyxl & 3.1+ & Lectura/escritura de archivos Excel sin dependencias externas. Esencial para procesar Libros de Remuneraciones y archivos del analista. \\
+\hline
+
+\multicolumn{3}{|c|}{\textbf{Infraestructura}} \\
+\hline
+
+Docker & 24+ & Containerización de todos los servicios. Permite despliegue consistente y escalamiento horizontal. Cada servicio tiene su propio container optimizado. \\
+\hline
+
+Docker Compose & 2.20+ & Orquestación local de servicios. Define la topología completa del sistema: web, workers, base de datos, cache y monitoring. \\
+\hline
+
+Nginx & 1.25+ & Proxy reverso y servidor de archivos estáticos. Maneja SSL termination, load balancing y serve de archivos React compilados. \\
+\hline
+
+\multicolumn{3}{|c|}{\textbf{Desarrollo y Testing}} \\
+\hline
+
+pytest & 7.4+ & Framework de testing para Python. Permite tests unitarios, de integración y E2E para validar lógica de negocio crítica. \\
+\hline
+
+ESLint & 8.45+ & Linter para código JavaScript/React. Garantiza calidad de código frontend y consistencia en el equipo de desarrollo. \\
+\hline
+
+Black & 23+ & Formateador automático de código Python. Mantiene consistencia de estilo sin debates de formato en el equipo. \\
+\hline
+
+\multicolumn{3}{|c|}{\textbf{Seguridad y Monitoring}} \\
+\hline
+
+Django Cors Headers & 4.2+ & Manejo de CORS para comunicación segura entre frontend y backend. Configurado para permitir solo orígenes autorizados. \\
+\hline
+
+Python Logging & Built-in & Sistema de logs estructurado con niveles diferenciados. Logs rotan automáticamente y se almacenan por categoría (auth, processing, errors). \\
+\hline
+
+VPN + MAC Whitelist & - & Infraestructura de acceso. Servidor en Uruguay accesible solo vía VPN con direcciones MAC autorizadas. Doble capa de seguridad. \\
+\hline
+
+\multicolumn{3}{|c|}{\textbf{Herramientas de Desarrollo}} \\
+\hline
+
+Git & 2.40+ & Control de versiones distribuido. Repository en GitHub con branching strategy para desarrollo colaborativo. \\
+\hline
+
+VS Code & 1.80+ & IDE principal con extensiones para Python, React y Docker. Facilita debugging remoto y desarrollo en containers. \\
+\hline
+
+\end{longtable}
+
+\subsection{Arquitectura de Integración}
+
+El stack seleccionado permite una integración fluida entre componentes:
+
+\begin{itemize}
+    \item \textbf{Django + DRF}: Expone API REST consumida por React frontend
+    \item \textbf{Celery + Redis}: Procesamiento asíncrono con cache estratificado por fases
+    \item \textbf{PostgreSQL}: Almacenamiento persistente con Django ORM
+    \item \textbf{Streamlit}: Conecta directamente a PostgreSQL para dashboards en tiempo real
+    \item \textbf{Docker}: Unifica el deployment y permite escalamiento independiente de servicios
+\end{itemize}
+
+\subsection{Decisiones Técnicas Clave}
+
+\subsubsection{¿Por qué Redis DB2 dedicado?}
+La separación de nómina en DB2 permite:
+\begin{itemize}
+    \item Aislamiento de datos críticos de nómina
+    \item Políticas TTL específicas para el dominio
+    \item Scaling independiente del cache general
+    \item Debugging simplificado con keys organizadas por fases
+\end{itemize}
+
+\subsubsection{¿Por qué procesamiento por fases?}
+La arquitectura de 5 fases secuenciales resuelve:
+\begin{itemize}
+    \item Uso eficiente de memoria (85\% reducción vs almacenamiento completo)
+    \item Escalabilidad controlada por filtrado automático
+    \item Recovery granular en caso de fallos
+    \item Trazabilidad completa del proceso de negocio
+\end{itemize}
+
+\subsubsection{¿Por qué Vite sobre Create React App?}
+Vite ofrece ventajas significativas:
+\begin{itemize}
+    \item Hot Module Replacement instantáneo en desarrollo
+    \item Build times 10x más rápidos
+    \item Bundle size optimizado para producción
+    \item Mejor soporte para TypeScript futuro
+\end{itemize}
+
+Este stack tecnológico representa un balance óptimo entre performance, mantenibilidad y escalabilidad, específicamente diseñado para las necesidades del procesamiento de nóminas empresariales en el contexto de BDO Chile.

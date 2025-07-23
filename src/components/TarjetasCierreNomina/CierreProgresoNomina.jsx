@@ -3,6 +3,7 @@ import ArchivosTalanaSection from "./ArchivosTalanaSection";
 import ArchivosAnalistaSection from "./ArchivosAnalistaSection";
 import VerificadorDatosSection from "./VerificadorDatosSection";
 import IncidenciasEncontradasSection from "./IncidenciasEncontradasSection";
+import ResumenCierreSection from "./ResumenCierreSection";
 import ModalClasificacionHeaders from "../ModalClasificacionHeaders";
 import {
   obtenerEstadoLibroRemuneraciones,
@@ -26,6 +27,17 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
   const [libroListo, setLibroListo] = useState(false);
   const [mensajeLibro, setMensajeLibro] = useState("");
   const [modoSoloLectura, setModoSoloLectura] = useState(false);
+
+  const esEstadoPosteriorAConsolidacion = (estado) => {
+    const estadosPosteriores = [
+      'datos_consolidados', 'con_incidencias', 'incidencias_resueltas', 'validacion_final', 'finalizado'
+    ];
+    return estadosPosteriores.includes(estado);
+  };
+
+  const esEstadoFinalizado = (estado) => {
+    return estado === 'finalizado';
+  };
 
   const handleGuardarClasificaciones = async ({ guardar, eliminar }) => {
     try {
@@ -90,6 +102,12 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
       setLibroListo(false);
     }
   }, [libro, libroListo]);
+
+  // Función para ir al Dashboard
+  const handleIrDashboard = () => {
+    // Redirigir al dashboard principal
+    window.location.href = '/dashboard';
+  };
 
   const handleSubirArchivo = async (archivo) => {
     setSubiendo(true);
@@ -240,9 +258,73 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
     }
   };
 
+  const esCierreFinalizadoSoloResumen = esEstadoFinalizado(cierre.estado);
+
   return (
     <div className="space-y-10">
-      {/* Sección 1: Archivos Talana */}
+      {/* OPCIÓN 1: Solo mostrar resumen cuando está finalizado (comentar OPCIÓN 2) */}
+      {esCierreFinalizadoSoloResumen ? (
+        <ResumenCierreSection 
+          cierre={cierre} 
+          onIrDashboard={handleIrDashboard}
+        />
+      ) : (
+        <>
+          {/* Sección 1: Archivos Talana */}
+          <ArchivosTalanaSection
+            libro={libro}
+            subiendo={subiendo}
+            onSubirArchivo={handleSubirArchivo}
+            onVerClasificacion={handleVerClasificacion}
+            onProcesarLibro={handleProcesarLibro}
+            onActualizarEstado={handleActualizarEstado}
+            headersSinClasificar={headersSinClasificar}
+            mensajeLibro={mensajeLibro}
+            libroListo={libroListo}
+            movimientos={movimientos}
+            subiendoMov={subiendoMov}
+            onSubirMovimientos={handleSubirMovimientos}
+            onActualizarEstadoMovimientos={handleActualizarEstadoMovimientos}
+            onEliminarLibro={handleEliminarLibro}
+            onEliminarMovimientos={handleEliminarMovimientos}
+            disabled={esEstadoFinalizado(cierre.estado)}
+          />
+          
+          {/* Sección 2: Archivos del Analista */}
+          <ArchivosAnalistaSection
+            cierreId={cierre.id}
+            cliente={cliente}
+            disabled={esEstadoPosteriorAConsolidacion(cierre.estado) || esEstadoFinalizado(cierre.estado)}
+          />
+
+          {/* Sección 3: Verificación de Datos (Discrepancias) */}
+          <VerificadorDatosSection 
+            cierre={cierre} 
+            disabled={esEstadoPosteriorAConsolidacion(cierre.estado) || esEstadoFinalizado(cierre.estado)}
+            onCierreActualizado={(nuevoCierre) => {
+              // Callback para actualizar el cierre en el componente padre
+              console.log('🔄 Cierre actualizado desde verificador:', nuevoCierre);
+              // Aquí podrías refrescar el estado completo del cierre si fuera necesario
+            }}
+          />
+
+          {/* Sección 4: Sistema de Incidencias */}
+          <IncidenciasEncontradasSection 
+            cierre={cierre} 
+            disabled={esEstadoFinalizado(cierre.estado)}
+          />
+        </>
+      )}
+
+      {/* OPCIÓN 2: Mostrar resumen al principio con otras secciones bloqueadas (descomentar para usar) */}
+      {/*
+      {esEstadoFinalizado(cierre.estado) && (
+        <ResumenCierreSection 
+          cierre={cierre} 
+          onIrDashboard={handleIrDashboard}
+        />
+      )}
+      
       <ArchivosTalanaSection
         libro={libro}
         subiendo={subiendo}
@@ -259,20 +341,28 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
         onActualizarEstadoMovimientos={handleActualizarEstadoMovimientos}
         onEliminarLibro={handleEliminarLibro}
         onEliminarMovimientos={handleEliminarMovimientos}
+        disabled={esEstadoFinalizado(cierre.estado)}
       />
       
-      {/* Sección 2: Archivos del Analista */}
       <ArchivosAnalistaSection
         cierreId={cierre.id}
         cliente={cliente}
-        disabled={false}
+        disabled={esEstadoPosteriorAConsolidacion(cierre.estado) || esEstadoFinalizado(cierre.estado)}
       />
 
-      {/* Sección 3: Verificación de Datos (Discrepancias) */}
-      <VerificadorDatosSection cierre={cierre} />
+      <VerificadorDatosSection 
+        cierre={cierre} 
+        disabled={esEstadoPosteriorAConsolidacion(cierre.estado) || esEstadoFinalizado(cierre.estado)}
+        onCierreActualizado={(nuevoCierre) => {
+          console.log('🔄 Cierre actualizado desde verificador:', nuevoCierre);
+        }}
+      />
 
-      {/* Sección 4: Sistema de Incidencias */}
-      <IncidenciasEncontradasSection cierre={cierre} />
+      <IncidenciasEncontradasSection 
+        cierre={cierre} 
+        disabled={esEstadoFinalizado(cierre.estado)}
+      />
+      */}
 
       <ModalClasificacionHeaders
         isOpen={modalAbierto}

@@ -882,7 +882,7 @@ def generar_estado_situacion_financiera(cierre_id, usuario_id=None):
             'cliente': cierre.cliente.nombre,
             'periodo': cierre.periodo,
             'fecha_generacion': inicio.isoformat(),
-            'usuario': usuario.username if usuario else 'Sistema',
+            'usuario': usuario.correo_bdo if usuario else 'Sistema',
             'total_cuentas': len(cuentas_data),
             'set_clasificacion_usado': set_esf.nombre if set_esf else 'N/A'
         }

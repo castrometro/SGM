@@ -1,16 +1,20 @@
 import { useState, useEffect } from "react";
-import { AlertOctagon, ChevronDown, ChevronRight, Play, Loader2, CheckCircle, AlertTriangle, Filter, Users, Eye } from "lucide-react";
+import { AlertOctagon, ChevronDown, ChevronRight, Play, Loader2, CheckCircle, AlertTriangle, Filter, Users, Eye, Lock, TrendingUp } from "lucide-react";
 import IncidenciasTable from "./IncidenciasEncontradas/IncidenciasTable";
 import ModalResolucionIncidencia from "./IncidenciasEncontradas/ModalResolucionIncidencia";
+import BotonFinalizarCierre from "./IncidenciasEncontradas/BotonFinalizarCierre";
 import { 
   obtenerIncidenciasCierre, 
   obtenerResumenIncidencias, 
   generarIncidenciasCierre,
   obtenerEstadoIncidenciasCierre,
-  previewIncidenciasCierre
+  previewIncidenciasCierre,
+  finalizarCierre,
+  obtenerAnalisisCompletoTemporal,
+  limpiarIncidenciasCierre
 } from "../../api/nomina";
 
-const IncidenciasEncontradasSection = ({ cierre }) => {
+const IncidenciasEncontradasSection = ({ cierre, disabled = false }) => {
   const [expandido, setExpandido] = useState(true);
   const [incidencias, setIncidencias] = useState([]);
   const [resumen, setResumen] = useState(null);
@@ -23,44 +27,115 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
   const [estadoIncidencias, setEstadoIncidencias] = useState(null);
   const [vistaPrevia, setVistaPrevia] = useState(null);
   const [mostrandoPreview, setMostrandoPreview] = useState(false);
+  const [finalizandoCierre, setFinalizandoCierre] = useState(false);
+  const [analisisCompleto, setAnalisisCompleto] = useState(null);
+  const [mostrandoAnalisisCompleto, setMostrandoAnalisisCompleto] = useState(false);
+  const [cargandoAnalisis, setCargandoAnalisis] = useState(false);
 
+  // Cargar estado de incidencias automáticamente al montar el componente
   useEffect(() => {
     if (cierre?.id) {
       cargarEstadoIncidencias();
-      if (estadoIncidencias?.tiene_incidencias) {
-        cargarDatos();
-      }
     }
   }, [cierre?.id]);
+
+  // Cargar datos de incidencias cuando se detecta que existen
+  useEffect(() => {
+    console.log("🔍 [useEffect] Estado de incidencias cambió:", estadoIncidencias);
+    console.log("🔍 [useEffect] Total incidencias del estado:", estadoIncidencias?.total_incidencias);
+    
+    if (estadoIncidencias?.total_incidencias > 0) {
+      console.log("🔍 [useEffect] Detectadas incidencias, llamando cargarDatos()");
+      cargarDatos();
+    } else {
+      console.log("🔍 [useEffect] No hay incidencias para cargar");
+    }
+  }, [estadoIncidencias?.total_incidencias]);
 
   const cargarEstadoIncidencias = async () => {
     if (!cierre?.id) return;
     
+    console.log("🔍 [cargarEstadoIncidencias] Iniciando carga para cierre:", cierre.id);
+    
     try {
       const estado = await obtenerEstadoIncidenciasCierre(cierre.id);
+      console.log("🔍 [cargarEstadoIncidencias] Estado de incidencias recibido:", estado);
+      console.log("🔍 [cargarEstadoIncidencias] Datos del cierre:", cierre);
       setEstadoIncidencias(estado);
+      
+      // También actualizar el prop cierre con el estado administrativo
+      if (estado.estado_cierre && cierre) {
+        cierre.estado_incidencias = estado.estado_cierre;
+      }
     } catch (err) {
-      console.error("Error cargando estado de incidencias:", err);
+      console.error("❌ [cargarEstadoIncidencias] Error cargando estado de incidencias:", err);
     }
   };
 
   const cargarDatos = async () => {
     if (!cierre?.id) return;
     
+    console.log("🔍 [cargarDatos] Iniciando carga de datos para cierre:", cierre.id);
+    
     setCargando(true);
     setError("");
     
     try {
+      console.log("🔍 [cargarDatos] Llamando APIs con filtros:", filtros);
+      
       const [incidenciasData, resumenData] = await Promise.all([
         obtenerIncidenciasCierre(cierre.id, filtros),
         obtenerResumenIncidencias(cierre.id)
       ]);
       
-      setIncidencias(Array.isArray(incidenciasData.results) ? incidenciasData.results : incidenciasData);
+      console.log("🔍 [cargarDatos] Datos de incidencias recibidos:", incidenciasData);
+      console.log("🔍 [cargarDatos] Resumen recibido:", resumenData);
+      
+      const incidenciasArray = Array.isArray(incidenciasData.results) ? incidenciasData.results : incidenciasData;
+      console.log("🔍 [cargarDatos] Incidencias procesadas:", incidenciasArray);
+      console.log("🔍 [cargarDatos] Total de incidencias:", incidenciasArray?.length || 0);
+      
+      setIncidencias(incidenciasArray);
       setResumen(resumenData);
     } catch (err) {
-      console.error("Error cargando datos de incidencias:", err);
+      console.error("❌ [cargarDatos] Error cargando datos de incidencias:", err);
       setError("Error al cargar incidencias");
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  const manejarLimpiarIncidencias = async () => {
+    if (!cierre?.id) return;
+    
+    if (!window.confirm('⚠️ ¿Estás seguro de limpiar TODAS las incidencias? Esta acción no se puede deshacer.')) {
+      return;
+    }
+    
+    setCargando(true);
+    setError("");
+    
+    try {
+      console.log("🗑️ Limpiando incidencias...");
+      const resultado = await limpiarIncidenciasCierre(cierre.id);
+      console.log("✅ Resultado limpieza:", resultado);
+      
+      // Limpiar estados y recargar
+      setIncidencias([]);
+      setResumen(null);
+      setEstadoIncidencias(null);
+      
+      setTimeout(async () => {
+        await cargarEstadoIncidencias();
+        console.log("🔄 Estados recargados después de limpiar");
+      }, 1000);
+      
+      alert(`✅ ${resultado.incidencias_borradas} incidencias limpiadas exitosamente`);
+      
+    } catch (err) {
+      console.error("Error limpiando incidencias:", err);
+      setError("Error al limpiar incidencias");
+      alert("❌ Error al limpiar incidencias");
     } finally {
       setCargando(false);
     }
@@ -73,12 +148,30 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
     setError("");
     
     try {
+      console.log("🔄 Iniciando generación de incidencias temporales...");
       await generarIncidenciasCierre(cierre.id);
-      // Esperar un momento para que se procese la tarea
-      setTimeout(() => {
-        cargarEstadoIncidencias();
-        cargarDatos();
-      }, 2000);
+      
+      console.log("✅ Incidencias generadas, limpiando cache y recargando datos...");
+      
+      // Limpiar estados para forzar recarga completa
+      setIncidencias([]);
+      setResumen(null);
+      setEstadoIncidencias(null);
+      
+      // Recargar estados inmediatamente y después con delay
+      setTimeout(async () => {
+        await cargarEstadoIncidencias();
+        await cargarDatos();
+        console.log("🔄 Primera recarga completada");
+      }, 1000);
+      
+      // Segunda recarga para asegurar sincronización
+      setTimeout(async () => {
+        await cargarEstadoIncidencias();
+        await cargarDatos();
+        console.log("🔄 Segunda recarga completada");
+      }, 3000);
+      
     } catch (err) {
       console.error("Error generando incidencias:", err);
       setError("Error al generar incidencias");
@@ -105,6 +198,24 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
     }
   };
 
+  const manejarAnalisisCompleto = async () => {
+    if (!cierre?.id) return;
+    
+    setCargandoAnalisis(true);
+    setError("");
+    
+    try {
+      const response = await obtenerAnalisisCompletoTemporal(cierre.id);
+      setAnalisisCompleto(response.analisis);
+      setMostrandoAnalisisCompleto(true);
+    } catch (err) {
+      console.error("Error generando análisis completo:", err);
+      setError("Error al generar análisis completo temporal");
+    } finally {
+      setCargandoAnalisis(false);
+    }
+  };
+
   const manejarFiltroChange = (nuevosFiltros) => {
     setFiltros({ ...filtros, ...nuevosFiltros });
   };
@@ -119,40 +230,99 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
     cargarEstadoIncidencias();
   };
 
+  const manejarFinalizarCierre = async () => {
+    if (!cierre?.id) return;
+    
+    // Confirmación del usuario
+    if (!window.confirm('¿Está seguro de que desea finalizar este cierre? Este proceso generará los reportes finales y no se podrá revertir.')) {
+      return;
+    }
+    
+    setFinalizandoCierre(true);
+    setError("");
+    
+    try {
+      const resultado = await finalizarCierre(cierre.id);
+      
+      if (resultado.success) {
+        alert(`🎉 ${resultado.message}\n\n` + 
+              `El cierre ha sido finalizado exitosamente.\n` +
+              `Estado: ${resultado.estado_final || 'Finalizado'}\n` +
+              `Empleados consolidados: ${resultado.resumen?.empleados_consolidados || 'N/A'}`);
+        
+        // Recargar la página para mostrar el nuevo estado
+        window.location.reload();
+      } else {
+        setError(resultado.message || 'Error al finalizar cierre');
+        alert(`Error: ${resultado.message || 'Error al finalizar cierre'}`);
+      }
+    } catch (err) {
+      console.error("Error finalizando cierre:", err);
+      const errorMsg = err.response?.data?.message || err.message || 'Error al finalizar cierre';
+      setError(errorMsg);
+      alert(`Error: ${errorMsg}`);
+    } finally {
+      setFinalizandoCierre(false);
+    }
+  };
+
   const obtenerColorEstado = (estado) => {
     switch (estado) {
+      case 'pendiente': return 'text-gray-400';
+      case 'detectadas': return 'text-yellow-400';
+      case 'en_revision': return 'text-blue-400';
+      case 'resueltas': return 'text-green-400';
+      // Estados legacy para compatibilidad
       case 'sin_incidencias': return 'text-green-400';
       case 'con_incidencias_pendientes': return 'text-yellow-400';
-      case 'incidencias_resueltas': return 'text-blue-400';
+      case 'incidencias_resueltas': return 'text-green-400';
       case 'todas_aprobadas': return 'text-green-400';
       default: return 'text-gray-400';
     }
   };
 
   const puedeGenerarIncidencias = () => {
-    return cierre?.estado === 'datos_consolidados' || cierre?.estado === 'con_incidencias' || cierre?.estado === 'sin_incidencias';
+    return cierre?.estado === 'datos_consolidados' || 
+           cierre?.estado === 'con_incidencias' || 
+           cierre?.estado === 'sin_incidencias' ||
+           cierre?.estado === 'incidencias_resueltas' ||
+           cierre?.estado === 'finalizado';
   };
 
   return (
     <section className="space-y-6">
       <div
-        className="flex items-center justify-between cursor-pointer hover:bg-gray-800/50 p-3 -m-3 rounded-lg transition-colors"
+        className={`flex items-center justify-between cursor-pointer hover:bg-gray-800/50 p-3 -m-3 rounded-lg transition-colors ${
+          disabled ? 'opacity-60' : ''
+        }`}
         onClick={() => setExpandido(!expandido)}
       >
         <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 bg-red-600 rounded-lg">
-            <AlertOctagon size={20} className="text-white" />
+          <div className={`flex items-center justify-center w-10 h-10 rounded-lg ${
+            disabled ? 'bg-gray-600' : 'bg-red-600'
+          }`}>
+            {disabled ? (
+              <Lock size={20} className="text-white" />
+            ) : (
+              <AlertOctagon size={20} className="text-white" />
+            )}
           </div>
           <div>
             <h2 className="text-xl font-semibold text-white">
               Sistema de Incidencias
+              {disabled && <span className="text-gray-400 text-sm ml-2">(Bloqueado - Cierre Finalizado)</span>}
             </h2>
             <div className="flex items-center gap-2 text-sm">
               <p className="text-gray-400">
                 Detección automática de inconsistencias respecto al cierre anterior
               </p>
-              {estadoIncidencias && (
-                <span className={`${obtenerColorEstado(estadoIncidencias.estado_incidencias)} font-medium`}>
+              {cierre?.estado_incidencias && (
+                <span className={`${obtenerColorEstado(cierre.estado_incidencias)} font-medium`}>
+                  • Estado: {cierre.estado_incidencias}
+                </span>
+              )}
+              {estadoIncidencias?.total_incidencias && (
+                <span className="text-gray-300">
                   • {estadoIncidencias.total_incidencias || 0} incidencias
                 </span>
               )}
@@ -179,7 +349,7 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
         </div>
       </div>
 
-      {expandido && (
+      {expandido && !disabled && (
         <div className="space-y-6">
           {/* Verificación de datos - Diseño simplificado */}
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
@@ -189,42 +359,39 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
                 {/* Estado de verificación */}
                 <div className="text-center">
                   <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-2 ${
-                    estadoIncidencias?.tiene_incidencias 
-                      ? (estadoIncidencias.incidencias_pendientes > 0 ? 'bg-red-500/20 border-2 border-red-500' : 'bg-green-500/20 border-2 border-green-500')
-                      : 'bg-gray-500/20 border-2 border-gray-500'
+                    cierre?.estado_incidencias === 'resueltas' ? 'bg-green-500/20 border-2 border-green-500' :
+                    cierre?.estado_incidencias === 'detectadas' || cierre?.estado_incidencias === 'en_revision' ? 'bg-yellow-500/20 border-2 border-yellow-500' :
+                    'bg-gray-500/20 border-2 border-gray-500'
                   }`}>
                     <AlertOctagon size={24} className={
-                      estadoIncidencias?.tiene_incidencias 
-                        ? (estadoIncidencias.incidencias_pendientes > 0 ? 'text-red-400' : 'text-green-400')
-                        : 'text-gray-400'
+                      cierre?.estado_incidencias === 'resueltas' ? 'text-green-400' :
+                      cierre?.estado_incidencias === 'detectadas' || cierre?.estado_incidencias === 'en_revision' ? 'text-yellow-400' :
+                      'text-gray-400'
                     } />
                   </div>
                   <p className="text-sm text-gray-400">Estado</p>
-                  <p className={`text-sm font-medium ${
-                    estadoIncidencias?.tiene_incidencias 
-                      ? (estadoIncidencias.incidencias_pendientes > 0 ? 'text-red-400' : 'text-green-400')
-                      : 'text-gray-400'
-                  }`}>
-                    {estadoIncidencias?.tiene_incidencias 
-                      ? (estadoIncidencias.incidencias_pendientes > 0 ? 'Con Incidencias' : 'Resueltas')
-                      : 'Pendiente'
+                  <p className={`text-sm font-medium ${obtenerColorEstado(cierre?.estado_incidencias || 'pendiente')}`}>
+                    {cierre?.estado_incidencias ? 
+                      cierre.estado_incidencias.charAt(0).toUpperCase() + cierre.estado_incidencias.slice(1).replace('_', ' ') : 
+                      'Pendiente'
                     }
                   </p>
                 </div>
 
                 {/* Contadores */}
-                {estadoIncidencias?.tiene_incidencias && (
+                {estadoIncidencias?.total_incidencias && estadoIncidencias.total_incidencias > 0 && (
                   <>
                     <div className="text-center">
                       <div className="text-2xl font-bold text-red-400">
-                        {estadoIncidencias.incidencias_pendientes || 0}
+                        {estadoIncidencias.estados?.pendiente || 0}
                       </div>
                       <p className="text-sm text-gray-400">Pendientes</p>
                     </div>
                     
                     <div className="text-center">
                       <div className="text-2xl font-bold text-green-400">
-                        {estadoIncidencias.incidencias_resueltas || 0}
+                        {(estadoIncidencias.estados?.aprobada || 0) + 
+                         (estadoIncidencias.estados?.en_revision || 0)}
                       </div>
                       <p className="text-sm text-gray-400">Resueltas</p>
                     </div>
@@ -239,8 +406,36 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
                 )}
               </div>
 
-              {/* Lado derecho - Botón de acción */}
+              {/* Lado derecho - Botones de acción */}
               <div className="flex gap-3">
+                {/* Botón de Debug - Limpiar Incidencias */}
+                <button
+                  onClick={manejarLimpiarIncidencias}
+                  disabled={cargando}
+                  className="flex items-center px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium text-sm"
+                  title="Debug: Limpiar todas las incidencias"
+                >
+                  🗑️ Limpiar
+                </button>
+
+                <button
+                  onClick={manejarAnalisisCompleto}
+                  disabled={cargandoAnalisis || !puedeGenerarIncidencias()}
+                  className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                >
+                  {cargandoAnalisis ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Analizando...
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="w-4 h-4 mr-2" />
+                      Ver Análisis Completo
+                    </>
+                  )}
+                </button>
+
                 <button
                   onClick={manejarGenerarIncidencias}
                   disabled={generando || !puedeGenerarIncidencias()}
@@ -258,6 +453,27 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
                     </>
                   )}
                 </button>
+
+                {/* Botón Finalizar Cierre - Solo cuando estado es incidencias_resueltas */}
+                {cierre?.estado === 'incidencias_resueltas' && (
+                  <button
+                    onClick={manejarFinalizarCierre}
+                    disabled={finalizandoCierre}
+                    className="flex items-center px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                  >
+                    {finalizandoCierre ? (
+                      <>
+                        <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                        Finalizando cierre...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="w-5 h-5 mr-2" />
+                        Finalizar Cierre
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -267,7 +483,7 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
                 <div className="flex items-center gap-2 text-yellow-400 text-sm">
                   <AlertTriangle className="w-4 h-4" />
                   <span>
-                    El cierre debe estar en estado "Datos Consolidados" para generar incidencias
+                    El cierre debe estar en estado "Datos Consolidados" o posteriores para generar incidencias
                   </span>
                 </div>
               </div>
@@ -303,6 +519,339 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
               <p className="text-sm text-yellow-300">
                 {vistaPrevia.mensaje}
               </p>
+            </div>
+          )}
+
+          {/* Análisis Completo Temporal */}
+          {mostrandoAnalisisCompleto && analisisCompleto && (
+            <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-medium text-blue-400">
+                  📊 Análisis Completo: Comparación Temporal
+                </h3>
+                <button
+                  onClick={() => setMostrandoAnalisisCompleto(false)}
+                  className="text-gray-400 hover:text-white text-xl"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                {/* Información del período */}
+                <div className="bg-gray-800 rounded-lg p-4">
+                  <h4 className="text-lg font-medium text-white mb-2">Períodos Comparados</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <p className="text-sm text-gray-400">Cliente</p>
+                      <p className="text-white font-medium">{analisisCompleto.cliente}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-400">Período Actual</p>
+                      <p className="text-blue-400 font-medium">{analisisCompleto.periodo_actual}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-400">Período Anterior</p>
+                      <p className="text-gray-300 font-medium">{analisisCompleto.periodo_anterior}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Resumen estadístico */}
+                {analisisCompleto.resumen && (
+                  <div className="bg-gray-800 rounded-lg p-4">
+                    <h4 className="text-lg font-medium text-white mb-3">Resumen General</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-white">
+                          {analisisCompleto.resumen.total_comparaciones}
+                        </div>
+                        <p className="text-sm text-gray-400">Total Comparaciones</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-red-400">
+                          {analisisCompleto.resumen.total_incidencias}
+                        </div>
+                        <p className="text-sm text-gray-400">Incidencias Detectadas</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-green-400">
+                          {analisisCompleto.resumen.total_validaciones_ok}
+                        </div>
+                        <p className="text-sm text-gray-400">Validaciones OK</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-blue-400">
+                          {analisisCompleto.resumen.porcentaje_cumplimiento}%
+                        </div>
+                        <p className="text-sm text-gray-400">% Cumplimiento</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* REGLA 1: Variaciones de Conceptos */}
+                {analisisCompleto.variaciones_conceptos && (
+                  <div className="bg-gray-800 rounded-lg p-4">
+                    <h4 className="text-lg font-medium text-white mb-3">
+                      📈 Regla 1: Variaciones de Conceptos (Todas)
+                    </h4>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+                      <div className="text-center">
+                        <div className="text-xl font-bold text-white">
+                          {analisisCompleto.variaciones_conceptos.total_comparaciones}
+                        </div>
+                        <p className="text-xs text-gray-400">Total</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-xl font-bold text-red-400">
+                          {analisisCompleto.variaciones_conceptos.incidencias_detectadas}
+                        </div>
+                        <p className="text-xs text-gray-400">Incidencias (≥30%)</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-xl font-bold text-yellow-400">
+                          {analisisCompleto.variaciones_conceptos.variaciones_menores}
+                        </div>
+                        <p className="text-xs text-gray-400">Var. Menores (&lt;30%)</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-xl font-bold text-green-400">
+                          {analisisCompleto.variaciones_conceptos.sin_cambios}
+                        </div>
+                        <p className="text-xs text-gray-400">Sin Cambios</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-xl font-bold text-blue-400">
+                          {analisisCompleto.variaciones_conceptos.con_variacion}
+                        </div>
+                        <p className="text-xs text-gray-400">Con Variación</p>
+                      </div>
+                    </div>
+
+                    {/* Tabla de variaciones más importantes */}
+                    {analisisCompleto.variaciones_conceptos.detalle && 
+                     analisisCompleto.variaciones_conceptos.detalle.length > 0 && (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-gray-700">
+                              <th className="text-left p-2 text-gray-400">Empleado</th>
+                              <th className="text-left p-2 text-gray-400">Concepto</th>
+                              <th className="text-right p-2 text-gray-400">Actual</th>
+                              <th className="text-right p-2 text-gray-400">Anterior</th>
+                              <th className="text-right p-2 text-gray-400">Variación %</th>
+                              <th className="text-center p-2 text-gray-400">Estado</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {analisisCompleto.variaciones_conceptos.detalle.slice(0, 10).map((item, index) => (
+                              <tr key={index} className="border-b border-gray-700/50">
+                                <td className="p-2 text-white">
+                                  <div>
+                                    <p className="font-medium">{item.nombre_empleado}</p>
+                                    <p className="text-xs text-gray-400">{item.rut_empleado}</p>
+                                  </div>
+                                </td>
+                                <td className="p-2 text-gray-300">{item.concepto}</td>
+                                <td className="p-2 text-right text-white">
+                                  ${item.monto_actual.toLocaleString('es-CL')}
+                                </td>
+                                <td className="p-2 text-right text-gray-300">
+                                  ${item.monto_anterior.toLocaleString('es-CL')}
+                                </td>
+                                <td className={`p-2 text-right font-medium ${
+                                  item.es_incidencia ? 'text-red-400' : 
+                                  Math.abs(item.variacion_pct) > 0.01 ? 'text-yellow-400' : 'text-green-400'
+                                }`}>
+                                  {item.variacion_pct.toFixed(1)}%
+                                </td>
+                                <td className="p-2 text-center">
+                                  <span className={`px-2 py-1 rounded text-xs ${
+                                    item.es_incidencia ? 'bg-red-900 text-red-200' :
+                                    Math.abs(item.variacion_pct) > 0.01 ? 'bg-yellow-900 text-yellow-200' :
+                                    'bg-green-900 text-green-200'
+                                  }`}>
+                                    {item.estado}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {analisisCompleto.variaciones_conceptos.detalle.length > 10 && (
+                          <p className="text-center text-gray-400 text-sm mt-2">
+                            ... y {analisisCompleto.variaciones_conceptos.detalle.length - 10} más
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* REGLA 3: Ingresos del Mes Anterior */}
+                {analisisCompleto.ingresos_mes_anterior && (
+                  <div className="bg-gray-800 rounded-lg p-4">
+                    <h4 className="text-lg font-medium text-white mb-3">
+                      👤 Regla 3: Ingresos del Mes Anterior
+                    </h4>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                      <div className="text-center">
+                        <div className="text-xl font-bold text-white">
+                          {analisisCompleto.ingresos_mes_anterior.total_ingresos_anteriores}
+                        </div>
+                        <p className="text-xs text-gray-400">Total Ingresos</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-xl font-bold text-green-400">
+                          {analisisCompleto.ingresos_mes_anterior.estan_presentes}
+                        </div>
+                        <p className="text-xs text-gray-400">Presentes</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-xl font-bold text-red-400">
+                          {analisisCompleto.ingresos_mes_anterior.no_estan_presentes}
+                        </div>
+                        <p className="text-xs text-gray-400">Ausentes</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-xl font-bold text-red-400">
+                          {analisisCompleto.ingresos_mes_anterior.incidencias_detectadas}
+                        </div>
+                        <p className="text-xs text-gray-400">Incidencias</p>
+                      </div>
+                    </div>
+
+                    {/* Lista de ingresos */}
+                    {analisisCompleto.ingresos_mes_anterior.detalle && 
+                     analisisCompleto.ingresos_mes_anterior.detalle.length > 0 && (
+                      <div className="space-y-2">
+                        {analisisCompleto.ingresos_mes_anterior.detalle.map((item, index) => (
+                          <div key={index} className={`p-3 rounded-lg ${
+                            item.es_incidencia ? 'bg-red-900/20 border border-red-500/30' : 
+                            'bg-green-900/20 border border-green-500/30'
+                          }`}>
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="font-medium text-white">{item.nombre_empleado}</p>
+                                <p className="text-sm text-gray-400">{item.rut_empleado}</p>
+                                <p className="text-xs text-gray-500">
+                                  Ingreso detectado: {item.ingreso_detectado_en}
+                                </p>
+                              </div>
+                              <span className={`px-3 py-1 rounded text-sm ${
+                                item.es_incidencia ? 'bg-red-700 text-red-200' : 'bg-green-700 text-green-200'
+                              }`}>
+                                {item.estado}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* REGLA 4: Finiquitos del Mes Anterior */}
+                {analisisCompleto.finiquitos_mes_anterior && (
+                  <div className="bg-gray-800 rounded-lg p-4">
+                    <h4 className="text-lg font-medium text-white mb-3">
+                      🚪 Regla 4: Finiquitos del Mes Anterior
+                    </h4>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                      <div className="text-center">
+                        <div className="text-xl font-bold text-white">
+                          {analisisCompleto.finiquitos_mes_anterior.total_finiquitos_anteriores}
+                        </div>
+                        <p className="text-xs text-gray-400">Total Finiquitos</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-xl font-bold text-green-400">
+                          {analisisCompleto.finiquitos_mes_anterior.correctamente_ausentes}
+                        </div>
+                        <p className="text-xs text-gray-400">Correctamente Ausentes</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-xl font-bold text-red-400">
+                          {analisisCompleto.finiquitos_mes_anterior.aun_presentes}
+                        </div>
+                        <p className="text-xs text-gray-400">Aún Presentes</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-xl font-bold text-red-400">
+                          {analisisCompleto.finiquitos_mes_anterior.incidencias_detectadas}
+                        </div>
+                        <p className="text-xs text-gray-400">Incidencias</p>
+                      </div>
+                    </div>
+
+                    {/* Lista de finiquitos */}
+                    {analisisCompleto.finiquitos_mes_anterior.detalle && 
+                     analisisCompleto.finiquitos_mes_anterior.detalle.length > 0 && (
+                      <div className="space-y-2">
+                        {analisisCompleto.finiquitos_mes_anterior.detalle.map((item, index) => (
+                          <div key={index} className={`p-3 rounded-lg ${
+                            item.es_incidencia ? 'bg-red-900/20 border border-red-500/30' : 
+                            'bg-green-900/20 border border-green-500/30'
+                          }`}>
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="font-medium text-white">{item.nombre_empleado}</p>
+                                <p className="text-sm text-gray-400">{item.rut_empleado}</p>
+                                <p className="text-xs text-gray-500">
+                                  Finiquito detectado: {item.finiquito_detectado_en}
+                                </p>
+                              </div>
+                              <span className={`px-3 py-1 rounded text-sm ${
+                                item.es_incidencia ? 'bg-red-700 text-red-200' : 'bg-green-700 text-green-200'
+                              }`}>
+                                {item.estado}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Mensaje si no hay período anterior */}
+                {!analisisCompleto.tiene_periodo_anterior && (
+                  <div className="bg-yellow-900/20 border border-yellow-500/30 rounded-lg p-4">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="w-5 h-5 text-yellow-400 mt-0.5" />
+                      <div>
+                        <p className="text-yellow-300 font-medium mb-2">Sin Período Anterior para Comparación</p>
+                        <p className="text-yellow-200 text-sm mb-3">{analisisCompleto.mensaje}</p>
+                        
+                        {/* Información adicional si se encontró un período pero no es válido */}
+                        {analisisCompleto.periodo_anterior_encontrado && (
+                          <div className="bg-yellow-800/30 rounded p-3 text-sm">
+                            <p className="text-yellow-100">
+                              <strong>Período encontrado:</strong> {analisisCompleto.periodo_anterior_encontrado}
+                            </p>
+                            <p className="text-yellow-100">
+                              <strong>Estado actual:</strong> {analisisCompleto.estado_periodo_anterior}
+                            </p>
+                            <p className="text-yellow-200 mt-2">
+                              💡 <strong>Solución:</strong> Para realizar el análisis temporal, el período anterior debe estar
+                              <code className="bg-yellow-700/50 px-1 rounded ml-1">finalizado</code>.
+                              Este es un comparativo directo solo con cierres anteriores finalizados.
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Botón para mostrar información del período actual */}
+                        <div className="mt-4">
+                          <p className="text-yellow-200 text-sm">
+                            📊 <strong>Alternativa:</strong> Puedes generar incidencias normalmente para revisar la consistencia interna de los datos del período actual.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -386,7 +935,7 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
           )}
 
           {/* Filtros */}
-          {estadoIncidencias?.tiene_incidencias && (
+          {estadoIncidencias?.total_incidencias > 0 && (
             <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
               <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex items-center gap-2">
@@ -465,7 +1014,7 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
           )}
 
           {/* Tabla de incidencias */}
-          {estadoIncidencias?.tiene_incidencias ? (
+          {estadoIncidencias?.total_incidencias > 0 ? (
             <div className="bg-gray-800 rounded-lg border border-gray-700">
               <div className="p-4 border-b border-gray-700">
                 <div className="flex items-center justify-between">
@@ -494,6 +1043,26 @@ const IncidenciasEncontradasSection = ({ cierre }) => {
               </p>
             </div>
           )}
+
+          {/* Botón de Finalización cuando hay 0 incidencias o todas están resueltas */}
+          {estadoIncidencias && (
+            <div className="mt-6">
+              <BotonFinalizarCierre 
+                cierre={{
+                  ...cierre,
+                  estado_incidencias: estadoIncidencias.estado_cierre || cierre?.estado_incidencias,
+                  total_incidencias: estadoIncidencias.total_incidencias || 0
+                }}
+                onCierreFinalizado={(resultado) => {
+                  // Actualizar estado local o recargar página
+                  console.log('Cierre finalizado:', resultado);
+                  // Opcional: Recargar la página o navegar a otra vista
+                  window.location.reload();
+                }}
+              />
+            </div>
+          )}
+
         </div>
       )}
 

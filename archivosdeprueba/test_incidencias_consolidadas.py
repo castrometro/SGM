@@ -1,235 +1,396 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
-Script de prueba para el sistema de incidencias consolidadas
-
-Ejecutar desde docker:
-docker compose exec django python /root/SGM/test_incidencias_consolidadas.py
+Test script para probar el nuevo sistema de incidencias consolidadas
 """
 
 import os
 import sys
 import django
-from datetime import datetime, date
+from decimal import Decimal
+from datetime import date, datetime
+
+# Agregar el directorio raíz del proyecto al path
+sys.path.insert(0, '/root/SGM/backend')
 
 # Configurar Django
-sys.path.append('/root/SGM/backend')
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'sgm_backend.settings')
 django.setup()
 
-# Imports después de setup de Django
-from contabilidad.models import CuentaContable, TipoDocumento, MovimientoContable
-from contabilidad.models_incidencias import IncidenciaResumen, HistorialReprocesamiento, LogResolucionIncidencia
-from contabilidad.utils.parser_libro_mayor_consolidado import analizar_incidencias_consolidadas, crear_incidencias_consolidadas
+from nomina.models import (
+    CierreNomina, 
+    NominaConsolidada, 
+    ConceptoConsolidado, 
+    MovimientoPersonal,
+    IncidenciaCierre,
+    TipoIncidencia
+)
+from nomina.utils.DetectarIncidenciasConsolidadas import detectar_incidencias_consolidadas
 from api.models import Cliente
-from contabilidad.models import CierreContabilidad, UploadLog
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
-def verificar_sistema():
-    """Verifica que el sistema esté funcionando correctamente"""
-    print("🔍 VERIFICANDO SISTEMA DE INCIDENCIAS CONSOLIDADAS")
-    print("=" * 60)
+def crear_datos_prueba():
+    """
+    Crea datos de prueba para el sistema de incidencias consolidadas
+    """
+    print("📊 Creando datos de prueba...")
     
-    # 1. Verificar que los modelos existen
-    print("\n1. ✅ Verificando modelos...")
-    try:
-        total_incidencias = IncidenciaResumen.objects.count()
-        print(f"   📊 Incidencias en BD: {total_incidencias}")
-        
-        # Mostrar distribución por estado
-        for estado in ['activa', 'resuelta', 'obsoleta']:
-            count = IncidenciaResumen.objects.filter(estado=estado).count()
-            if count > 0:
-                print(f"      - {estado.title()}: {count}")
-    except Exception as e:
-        print(f"   ❌ Error con modelos: {e}")
-        return False
+    # 1. Crear cliente de prueba
+    cliente, _ = Cliente.objects.get_or_create(
+        nombre="Empresa Test Incidencias",
+        defaults={'estado': 'activo'}
+    )
     
-    # 2. Verificar que hay datos de prueba
-    print("\n2. 📋 Verificando datos existentes...")
-    clientes = Cliente.objects.count()
-    cierres = CierreContabilidad.objects.count()
-    upload_logs = UploadLog.objects.count()
-    
-    print(f"   - Clientes: {clientes}")
-    print(f"   - Cierres: {cierres}")
-    print(f"   - Upload Logs: {upload_logs}")
-    
-    if clientes == 0:
-        print("   ⚠️  No hay clientes. Creando datos básicos...")
-        crear_datos_basicos()
-    
-    # 3. Probar creación de incidencia
-    print("\n3. 🧪 Probando creación de incidencia...")
-    try:
-        # Buscar o crear un upload_log para probar
-        upload_log = UploadLog.objects.first()
-        if not upload_log:
-            print("   ⚠️  No hay upload_logs. Creando uno básico...")
-            cliente = Cliente.objects.first()
-            cierre = CierreContabilidad.objects.first()
-            if not cliente or not cierre:
-                print("   ❌ No se pueden crear datos básicos")
-                return False
-            
-            upload_log = UploadLog.objects.create(
-                cliente=cliente,
-                cierre=cierre,
-                nombre_archivo_original="test_incidencias.xlsx",
-                tipo_archivo='libro_mayor',
-                estado='procesado',
-                resumen={'test': True}
-            )
-        
-        # Crear una incidencia de prueba
-        incidencia_test, created = IncidenciaResumen.objects.get_or_create(
-            upload_log=upload_log,
-            tipo_incidencia='tipos_doc_no_reconocidos',
-            codigo_problema='TEST',
-            defaults={
-                'cantidad_afectada': 5,
-                'elementos_afectados': ['1101', '1102', '1103'],
-                'detalle_muestra': [
-                    {'cuenta': '1101', 'movimiento': 1, 'monto': 1000},
-                    {'cuenta': '1102', 'movimiento': 2, 'monto': 2000},
-                ],
-                'severidad': 'media',
-                'mensaje_usuario': 'Incidencia de prueba del sistema',
-                'accion_sugerida': 'Esta es una prueba del sistema de incidencias consolidadas',
-                'estadisticas_adicionales': {
-                    'monto_total_afectado': 3000,
-                    'test_mode': True,
-                }
-            }
-        )
-        
-        if created:
-            print(f"   ✅ Incidencia de prueba creada: ID {incidencia_test.id}")
-        else:
-            print(f"   ✅ Incidencia de prueba existente: ID {incidencia_test.id}")
-    
-    except Exception as e:
-        print(f"   ❌ Error creando incidencia de prueba: {e}")
-        return False
-    
-    # 4. Probar endpoints básicos
-    print("\n4. 🌐 Probando estructura de endpoints...")
-    try:
-        from contabilidad.views.incidencias import (
-            obtener_incidencias_consolidadas,
-            dashboard_incidencias,
-            marcar_incidencia_resuelta,
-            historial_reprocesamiento,
-            resumen_tipos_incidencia,
-        )
-        print("   ✅ Todos los endpoints importados correctamente")
-    except ImportError as e:
-        print(f"   ❌ Error importando endpoints: {e}")
-        return False
-    
-    # 5. Resumen final
-    print("\n5. 📈 Resumen del sistema:")
-    
-    # Estadísticas por tipo
-    print("   Incidencias por tipo:")
-    for tipo_codigo, tipo_desc in IncidenciaResumen.TIPOS_INCIDENCIA:
-        count = IncidenciaResumen.objects.filter(tipo_incidencia=tipo_codigo).count()
-        if count > 0:
-            print(f"      - {tipo_desc}: {count}")
-    
-    # Estadísticas por severidad
-    print("   Incidencias por severidad:")
-    for sev_codigo, sev_desc in IncidenciaResumen.SEVERIDAD_CHOICES:
-        count = IncidenciaResumen.objects.filter(severidad=sev_codigo).count()
-        if count > 0:
-            print(f"      - {sev_desc}: {count}")
-    
-    print("\n✅ SISTEMA VERIFICADO CORRECTAMENTE")
-    return True
-
-
-def crear_datos_basicos():
-    """Crea datos básicos si no existen"""
-    # Crear cliente
-    cliente, created = Cliente.objects.get_or_create(
-        nombre="Cliente Test Incidencias",
+    # 2. Crear usuario analista
+    analista, _ = User.objects.get_or_create(
+        username="test_analista",
         defaults={
-            'rut': '12345678-9',
-            'email': 'test@incidencias.com',
-            'activo': True,
+            'email': 'test@empresa.com',
+            'tipo_usuario': 'analista',
+            'is_active': True
         }
     )
     
-    # Crear cierre
-    cierre, created = CierreContabilidad.objects.get_or_create(
+    # 3. Crear cierre período anterior (febrero)
+    cierre_anterior, _ = CierreNomina.objects.get_or_create(
         cliente=cliente,
-        periodo="2024-12",
+        periodo=date(2024, 2, 1),
         defaults={
-            'fecha_cierre': date(2024, 12, 31),
-            'estado': 'procesado',
+            'usuario_analista': analista,
+            'estado': 'completado',
+            'estado_consolidacion': 'consolidado',
+            'estado_incidencias': 'sin_incidencias'
         }
     )
     
-    print(f"   ✅ Datos básicos creados: Cliente {cliente.nombre}, Cierre {cierre.periodo}")
-
-
-def mostrar_urls_disponibles():
-    """Muestra las URLs disponibles para probar"""
-    print("\n🔗 URLs DISPONIBLES PARA PROBAR:")
-    print("=" * 50)
+    # 4. Crear cierre período actual (marzo)
+    cierre_actual, _ = CierreNomina.objects.get_or_create(
+        cliente=cliente,
+        periodo=date(2024, 3, 1),
+        defaults={
+            'usuario_analista': analista,
+            'estado': 'completado',
+            'estado_consolidacion': 'consolidado',
+            'estado_incidencias': 'pendiente'
+        }
+    )
     
-    # Obtener un cierre y cliente para los ejemplos
-    cierre = CierreContabilidad.objects.first()
-    cliente = Cliente.objects.first()
+    # 5. Crear datos consolidados para período anterior
+    crear_nomina_consolidada_anterior(cierre_anterior)
     
-    if cierre and cliente:
-        base_url = "http://localhost:8000/api/contabilidad"
-        print(f"📊 Dashboard de incidencias:")
-        print(f"   GET {base_url}/dashboard/{cliente.id}/incidencias/")
-        
-        print(f"\n📋 Incidencias de un cierre:")
-        print(f"   GET {base_url}/incidencias/{cierre.id}/")
-        print(f"   GET {base_url}/incidencias/{cierre.id}/?estado=activa")
-        print(f"   GET {base_url}/incidencias/{cierre.id}/?severidad=alta")
-        
-        print(f"\n🔧 Gestión de incidencias:")
-        incidencia = IncidenciaResumen.objects.first()
-        if incidencia:
-            print(f"   POST {base_url}/incidencias/{incidencia.id}/resolver/")
-        
-        upload_log = UploadLog.objects.first()
-        if upload_log:
-            print(f"   GET {base_url}/upload-log/{upload_log.id}/historial/")
-        
-        print(f"\n📚 Información del sistema:")
-        print(f"   GET {base_url}/incidencias/tipos/")
-        print(f"   GET {base_url}/incidencias/estadisticas/")
-    else:
-        print("   ⚠️  No hay datos para mostrar URLs de ejemplo")
-
-
-if __name__ == "__main__":
-    print("🚀 INICIANDO VERIFICACIÓN DEL SISTEMA DE INCIDENCIAS CONSOLIDADAS")
-    print("=" * 70)
+    # 6. Crear datos consolidados para período actual (con diferencias)
+    crear_nomina_consolidada_actual(cierre_actual)
     
+    print(f"✅ Datos creados: Cliente {cliente.id}, Cierres {cierre_anterior.id} (feb) y {cierre_actual.id} (mar)")
+    return cierre_anterior, cierre_actual
+
+def crear_nomina_consolidada_anterior(cierre):
+    """
+    Crea datos consolidados para el período anterior (febrero)
+    """
+    # Empleado 1: Juan Pérez (estable)
+    nomina1 = NominaConsolidada.objects.create(
+        cierre=cierre,
+        rut_empleado="11111111-1",
+        nombre_empleado="Juan Pérez",
+        total_haberes=Decimal("1000000"),
+        total_descuentos=Decimal("200000"),
+        liquido_pagar=Decimal("800000")
+    )
+    
+    # Conceptos de Juan
+    ConceptoConsolidado.objects.create(
+        nomina_consolidada=nomina1,
+        nombre_concepto="Sueldo Base",
+        monto_total=Decimal("800000"),
+        es_numerico=True
+    )
+    ConceptoConsolidado.objects.create(
+        nomina_consolidada=nomina1,
+        nombre_concepto="Gratificación",
+        monto_total=Decimal("200000"),
+        es_numerico=True
+    )
+    
+    # Empleado 2: María González (tendrá variación)
+    nomina2 = NominaConsolidada.objects.create(
+        cierre=cierre,
+        rut_empleado="22222222-2",
+        nombre_empleado="María González",
+        total_haberes=Decimal("1200000"),
+        total_descuentos=Decimal("240000"),
+        liquido_pagar=Decimal("960000")
+    )
+    
+    ConceptoConsolidado.objects.create(
+        nomina_consolidada=nomina2,
+        nombre_concepto="Sueldo Base",
+        monto_total=Decimal("1000000"),
+        es_numerico=True
+    )
+    ConceptoConsolidado.objects.create(
+        nomina_consolidada=nomina2,
+        nombre_concepto="Bono Productividad",
+        monto_total=Decimal("200000"),
+        es_numerico=True
+    )
+    
+    # Empleado 3: Pedro Rodríguez (incorporación en feb, debería continuar en mar)
+    nomina3 = NominaConsolidada.objects.create(
+        cierre=cierre,
+        rut_empleado="33333333-3",
+        nombre_empleado="Pedro Rodríguez",
+        total_haberes=Decimal("900000"),
+        total_descuentos=Decimal("180000"),
+        liquido_pagar=Decimal("720000")
+    )
+    
+    ConceptoConsolidado.objects.create(
+        nomina_consolidada=nomina3,
+        nombre_concepto="Sueldo Base",
+        monto_total=Decimal("900000"),
+        es_numerico=True
+    )
+    
+    # Movimiento de incorporación de Pedro
+    MovimientoPersonal.objects.create(
+        nomina_consolidada=nomina3,
+        tipo_movimiento='ingreso',
+        fecha_movimiento=date(2024, 2, 1),
+        observaciones='Incorporación febrero'
+    )
+    
+    print(f"📋 Creados 3 empleados para período anterior (Feb 2024)")
+
+def crear_nomina_consolidada_actual(cierre):
+    """
+    Crea datos consolidados para el período actual (marzo) con diferencias
+    """
+    # Empleado 1: Juan Pérez (sin cambios)
+    nomina1 = NominaConsolidada.objects.create(
+        cierre=cierre,
+        rut_empleado="11111111-1",
+        nombre_empleado="Juan Pérez",
+        total_haberes=Decimal("1000000"),
+        total_descuentos=Decimal("200000"),
+        liquido_pagar=Decimal("800000")
+    )
+    
+    ConceptoConsolidado.objects.create(
+        nomina_consolidada=nomina1,
+        nombre_concepto="Sueldo Base",
+        monto_total=Decimal("800000"),
+        es_numerico=True
+    )
+    ConceptoConsolidado.objects.create(
+        nomina_consolidada=nomina1,
+        nombre_concepto="Gratificación",
+        monto_total=Decimal("200000"),
+        es_numerico=True
+    )
+    
+    # Empleado 2: María González (VARIACIÓN >30% en Bono Productividad)
+    nomina2 = NominaConsolidada.objects.create(
+        cierre=cierre,
+        rut_empleado="22222222-2",
+        nombre_empleado="María González",
+        total_haberes=Decimal("1400000"),  # Aumentó
+        total_descuentos=Decimal("280000"),
+        liquido_pagar=Decimal("1120000")
+    )
+    
+    ConceptoConsolidado.objects.create(
+        nomina_consolidada=nomina2,
+        nombre_concepto="Sueldo Base",
+        monto_total=Decimal("1000000"),  # Igual
+        es_numerico=True
+    )
+    ConceptoConsolidado.objects.create(
+        nomina_consolidada=nomina2,
+        nombre_concepto="Bono Productividad",
+        monto_total=Decimal("400000"),  # Era 200K, ahora 400K = 100% de variación
+        es_numerico=True
+    )
+    
+    # CONCEPTO NUEVO: Asignación Especial para María
+    ConceptoConsolidado.objects.create(
+        nomina_consolidada=nomina2,
+        nombre_concepto="Asignación Especial",
+        monto_total=Decimal("100000"),
+        es_numerico=True
+    )
+    
+    # Empleado 4: Ana Martínez (EMPLEADO NUEVO sin incorporación documentada)
+    nomina4 = NominaConsolidada.objects.create(
+        cierre=cierre,
+        rut_empleado="44444444-4",
+        nombre_empleado="Ana Martínez",
+        total_haberes=Decimal("850000"),
+        total_descuentos=Decimal("170000"),
+        liquido_pagar=Decimal("680000")
+    )
+    
+    ConceptoConsolidado.objects.create(
+        nomina_consolidada=nomina4,
+        nombre_concepto="Sueldo Base",
+        monto_total=Decimal("850000"),
+        es_numerico=True
+    )
+    
+    # EMPLEADO 3 (Pedro) NO APARECE EN MARZO = debería ingresar pero no está
+    
+    print(f"📋 Creados datos para período actual (Mar 2024) con variaciones detectables")
+
+def probar_deteccion_incidencias():
+    """
+    Prueba el sistema de detección de incidencias
+    """
+    print("\n🔍 Probando detección de incidencias...")
+    
+    # Obtener cierres
+    cierre_actual = CierreNomina.objects.filter(periodo=date(2024, 3, 1)).first()
+    
+    if not cierre_actual:
+        print("❌ No se encontró cierre actual")
+        return
+    
+    # Verificar que puede generar incidencias
+    if not cierre_actual.puede_generar_incidencias():
+        print(f"❌ Cierre no puede generar incidencias. Estado: {cierre_actual.estado_consolidacion}")
+        return
+    
+    # Detectar incidencias
     try:
-        # Verificar sistema
-        if verificar_sistema():
-            # Mostrar URLs para probar
-            mostrar_urls_disponibles()
-            
-            print("\n🎉 VERIFICACIÓN COMPLETADA EXITOSAMENTE")
-            print("=" * 50)
-            print("\n📋 PRÓXIMOS PASOS:")
-            print("1. Acceder al admin Django para gestionar incidencias:")
-            print("   http://localhost:8000/admin/contabilidad/incidenciaresumen/")
-            print("\n2. Probar los endpoints desde el frontend o herramientas como curl/Postman")
-            print("\n3. El sistema está listo para procesar libros mayor y generar incidencias automáticamente")
-        else:
-            print("\n❌ VERIFICACIÓN FALLÓ - Revisar errores arriba")
-            
+        incidencias = detectar_incidencias_consolidadas(cierre_actual)
+        
+        print(f"✅ Detectadas {len(incidencias)} incidencias:")
+        
+        for i, incidencia in enumerate(incidencias, 1):
+            print(f"\n{i}. {incidencia.tipo_incidencia}")
+            print(f"   Empleado: {incidencia.rut_empleado}")
+            print(f"   Descripción: {incidencia.descripcion}")
+            print(f"   Prioridad: {incidencia.prioridad}")
+            if incidencia.concepto_afectado:
+                print(f"   Concepto: {incidencia.concepto_afectado}")
+            if incidencia.valor_libro and incidencia.valor_novedades:
+                print(f"   Valores: {incidencia.valor_libro} vs {incidencia.valor_novedades}")
+        
+        # Guardar incidencias para probar
+        print(f"\n💾 Guardando {len(incidencias)} incidencias...")
+        for incidencia in incidencias:
+            incidencia.save()
+        
+        print("✅ Incidencias guardadas exitosamente")
+        
+        # Actualizar estado del cierre
+        cierre_actual.estado_incidencias = 'incidencias_generadas'
+        cierre_actual.total_incidencias = len(incidencias)
+        cierre_actual.save(update_fields=['estado_incidencias', 'total_incidencias'])
+        
+        print(f"✅ Estado del cierre actualizado: {cierre_actual.estado_incidencias}")
+        
     except Exception as e:
-        print(f"\n❌ ERROR EN VERIFICACIÓN: {e}")
+        print(f"❌ Error detectando incidencias: {e}")
         import traceback
         traceback.print_exc()
+
+def probar_consulta_incidencias():
+    """
+    Prueba la consulta de incidencias generadas
+    """
+    print("\n📊 Consultando incidencias generadas...")
+    
+    cierre_actual = CierreNomina.objects.filter(periodo=date(2024, 3, 1)).first()
+    if not cierre_actual:
+        return
+    
+    incidencias = IncidenciaCierre.objects.filter(cierre=cierre_actual)
+    
+    print(f"Total incidencias: {incidencias.count()}")
+    
+    # Resumen por tipo
+    tipos = {}
+    for incidencia in incidencias:
+        tipo = incidencia.tipo_incidencia
+        tipos[tipo] = tipos.get(tipo, 0) + 1
+    
+    print("\nPor tipo:")
+    for tipo, cantidad in tipos.items():
+        print(f"  {tipo}: {cantidad}")
+    
+    # Resumen por prioridad
+    prioridades = {}
+    for incidencia in incidencias:
+        prioridad = incidencia.prioridad
+        prioridades[prioridad] = prioridades.get(prioridad, 0) + 1
+    
+    print("\nPor prioridad:")
+    for prioridad, cantidad in prioridades.items():
+        print(f"  {prioridad}: {cantidad}")
+
+def limpiar_datos_prueba():
+    """
+    Limpia los datos de prueba
+    """
+    print("\n🧹 Limpiando datos de prueba...")
+    
+    try:
+        # Eliminar incidencias
+        IncidenciaCierre.objects.filter(
+            cierre__cliente__nombre="Empresa Test Incidencias"
+        ).delete()
+        
+        # Eliminar datos consolidados
+        NominaConsolidada.objects.filter(
+            cierre__cliente__nombre="Empresa Test Incidencias"
+        ).delete()
+        
+        # Eliminar cierres
+        CierreNomina.objects.filter(
+            cliente__nombre="Empresa Test Incidencias"
+        ).delete()
+        
+        # Eliminar cliente
+        Cliente.objects.filter(
+            nombre="Empresa Test Incidencias"
+        ).delete()
+        
+        print("✅ Datos de prueba eliminados")
+        
+    except Exception as e:
+        print(f"❌ Error limpiando datos: {e}")
+
+def main():
+    """
+    Función principal del test
+    """
+    print("🚀 Iniciando test del sistema de incidencias consolidadas\n")
+    
+    # Limpiar datos previos
+    limpiar_datos_prueba()
+    
+    try:
+        # Crear datos de prueba
+        cierre_anterior, cierre_actual = crear_datos_prueba()
+        
+        # Probar detección
+        probar_deteccion_incidencias()
+        
+        # Probar consulta
+        probar_consulta_incidencias()
+        
+        print("\n✅ Test completado exitosamente")
+        
+        # Preguntar si limpiar datos
+        respuesta = input("\n¿Desea limpiar los datos de prueba? (s/n): ")
+        if respuesta.lower() in ['s', 'si', 'y', 'yes']:
+            limpiar_datos_prueba()
+        
+    except Exception as e:
+        print(f"\n❌ Error en el test: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()

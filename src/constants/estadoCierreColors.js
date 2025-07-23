@@ -12,13 +12,12 @@ const estadoCierreColors = {
   rechazado:          { texto: "Rechazado", color: "bg-red-600" },
   aprobado:           { texto: "Aprobado", color: "bg-green-500" },
   finalizado:         { texto: "Finalizado", color: "bg-green-700" },
-  completo:           { texto: "Completado", color: "bg-green-700" },
   
   // Estados específicos de nómina
   datos_consolidados: { texto: "Datos Consolidados", color: "bg-blue-600" },
+  incidencias_resueltas: { texto: "Incidencias Resueltas", color: "bg-green-500" },
   reportes_generados: { texto: "Reportes Generados", color: "bg-purple-600" },
   validacion_senior:  { texto: "Validación Senior", color: "bg-orange-500" },
-  completado:         { texto: "Completado", color: "bg-green-700" },
   analisis_generado:  { texto: "Análisis Generado", color: "bg-blue-500" },
   incidencias_abiertas: { texto: "Incidencias Abiertas", color: "bg-red-500" },
   

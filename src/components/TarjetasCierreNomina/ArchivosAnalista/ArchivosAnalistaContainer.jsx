@@ -303,7 +303,7 @@ const ArchivosAnalistaContainer = ({
         await eliminarArchivoAnalista(archivo.id);
       }
       
-      // Resetear estado del archivo
+      // Resetear estado del archivo completamente
       setArchivos(prev => ({
         ...prev,
         [tipo]: {
@@ -312,6 +312,19 @@ const ArchivosAnalistaContainer = ({
           error: ""
         }
       }));
+      
+      // Reportar cambio de estado al componente padre
+      if (onEstadosChange) {
+        const nuevosEstados = {
+          ...Object.fromEntries(
+            Object.entries(archivos).map(([key, value]) => [
+              key,
+              key === tipo ? "no_subido" : value.estado
+            ])
+          )
+        };
+        onEstadosChange(nuevosEstados);
+      }
       
       console.log(`✅ Archivo ${tipo} eliminado correctamente`);
       

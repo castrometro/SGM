@@ -190,6 +190,33 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado, tipoModulo = "con
           </>
         )}
 
+        {/* Botones para visualización de datos - Solo para nómina */}
+        {tipoModulo === "nomina" && ['datos_consolidados', 'con_incidencias', 'sin_incidencias', 'incidencias_resueltas', 'finalizado'].includes(cierre?.estado) && (
+          <>
+            {/* Botón Ver Libro de Remuneraciones */}
+            <button
+              onClick={() => navigate(`/menu/cierres-nomina/${cierre.id}/libro-remuneraciones`)}
+              className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Ver Libro de Remuneraciones
+            </button>
+
+            {/* Botón Ver Movimientos del Mes */}
+            <button
+              onClick={() => navigate(`/menu/cierres-nomina/${cierre.id}/movimientos`)}
+              className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+              </svg>
+              Ver Movimientos del Mes
+            </button>
+          </>
+        )}
+
         {/* Botón Finalizar Cierre solo para sin_incidencias en contabilidad */}
         {tipoModulo === "contabilidad" && cierre?.estado === 'sin_incidencias' && (
           <>
@@ -259,7 +286,7 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado, tipoModulo = "con
         )}
 
         {/* Indicador de cierre finalizado - Solo para contabilidad */}
-        {tipoModulo === "contabilidad" && cierre?.estado === 'completado' && (
+        {tipoModulo === "contabilidad" && cierre?.estado === 'finalizado' && (
           <>
             <div className="bg-green-600 text-white px-4 py-2 rounded-lg font-semibold text-sm flex items-center gap-2">
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -578,17 +578,52 @@ def guardar_registros_novedades_task(result):
 
 @shared_task
 def generar_incidencias_cierre_task(cierre_id):
-    """Task para generar incidencias de un cierre"""
-    # 🚫 FUNCIONALIDAD COMENTADA TEMPORALMENTE  
-    # Las incidencias solo deben generarse cuando las discrepancias sean 0
-    # y se implementará la comparación contra el mes anterior
+    """
+    🔍 TASK: GENERACIÓN DE INCIDENCIAS CONSOLIDADAS
     
-    logger.info(f"Task de incidencias deshabilitada para cierre {cierre_id}")
-    return {
-        "error": "Funcionalidad de incidencias deshabilitada temporalmente",
-        "message": "Primero debe completar la fase de discrepancias antes de generar incidencias",
-        "cierre_id": cierre_id
-    }
+    Genera incidencias comparando datos consolidados del mes actual con el mes anterior.
+    Implementa las 4 reglas principales:
+    1. Variaciones de valor header-empleado superior a ±30%
+    2. Ausentismos del mes anterior que deberían continuar
+    3. Personas que ingresaron el mes anterior y no están presentes  
+    4. Personas que finiquitaron el mes anterior y siguen presentes
+    """
+    from .utils.DetectarIncidenciasConsolidadas import generar_incidencias_consolidadas_task
+    from .models import CierreNomina
+    
+    logger.info(f"🔍 Iniciando generación de incidencias para cierre consolidado {cierre_id}")
+    
+    try:
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        # Verificar que el cierre esté en un estado válido para generar incidencias
+        estados_validos = ['datos_consolidados', 'con_incidencias', 'incidencias_resueltas'] 
+        if cierre.estado not in estados_validos:
+            raise ValueError(f"El cierre debe estar en estado válido para generar incidencias. Estado actual: {cierre.estado}, Estados válidos: {estados_validos}")
+        
+        # Ejecutar detección de incidencias
+        resultado = generar_incidencias_consolidadas_task(cierre_id)
+        
+        if resultado['success']:
+            logger.info(f"✅ Incidencias generadas exitosamente para cierre {cierre_id}: {resultado['total_incidencias']} incidencias")
+            return resultado
+        else:
+            logger.error(f"❌ Error en detección de incidencias para cierre {cierre_id}: {resultado.get('error', 'Error desconocido')}")
+            return resultado
+        
+    except Exception as e:
+        logger.error(f"❌ Error crítico generando incidencias para cierre {cierre_id}: {e}")
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            # No cambiar estado en caso de error, mantener consolidado
+        except:
+            pass
+        
+        return {
+            'success': False,
+            'error': str(e),
+            'cierre_id': cierre_id
+        }
     
     # CÓDIGO ORIGINAL COMENTADO:
     # from .utils.GenerarIncidencias import generar_todas_incidencias
@@ -1148,4 +1183,427 @@ def generar_incidencias_consolidadas_task(cierre_id):
         return {
             'success': False,
             'error': str(e)
+        }
+
+
+@shared_task
+def consolidar_datos_nomina_task(cierre_id):
+    """
+    🔄 TAREA: CONSOLIDACIÓN DE DATOS DE NÓMINA
+    
+    Toma un cierre en estado 'verificado_sin_discrepancias' y:
+    1. Lee los archivos procesados (Libro, Movimientos, Analista)
+    2. Genera registros de NominaConsolidada
+    3. Genera registros de HeaderValorEmpleado (mapeo 1:1 Excel)
+    4. Genera registros de MovimientoPersonal
+    5. Cambia estado a 'datos_consolidados'
+    """
+    import logging
+    from django.utils import timezone
+    from decimal import Decimal, InvalidOperation
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"🔄 Iniciando consolidación de datos para cierre {cierre_id}")
+    
+    try:
+        # 1. OBTENER EL CIERRE
+        from .models import CierreNomina, NominaConsolidada, HeaderValorEmpleado, MovimientoPersonal
+        
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        logger.info(f"📋 Cierre obtenido: {cierre} - Estado: {cierre.estado}")
+        
+        # Verificar estado
+        if cierre.estado not in ['verificado_sin_discrepancias', 'datos_consolidados']:
+            raise ValueError(f"El cierre debe estar en 'verificado_sin_discrepancias' o 'datos_consolidados', actual: {cierre.estado}")
+        
+        # Cambiar estado a procesando
+        cierre.estado = 'consolidando'
+        cierre.save(update_fields=['estado'])
+        
+        # 2. OBTENER ARCHIVOS PROCESADOS
+        libro = cierre.libros_remuneraciones.filter(estado='procesado').first()
+        movimientos = cierre.movimientos_mes.filter(estado='procesado').first()
+        
+        if not libro:
+            raise ValueError("No hay libro de remuneraciones procesado")
+        if not movimientos:
+            raise ValueError("No hay archivo de movimientos procesado")
+            
+        logger.info(f"📚 Libro: {libro.archivo.name}")
+        logger.info(f"🔄 Movimientos: {movimientos.archivo.name}")
+        
+        # 3. LIMPIAR CONSOLIDACIÓN ANTERIOR (SI EXISTE)
+        consolidaciones_eliminadas = cierre.nomina_consolidada.count()
+        if consolidaciones_eliminadas > 0:
+            logger.info(f"🗑️ Eliminando {consolidaciones_eliminadas} registros de consolidación anterior...")
+            # Limpiar también MovimientoPersonal relacionados
+            from .models import MovimientoPersonal
+            movimientos_eliminados = MovimientoPersonal.objects.filter(nomina_consolidada__cierre=cierre).count()
+            MovimientoPersonal.objects.filter(nomina_consolidada__cierre=cierre).delete()
+            
+            cierre.nomina_consolidada.all().delete()
+            logger.info(f"✅ {consolidaciones_eliminadas} registros de consolidación anterior eliminados exitosamente")
+            logger.info(f"✅ {movimientos_eliminados} movimientos de personal anteriores eliminados exitosamente")
+        else:
+            logger.info("ℹ️ No hay consolidación anterior que eliminar")
+        
+        logger.info("🔄 Iniciando nueva consolidación desde cero...")
+        
+        # 4. CONSOLIDAR DATOS DEL LIBRO DE REMUNERACIONES
+        empleados_consolidados = 0
+        headers_consolidados = 0
+        
+        # Obtener empleados del libro
+        empleados = cierre.empleados.all()
+        logger.info(f"👥 Procesando {empleados.count()} empleados")
+        
+        for empleado in empleados:
+            # Crear registro de nómina consolidada
+            nomina_consolidada = NominaConsolidada.objects.create(
+                cierre=cierre,
+                rut_empleado=empleado.rut,
+                nombre_empleado=f"{empleado.nombre} {empleado.apellido_paterno} {empleado.apellido_materno}".strip(),
+                estado_empleado='activo',  # TODO: Detectar estado según movimientos
+                dias_trabajados=empleado.dias_trabajados,
+                fecha_consolidacion=timezone.now(),
+                fuente_datos={
+                    'libro_id': libro.id,
+                    'movimientos_id': movimientos.id,
+                    'consolidacion_version': '1.0'
+                }
+            )
+            
+            # Obtener registros de conceptos del empleado
+            conceptos_empleado = empleado.registroconceptoempleado_set.all()
+            
+            # Crear HeaderValorEmpleado para cada concepto
+            for concepto in conceptos_empleado:
+                # Determinar si es numérico
+                valor_numerico = None
+                es_numerico = False
+                
+                if concepto.monto:
+                    try:
+                        # Limpiar el valor (remover $, comas, pero MANTENER puntos decimales)
+                        valor_limpio = str(concepto.monto).replace('$', '').replace(',', '').strip()
+                        # Verificar si es un número válido (entero o decimal)
+                        if valor_limpio and (valor_limpio.replace('-', '').replace('.', '').isdigit()):
+                            valor_numerico = Decimal(valor_limpio)
+                            es_numerico = True
+                    except (ValueError, InvalidOperation, AttributeError):
+                        pass
+                
+                # Crear registro HeaderValorEmpleado
+                HeaderValorEmpleado.objects.create(
+                    nomina_consolidada=nomina_consolidada,
+                    nombre_header=concepto.nombre_concepto_original,
+                    concepto_remuneracion=concepto.concepto,
+                    valor_original=concepto.monto or '',
+                    valor_numerico=valor_numerico,
+                    es_numerico=es_numerico,
+                    fuente_archivo='libro_remuneraciones',
+                    fecha_consolidacion=timezone.now()
+                )
+                headers_consolidados += 1
+            
+            empleados_consolidados += 1
+            
+            if empleados_consolidados % 100 == 0:
+                logger.info(f"📊 Progreso: {empleados_consolidados} empleados consolidados")
+        
+        # 5. CONSOLIDAR MOVIMIENTOS DE PERSONAL
+        movimientos_creados = 0
+        
+        # Importar modelos de movimientos
+        from .models import (
+            MovimientoAltaBaja, MovimientoAusentismo, MovimientoVacaciones,
+            MovimientoVariacionSueldo, MovimientoVariacionContrato, ConceptoConsolidado
+        )
+        
+        logger.info("🔄 Iniciando consolidación de movimientos de personal...")
+        
+        # 5.1 Procesar ALTAS y BAJAS (Ingresos y Finiquitos)
+        altas_bajas = MovimientoAltaBaja.objects.filter(cierre=cierre)
+        logger.info(f"📊 Procesando {altas_bajas.count()} movimientos de altas/bajas")
+        
+        for movimiento in altas_bajas:
+            # Buscar o crear el empleado consolidado
+            nomina_consolidada = None
+            try:
+                nomina_consolidada = NominaConsolidada.objects.get(
+                    cierre=cierre, 
+                    rut_empleado=movimiento.rut
+                )
+            except NominaConsolidada.DoesNotExist:
+                # Si no existe, crear uno nuevo para este movimiento
+                nomina_consolidada = NominaConsolidada.objects.create(
+                    cierre=cierre,
+                    rut_empleado=movimiento.rut,
+                    nombre_empleado=movimiento.nombres_apellidos,
+                    cargo=movimiento.cargo,
+                    centro_costo=movimiento.centro_de_costo,
+                    estado_empleado='nueva_incorporacion' if movimiento.alta_o_baja == 'ALTA' else 'finiquito',
+                    dias_trabajados=movimiento.dias_trabajados,
+                    total_haberes=movimiento.sueldo_base,
+                    liquido_pagar=movimiento.sueldo_base,
+                    fecha_consolidacion=timezone.now(),
+                    fuente_datos={
+                        'libro_id': libro.id,
+                        'movimientos_id': movimientos.id,
+                        'consolidacion_version': '1.0',
+                        'movimiento_tipo': 'alta_baja'
+                    }
+                )
+            
+            # Actualizar estado según el movimiento
+            if movimiento.alta_o_baja == 'ALTA':
+                nomina_consolidada.estado_empleado = 'nueva_incorporacion'
+            elif movimiento.alta_o_baja == 'BAJA':
+                nomina_consolidada.estado_empleado = 'finiquito'
+            
+            nomina_consolidada.save(update_fields=['estado_empleado'])
+            
+            # Crear MovimientoPersonal
+            MovimientoPersonal.objects.create(
+                nomina_consolidada=nomina_consolidada,
+                tipo_movimiento='ingreso' if movimiento.alta_o_baja == 'ALTA' else 'finiquito',
+                motivo=movimiento.motivo,
+                fecha_movimiento=movimiento.fecha_ingreso if movimiento.alta_o_baja == 'ALTA' else movimiento.fecha_retiro,
+                observaciones=f"Tipo contrato: {movimiento.tipo_contrato}, Sueldo base: ${movimiento.sueldo_base:,.0f}",
+                fecha_deteccion=timezone.now(),
+                detectado_por_sistema='consolidacion_automatica_v1'
+            )
+            
+            movimientos_creados += 1
+        
+        # 5.2 Procesar AUSENTISMOS
+        ausentismos = MovimientoAusentismo.objects.filter(cierre=cierre)
+        logger.info(f"📊 Procesando {ausentismos.count()} movimientos de ausentismo")
+        
+        for ausentismo in ausentismos:
+            try:
+                nomina_consolidada = NominaConsolidada.objects.get(
+                    cierre=cierre, 
+                    rut_empleado=ausentismo.rut
+                )
+                
+                # Actualizar estado si es ausencia total
+                if ausentismo.dias >= 30:  # Más de 30 días = ausencia total
+                    nomina_consolidada.estado_empleado = 'ausente_total'
+                    nomina_consolidada.dias_ausencia = ausentismo.dias
+                else:
+                    nomina_consolidada.estado_empleado = 'ausente_parcial'
+                    nomina_consolidada.dias_ausencia = ausentismo.dias
+                
+                nomina_consolidada.save(update_fields=['estado_empleado', 'dias_ausencia'])
+                
+                # Crear MovimientoPersonal
+                MovimientoPersonal.objects.create(
+                    nomina_consolidada=nomina_consolidada,
+                    tipo_movimiento='ausentismo',
+                    motivo=f"{ausentismo.tipo} - {ausentismo.motivo}",
+                    dias_ausencia=ausentismo.dias,
+                    fecha_movimiento=ausentismo.fecha_inicio_ausencia,
+                    observaciones=f"Desde: {ausentismo.fecha_inicio_ausencia} hasta: {ausentismo.fecha_fin_ausencia}. {ausentismo.observaciones}",
+                    fecha_deteccion=timezone.now(),
+                    detectado_por_sistema='consolidacion_automatica_v1'
+                )
+                
+                movimientos_creados += 1
+                
+            except NominaConsolidada.DoesNotExist:
+                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {ausentismo.rut} en ausentismo")
+                continue
+        
+        # 5.3 Procesar VACACIONES
+        vacaciones = MovimientoVacaciones.objects.filter(cierre=cierre)
+        logger.info(f"📊 Procesando {vacaciones.count()} movimientos de vacaciones")
+        
+        for vacacion in vacaciones:
+            try:
+                nomina_consolidada = NominaConsolidada.objects.get(
+                    cierre=cierre, 
+                    rut_empleado=vacacion.rut
+                )
+                
+                # Crear MovimientoPersonal para vacaciones
+                MovimientoPersonal.objects.create(
+                    nomina_consolidada=nomina_consolidada,
+                    tipo_movimiento='ausentismo',
+                    motivo='Vacaciones',
+                    dias_ausencia=vacacion.cantidad_dias,
+                    fecha_movimiento=vacacion.fecha_inicio,
+                    observaciones=f"Vacaciones desde: {vacacion.fecha_inicio} hasta: {vacacion.fecha_fin_vacaciones}. Retorno: {vacacion.fecha_retorno}",
+                    fecha_deteccion=timezone.now(),
+                    detectado_por_sistema='consolidacion_automatica_v1'
+                )
+                
+                movimientos_creados += 1
+                
+            except NominaConsolidada.DoesNotExist:
+                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {vacacion.rut} en vacaciones")
+                continue
+        
+        # 5.4 Procesar VARIACIONES DE SUELDO
+        variaciones_sueldo = MovimientoVariacionSueldo.objects.filter(cierre=cierre)
+        logger.info(f"📊 Procesando {variaciones_sueldo.count()} variaciones de sueldo")
+        
+        for variacion in variaciones_sueldo:
+            try:
+                nomina_consolidada = NominaConsolidada.objects.get(
+                    cierre=cierre, 
+                    rut_empleado=variacion.rut
+                )
+                
+                # Crear MovimientoPersonal
+                MovimientoPersonal.objects.create(
+                    nomina_consolidada=nomina_consolidada,
+                    tipo_movimiento='cambio_datos',
+                    motivo=f"Variación de sueldo: {variacion.porcentaje_reajuste}%",
+                    fecha_movimiento=cierre.fecha_creacion.date(),
+                    observaciones=f"Sueldo anterior: ${variacion.sueldo_base_anterior:,.0f} → Sueldo actual: ${variacion.sueldo_base_actual:,.0f} (Variación: ${variacion.variacion_pesos:,.0f})",
+                    fecha_deteccion=timezone.now(),
+                    detectado_por_sistema='consolidacion_automatica_v1'
+                )
+                
+                movimientos_creados += 1
+                
+            except NominaConsolidada.DoesNotExist:
+                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {variacion.rut} en variación de sueldo")
+                continue
+        
+        # 5.5 Procesar VARIACIONES DE CONTRATO
+        variaciones_contrato = MovimientoVariacionContrato.objects.filter(cierre=cierre)
+        logger.info(f"📊 Procesando {variaciones_contrato.count()} variaciones de contrato")
+        
+        for variacion in variaciones_contrato:
+            try:
+                nomina_consolidada = NominaConsolidada.objects.get(
+                    cierre=cierre, 
+                    rut_empleado=variacion.rut
+                )
+                
+                # Crear MovimientoPersonal
+                MovimientoPersonal.objects.create(
+                    nomina_consolidada=nomina_consolidada,
+                    tipo_movimiento='cambio_datos',
+                    motivo='Cambio de tipo de contrato',
+                    fecha_movimiento=cierre.fecha_creacion.date(),
+                    observaciones=f"Contrato anterior: {variacion.tipo_contrato_anterior} → Contrato actual: {variacion.tipo_contrato_actual}",
+                    fecha_deteccion=timezone.now(),
+                    detectado_por_sistema='consolidacion_automatica_v1'
+                )
+                
+                movimientos_creados += 1
+                
+            except NominaConsolidada.DoesNotExist:
+                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {variacion.rut} en variación de contrato")
+                continue
+        
+        # 5.6 CONSOLIDAR CONCEPTOS POR EMPLEADO
+        logger.info("💰 Consolidando conceptos y totales por empleado...")
+        conceptos_consolidados = 0
+        
+        for nomina_consolidada in NominaConsolidada.objects.filter(cierre=cierre):
+            # Obtener todos los headers para este empleado
+            headers_empleado = HeaderValorEmpleado.objects.filter(nomina_consolidada=nomina_consolidada)
+            
+            total_haberes = Decimal('0')
+            total_descuentos = Decimal('0')
+            
+            # Agrupar por concepto y sumar
+            conceptos_agrupados = {}
+            
+            for header in headers_empleado:
+                if header.concepto_remuneracion and header.valor_numerico:
+                    concepto_nombre = header.concepto_remuneracion.nombre_concepto  # Corregido: usar nombre_concepto
+                    clasificacion = header.concepto_remuneracion.clasificacion
+                    
+                    if concepto_nombre not in conceptos_agrupados:
+                        conceptos_agrupados[concepto_nombre] = {
+                            'clasificacion': clasificacion,
+                            'monto_total': Decimal('0'),
+                            'cantidad': 0,
+                            'concepto_obj': header.concepto_remuneracion
+                        }
+                    
+                    conceptos_agrupados[concepto_nombre]['monto_total'] += header.valor_numerico
+                    conceptos_agrupados[concepto_nombre]['cantidad'] += 1
+                    
+                    # Sumar a haberes o descuentos según clasificación
+                    if clasificacion in ['haberes_imponibles', 'haberes_no_imponibles', 'horas_extras']:
+                        total_haberes += header.valor_numerico
+                    elif clasificacion in ['descuentos_legales', 'otros_descuentos']:
+                        total_descuentos += header.valor_numerico
+            
+            # Crear ConceptoConsolidado para cada concepto agrupado
+            for concepto_nombre, datos in conceptos_agrupados.items():
+                # Mapear clasificación a tipo_concepto
+                clasificacion_mapping = {
+                    'haberes_imponibles': 'haber_imponible',
+                    'haberes_no_imponibles': 'haber_no_imponible',
+                    'descuentos_legales': 'descuento_legal',
+                    'otros_descuentos': 'otro_descuento'
+                }
+                
+                tipo_concepto = clasificacion_mapping.get(datos['clasificacion'], 'informativo')
+                # ConceptoRemuneracion no tiene campo codigo, usar id o dejarlo None
+                codigo_concepto = str(datos['concepto_obj'].id) if datos['concepto_obj'] else None
+                
+                ConceptoConsolidado.objects.create(
+                    nomina_consolidada=nomina_consolidada,
+                    codigo_concepto=codigo_concepto,
+                    nombre_concepto=concepto_nombre,
+                    tipo_concepto=tipo_concepto,
+                    monto_total=datos['monto_total'],
+                    cantidad=datos['cantidad'],
+                    es_numerico=True,
+                    fuente_archivo='libro_remuneraciones'
+                )
+                conceptos_consolidados += 1
+            
+            # Actualizar totales en la nómina consolidada
+            nomina_consolidada.total_haberes = total_haberes
+            nomina_consolidada.total_descuentos = total_descuentos
+            nomina_consolidada.liquido_pagar = total_haberes - total_descuentos
+            nomina_consolidada.save(update_fields=['total_haberes', 'total_descuentos', 'liquido_pagar'])
+        
+        logger.info(f"💰 {conceptos_consolidados} conceptos consolidados creados")
+        
+        # 6. FINALIZAR CONSOLIDACIÓN
+        cierre.estado = 'datos_consolidados'
+        cierre.fecha_consolidacion = timezone.now()
+        cierre.save(update_fields=['estado', 'fecha_consolidacion'])
+        
+        logger.info(f"✅ Consolidación completada:")
+        logger.info(f"   📊 {empleados_consolidados} empleados consolidados")
+        logger.info(f"   📋 {headers_consolidados} headers-valores creados")
+        logger.info(f"   🔄 {movimientos_creados} movimientos de personal creados")
+        logger.info(f"   💰 {conceptos_consolidados} conceptos consolidados creados")
+        
+        return {
+            'success': True,
+            'cierre_id': cierre_id,
+            'empleados_consolidados': empleados_consolidados,
+            'headers_consolidados': headers_consolidados,
+            'movimientos_creados': movimientos_creados,
+            'conceptos_consolidados': conceptos_consolidados,
+            'nuevo_estado': cierre.estado
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error en consolidación para cierre {cierre_id}: {e}")
+        
+        # Revertir estado en caso de error
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            cierre.estado = 'verificado_sin_discrepancias'
+            cierre.save(update_fields=['estado'])
+        except:
+            pass
+            
+        return {
+            'success': False,
+            'error': str(e),
+            'cierre_id': cierre_id
         }

@@ -224,18 +224,22 @@ class RegistroConceptoEmpleadoNovedadesSerializer(serializers.ModelSerializer):
 class ResolucionIncidenciaSerializer(serializers.ModelSerializer):
     usuario_nombre = serializers.CharField(source='usuario.get_full_name', read_only=True)
     usuario_correo = serializers.CharField(source='usuario.correo_bdo', read_only=True)
+    supervisor_nombre = serializers.CharField(source='supervisor.get_full_name', read_only=True)
+    supervisor_correo = serializers.CharField(source='supervisor.correo_bdo', read_only=True)
     usuarios_mencionados_nombres = serializers.SerializerMethodField()
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
     
     class Meta:
         model = ResolucionIncidencia
         fields = [
-            'id', 'tipo_resolucion', 'comentario', 'adjunto',
-            'fecha_resolucion', 'estado_anterior', 'estado_nuevo',
-            'valor_corregido', 'campo_corregido', 'usuario',
-            'usuario_nombre', 'usuario_correo', 'usuarios_mencionados',
-            'usuarios_mencionados_nombres'
+            'id', 'tipo_resolucion', 'comentario', 'adjunto', 'estado',
+            'fecha_resolucion', 'fecha_supervision', 'estado_anterior', 'estado_nuevo',
+            'valor_corregido', 'campo_corregido', 'usuario', 'supervisor',
+            'comentario_supervisor', 'usuario_nombre', 'usuario_correo', 
+            'supervisor_nombre', 'supervisor_correo', 'usuarios_mencionados',
+            'usuarios_mencionados_nombres', 'estado_display'
         ]
-        read_only_fields = ['usuario', 'fecha_resolucion', 'estado_anterior', 'estado_nuevo']
+        read_only_fields = ['usuario', 'fecha_resolucion', 'estado_anterior', 'estado_nuevo', 'fecha_supervision']
     
     def get_usuarios_mencionados_nombres(self, obj):
         return [user.get_full_name() or user.correo_bdo for user in obj.usuarios_mencionados.all()]

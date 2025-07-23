@@ -14,8 +14,11 @@ from .models import (
     # Modelos de análisis y discrepancias
     AnalisisDatosCierre, IncidenciaVariacionSalarial, DiscrepanciaCierre,
     # Modelos consolidados (están en models.py)
-    NominaConsolidada, ConceptoConsolidado, MovimientoPersonal
+    NominaConsolidada, HeaderValorEmpleado, ConceptoConsolidado, MovimientoPersonal
 )
+
+# Importar modelos de logging
+from .models_logging import UploadLogNomina, TarjetaActivityLogNomina
 
 
 @admin.register(CierreNomina)
@@ -95,6 +98,145 @@ class CierreNominaAdmin(admin.ModelAdmin):
         - Bajas: {por_prioridad['baja']}
         """
     resumen_incidencias.short_description = 'Resumen de Incidencias'
+
+
+# ========== ACCIONES PERSONALIZADAS PARA CIERRE NOMINA ==========
+
+@admin.action(description='Actualizar consolidación (eliminar y regenerar)')
+def actualizar_consolidacion_cierre(modeladmin, request, queryset):
+    """Acción para eliminar consolidación actual y regenerar"""
+    from django.db import transaction
+    from .utils.ConsolidarInformacion import consolidar_cierre_completo
+    
+    actualizado_count = 0
+    error_count = 0
+    errores = []
+    
+    for cierre in queryset:
+        try:
+            with transaction.atomic():
+                # 1. Eliminar consolidación existente
+                nominas_eliminadas = cierre.nomina_consolidada.count()
+                cierre.nomina_consolidada.all().delete()
+                
+                # 2. Limpiar otros datos consolidados
+                # Si hay otros modelos relacionados, eliminarlos también
+                
+                # 3. Resetear estado de consolidación
+                cierre.estado_consolidacion = 'pendiente'
+                cierre.fecha_consolidacion = None
+                cierre.save(update_fields=['estado_consolidacion', 'fecha_consolidacion'])
+                
+                # 4. Ejecutar nueva consolidación
+                resultado = consolidar_cierre_completo(cierre.id, request.user)
+                
+                if resultado.get('exitoso', False):
+                    actualizado_count += 1
+                    estadisticas = resultado.get('estadisticas', {})
+                    nominas_procesadas = estadisticas.get('nominas_consolidadas', 0)
+                    
+                    # Mensaje de éxito
+                    mensaje = f"Consolidación actualizada: {nominas_eliminadas} registros eliminados, {nominas_procesadas} nuevos registros generados"
+                    modeladmin.message_user(
+                        request,
+                        f"✅ {cierre.cliente.nombre} - {cierre.periodo}: {mensaje}",
+                        level=modeladmin.message_user.SUCCESS
+                    )
+                else:
+                    error_count += 1
+                    error_msg = resultado.get('error', 'Error desconocido')
+                    errores.append(f"{cierre.cliente.nombre} - {cierre.periodo}: {error_msg}")
+                    
+        except Exception as e:
+            error_count += 1
+            errores.append(f"{cierre.cliente.nombre} - {cierre.periodo}: Error inesperado - {str(e)}")
+    
+    # Mensaje resumen
+    if actualizado_count > 0:
+        modeladmin.message_user(
+            request,
+            f"🔄 {actualizado_count} consolidación(es) actualizada(s) exitosamente.",
+            level=modeladmin.message_user.SUCCESS
+        )
+    
+    if error_count > 0:
+        modeladmin.message_user(
+            request,
+            f"❌ {error_count} error(es) durante actualización: {'; '.join(errores[:3])}{'...' if len(errores) > 3 else ''}",
+            level=modeladmin.message_user.ERROR
+        )
+
+@admin.action(description='Generar consolidación inicial')
+def generar_consolidacion_inicial(modeladmin, request, queryset):
+    """Acción para generar consolidación en cierres que no la tienen"""
+    from django.db import transaction
+    from .utils.ConsolidarInformacion import consolidar_cierre_completo
+    
+    generado_count = 0
+    error_count = 0
+    ya_existia_count = 0
+    errores = []
+    
+    for cierre in queryset:
+        try:
+            # Verificar si ya tiene consolidación
+            if cierre.nomina_consolidada.exists():
+                ya_existia_count += 1
+                continue
+                
+            with transaction.atomic():
+                # Asegurar estado correcto antes de consolidar
+                cierre.estado_consolidacion = 'pendiente'
+                cierre.save(update_fields=['estado_consolidacion'])
+                
+                resultado = consolidar_cierre_completo(cierre.id, request.user)
+                
+                if resultado.get('exitoso', False):
+                    generado_count += 1
+                    estadisticas = resultado.get('estadisticas', {})
+                    nominas_procesadas = estadisticas.get('nominas_consolidadas', 0)
+                    
+                    modeladmin.message_user(
+                        request,
+                        f"✅ {cierre.cliente.nombre} - {cierre.periodo}: {nominas_procesadas} nóminas consolidadas generadas",
+                        level=modeladmin.message_user.SUCCESS
+                    )
+                else:
+                    error_count += 1
+                    error_msg = resultado.get('error', 'Error desconocido')
+                    errores.append(f"{cierre.cliente.nombre} - {cierre.periodo}: {error_msg}")
+                    
+        except Exception as e:
+            error_count += 1
+            errores.append(f"{cierre.cliente.nombre} - {cierre.periodo}: Error inesperado - {str(e)}")
+    
+    # Mensaje resumen
+    if generado_count > 0:
+        modeladmin.message_user(
+            request,
+            f"🆕 {generado_count} consolidación(es) inicial(es) generada(s) exitosamente.",
+            level=modeladmin.message_user.SUCCESS
+        )
+    
+    if ya_existia_count > 0:
+        modeladmin.message_user(
+            request,
+            f"ℹ️ {ya_existia_count} cierre(s) ya tenía(n) consolidación existente.",
+            level=modeladmin.message_user.INFO
+        )
+    
+    if error_count > 0:
+        modeladmin.message_user(
+            request,
+            f"❌ {error_count} error(es) durante generación: {'; '.join(errores[:3])}{'...' if len(errores) > 3 else ''}",
+            level=modeladmin.message_user.ERROR
+        )
+
+# Asignar acciones al admin de CierreNomina
+CierreNominaAdmin.actions = [
+    actualizar_consolidacion_cierre,
+    generar_consolidacion_inicial
+]
 
 
 @admin.register(EmpleadoCierre)
@@ -561,9 +703,10 @@ class ResolucionIncidenciaAdmin(admin.ModelAdmin):
 def asignar_incidencias_a_mi(modeladmin, request, queryset):
     """Acción para asignarse incidencias"""
     count = queryset.update(asignado_a=request.user)
+    nombre_completo = f'{request.user.nombre} {request.user.apellido}'.strip() if hasattr(request.user, 'nombre') else request.user.correo_bdo
     modeladmin.message_user(
         request,
-        f'{count} incidencia(s) asignada(s) a {request.user.get_full_name() or request.user.correo_bdo}'
+        f'{count} incidencia(s) asignada(s) a {nombre_completo or request.user.correo_bdo}'
     )
 
 @admin.action(description='Marcar como pendientes')
@@ -684,7 +827,8 @@ class AnalisisDatosCierreAdmin(admin.ModelAdmin):
     def analista_display(self, obj):
         """Mostrar analista con formato"""
         if obj.analista:
-            return f"{obj.analista.get_full_name() or obj.analista.correo_bdo}"
+            nombre_completo = f'{obj.analista.nombre} {obj.analista.apellido}'.strip() if hasattr(obj.analista, 'nombre') else obj.analista.correo_bdo
+            return nombre_completo or obj.analista.correo_bdo
         return "-"
     analista_display.short_description = 'Analista'
     
@@ -1026,6 +1170,20 @@ class DiscrepanciaCierreAdmin(admin.ModelAdmin):
 
 # ========== ADMINISTRACIÓN DE MODELOS CONSOLIDADOS ==========
 
+class HeaderValorEmpleadoInline(admin.TabularInline):
+    """Inline para mostrar headers-valores dentro de una nómina consolidada"""
+    model = HeaderValorEmpleado
+    extra = 0
+    readonly_fields = ('nombre_header', 'concepto_remuneracion', 'valor_original', 'valor_numerico', 'es_numerico')
+    fields = ('nombre_header', 'concepto_remuneracion', 'valor_original', 'valor_numerico', 'es_numerico')
+    
+    def has_add_permission(self, request, obj=None):
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 class ConceptoConsolidadoInline(admin.TabularInline):
     """Inline para mostrar conceptos dentro de una nómina consolidada"""
     model = ConceptoConsolidado
@@ -1114,7 +1272,7 @@ class NominaConsolidadaAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         })
     )
-    inlines = [ConceptoConsolidadoInline, MovimientoPersonalInline]
+    inlines = [HeaderValorEmpleadoInline, ConceptoConsolidadoInline, MovimientoPersonalInline]
     date_hierarchy = 'fecha_consolidacion'
     list_per_page = 50
     
@@ -1186,6 +1344,134 @@ class NominaConsolidadaAdmin(admin.ModelAdmin):
             'cierre',
             'cierre__cliente'
         ).prefetch_related('conceptos', 'movimientos')
+
+
+@admin.register(HeaderValorEmpleado)
+class HeaderValorEmpleadoAdmin(admin.ModelAdmin):
+    """Administración de headers-valores por empleado"""
+    list_display = (
+        'nombre_header',
+        'empleado_info',
+        'concepto_display',
+        'valor_display',
+        'es_numerico',
+        'fuente_archivo',
+        'fecha_consolidacion'
+    )
+    list_filter = (
+        'es_numerico',
+        'fuente_archivo',
+        'concepto_remuneracion__clasificacion',
+        'nomina_consolidada__cierre__cliente',
+        'nomina_consolidada__cierre__periodo',
+        'fecha_consolidacion'
+    )
+    search_fields = (
+        'nombre_header',
+        'nomina_consolidada__nombre_empleado',
+        'nomina_consolidada__rut_empleado',
+        'valor_original',
+        'concepto_remuneracion__nombre_concepto'
+    )
+    readonly_fields = (
+        'fecha_consolidacion',
+        'coordenadas_excel',
+        'resumen_header_valor'
+    )
+    fieldsets = (
+        ('Información del Header', {
+            'fields': (
+                'nomina_consolidada',
+                'nombre_header',
+                'concepto_remuneracion'
+            )
+        }),
+        ('Valores', {
+            'fields': (
+                'valor_original',
+                'valor_numerico',
+                'es_numerico'
+            )
+        }),
+        ('Origen del Dato', {
+            'fields': (
+                'fuente_archivo',
+                'columna_excel',
+                'fila_excel',
+                'coordenadas_excel'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Metadatos', {
+            'fields': (
+                'fecha_consolidacion',
+                'resumen_header_valor'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    date_hierarchy = 'fecha_consolidacion'
+    list_per_page = 100
+    
+    def empleado_info(self, obj):
+        """Info del empleado"""
+        return f"{obj.nomina_consolidada.nombre_empleado} ({obj.nomina_consolidada.rut_empleado})"
+    empleado_info.short_description = 'Empleado'
+    
+    def concepto_display(self, obj):
+        """Display del concepto si existe"""
+        if obj.concepto_remuneracion:
+            return f"{obj.concepto_remuneracion.nombre_concepto} ({obj.concepto_remuneracion.get_clasificacion_display()})"
+        return "Sin clasificar"
+    concepto_display.short_description = 'Concepto'
+    
+    def valor_display(self, obj):
+        """Display inteligente del valor"""
+        if obj.es_numerico and obj.valor_numerico is not None:
+            return f"${obj.valor_numerico:,.2f}"
+        return obj.valor_original or "Sin valor"
+    valor_display.short_description = 'Valor'
+    
+    def coordenadas_excel(self, obj):
+        """Coordenadas Excel si están disponibles"""
+        if obj.columna_excel and obj.fila_excel:
+            return f"{obj.columna_excel}{obj.fila_excel}"
+        return "No disponible"
+    coordenadas_excel.short_description = 'Coordenadas Excel'
+    
+    def resumen_header_valor(self, obj):
+        """Resumen completo del header-valor"""
+        return f"""
+        RESUMEN HEADER-VALOR:
+        
+        👤 EMPLEADO:
+        - Nombre: {obj.nomina_consolidada.nombre_empleado}
+        - RUT: {obj.nomina_consolidada.rut_empleado}
+        - Cierre: {obj.nomina_consolidada.cierre.cliente.nombre} - {obj.nomina_consolidada.cierre.periodo}
+        
+        📊 HEADER:
+        - Nombre: {obj.nombre_header}
+        - Clasificación: {obj.concepto_remuneracion.get_clasificacion_display() if obj.concepto_remuneracion else 'Sin clasificar'}
+        - Fuente: {obj.fuente_archivo}
+        
+        💰 VALOR:
+        - Original: {obj.valor_original}
+        - Numérico: {f'${obj.valor_numerico:,.2f}' if obj.valor_numerico else 'N/A'}
+        - Es Numérico: {'Sí' if obj.es_numerico else 'No'}
+        
+        📍 ORIGEN:
+        - Coordenadas Excel: {f'{obj.columna_excel}{obj.fila_excel}' if obj.columna_excel and obj.fila_excel else 'No disponible'}
+        - Fecha Consolidación: {obj.fecha_consolidacion.strftime('%d/%m/%Y %H:%M')}
+        """
+    resumen_header_valor.short_description = 'Resumen Completo'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'nomina_consolidada',
+            'nomina_consolidada__cierre',
+            'nomina_consolidada__cierre__cliente',
+            'concepto_remuneracion'
+        )
 
 
 @admin.register(ConceptoConsolidado)
@@ -1493,5 +1779,302 @@ def exportar_consolidados_excel(modeladmin, request, queryset):
 
 # Agregar acciones personalizadas
 NominaConsolidadaAdmin.actions = [exportar_consolidados_excel]
+HeaderValorEmpleadoAdmin.actions = [exportar_consolidados_excel]
 ConceptoConsolidadoAdmin.actions = [recalcular_estadisticas_conceptos, exportar_consolidados_excel]
 MovimientoPersonalAdmin.actions = [exportar_consolidados_excel]
+
+
+# ========== ADMINISTRACIÓN DE MODELOS DE LOGGING ==========
+
+@admin.register(UploadLogNomina)
+class UploadLogNominaAdmin(admin.ModelAdmin):
+    """Administración de logs de uploads de nómina"""
+    list_display = (
+        'archivo_nombre_corto',
+        'tipo_display',
+        'cierre_info',
+        'estado_display',
+        'fecha_subida',
+        'usuario_display'
+    )
+    list_filter = (
+        'tipo_upload',
+        'estado',
+        'cierre__cliente',
+        'cierre__periodo',
+        'fecha_subida',
+        'usuario'
+    )
+    search_fields = (
+        'nombre_archivo_original',
+        'cierre__cliente__nombre',
+        'cierre__periodo',
+        'usuario__first_name',
+        'usuario__last_name',
+        'usuario__correo_bdo'
+    )
+    readonly_fields = (
+        'fecha_subida',
+        'tiempo_procesamiento',
+        'headers_detectados_formatted',
+        'resumen_formatted'
+    )
+    fieldsets = (
+        ('Información del Archivo', {
+            'fields': (
+                'tipo_upload',
+                'nombre_archivo_original',
+                'cierre',
+                'usuario'
+            )
+        }),
+        ('Estado de Procesamiento', {
+            'fields': (
+                'estado',
+                'fecha_subida',
+                'tiempo_procesamiento'
+            )
+        }),
+        ('Headers Detectados', {
+            'fields': (
+                'headers_detectados_formatted',
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Resultados', {
+            'fields': (
+                'resumen_formatted',
+                'errores'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+    date_hierarchy = 'fecha_subida'
+    list_per_page = 50
+    
+    def archivo_nombre_corto(self, obj):
+        """Nombre del archivo truncado"""
+        if obj.nombre_archivo_original:
+            nombre = obj.nombre_archivo_original
+            if len(nombre) > 30:
+                return f"{nombre[:15]}...{nombre[-10:]}"
+            return nombre
+        return "Sin archivo"
+    archivo_nombre_corto.short_description = 'Archivo'
+    
+    def tipo_display(self, obj):
+        """Display con iconos para tipo"""
+        icons = {
+            'libro_remuneraciones': '📚',
+            'movimientos_mes': '🔄',
+            'novedades': '📋',
+            'movimientos_ingresos': '🟢',
+            'movimientos_finiquitos': '🔴',
+            'movimientos_incidencias': '⚠️',
+            'archivos_analista': '👤'
+        }
+        icon = icons.get(obj.tipo_upload, '📄')
+        return f"{icon} {obj.get_tipo_upload_display()}"
+    tipo_display.short_description = 'Tipo'
+    
+    def cierre_info(self, obj):
+        """Info del cierre"""
+        return f"{obj.cierre.cliente.nombre} - {obj.cierre.periodo}"
+    cierre_info.short_description = 'Cierre'
+    
+    def estado_display(self, obj):
+        """Estado con colores"""
+        colors = {
+            'subido': '#6b7280',           # gris
+            'procesando': '#f59e0b',       # amarillo
+            'analizando_hdrs': '#3b82f6',  # azul
+            'hdrs_analizados': '#8b5cf6',  # morado
+            'clasif_en_proceso': '#f97316', # naranja
+            'clasificado': '#10b981',      # verde
+            'procesado': '#059669',        # verde oscuro
+            'error': '#ef4444',            # rojo
+            'cancelado': '#6b7280'         # gris oscuro
+        }
+        color = colors.get(obj.estado, '#6b7280')
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">●</span> {}',
+            color,
+            obj.get_estado_display()
+        )
+    estado_display.short_description = 'Estado'
+    
+    def usuario_display(self, obj):
+        """Info del usuario"""
+        if obj.usuario:
+            nombre_completo = f"{obj.usuario.nombre} {obj.usuario.apellido}".strip()
+            return nombre_completo if nombre_completo else obj.usuario.correo_bdo
+        return "Sin asignar"
+    usuario_display.short_description = 'Usuario'
+    
+    def headers_detectados_formatted(self, obj):
+        """Headers detectados formateados"""
+        if obj.headers_detectados:
+            headers = obj.headers_detectados
+            if isinstance(headers, list):
+                return format_html("<br>".join([f"• {header}" for header in headers[:10]]))
+            elif isinstance(headers, dict):
+                return f"Headers: {len(headers)} detectados"
+        return "Sin headers detectados"
+    headers_detectados_formatted.short_description = 'Headers Detectados'
+    
+    def resumen_formatted(self, obj):
+        """Resumen formateado"""
+        if obj.resumen:
+            return format_html(str(obj.resumen).replace('\n', '<br>'))
+        return "Sin resumen"
+    resumen_formatted.short_description = 'Resumen'
+    
+    def tiempo_procesamiento_display(self, obj):
+        """Tiempo de procesamiento calculado"""
+        if obj.tiempo_procesamiento:
+            total_seconds = obj.tiempo_procesamiento.total_seconds()
+            if total_seconds < 60:
+                return f"{total_seconds:.1f}s"
+            elif total_seconds < 3600:
+                return f"{total_seconds/60:.1f}m"
+            else:
+                return f"{total_seconds/3600:.1f}h"
+        return "Sin calcular"
+    tiempo_procesamiento_display.short_description = 'Tiempo Procesamiento'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'cierre',
+            'cierre__cliente',
+            'usuario'
+        )
+
+
+@admin.register(TarjetaActivityLogNomina)
+class TarjetaActivityLogNominaAdmin(admin.ModelAdmin):
+    """Administración de logs de actividad de tarjetas"""
+    list_display = (
+        'timestamp',
+        'tarjeta_display',
+        'accion_display',
+        'usuario_info',
+        'cierre_info',
+        'resultado_display'
+    )
+    list_filter = (
+        'tarjeta',
+        'accion',
+        'usuario',
+        'cierre__cliente',
+        'cierre__periodo',
+        'timestamp'
+    )
+    search_fields = (
+        'tarjeta',
+        'accion',
+        'descripcion',
+        'usuario__first_name',
+        'usuario__last_name',
+        'usuario__correo_bdo',
+        'cierre__cliente__nombre'
+    )
+    readonly_fields = (
+        'timestamp',
+        'metadata_formatted'
+    )
+    fieldsets = (
+        ('Información de la Actividad', {
+            'fields': (
+                'tarjeta',
+                'accion',
+                'usuario',
+                'cierre',
+                'timestamp'
+            )
+        }),
+        ('Detalles', {
+            'fields': (
+                'descripcion',
+                'metadata_formatted'
+            )
+        })
+    )
+    date_hierarchy = 'timestamp'
+    list_per_page = 100
+    
+    def tarjeta_display(self, obj):
+        """Display de tarjeta con iconos"""
+        icons = {
+            'verificador_datos': '🔍',
+            'archivos_analista': '👤',
+            'consolidacion': '📊',
+            'incidencias': '⚠️',
+            'entrega': '📤'
+        }
+        icon = icons.get(obj.tarjeta, '📋')
+        return f"{icon} {obj.tarjeta.replace('_', ' ').title()}"
+    tarjeta_display.short_description = 'Tarjeta'
+    
+    def accion_display(self, obj):
+        """Display de acción con colores"""
+        colors = {
+            'abrir': '#3b82f6',      # azul
+            'procesar': '#f59e0b',   # amarillo
+            'completar': '#10b981',  # verde
+            'error': '#ef4444',      # rojo
+            'cancelar': '#6b7280'    # gris
+        }
+        color = colors.get(obj.accion, '#6b7280')
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">{}</span>',
+            color,
+            obj.accion.title()
+        )
+    accion_display.short_description = 'Acción'
+    
+    def usuario_info(self, obj):
+        """Info del usuario"""
+        if obj.usuario:
+            nombre_completo = f"{obj.usuario.nombre} {obj.usuario.apellido}".strip()
+            return nombre_completo if nombre_completo else obj.usuario.correo_bdo
+        return "Sistema"
+    usuario_info.short_description = 'Usuario'
+    
+    def cierre_info(self, obj):
+        """Info del cierre"""
+        return f"{obj.cierre.cliente.nombre} - {obj.cierre.periodo}"
+    cierre_info.short_description = 'Cierre'
+    
+    def resultado_display(self, obj):
+        """Display del resultado con colores"""
+        colors = {
+            'exito': '#10b981',      # verde
+            'error': '#ef4444',      # rojo
+            'warning': '#f59e0b'     # amarillo
+        }
+        color = colors.get(obj.resultado, '#6b7280')
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">●</span> {}',
+            color,
+            obj.get_resultado_display()
+        )
+    resultado_display.short_description = 'Resultado'
+    
+    def metadata_formatted(self, obj):
+        """Metadata formateada"""
+        if obj.detalles:
+            import json
+            try:
+                formatted = json.dumps(obj.detalles, indent=2, ensure_ascii=False)
+                return format_html(f"<pre>{formatted}</pre>")
+            except:
+                return str(obj.detalles)
+        return "Sin detalles"
+    metadata_formatted.short_description = 'Detalles'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'usuario',
+            'cierre',
+            'cierre__cliente'
+        )

@@ -89,11 +89,34 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
         )
         
         if not created:
-            # Si ya existe, actualizar el archivo
-            archivo_novedades.archivo = archivo
-            archivo_novedades.analista = request.user
-            archivo_novedades.estado = 'pendiente'
-            archivo_novedades.save()
+            # Si ya existe, LIMPIAR COMPLETAMENTE los datos del archivo anterior
+            logger.info(f"Resubiendo archivo de novedades - Limpiando datos anteriores del archivo {archivo_novedades.id}")
+            
+            with transaction.atomic():
+                # 1. Eliminar todos los registros de conceptos de empleados novedades del cierre
+                empleados_novedades = EmpleadoCierreNovedades.objects.filter(cierre=cierre)
+                total_registros = 0
+                
+                for empleado in empleados_novedades:
+                    count_registros = empleado.registroconceptoempleadonovedades_set.count()
+                    empleado.registroconceptoempleadonovedades_set.all().delete()
+                    total_registros += count_registros
+                
+                logger.info(f"Eliminados {total_registros} registros de conceptos novedades para resubida")
+                
+                # 2. Eliminar todos los empleados novedades del cierre
+                count_empleados_novedades = empleados_novedades.count()
+                empleados_novedades.delete()
+                logger.info(f"Eliminados {count_empleados_novedades} empleados novedades para resubida")
+                
+                # 3. Limpiar header_json y actualizar archivo
+                archivo_novedades.archivo = archivo
+                archivo_novedades.analista = request.user
+                archivo_novedades.estado = 'pendiente'
+                archivo_novedades.header_json = None  # IMPORTANTE: Limpiar headers del archivo anterior
+                archivo_novedades.save()
+                
+                logger.info(f"Archivo de novedades {archivo_novedades.id} limpiado y actualizado para resubida")
         
         # Disparar tarea de procesamiento con Celery
         procesar_archivo_novedades.delay(archivo_novedades.id)

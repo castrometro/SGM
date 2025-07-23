@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AlertCircle, Settings } from "lucide-react";
 import { 
   descargarPlantillaNovedades,
@@ -28,6 +28,19 @@ const NovedadesCard = ({
     headers_clasificados: [] 
   });
   const [errorLocal, setErrorLocal] = useState("");
+
+  // Limpiar estado local cuando el archivo cambia o se elimina
+  useEffect(() => {
+    if (!archivo?.id) {
+      // Si no hay archivo, limpiar todo el estado local
+      setHeadersNovedades({ 
+        headers_sin_clasificar: [], 
+        headers_clasificados: [] 
+      });
+      setErrorLocal("");
+      setModalMapeoAbierto(false);
+    }
+  }, [archivo?.id]);
 
   const handleMapearHeaders = async () => {
     if (!archivo?.id) return;

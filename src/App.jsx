@@ -27,6 +27,10 @@ import EstadosCierres from "./components/Gerente/EstadosCierres";
 import CacheRedis from "./components/Gerente/CacheRedis";
 import AdminSistema from "./components/Gerente/AdminSistema";
 
+// Importar nuevos componentes de Nómina
+import LibroRemuneraciones from "./components/LibroRemuneraciones/LibroRemuneraciones";
+import MovimientosMes from "./components/MovimientosMes/MovimientosMes";
+
 function App() {
   return (
     <Router>
@@ -64,7 +68,9 @@ function App() {
           />
 
           {/* ----------- ÁREA: NÓMINA ------------- */}
-          <Route path="nomina/cierres/:cierreId" element={<CierreDetalleNomina />} />          {/* ----------- ÁREA: GESTIÓN DE ANALISTAS ------------- */}
+          <Route path="nomina/cierres/:cierreId" element={<CierreDetalleNomina />} />
+          <Route path="cierres-nomina/:id/libro-remuneraciones" element={<LibroRemuneraciones />} />
+          <Route path="cierres-nomina/:id/movimientos" element={<MovimientosMes />} />          {/* ----------- ÁREA: GESTIÓN DE ANALISTAS ------------- */}
           <Route path="analistas" element={<GestionAnalistas />} />
           
           {/* ----------- ÁREA: MIS ANALISTAS (SUPERVISOR) ------------- */}

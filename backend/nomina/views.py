@@ -9,6 +9,8 @@ from api.models import Cliente, AsignacionClienteUsuario
 from .permissions import SupervisorPuedeVerCierresNominaAnalistas
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.db import transaction
+from django.db.models import Q
 import logging
 
 from .utils.LibroRemuneraciones import clasificar_headers_libro_remuneraciones
@@ -220,6 +222,137 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
             "cambio_estado": estado_anterior != estado_nuevo
         })
 
+    @action(detail=True, methods=['post'], url_path='consolidar-datos')
+    def consolidar_datos(self, request, pk=None):
+        """
+        🔄 CONSOLIDAR DATOS DE NÓMINA
+        
+        Ejecuta la consolidación de datos del cierre de forma asíncrona:
+        1. Valida estado 'verificado_sin_discrepancias'
+        2. Lanza tarea Celery de consolidación
+        3. Retorna inmediatamente con task_id para seguimiento
+        """
+        from .models_logging import registrar_actividad_tarjeta_nomina
+        from .utils.clientes import get_client_ip
+        from .tasks import consolidar_datos_nomina_task
+        
+        cierre = self.get_object()
+        estado_anterior = cierre.estado
+        
+        # Verificar estado válido para consolidación
+        if cierre.estado not in ['verificado_sin_discrepancias', 'datos_consolidados']:
+            return Response({
+                "success": False,
+                "error": f"El cierre debe estar en estado 'verificado_sin_discrepancias' o 'datos_consolidados' para consolidar datos. Estado actual: {cierre.estado}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Verificar que hay archivos procesados
+            libro = cierre.libros_remuneraciones.filter(estado='procesado').first()
+            movimientos = cierre.movimientos_mes.filter(estado='procesado').first()
+            
+            if not libro:
+                return Response({
+                    "success": False,
+                    "error": "No hay libro de remuneraciones procesado disponible"
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            if not movimientos:
+                return Response({
+                    "success": False,
+                    "error": "No hay archivo de movimientos procesado disponible"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Lanzar tarea asíncrona de consolidación
+            task = consolidar_datos_nomina_task.delay(cierre.id)
+            
+            # Registrar inicio de la actividad
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=cierre.id,
+                tarjeta="verificador_datos",
+                accion="consolidar_datos",
+                descripcion="Iniciando consolidación de datos de nómina",
+                usuario=request.user,
+                detalles={
+                    "estado_anterior": estado_anterior,
+                    "task_id": task.id,
+                    "archivos_disponibles": {
+                        "libro": libro.archivo.name,
+                        "movimientos": movimientos.archivo.name
+                    }
+                },
+                ip_address=get_client_ip(request)
+            )
+            
+            return Response({
+                "success": True,
+                "mensaje": "Consolidación de datos iniciada",
+                "task_id": task.id,
+                "cierre_id": cierre.id,
+                "estado_inicial": estado_anterior,
+                "archivos_procesados": {
+                    "libro_remuneraciones": libro.archivo.name,
+                    "movimientos_mes": movimientos.archivo.name
+                }
+            })
+            
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": f"Error al iniciar consolidación de datos: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'], url_path='task-status/(?P<task_id>[^/.]+)')
+    def consultar_estado_tarea(self, request, pk=None, task_id=None):
+        """
+        🔍 CONSULTAR ESTADO DE TAREA CELERY
+        
+        Permite verificar el estado de una tarea de Celery ejecutándose
+        en background (como la consolidación de datos).
+        """
+        from celery import current_app
+        
+        if not task_id:
+            return Response({
+                "success": False,
+                "error": "task_id es requerido"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Obtener el resultado de la tarea
+            result = current_app.AsyncResult(task_id)
+            
+            response_data = {
+                "task_id": task_id,
+                "status": result.status,
+                "ready": result.ready()
+            }
+            
+            if result.ready():
+                if result.successful():
+                    response_data.update({
+                        "success": True,
+                        "result": result.result
+                    })
+                else:
+                    response_data.update({
+                        "success": False,
+                        "error": str(result.result) if result.result else "Tarea falló sin información específica"
+                    })
+            else:
+                response_data.update({
+                    "success": None,  # Aún en proceso
+                    "mensaje": "Tarea en proceso..."
+                })
+            
+            return Response(response_data)
+            
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": f"Error consultando estado de tarea: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=True, methods=['post'], url_path='generar-incidencias-consolidadas')
     def generar_incidencias_consolidadas(self, request, pk=None):
         """
@@ -302,40 +435,210 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='estado-incidencias')
     def estado_incidencias(self, request, pk=None):
         """
-        Consulta el estado actual de las incidencias del cierre
+        Obtiene el resumen completo del estado de las incidencias para el dashboard
         """
         cierre = self.get_object()
         
-        # Contar incidencias por estado
-        from .models import IncidenciaCierre
+        # Contar incidencias por estado de resolución
+        from .models import IncidenciaCierre, ResolucionIncidencia
         incidencias = IncidenciaCierre.objects.filter(cierre=cierre)
+        resoluciones = ResolucionIncidencia.objects.filter(incidencia__cierre=cierre)
         
-        resumen = {
-            'total_incidencias': incidencias.count(),
-            'por_estado': {
-                'pendiente': incidencias.filter(estado='pendiente').count(),
-                'en_revision': incidencias.filter(estado='en_revision').count(),
-                'aprobada': incidencias.filter(estado='aprobada').count(),
-                'rechazada': incidencias.filter(estado='rechazada').count(),
-            },
-            'por_tipo': {
-                tipo: incidencias.filter(tipo_incidencia=tipo).count()
-                for tipo in ['VARIACION_CONCEPTO', 'CONCEPTO_NUEVO', 'CONCEPTO_PERDIDO', 
-                           'EMPLEADO_DEBERIA_INGRESAR', 'EMPLEADO_NO_DEBERIA_ESTAR', 'AUSENTISMO_CONTINUO']
-            },
-            'por_prioridad': {
-                'alta': incidencias.filter(prioridad='alta').count(),
-                'media': incidencias.filter(prioridad='media').count(),
-                'baja': incidencias.filter(prioridad='baja').count(),
-            }
+        # Progreso general
+        progreso = {
+            'aprobadas': resoluciones.filter(
+                estado='aprobada_supervisor',
+                incidencia__estado='aprobada'
+            ).count(),
+            'pendientes': incidencias.filter(estado='pendiente').count(),
+            'rechazadas': resoluciones.filter(
+                estado='rechazada_supervisor'
+            ).count()
         }
         
+        # Estados de resolución
+        estados = {
+            'pendiente': incidencias.filter(estado='pendiente').count(),
+            'resuelta_analista': resoluciones.filter(estado='resuelta_analista').count(),
+            'aprobada_supervisor': resoluciones.filter(estado='aprobada_supervisor').count(),
+            'rechazada_supervisor': resoluciones.filter(estado='rechazada_supervisor').count()
+        }
+        
+        # Distribución por prioridad
+        prioridades = {
+            'alta': incidencias.filter(prioridad='alta').count(),
+            'media': incidencias.filter(prioridad='media').count(),
+            'baja': incidencias.filter(prioridad='baja').count()
+        }
+        
+        # Verificar si puede finalizar (todas aprobadas)
+        total_incidencias = incidencias.count()
+        puede_finalizar = total_incidencias > 0 and progreso['aprobadas'] == total_incidencias
+        
         return Response({
+            'total_incidencias': total_incidencias,
+            'progreso': progreso,
+            'estados': estados,
+            'prioridades': prioridades,
+            'puede_finalizar': puede_finalizar,
             'estado_cierre': cierre.estado_incidencias,
-            'estado_consolidacion': cierre.estado_consolidacion,
-            'resumen_incidencias': resumen,
-            'puede_generar_incidencias': cierre.puede_generar_incidencias()
+            'estado_consolidacion': cierre.estado_consolidacion
         })
+
+    @action(detail=True, methods=['post'], url_path='marcar-todas-como-justificadas')
+    def marcar_todas_como_justificadas(self, request, pk=None):
+        """
+        Marca todas las incidencias resueltas por analistas como aprobadas por supervisor (acción masiva)
+        """
+        from .models_logging import registrar_actividad_tarjeta_nomina
+        from .utils.clientes import get_client_ip
+        from .models import ResolucionIncidencia
+        
+        cierre = self.get_object()
+        comentario = request.data.get('comentario', 'Aprobación masiva por supervisor')
+        
+        # Verificar permisos de supervisor
+        if not request.user.puede_supervisar_analista():
+            return Response({
+                "error": "Solo supervisores pueden realizar aprobaciones masivas"
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Obtener resoluciones pendientes de aprobación
+        resoluciones_pendientes = ResolucionIncidencia.objects.filter(
+            incidencia__cierre=cierre,
+            estado='resuelta_analista'
+        )
+        
+        if not resoluciones_pendientes.exists():
+            return Response({
+                "error": "No hay incidencias pendientes de aprobación"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            incidencias_aprobadas = 0
+            
+            with transaction.atomic():
+                for resolucion in resoluciones_pendientes:
+                    # Actualizar resolución
+                    resolucion.estado = 'aprobada_supervisor'
+                    resolucion.fecha_supervision = timezone.now()
+                    resolucion.supervisor = request.user
+                    resolucion.comentario_supervisor = comentario
+                    resolucion.save()
+                    
+                    # Actualizar incidencia
+                    resolucion.incidencia.estado = 'aprobada'
+                    resolucion.incidencia.save()
+                    
+                    incidencias_aprobadas += 1
+                
+                # Actualizar estado del cierre si es necesario
+                total_incidencias = cierre.incidencias_cierre.count()
+                incidencias_aprobadas_total = cierre.incidencias_cierre.filter(estado='aprobada').count()
+                
+                if incidencias_aprobadas_total == total_incidencias:
+                    cierre.estado_incidencias = 'incidencias_resueltas'
+                    cierre.save(update_fields=['estado_incidencias'])
+            
+            # Registrar actividad
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=cierre.id,
+                tarjeta="incidencias",
+                accion="aprobacion_masiva_supervisor",
+                descripcion=f"Aprobación masiva de {incidencias_aprobadas} incidencias",
+                usuario=request.user,
+                detalles={
+                    "incidencias_aprobadas": incidencias_aprobadas,
+                    "comentario": comentario,
+                    "estado_cierre_actualizado": cierre.estado_incidencias
+                },
+                ip_address=get_client_ip(request)
+            )
+            
+            return Response({
+                "success": True,
+                "incidencias_aprobadas": incidencias_aprobadas,
+                "mensaje": f"{incidencias_aprobadas} incidencias aprobadas exitosamente",
+                "nuevo_estado_cierre": cierre.estado_incidencias
+            })
+            
+        except Exception as e:
+            return Response({
+                "error": f"Error en aprobación masiva: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'], url_path='solicitar-recarga-archivos')
+    def solicitar_recarga_archivos(self, request, pk=None):
+        """
+        Solicita que se habilite la recarga de archivos para corregir incidencias en Talana
+        """
+        from .models_logging import registrar_actividad_tarjeta_nomina
+        from .utils.clientes import get_client_ip
+        
+        cierre = self.get_object()
+        motivo = request.data.get('motivo', '').strip()
+        
+        if not motivo:
+            return Response({
+                "error": "Debe proporcionar un motivo para la recarga"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Verificar permisos de supervisor
+        if not request.user.puede_supervisar_analista():
+            return Response({
+                "error": "Solo supervisores pueden solicitar recarga de archivos"
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            # Actualizar campos de recarga
+            cierre.observaciones_recarga = motivo
+            cierre.fecha_solicitud_recarga = timezone.now()
+            cierre.version_datos = (cierre.version_datos or 0) + 1
+            cierre.estado = 'recarga_solicitada'  # Nuevo estado
+            cierre.save(update_fields=[
+                'observaciones_recarga', 
+                'fecha_solicitud_recarga', 
+                'version_datos', 
+                'estado'
+            ])
+            
+            # Registrar actividad
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=cierre.id,
+                tarjeta="incidencias",
+                accion="solicitar_recarga_archivos",
+                descripcion=f"Solicitud de recarga de archivos: {motivo}",
+                usuario=request.user,
+                detalles={
+                    "motivo": motivo,
+                    "version_datos": cierre.version_datos,
+                    "estado_anterior": cierre.estado,
+                    "nueva_version": cierre.version_datos
+                },
+                ip_address=get_client_ip(request)
+            )
+            
+            # Instrucciones para el analista
+            instrucciones = [
+                "1. Corregir los datos problemáticos en Talana",
+                "2. Exportar nuevamente los archivos desde Talana",
+                "3. Resubir archivos en esta plataforma",
+                "4. Ejecutar nueva consolidación",
+                "5. Verificar que las incidencias se resuelvan"
+            ]
+            
+            return Response({
+                "success": True,
+                "mensaje": "Solicitud de recarga registrada exitosamente",
+                "version_datos": cierre.version_datos,
+                "estado_cierre": cierre.estado,
+                "instrucciones": instrucciones
+            })
+            
+        except Exception as e:
+            return Response({
+                "error": f"Error solicitando recarga: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
     queryset = LibroRemuneracionesUpload.objects.all()
@@ -1358,10 +1661,20 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         queryset = super().get_queryset()
-        cierre_id = self.request.query_params.get('cierre')
-        estado = self.request.query_params.get('estado')
-        prioridad = self.request.query_params.get('prioridad')
-        asignado_a = self.request.query_params.get('asignado_a')
+        
+        # Manejar tanto WSGIRequest (Django) como Request (DRF)
+        if hasattr(self.request, 'query_params'):
+            # Request de DRF
+            cierre_id = self.request.query_params.get('cierre')
+            estado = self.request.query_params.get('estado')
+            prioridad = self.request.query_params.get('prioridad')
+            asignado_a = self.request.query_params.get('asignado_a')
+        else:
+            # WSGIRequest de Django
+            cierre_id = self.request.GET.get('cierre')
+            estado = self.request.GET.get('estado')
+            prioridad = self.request.GET.get('prioridad')
+            asignado_a = self.request.GET.get('asignado_a')
         
         if cierre_id:
             queryset = queryset.filter(cierre_id=cierre_id)
@@ -1376,14 +1689,203 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['post'], url_path='generar/(?P<cierre_id>[^/.]+)')
     def generar_incidencias(self, request, cierre_id=None):
-        """Endpoint para generar incidencias de un cierre específico"""
-        # 🚫 FUNCIONALIDAD COMENTADA TEMPORALMENTE
-        # Las incidencias solo deben generarse cuando las discrepancias sean 0
-        # y se implementará la comparación contra el mes anterior
+        """
+        🔍 ENDPOINT: Generar incidencias comparando datos consolidados
+        
+        Ejecuta la detección de incidencias entre el mes actual y anterior:
+        1. Variaciones de conceptos >±30%
+        2. Ausentismos continuos
+        3. Ingresos del mes anterior faltantes
+        4. Finiquitos del mes anterior presentes
+        """
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        # Verificar permisos básicos
+        if not request.user.is_authenticated:
+            return Response({"error": "Usuario no autenticado"}, status=401)
+        
+        # Verificar que el cierre esté en un estado válido para generar incidencias
+        estados_validos = ['datos_consolidados', 'con_incidencias', 'incidencias_resueltas']
+        if cierre.estado not in estados_validos:
+            return Response({
+                "error": "Estado incorrecto",
+                "message": f"El cierre debe estar en estado válido para generar incidencias. Estado actual: {cierre.estado}",
+                "estado_actual": cierre.estado,
+                "estados_validos": estados_validos
+            }, status=400)
+        
+        # Lanzar tarea de generación de incidencias
+        from .tasks import generar_incidencias_cierre_task
+        task = generar_incidencias_cierre_task.delay(cierre_id)
+        
         return Response({
-            "error": "Funcionalidad de incidencias deshabilitada temporalmente",
-            "message": "Primero debe completar la fase de discrepancias (debe ser 0 discrepancias) antes de generar incidencias contra el mes anterior"
-        }, status=501)
+            "message": "🔍 Generación de incidencias consolidadas iniciada",
+            "descripcion": "Comparando datos del mes actual vs anterior según las 4 reglas de detección",
+            "task_id": task.id,
+            "cierre_id": cierre_id,
+            "estado_cierre": cierre.estado,
+            "reglas_aplicadas": [
+                "Variaciones de conceptos >±30%",
+                "Ausentismos continuos del mes anterior", 
+                "Ingresos del mes anterior faltantes",
+                "Finiquitos del mes anterior aún presentes"
+            ]
+        }, status=202)
+    
+    @action(detail=False, methods=['delete'], url_path='limpiar/(?P<cierre_id>[^/.]+)')
+    def limpiar_incidencias(self, request, cierre_id=None):
+        """
+        🗑️ ENDPOINT: Limpiar incidencias de un cierre (función de debug)
+        """
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            incidencias_borradas = IncidenciaCierre.objects.filter(cierre=cierre).count()
+            IncidenciaCierre.objects.filter(cierre=cierre).delete()
+            
+            # Resetear estado de incidencias
+            cierre.estado_incidencias = 'pendiente'
+            cierre.total_incidencias = 0
+            cierre.save(update_fields=['estado_incidencias', 'total_incidencias'])
+            
+            return Response({
+                "message": f"✅ {incidencias_borradas} incidencias limpiadas del cierre {cierre_id}",
+                "incidencias_borradas": incidencias_borradas,
+                "nuevo_estado": cierre.estado_incidencias
+            }, status=200)
+            
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        except Exception as e:
+            return Response({"error": f"Error limpiando incidencias: {str(e)}"}, status=500)
+    
+    @action(detail=False, methods=['get'], url_path='analisis-completo/(?P<cierre_id>[^/.]+)')
+    def analisis_completo_temporal(self, request, cierre_id=None):
+        """
+        🔍 ENDPOINT: Análisis completo de comparación temporal
+        
+        Muestra TODAS las comparaciones vs período anterior, no solo incidencias:
+        1. Todas las variaciones de conceptos (incluso <30%)
+        2. Todos los ausentismos continuos
+        3. Todos los ingresos del mes anterior
+        4. Todos los finiquitos del mes anterior
+        """
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        # Verificar permisos básicos
+        if not request.user.is_authenticated:
+            return Response({"error": "Usuario no autenticado"}, status=401)
+        
+        # Verificar que el cierre esté consolidado
+        if cierre.estado != 'datos_consolidados':
+            return Response({
+                "error": "Estado incorrecto",
+                "message": f"El cierre debe estar en 'datos_consolidados' para análisis completo. Estado actual: {cierre.estado}",
+                "estado_actual": cierre.estado,
+                "estado_requerido": "datos_consolidados"
+            }, status=400)
+        
+        try:
+            from .utils.AnalisisCompletoIncidencias import generar_analisis_completo_temporal
+            analisis = generar_analisis_completo_temporal(cierre)
+            
+            return Response({
+                "success": True,
+                "cierre_id": cierre_id,
+                "analisis": analisis,
+                "mensaje": "✅ Análisis temporal completo generado exitosamente"
+            }, status=200)
+            
+        except Exception as e:
+            logger.error(f"Error generando análisis completo para cierre {cierre_id}: {e}")
+            return Response({
+                "error": "Error interno",
+                "message": f"Error generando análisis completo: {str(e)}"
+            }, status=500)
+    
+    @action(detail=False, methods=['post'], url_path='finalizar/(?P<cierre_id>[^/.]+)')
+    def finalizar_cierre(self, request, cierre_id=None):
+        """
+        🎯 ENDPOINT: Finalizar cierre y generar informes
+        
+        Solo disponible cuando el cierre está en estado 'incidencias_resueltas'
+        (es decir, cuando no hay incidencias o todas están resueltas)
+        """
+        from django.utils import timezone
+        
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        # Verificar permisos
+        if not request.user.is_authenticated:
+            return Response({"error": "Usuario no autenticado"}, status=401)
+        
+        # Verificar que el cierre esté listo para finalizar
+        if cierre.estado != 'incidencias_resueltas':
+            return Response({
+                "error": "Estado incorrecto",
+                "message": f"El cierre debe estar en 'incidencias_resueltas' para ser finalizado. Estado actual: {cierre.estado}",
+                "estado_actual": cierre.estado,
+                "estados_permitidos": ["incidencias_resueltas"],
+                "estado_incidencias": getattr(cierre, 'estado_incidencias', 'no_definido'),
+                "total_incidencias": getattr(cierre, 'total_incidencias', 0)
+            }, status=400)
+        
+        # Verificar que no hay incidencias pendientes
+        incidencias_pendientes = cierre.incidencias.filter(
+            estado__in=['pendiente', 'en_revision']
+        ).count()
+        
+        if incidencias_pendientes > 0:
+            return Response({
+                "error": "Incidencias pendientes",
+                "message": f"Hay {incidencias_pendientes} incidencias pendientes de resolución",
+                "incidencias_pendientes": incidencias_pendientes,
+                "accion_requerida": "Resolver todas las incidencias antes de finalizar"
+            }, status=400)
+        
+        # Proceder con la finalización
+        try:
+            # Cambiar estado del cierre a finalizado
+            cierre.estado = 'finalizado'
+            cierre.estado_incidencias = 'finalizado'
+            cierre.fecha_finalizacion = timezone.now()
+            cierre.usuario_finalizacion = request.user
+            cierre.save(update_fields=['estado', 'estado_incidencias', 'fecha_finalizacion', 'usuario_finalizacion'])
+            
+            # TODO: Aquí se pueden lanzar tareas para generar informes
+            # - Generar informe consolidado
+            # - Generar reportes financieros
+            # - Notificar a usuarios relevantes
+            
+            return Response({
+                "success": True,
+                "message": "🎉 Cierre finalizado exitosamente",
+                "cierre_id": cierre_id,
+                "estado_final": cierre.estado,
+                "fecha_finalizacion": cierre.fecha_finalizacion,
+                "usuario_finalizacion": request.user.correo_bdo,
+                "resumen": {
+                    "empleados_consolidados": cierre.nomina_consolidada.count(),
+                    "total_incidencias_resueltas": cierre.incidencias.count(),
+                    "periodo": str(cierre.periodo),
+                    "cliente": cierre.cliente.nombre
+                },
+                "siguiente_paso": "Cierre completado. Informes disponibles en el sistema."
+            }, status=200)
+            
+        except Exception as e:
+            return Response({
+                "error": "Error interno",
+                "message": f"Error al finalizar cierre: {str(e)}"
+            }, status=500)
         
         # CÓDIGO ORIGINAL COMENTADO:
         # try:
@@ -1473,7 +1975,7 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
         
         # Actualizar el estado de incidencias del cierre
         cierre.estado_incidencias = 'resueltas'
-        cierre.estado = 'completado'
+        cierre.estado = 'finalizado'
         cierre.save(update_fields=['estado_incidencias', 'estado'])
         
         logger.info(f"DEV: Eliminadas {deleted_count} incidencias del cierre {cierre_id}")
@@ -1493,10 +1995,10 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
         except CierreNomina.DoesNotExist:
             return Response({"error": "Cierre no encontrado"}, status=404)
         
-        # Verificar que el cierre esté en estado completado y archivos consolidados
-        if cierre.estado != 'completado':
+        # Verificar que el cierre esté en estado finalizado y archivos consolidados
+        if cierre.estado != 'finalizado':
             return Response({
-                "error": "El cierre debe estar en estado 'completado' para iniciar análisis"
+                "error": "El cierre debe estar en estado 'finalizado' para iniciar análisis"
             }, status=400)
         
         if cierre.estado_incidencias != 'resueltas':
@@ -1572,6 +2074,96 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
                 "error": f"Error generando preview: {str(e)}"
             }, status=500)
 
+    @action(detail=True, methods=['post'])
+    def aprobar(self, request, pk=None):
+        """Aprobar una incidencia de cierre"""
+        incidencia = self.get_object()
+        comentario = request.data.get('comentario', '').strip()
+        
+        # Verificar permisos básicos de autenticación
+        if not request.user.is_authenticated:
+            return Response({"error": "Usuario no autenticado"}, status=401)
+        
+        # Verificar permisos de supervisor
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({"error": "Solo supervisores pueden aprobar incidencias"}, status=403)
+        
+        try:
+            # Crear resolución de aprobación
+            from .models import ResolucionIncidencia
+            resolucion = ResolucionIncidencia.objects.create(
+                incidencia=incidencia,
+                usuario=request.user,
+                tipo_resolucion='aprobacion',
+                comentario=comentario or 'Incidencia aprobada',
+            )
+            
+            # Cambiar estado de la incidencia
+            incidencia.estado = 'aprobada'
+            incidencia.asignado_a = request.user
+            incidencia.fecha_ultima_accion = timezone.now()
+            incidencia.save(update_fields=['estado', 'asignado_a', 'fecha_ultima_accion'])
+            
+            logger.info(f"✅ Incidencia {incidencia.id} aprobada por {request.user.correo_bdo}")
+            
+            return Response({
+                "message": "Incidencia aprobada correctamente",
+                "estado": incidencia.estado,
+                "fecha_aprobacion": incidencia.fecha_ultima_accion,
+                "resolucion_id": resolucion.id
+            })
+            
+        except Exception as e:
+            logger.error(f"Error aprobando incidencia {pk}: {e}")
+            return Response({"error": f"Error aprobando incidencia: {str(e)}"}, status=500)
+    
+    @action(detail=True, methods=['post'])
+    def rechazar(self, request, pk=None):
+        """Rechazar una incidencia de cierre"""
+        incidencia = self.get_object()
+        comentario = request.data.get('comentario', '').strip()
+        
+        if not comentario:
+            return Response({"error": "El comentario es requerido para rechazar"}, status=400)
+        
+        # Verificar permisos básicos de autenticación
+        if not request.user.is_authenticated:
+            return Response({"error": "Usuario no autenticado"}, status=401)
+        
+        # Verificar permisos de supervisor
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({"error": "Solo supervisores pueden rechazar incidencias"}, status=403)
+        
+        try:
+            # Crear resolución de rechazo
+            from .models import ResolucionIncidencia
+            resolucion = ResolucionIncidencia.objects.create(
+                incidencia=incidencia,
+                usuario=request.user,
+                tipo_resolucion='rechazo',
+                comentario=comentario,
+            )
+            
+            # Cambiar estado de la incidencia a pendiente (para re-justificación)
+            incidencia.estado = 'pendiente'
+            incidencia.asignado_a = None  # Liberar asignación para que analista pueda volver a justificar
+            incidencia.fecha_ultima_accion = timezone.now()
+            incidencia.save(update_fields=['estado', 'asignado_a', 'fecha_ultima_accion'])
+            
+            logger.info(f"❌ Incidencia {incidencia.id} rechazada por {request.user.correo_bdo}")
+            
+            return Response({
+                "message": "Incidencia rechazada correctamente",
+                "estado": incidencia.estado,
+                "fecha_rechazo": incidencia.fecha_ultima_accion,
+                "resolucion_id": resolucion.id,
+                "motivo": comentario
+            })
+            
+        except Exception as e:
+            logger.error(f"Error rechazando incidencia {pk}: {e}")
+            return Response({"error": f"Error rechazando incidencia: {str(e)}"}, status=500)
+
 class ResolucionIncidenciaViewSet(viewsets.ModelViewSet):
     """ViewSet para gestionar resoluciones de incidencias"""
     queryset = ResolucionIncidencia.objects.all()
@@ -1595,7 +2187,9 @@ class ResolucionIncidenciaViewSet(viewsets.ModelViewSet):
         return ResolucionIncidenciaSerializer
     
     def perform_create(self, serializer):
-        """Crear una nueva resolución para una incidencia"""
+        """
+        Crear una nueva resolución para una incidencia con flujo analista-supervisor
+        """
         incidencia_id = self.request.data.get('incidencia_id')
         
         if not incidencia_id:
@@ -1606,24 +2200,62 @@ class ResolucionIncidenciaViewSet(viewsets.ModelViewSet):
         except IncidenciaCierre.DoesNotExist:
             raise serializers.ValidationError("Incidencia no encontrada")
         
+        tipo_resolucion = self.request.data.get('tipo_resolucion')
+        usuario = self.request.user
+        
+        # Obtener el estado actual de la incidencia
+        estado_anterior = incidencia.estado
+        
+        # 🎯 LÓGICA DEL FLUJO ANALISTA-SUPERVISOR
+        if tipo_resolucion in ['comentario', 'justificacion', 'solucion']:
+            # ✅ ANALISTA justifica o propone solución
+            if incidencia.estado == 'pendiente':
+                estado_nuevo = 'resuelta_analista'  # Esperando revisión del supervisor
+                incidencia.asignado_a = None  # Liberar para que supervisor pueda revisar
+            else:
+                estado_nuevo = 'resuelta_analista'  # Re-resolución después de rechazo
+                
+        elif tipo_resolucion == 'aprobacion':
+            # ✅ SUPERVISOR aprueba la justificación del analista
+            if usuario.is_staff or usuario.is_superuser:
+                estado_nuevo = 'aprobada_supervisor'
+            else:
+                raise serializers.ValidationError("Solo supervisores pueden aprobar resoluciones")
+                
+        elif tipo_resolucion == 'rechazo':
+            # ❌ SUPERVISOR rechaza y solicita mejora
+            if usuario.is_staff or usuario.is_superuser:
+                estado_nuevo = 'rechazada_supervisor'
+                # Reasignar al analista original si existe historial
+                resolucion_analista = ResolucionIncidencia.objects.filter(
+                    incidencia=incidencia,
+                    tipo_resolucion__in=['comentario', 'justificacion', 'solucion']
+                ).order_by('-fecha_resolucion').first()
+                
+                if resolucion_analista:
+                    incidencia.asignado_a = resolucion_analista.usuario
+            else:
+                raise serializers.ValidationError("Solo supervisores pueden rechazar resoluciones")
+                
+        else:
+            # Para otros tipos, mantener estado actual
+            estado_nuevo = estado_anterior
+        
         # Crear la resolución
         resolucion = serializer.save(
             incidencia=incidencia,
-            usuario=self.request.user
+            usuario=usuario,
+            estado_anterior=estado_anterior,
+            estado_nuevo=estado_nuevo
         )
         
-        # Actualizar estado de la incidencia según el tipo de resolución y rol del usuario
-        tipo_resolucion = resolucion.tipo_resolucion
-        if tipo_resolucion == 'solucion':
-            # Si el usuario es staff o superuser, puede aprobar directamente
-            if self.request.user.is_staff or self.request.user.is_superuser:
-                incidencia.estado = 'aprobada_supervisor'
-            else:
-                incidencia.estado = 'resuelta_analista'
-        elif tipo_resolucion == 'rechazo':
-            incidencia.estado = 'rechazada_supervisor'
+        # Actualizar estado de la incidencia
+        incidencia.estado = estado_nuevo
+        incidencia.fecha_ultima_accion = timezone.now()
+        incidencia.save(update_fields=['estado', 'fecha_ultima_accion', 'asignado_a'])
         
-        incidencia.save(update_fields=['estado'])
+        logger.info(f"📝 Resolución creada por {usuario.correo_bdo}: {tipo_resolucion} para incidencia {incidencia.id}")
+        logger.info(f"🔄 Estado cambiado: {estado_anterior} → {estado_nuevo}")
         
         return resolucion
     
@@ -1640,11 +2272,175 @@ class ResolucionIncidenciaViewSet(viewsets.ModelViewSet):
         ).select_related('usuario').order_by('fecha_resolucion')
         
         serializer = ResolucionIncidenciaSerializer(resoluciones, many=True)
+        
+        # Información adicional sobre el estado de la conversación
+        estado_conversacion = self._obtener_estado_conversacion(incidencia, resoluciones)
+        
         return Response({
             "incidencia_id": incidencia_id,
             "resoluciones": serializer.data,
-            "total_resoluciones": resoluciones.count()
+            "total_resoluciones": resoluciones.count(),
+            "estado_actual": incidencia.estado,
+            "estado_conversacion": estado_conversacion,
+            "puede_aprobar": request.user.is_staff or request.user.is_superuser,
+            "puede_resolver": True  # Todos pueden agregar comentarios/justificaciones
         })
+    
+    def _obtener_nombre_usuario(self, usuario):
+        """Obtiene el correo del usuario para identificación"""
+        return usuario.correo_bdo
+    
+    def _obtener_estado_conversacion(self, incidencia, resoluciones):
+        """Determina el estado de la conversación para la UI"""
+        if not resoluciones.exists():
+            return {
+                "estado": "pendiente_analista",
+                "mensaje": "Esperando justificación del analista",
+                "accion_siguiente": "El analista debe justificar esta incidencia"
+            }
+        
+        ultima_resolucion = resoluciones.last()
+        
+        if incidencia.estado == 'resuelta_analista':
+            return {
+                "estado": "esperando_supervisor",
+                "mensaje": "Esperando revisión del supervisor",
+                "accion_siguiente": "El supervisor debe aprobar o rechazar la justificación",
+                "ultima_accion": f"Justificada por {self._obtener_nombre_usuario(ultima_resolucion.usuario)}"
+            }
+        elif incidencia.estado == 'rechazada_supervisor':
+            return {
+                "estado": "rechazada",
+                "mensaje": "Justificación rechazada por supervisor",
+                "accion_siguiente": "El analista debe mejorar la justificación o corregir en Talana",
+                "ultima_accion": f"Rechazada por {self._obtener_nombre_usuario(ultima_resolucion.usuario)}"
+            }
+        elif incidencia.estado == 'aprobada_supervisor':
+            return {
+                "estado": "aprobada",
+                "mensaje": "Incidencia resuelta y aprobada",
+                "accion_siguiente": "No se requieren más acciones",
+                "ultima_accion": f"Aprobada por {self._obtener_nombre_usuario(ultima_resolucion.usuario)}"
+            }
+        else:
+            return {
+                "estado": "en_proceso",
+                "mensaje": "Conversación en progreso",
+                "accion_siguiente": "Continuar la conversación"
+            }
+    
+    @action(detail=False, methods=['get'], url_path='pendientes-supervisor')
+    def pendientes_supervisor(self, request):
+        """
+        Obtiene incidencias que requieren revisión del supervisor
+        """
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({"error": "Solo supervisores pueden acceder a esta vista"}, status=403)
+        
+        # Incidencias con justificaciones pendientes de revisión
+        incidencias_pendientes = IncidenciaCierre.objects.filter(
+            estado='resuelta_analista'
+        ).select_related('cierre', 'cierre__cliente').prefetch_related(
+            'resoluciones__usuario'
+        ).order_by('-fecha_ultima_accion')
+        
+        data = []
+        for incidencia in incidencias_pendientes:
+            ultima_resolucion = incidencia.resoluciones.order_by('-fecha_resolucion').first()
+            data.append({
+                'id': incidencia.id,
+                'rut_empleado': incidencia.rut_empleado,
+                'tipo_incidencia': incidencia.get_tipo_incidencia_display(),
+                'descripcion': incidencia.descripcion[:100] + '...' if len(incidencia.descripcion) > 100 else incidencia.descripcion,
+                'prioridad': incidencia.prioridad,
+                'cierre': {
+                    'id': incidencia.cierre.id,
+                    'cliente': incidencia.cierre.cliente.nombre,
+                    'periodo': incidencia.cierre.periodo
+                },
+                'ultima_justificacion': {
+                    'fecha': ultima_resolucion.fecha_resolucion if ultima_resolucion else None,
+                    'usuario': self._obtener_nombre_usuario(ultima_resolucion.usuario) if ultima_resolucion else None,
+                    'comentario': ultima_resolucion.comentario[:100] + '...' if ultima_resolucion and len(ultima_resolucion.comentario) > 100 else ultima_resolucion.comentario if ultima_resolucion else None
+                },
+                'fecha_ultima_accion': incidencia.fecha_ultima_accion,
+                'impacto_monetario': incidencia.impacto_monetario
+            })
+        
+        return Response({
+            'incidencias_pendientes': data,
+            'total': len(data),
+            'resumen': {
+                'alta_prioridad': len([i for i in data if i['prioridad'] == 'alta']),
+                'media_prioridad': len([i for i in data if i['prioridad'] == 'media']),
+                'baja_prioridad': len([i for i in data if i['prioridad'] == 'baja'])
+            }
+        })
+    
+    @action(detail=False, methods=['get'], url_path='mis-pendientes')
+    def mis_pendientes(self, request):
+        """
+        Obtiene incidencias asignadas al usuario actual o que requieren su atención
+        """
+        usuario = request.user
+        
+        # Incidencias asignadas directamente
+        asignadas = IncidenciaCierre.objects.filter(
+            asignado_a=usuario,
+            estado__in=['pendiente', 'rechazada_supervisor']
+        )
+        
+        # Si es supervisor, agregar las que esperan su revisión
+        esperando_revision = []
+        if usuario.is_staff or usuario.is_superuser:
+            esperando_revision = IncidenciaCierre.objects.filter(
+                estado='resuelta_analista'
+            )
+        
+        # Combinar querysets
+        from django.db.models import Q
+        todas = IncidenciaCierre.objects.filter(
+            Q(asignado_a=usuario, estado__in=['pendiente', 'rechazada_supervisor']) |
+            Q(estado='resuelta_analista') if (usuario.is_staff or usuario.is_superuser) else Q()
+        ).select_related('cierre', 'cierre__cliente').distinct().order_by('-fecha_ultima_accion')
+        
+        data = []
+        for incidencia in todas:
+            estado_para_usuario = self._determinar_estado_para_usuario(incidencia, usuario)
+            data.append({
+                'id': incidencia.id,
+                'rut_empleado': incidencia.rut_empleado,
+                'tipo_incidencia': incidencia.get_tipo_incidencia_display(),
+                'descripcion': incidencia.descripcion,
+                'prioridad': incidencia.prioridad,
+                'estado_para_usuario': estado_para_usuario,
+                'cierre': {
+                    'id': incidencia.cierre.id,
+                    'cliente': incidencia.cierre.cliente.nombre,
+                    'periodo': incidencia.cierre.periodo
+                },
+                'fecha_ultima_accion': incidencia.fecha_ultima_accion,
+                'total_resoluciones': incidencia.resoluciones.count()
+            })
+        
+        return Response({
+            'mis_incidencias': data,
+            'total': len(data),
+            'rol': 'supervisor' if (usuario.is_staff or usuario.is_superuser) else 'analista'
+        })
+    
+    def _determinar_estado_para_usuario(self, incidencia, usuario):
+        """Determina qué acción debe tomar el usuario en esta incidencia"""
+        if incidencia.estado == 'pendiente' and incidencia.asignado_a == usuario:
+            return "requiere_justificacion"
+        elif incidencia.estado == 'rechazada_supervisor' and incidencia.asignado_a == usuario:
+            return "requiere_mejora_justificacion"
+        elif incidencia.estado == 'resuelta_analista' and (usuario.is_staff or usuario.is_superuser):
+            return "requiere_revision_supervisor"
+        elif incidencia.estado == 'aprobada_supervisor':
+            return "aprobada"
+        else:
+            return "en_proceso"
 
 
 # ======== ENDPOINTS ADICIONALES PARA CIERRE NOMINA ========
@@ -1658,6 +2454,149 @@ class CierreNominaIncidenciasViewSet(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
     def estado_incidencias(self, request, pk=None):
         """Obtiene el estado de incidencias de un cierre"""
+        try:
+            cierre = CierreNomina.objects.get(pk=pk)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        incidencias = cierre.incidencias.all()
+        
+        # Estadísticas por estado
+        estados = {}
+        for incidencia in incidencias:
+            estado = incidencia.estado
+            estados[estado] = estados.get(estado, 0) + 1
+        
+        # Estadísticas por prioridad
+        prioridades = {}
+        for incidencia in incidencias:
+            prioridad = incidencia.prioridad
+            prioridades[prioridad] = prioridades.get(prioridad, 0) + 1
+        
+        return Response({
+            'cierre_id': pk,
+            'total_incidencias': incidencias.count(),
+            'estados': estados,
+            'prioridades': prioridades,
+            'puede_finalizar': all(inc.estado == 'aprobada_supervisor' for inc in incidencias),
+            'progreso': {
+                'aprobadas': estados.get('aprobada_supervisor', 0),
+                'pendientes': estados.get('pendiente', 0) + estados.get('resuelta_analista', 0),
+                'rechazadas': estados.get('rechazada_supervisor', 0)
+            }
+        })
+    
+    @action(detail=True, methods=['post'], url_path='solicitar-recarga-archivos')
+    def solicitar_recarga_archivos(self, request, pk=None):
+        """
+        Permite solicitar la recarga de archivos cuando hay incidencias
+        que requieren corrección en Talana
+        """
+        try:
+            cierre = CierreNomina.objects.get(pk=pk)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        # Verificar que existan incidencias rechazadas o que justifiquen la recarga
+        incidencias_rechazadas = cierre.incidencias.filter(estado='rechazada_supervisor').count()
+        
+        if incidencias_rechazadas == 0:
+            return Response({
+                "error": "No hay incidencias rechazadas que justifiquen recargar archivos"
+            }, status=400)
+        
+        motivo = request.data.get('motivo', '')
+        if not motivo:
+            return Response({"error": "Debe proporcionar un motivo para la recarga"}, status=400)
+        
+        # Cambiar estado del cierre para permitir recarga
+        cierre.estado = 'requiere_recarga_archivos'
+        cierre.observaciones_recarga = f"Solicitado por {request.user.username}: {motivo}"
+        cierre.fecha_solicitud_recarga = timezone.now()
+        cierre.save(update_fields=['estado', 'observaciones_recarga', 'fecha_solicitud_recarga'])
+        
+        # Registrar la solicitud en el historial (si existe modelo de historial)
+        logger.info(f"🔄 Recarga de archivos solicitada para cierre {pk} por {request.user.username}: {motivo}")
+        
+        return Response({
+            "mensaje": "Solicitud de recarga de archivos registrada",
+            "cierre_id": pk,
+            "nuevo_estado": cierre.estado,
+            "motivo": motivo,
+            "incidencias_rechazadas": incidencias_rechazadas,
+            "instrucciones": [
+                "1. Corregir los datos en Talana según las incidencias rechazadas",
+                "2. Volver a subir los archivos corregidos (Libro, Movimientos, etc.)",
+                "3. El sistema re-consolidará automáticamente los datos",
+                "4. Se generarán nuevas incidencias basadas en los datos actualizados"
+            ]
+        })
+    
+    @action(detail=True, methods=['post'], url_path='marcar-todas-como-justificadas')
+    def marcar_todas_como_justificadas(self, request, pk=None):
+        """
+        Acción masiva para que un supervisor marque todas las incidencias
+        como justificadas (para casos donde el analista ha explicado todo correctamente)
+        """
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({
+                "error": "Solo supervisores pueden realizar aprobaciones masivas"
+            }, status=403)
+        
+        try:
+            cierre = CierreNomina.objects.get(pk=pk)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        # Obtener incidencias que están esperando revisión del supervisor
+        incidencias_pendientes = cierre.incidencias.filter(
+            estado='resuelta_analista'
+        )
+        
+        if not incidencias_pendientes.exists():
+            return Response({
+                "error": "No hay incidencias pendientes de aprobación"
+            }, status=400)
+        
+        comentario_aprobacion = request.data.get('comentario', 'Aprobación masiva por supervisor')
+        
+        # Crear resolución de aprobación para cada incidencia
+        resoluciones_creadas = []
+        for incidencia in incidencias_pendientes:
+            resolucion = ResolucionIncidencia.objects.create(
+                incidencia=incidencia,
+                usuario=request.user,
+                tipo_resolucion='aprobacion',
+                comentario=comentario_aprobacion,
+                estado_anterior=incidencia.estado,
+                estado_nuevo='aprobada_supervisor'
+            )
+            
+            # Actualizar estado de la incidencia
+            incidencia.estado = 'aprobada_supervisor'
+            incidencia.fecha_ultima_accion = timezone.now()
+            incidencia.save(update_fields=['estado', 'fecha_ultima_accion'])
+            
+            resoluciones_creadas.append(resolucion)
+        
+        # Verificar si todas las incidencias están aprobadas
+        incidencias_restantes = cierre.incidencias.exclude(estado='aprobada_supervisor').count()
+        
+        if incidencias_restantes == 0:
+            # Todas las incidencias están resueltas
+            cierre.estado = 'incidencias_resueltas'
+            cierre.estado_incidencias = 'resueltas'
+            cierre.save(update_fields=['estado', 'estado_incidencias'])
+        
+        logger.info(f"✅ Aprobación masiva realizada por {request.user.username} en cierre {pk}: {len(resoluciones_creadas)} incidencias aprobadas")
+        
+        return Response({
+            "mensaje": f"{len(resoluciones_creadas)} incidencias aprobadas exitosamente",
+            "incidencias_aprobadas": len(resoluciones_creadas),
+            "incidencias_restantes": incidencias_restantes,
+            "cierre_completado": incidencias_restantes == 0,
+            "nuevo_estado_cierre": cierre.estado
+        })
         try:
             cierre = CierreNomina.objects.get(id=pk)
         except CierreNomina.DoesNotExist:
@@ -1695,7 +2634,7 @@ class CierreNominaIncidenciasViewSet(viewsets.ViewSet):
             return Response({"error": "Cierre no encontrado"}, status=404)
         
         # Verificar que el cierre esté en estado adecuado
-        if cierre.estado not in ['verificacion_datos', 'verificado_sin_discrepancias', 'con_discrepancias', 'completado']:
+        if cierre.estado not in ['verificacion_datos', 'verificado_sin_discrepancias', 'con_discrepancias', 'finalizado']:
             return Response({
                 "error": f"El cierre debe estar en estado válido para generar incidencias. Estado actual: '{cierre.estado}'"
             }, status=400)
@@ -1903,9 +2842,9 @@ class DiscrepanciaCierreViewSet(viewsets.ModelViewSet):
             return Response({"error": "Usuario no autenticado"}, status=401)
         
         # Verificar que el cierre esté en estado adecuado
-        if cierre.estado not in ['archivos_completos', 'verificacion_datos']:
+        if cierre.estado not in ['archivos_completos', 'verificacion_datos', 'con_discrepancias']:
             return Response({
-                "error": f"El cierre debe estar en estado 'archivos_completos' o 'verificacion_datos' para generar discrepancias. Estado actual: '{cierre.estado}'"
+                "error": f"El cierre debe estar en estado 'archivos_completos', 'verificacion_datos' o 'con_discrepancias' para generar discrepancias. Estado actual: '{cierre.estado}'"
             }, status=400)
         
         # Lanzar tarea de generación de discrepancias
@@ -2132,3 +3071,203 @@ def obtener_estado_upload_log_nomina(request, upload_log_id):
         )
 
 
+@api_view(['GET'])
+def obtener_libro_remuneraciones(request, cierre_id):
+    """
+    📋 LIBRO DE REMUNERACIONES CONSOLIDADO
+    
+    Devuelve el libro de remuneraciones con toda la información consolidada:
+    - Empleados con sus datos básicos
+    - Headers con valores por empleado
+    - Conceptos consolidados
+    """
+    try:
+        # Obtener el cierre y verificar permisos
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        # Verificar que hay datos consolidados
+        if not cierre.nomina_consolidada.exists():
+            return Response({
+                'error': 'No hay datos consolidados para este cierre',
+                'mensaje': 'Debe ejecutar la consolidación antes de ver el libro de remuneraciones'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Importar modelos aquí para evitar import circular
+        from .models import NominaConsolidada, HeaderValorEmpleado, ConceptoConsolidado
+        
+        # Obtener empleados consolidados
+        empleados = NominaConsolidada.objects.filter(cierre=cierre).order_by('nombre_empleado')
+        
+        # Datos principales del cierre
+        data = {
+            'cierre': {
+                'id': cierre.id,
+                'cliente': cierre.cliente.nombre,
+                'periodo': cierre.periodo,
+                'estado': cierre.estado,
+                'fecha_consolidacion': cierre.fecha_consolidacion,
+            },
+            'resumen': {
+                'total_empleados': empleados.count(),
+                'total_haberes': sum(emp.total_haberes for emp in empleados),
+                'total_descuentos': sum(emp.total_descuentos for emp in empleados),
+                'liquido_total': sum(emp.liquido_pagar for emp in empleados),
+            },
+            'empleados': []
+        }
+        
+        # Obtener todos los headers únicos para crear columnas
+        headers_unicos = HeaderValorEmpleado.objects.filter(
+            nomina_consolidada__cierre=cierre
+        ).values_list('nombre_header', flat=True).distinct().order_by('nombre_header')
+        
+        data['headers'] = list(headers_unicos)
+        
+        # Construir datos por empleado
+        for empleado in empleados:
+            # Obtener header-valores para este empleado
+            header_valores = HeaderValorEmpleado.objects.filter(
+                nomina_consolidada=empleado
+            ).order_by('nombre_header')
+            
+            # Crear diccionario de valores por header
+            valores_headers = {hv.nombre_header: hv.valor_original for hv in header_valores}
+            
+            # Obtener conceptos consolidados para este empleado
+            conceptos = ConceptoConsolidado.objects.filter(
+                nomina_consolidada=empleado
+            ).order_by('nombre_concepto')
+            
+            empleado_data = {
+                'id': empleado.id,
+                'rut_empleado': empleado.rut_empleado,
+                'nombre_empleado': empleado.nombre_empleado,
+                'cargo': empleado.cargo,
+                'centro_costo': empleado.centro_costo,
+                'estado_empleado': empleado.estado_empleado,
+                'total_haberes': str(empleado.total_haberes),
+                'total_descuentos': str(empleado.total_descuentos),
+                'liquido_pagar': str(empleado.liquido_pagar),
+                'dias_trabajados': empleado.dias_trabajados,
+                'dias_ausencia': empleado.dias_ausencia,
+                'valores_headers': valores_headers,
+                'conceptos': [
+                    {
+                        'nombre': concepto.nombre_concepto,
+                        'clasificacion': concepto.tipo_concepto,
+                        'monto_total': str(concepto.monto_total),
+                        'cantidad': concepto.cantidad,
+                        'origen_datos': concepto.fuente_archivo,
+                    }
+                    for concepto in conceptos
+                ]
+            }
+            
+            data['empleados'].append(empleado_data)
+        
+        return Response(data, status=status.HTTP_200_OK)
+        
+    except CierreNomina.DoesNotExist:
+        return Response(
+            {'error': 'Cierre no encontrado'}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        logging.error(f"Error obteniendo libro de remuneraciones: {str(e)}")
+        return Response(
+            {'error': 'Error interno del servidor'}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+def obtener_movimientos_mes(request, cierre_id):
+    """
+    🔄 MOVIMIENTOS DEL MES
+    
+    Devuelve todos los movimientos de personal del mes:
+    - Ingresos (nuevas incorporaciones)
+    - Finiquitos (términos de contrato)
+    - Ausentismos (licencias, vacaciones)
+    - Reincorporaciones
+    """
+    try:
+        # Obtener el cierre y verificar permisos
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        # Verificar que hay datos consolidados
+        if not cierre.nomina_consolidada.exists():
+            return Response({
+                'error': 'No hay datos consolidados para este cierre',
+                'mensaje': 'Debe ejecutar la consolidación antes de ver los movimientos'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Importar modelos aquí para evitar import circular
+        from .models import MovimientoPersonal, NominaConsolidada
+        
+        # Obtener todos los movimientos para este cierre
+        movimientos = MovimientoPersonal.objects.filter(
+            nomina_consolidada__cierre=cierre
+        ).select_related('nomina_consolidada').order_by('-fecha_deteccion')
+        
+        # Contar movimientos por tipo
+        resumen_tipos = {}
+        for tipo, display in MovimientoPersonal.TIPO_MOVIMIENTO_CHOICES:
+            count = movimientos.filter(tipo_movimiento=tipo).count()
+            resumen_tipos[tipo] = {
+                'count': count,
+                'display': display
+            }
+        
+        # Datos principales del cierre
+        data = {
+            'cierre': {
+                'id': cierre.id,
+                'cliente': cierre.cliente.nombre,
+                'periodo': cierre.periodo,
+                'estado': cierre.estado,
+            },
+            'resumen': {
+                'total_movimientos': movimientos.count(),
+                'por_tipo': resumen_tipos,
+            },
+            'movimientos': []
+        }
+        
+        # Construir lista de movimientos
+        for movimiento in movimientos:
+            movimiento_data = {
+                'id': movimiento.id,
+                'tipo_movimiento': movimiento.tipo_movimiento,
+                'tipo_display': movimiento.get_tipo_movimiento_display(),
+                'empleado': {
+                    'rut': movimiento.nomina_consolidada.rut_empleado,
+                    'nombre': movimiento.nomina_consolidada.nombre_empleado,
+                    'cargo': movimiento.nomina_consolidada.cargo,
+                    'centro_costo': movimiento.nomina_consolidada.centro_costo,
+                    'estado': movimiento.nomina_consolidada.estado_empleado,
+                    'liquido_pagar': str(movimiento.nomina_consolidada.liquido_pagar) if movimiento.nomina_consolidada.liquido_pagar else '0',
+                },
+                'motivo': movimiento.motivo,
+                'dias_ausencia': movimiento.dias_ausencia,
+                'fecha_movimiento': movimiento.fecha_movimiento,
+                'observaciones': movimiento.observaciones,
+                'fecha_deteccion': movimiento.fecha_deteccion,
+                'detectado_por_sistema': movimiento.detectado_por_sistema,
+            }
+            
+            data['movimientos'].append(movimiento_data)
+        
+        return Response(data, status=status.HTTP_200_OK)
+        
+    except CierreNomina.DoesNotExist:
+        return Response(
+            {'error': 'Cierre no encontrado'}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        logging.error(f"Error obteniendo movimientos del mes: {str(e)}")
+        return Response(
+            {'error': 'Error interno del servidor'}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

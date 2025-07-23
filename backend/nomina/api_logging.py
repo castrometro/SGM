@@ -410,7 +410,7 @@ def get_activity_log(request, cierre_id, tarjeta):
                 'timestamp': log.timestamp.isoformat(),
                 'accion': log.accion,
                 'descripcion': log.descripcion,
-                'usuario': log.usuario.username if log.usuario else None,
+                'usuario': log.usuario.correo_bdo if log.usuario else None,
                 'resultado': log.resultado,
                 'detalles': log.detalles,
                 'ip_address': log.ip_address,

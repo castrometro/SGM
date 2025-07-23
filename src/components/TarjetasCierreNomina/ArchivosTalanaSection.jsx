@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Database, ChevronDown, ChevronRight } from "lucide-react";
+import { Database, ChevronDown, ChevronRight, Lock } from "lucide-react";
 import LibroRemuneracionesCard from "./LibroRemuneracionesCard";
 import MovimientosMesCard from "./MovimientosMesCard";
 
@@ -22,6 +22,9 @@ const ArchivosTalanaSection = ({
   onSubirMovimientos,
   onActualizarEstadoMovimientos,
   onEliminarMovimientos,
+  
+  // Props de control
+  disabled = false,
 }) => {
   const [expandido, setExpandido] = useState(true);
   
@@ -43,37 +46,63 @@ const ArchivosTalanaSection = ({
 
   return (
     <section className="space-y-6">
-      {/* Header de la sección - ahora clicable */}
+      {/* Header de la sección - ahora clicable (solo si no está disabled) */}
       <div 
-        className="flex items-center justify-between cursor-pointer hover:bg-gray-800/50 p-3 -m-3 rounded-lg transition-colors"
-        onClick={() => setExpandido(!expandido)}
+        className={`flex items-center justify-between p-3 -m-3 rounded-lg transition-colors ${
+          disabled 
+            ? 'opacity-60 cursor-not-allowed' 
+            : 'cursor-pointer hover:bg-gray-800/50'
+        }`}
+        onClick={() => !disabled && setExpandido(!expandido)}
       >
         <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 bg-blue-600 rounded-lg">
-            <Database size={20} className="text-white" />
+          <div className={`flex items-center justify-center w-10 h-10 rounded-lg ${
+            disabled ? 'bg-gray-600' : 'bg-blue-600'
+          }`}>
+            {disabled ? (
+              <Lock size={20} className="text-white" />
+            ) : (
+              <Database size={20} className="text-white" />
+            )}
           </div>
           <div>
-            <h2 className="text-xl font-semibold text-white">Archivos Talana</h2>
-            <p className="text-gray-400 text-sm">Archivos principales del sistema Talana</p>
+            <h2 className={`text-xl font-semibold ${disabled ? 'text-gray-400' : 'text-white'}`}>
+              Archivos Talana
+              {disabled && (
+                <span className="ml-2 text-sm font-normal text-gray-500">
+                  (Bloqueado - Cierre Finalizado)
+                </span>
+              )}
+            </h2>
+            <p className="text-gray-400 text-sm">
+              {disabled 
+                ? 'Los archivos están bloqueados porque el cierre ha sido finalizado'
+                : 'Archivos principales del sistema Talana'
+              }
+            </p>
           </div>
         </div>
         
         <div className="flex items-center gap-3">
-          {!expandido && (
+          {!expandido && !disabled && (
             <span className={`text-sm font-medium ${colorEstado}`}>
               {estadoGeneral}
             </span>
           )}
-          {expandido ? (
-            <ChevronDown size={20} className="text-gray-400" />
+          {disabled ? (
+            <span className="text-sm font-medium text-gray-500">Bloqueado</span>
           ) : (
-            <ChevronRight size={20} className="text-gray-400" />
+            expandido ? (
+              <ChevronDown size={20} className="text-gray-400" />
+            ) : (
+              <ChevronRight size={20} className="text-gray-400" />
+            )
           )}
         </div>
       </div>
       
-      {/* Grid de tarjetas - solo se muestra cuando está expandido */}
-      {expandido && (
+      {/* Grid de tarjetas - solo se muestra cuando está expandido y no disabled */}
+      {expandido && !disabled && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <LibroRemuneracionesCard
             estado={estadoLibro}
@@ -88,7 +117,7 @@ const ArchivosTalanaSection = ({
             headersSinClasificar={headersSinClasificar}
             headerClasificados={libro?.header_json?.headers_clasificados || []}
             mensaje={mensajeLibro}
-            disabled={libro?.estado === "procesando"}
+            disabled={disabled || libro?.estado === "procesando"}
           />
           
           <MovimientosMesCard
@@ -98,7 +127,7 @@ const ArchivosTalanaSection = ({
             onSubirArchivo={onSubirMovimientos}
             onActualizarEstado={onActualizarEstadoMovimientos}
             onEliminarArchivo={onEliminarMovimientos}
-            disabled={false}
+            disabled={disabled}
           />
         </div>
       )}

@@ -26,8 +26,12 @@ const ArchivoAnalistaBase = ({
   const isProcessed = estado === "procesado" || estado === "procesado_parcial";
   const hasError = estado === "con_error";
   
+  // Determinar si se puede subir un archivo nuevo (solo cuando no hay archivo)
   const puedeSubirArchivo = !isDisabled && 
-    (estado === "no_subido" || estado === "pendiente");
+    (estado === "no_subido" || estado === "pendiente") && !archivo?.id;
+  
+  // Determinar si se puede resubir (cuando ya hay archivo subido)
+  const puedeResubir = archivo?.id && !isDisabled && onEliminarArchivo;
   
   const estadosConArchivoBloqueado = ["en_proceso", "procesando", "procesado"];
   const archivoEsBloqueado = estadosConArchivoBloqueado.includes(estado);
@@ -89,7 +93,7 @@ const ArchivoAnalistaBase = ({
       </a>
 
       <div className="flex flex-col gap-2">
-        {/* Botón de subida de archivo */}
+        {/* Botón de subida de archivo - solo cuando no hay archivo */}
         {puedeSubirArchivo ? (
           <button
             type="button"
@@ -99,17 +103,32 @@ const ArchivoAnalistaBase = ({
           >
             {isProcesando ? "Procesando..." : subiendo ? "Subiendo..." : "Elegir archivo .xlsx"}
           </button>
-        ) : hasError ? (
+        ) : archivo?.id ? (
+          /* Cuando hay archivo - mostrar estado y botón resubir */
           <div className="flex gap-2">
             <button
               type="button"
               disabled={true}
-              className="bg-red-600 px-3 py-1 rounded text-sm font-medium cursor-not-allowed opacity-60 flex-1"
-              title="El archivo tuvo errores durante el procesamiento"
+              className={`px-3 py-1 rounded text-sm font-medium cursor-not-allowed opacity-60 flex-1 ${
+                hasError ? 'bg-red-600' : 
+                isProcesando ? 'bg-orange-600' :
+                isProcessed ? 'bg-gray-600' : 'bg-gray-600'
+              }`}
+              title={
+                hasError ? "El archivo tuvo errores durante el procesamiento" :
+                isProcesando ? "El archivo se está procesando" :
+                isProcessed ? "El archivo ya fue procesado" :
+                "Archivo subido"
+              }
             >
-              Archivo con error
+              {hasError ? "Archivo con error" :
+               isProcesando ? "Procesando..." :
+               isProcessed ? "Archivo procesado" :
+               "Archivo subido"}
             </button>
-            {archivo?.id && onEliminarArchivo && (
+            
+            {/* Botón Resubir - disponible desde que hay archivo */}
+            {puedeResubir && (
               <button
                 type="button"
                 onClick={handleEliminarArchivo}
@@ -121,29 +140,7 @@ const ArchivoAnalistaBase = ({
               </button>
             )}
           </div>
-        ) : (
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={true}
-              className="bg-gray-600 px-3 py-1 rounded text-sm font-medium cursor-not-allowed opacity-60 flex-1"
-              title="El archivo ya fue procesado"
-            >
-              Archivo bloqueado
-            </button>
-            {isProcessed && archivo?.id && onEliminarArchivo && (
-              <button
-                type="button"
-                onClick={handleEliminarArchivo}
-                disabled={eliminando}
-                className="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm font-medium transition"
-                title="Eliminar archivo actual para permitir subir uno nuevo"
-              >
-                {eliminando ? "Eliminando..." : "Resubir"}
-              </button>
-            )}
-          </div>
-        )}
+        ) : null}
         
         {/* Botones personalizados (para novedades principalmente) */}
         {children}

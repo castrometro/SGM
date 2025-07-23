@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { UserCheck, ChevronDown, ChevronRight } from "lucide-react";
+import { UserCheck, ChevronDown, ChevronRight, Lock } from "lucide-react";
 import ArchivosAnalistaContainer from "./ArchivosAnalista/ArchivosAnalistaContainer";
 
 const ArchivosAnalistaSection = ({
@@ -25,37 +25,63 @@ const ArchivosAnalistaSection = ({
 
   return (
     <section className="space-y-6">
-      {/* Header de la sección - ahora clicable */}
+      {/* Header de la sección - ahora clicable (solo si no está disabled) */}
       <div 
-        className="flex items-center justify-between cursor-pointer hover:bg-gray-800/50 p-3 -m-3 rounded-lg transition-colors"
-        onClick={() => setExpandido(!expandido)}
+        className={`flex items-center justify-between p-3 -m-3 rounded-lg transition-colors ${
+          disabled 
+            ? 'opacity-60 cursor-not-allowed' 
+            : 'cursor-pointer hover:bg-gray-800/50'
+        }`}
+        onClick={() => !disabled && setExpandido(!expandido)}
       >
         <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 bg-green-600 rounded-lg">
-            <UserCheck size={20} className="text-white" />
+          <div className={`flex items-center justify-center w-10 h-10 rounded-lg ${
+            disabled ? 'bg-gray-600' : 'bg-green-600'
+          }`}>
+            {disabled ? (
+              <Lock size={20} className="text-white" />
+            ) : (
+              <UserCheck size={20} className="text-white" />
+            )}
           </div>
           <div>
-            <h2 className="text-xl font-semibold text-white">Archivos del Analista</h2>
-            <p className="text-gray-400 text-sm">Archivos complementarios gestionados por el analista</p>
+            <h2 className={`text-xl font-semibold ${disabled ? 'text-gray-400' : 'text-white'}`}>
+              Archivos del Analista
+              {disabled && (
+                <span className="ml-2 text-sm font-normal text-gray-500">
+                  (Bloqueado - Datos Consolidados)
+                </span>
+              )}
+            </h2>
+            <p className="text-gray-400 text-sm">
+              {disabled 
+                ? 'Los archivos están bloqueados porque los datos ya han sido consolidados'
+                : 'Archivos complementarios gestionados por el analista'
+              }
+            </p>
           </div>
         </div>
         
         <div className="flex items-center gap-3">
-          {!expandido && (
+          {!expandido && !disabled && (
             <span className={`text-sm font-medium ${colorEstado}`}>
               {estadoGeneral}
             </span>
           )}
-          {expandido ? (
-            <ChevronDown size={20} className="text-gray-400" />
+          {disabled ? (
+            <span className="text-sm font-medium text-gray-500">Bloqueado</span>
           ) : (
-            <ChevronRight size={20} className="text-gray-400" />
+            expandido ? (
+              <ChevronDown size={20} className="text-gray-400" />
+            ) : (
+              <ChevronRight size={20} className="text-gray-400" />
+            )
           )}
         </div>
       </div>
       
-      {/* Contenedor de archivos del analista - solo se muestra cuando está expandido */}
-      {expandido && (
+      {/* Contenedor de archivos del analista - solo se muestra cuando está expandido y no disabled */}
+      {expandido && !disabled && (
         <ArchivosAnalistaContainer
           cierreId={cierreId}
           cliente={cliente}

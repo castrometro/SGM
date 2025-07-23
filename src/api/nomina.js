@@ -45,13 +45,39 @@ export const actualizarEstadoCierreNomina = async (cierreId) => {
   return res.data;
 };
 
+// Consolidar datos de Talana (Libro + Novedades)
+export const consolidarDatosTalana = async (cierreId) => {
+  const res = await api.post(`/nomina/cierres/${cierreId}/consolidar-datos/`);
+  return res.data;
+};
+
+// Consultar estado de tarea Celery
+export const consultarEstadoTarea = async (cierreId, taskId) => {
+  const res = await api.get(`/nomina/cierres/${cierreId}/task-status/${taskId}/`);
+  return res.data;
+};
+
 // ========== SISTEMA DE INCIDENCIAS ==========
 
 // Obtener incidencias de un cierre
 export const obtenerIncidenciasCierre = async (cierreId, filtros = {}) => {
+  console.log("🔍 [API] obtenerIncidenciasCierre - Iniciando con:", { cierreId, filtros });
+  
   const params = { cierre: cierreId, ...filtros };
-  const response = await api.get('/nomina/incidencias/', { params });
-  return response.data;
+  console.log("🔍 [API] obtenerIncidenciasCierre - Parámetros de la petición:", params);
+  
+  try {
+    const response = await api.get('/nomina/incidencias/', { params });
+    console.log("🔍 [API] obtenerIncidenciasCierre - Respuesta completa:", response);
+    console.log("🔍 [API] obtenerIncidenciasCierre - Datos recibidos:", response.data);
+    console.log("🔍 [API] obtenerIncidenciasCierre - Status:", response.status);
+    
+    return response.data;
+  } catch (error) {
+    console.error("❌ [API] obtenerIncidenciasCierre - Error:", error);
+    console.error("❌ [API] obtenerIncidenciasCierre - Error response:", error.response);
+    throw error;
+  }
 };
 
 // Generar incidencias para un cierre
@@ -60,10 +86,34 @@ export const generarIncidenciasCierre = async (cierreId) => {
   return response.data;
 };
 
+// Limpiar incidencias de un cierre (función de debug)
+export const limpiarIncidenciasCierre = async (cierreId) => {
+  const response = await api.delete(`/nomina/incidencias/limpiar/${cierreId}/`);
+  return response.data;
+};
+
+// Finalizar cierre (cuando no hay incidencias o todas están resueltas)
+export const finalizarCierre = async (cierreId) => {
+  const response = await api.post(`/nomina/incidencias/finalizar/${cierreId}/`);
+  return response.data;
+};
+
 // Obtener resumen de incidencias de un cierre
 export const obtenerResumenIncidencias = async (cierreId) => {
-  const response = await api.get(`/nomina/incidencias/resumen/${cierreId}/`);
-  return response.data;
+  console.log("🔍 [API] obtenerResumenIncidencias - Iniciando para cierre:", cierreId);
+  
+  try {
+    const response = await api.get(`/nomina/incidencias/resumen/${cierreId}/`);
+    console.log("🔍 [API] obtenerResumenIncidencias - Respuesta completa:", response);
+    console.log("🔍 [API] obtenerResumenIncidencias - Datos recibidos:", response.data);
+    console.log("🔍 [API] obtenerResumenIncidencias - Status:", response.status);
+    
+    return response.data;
+  } catch (error) {
+    console.error("❌ [API] obtenerResumenIncidencias - Error:", error);
+    console.error("❌ [API] obtenerResumenIncidencias - Error response:", error.response);
+    throw error;
+  }
 };
 
 // Cambiar estado de una incidencia
@@ -190,13 +240,31 @@ export const obtenerResolucionesUsuario = async (usuarioId) => {
 
 // Obtener estado de incidencias de un cierre
 export const obtenerEstadoIncidenciasCierre = async (cierreId) => {
-  const response = await api.get(`/nomina/cierres-incidencias/${cierreId}/estado_incidencias/`);
-  return response.data;
+  console.log("🔍 [API] obtenerEstadoIncidenciasCierre - Iniciando para cierre:", cierreId);
+  
+  try {
+    const response = await api.get(`/nomina/cierres/${cierreId}/estado-incidencias/`);
+    console.log("🔍 [API] obtenerEstadoIncidenciasCierre - Respuesta completa:", response);
+    console.log("🔍 [API] obtenerEstadoIncidenciasCierre - Datos recibidos:", response.data);
+    console.log("🔍 [API] obtenerEstadoIncidenciasCierre - Status:", response.status);
+    
+    return response.data;
+  } catch (error) {
+    console.error("❌ [API] obtenerEstadoIncidenciasCierre - Error:", error);
+    console.error("❌ [API] obtenerEstadoIncidenciasCierre - Error response:", error.response);
+    throw error;
+  }
 };
 
 // Lanzar generación de incidencias desde el cierre
 export const lanzarGeneracionIncidencias = async (cierreId) => {
   const response = await api.post(`/nomina/cierres-incidencias/${cierreId}/lanzar_generacion_incidencias/`);
+  return response.data;
+};
+
+// Obtener análisis completo temporal (todas las comparaciones vs mes anterior)
+export const obtenerAnalisisCompletoTemporal = async (cierreId) => {
+  const response = await api.get(`/nomina/incidencias/analisis-completo/${cierreId}/`);
   return response.data;
 };
 
@@ -505,5 +573,39 @@ export const previewDiscrepanciasCierre = async (cierreId) => {
 // Limpiar discrepancias de un cierre
 export const limpiarDiscrepanciasCierre = async (cierreId) => {
   const response = await api.delete(`/nomina/discrepancias/limpiar/${cierreId}/`);
+  return response.data;
+};
+
+// ========================================
+// 📋 VISUALIZACIÓN DE DATOS CONSOLIDADOS
+// ========================================
+
+// Obtener libro de remuneraciones consolidado
+export const obtenerLibroRemuneraciones = async (cierreId) => {
+  const response = await api.get(`/nomina/cierres/${cierreId}/libro-remuneraciones/`);
+  return response.data;
+};
+
+// Obtener movimientos del mes (ingresos, ausencias, finiquitos)
+export const obtenerMovimientosMes = async (cierreId) => {
+  const response = await api.get(`/nomina/cierres/${cierreId}/movimientos/`);
+  return response.data;
+};
+
+// ========== APROBACIÓN Y RECHAZO DE INCIDENCIAS ==========
+
+// Aprobar incidencia (flujo de conversación)
+export const aprobarIncidencia = async (incidenciaId, comentario = '') => {
+  const response = await api.post(`/nomina/incidencias/${incidenciaId}/aprobar/`, {
+    comentario
+  });
+  return response.data;
+};
+
+// Rechazar incidencia (flujo de conversación)  
+export const rechazarIncidencia = async (incidenciaId, comentario) => {
+  const response = await api.post(`/nomina/incidencias/${incidenciaId}/rechazar/`, {
+    comentario
+  });
   return response.data;
 };

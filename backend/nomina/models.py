@@ -50,10 +50,13 @@ class CierreNomina(models.Model):
             ('archivos_completos', 'Archivos Completos'),
             ('verificacion_datos', 'Verificación de Datos'),
             ('verificado_sin_discrepancias', 'Verificado Sin Discrepancias'),
+            ('datos_consolidados', 'Datos Consolidados'),
             ('con_discrepancias', 'Con Discrepancias'),
+            ('con_incidencias', 'Con Incidencias'),
             ('incidencias_resueltas', 'Incidencias Resueltas'),
+            ('requiere_recarga_archivos', 'Requiere Recarga de Archivos'),
             ('validacion_final', 'Validación Final'),
-            ('completado', 'Completado'),
+            ('finalizado', 'Finalizado'),
         ],
         default='pendiente'
     )
@@ -75,6 +78,11 @@ class CierreNomina(models.Model):
     revisiones_realizadas = models.PositiveIntegerField(default=0)
     supervisor_asignado = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='cierres_supervisor')
 
+    # === CAMPOS PARA MANEJO DE RECARGA DE ARCHIVOS ===
+    observaciones_recarga = models.TextField(null=True, blank=True, help_text="Motivo para solicitar recarga de archivos")
+    fecha_solicitud_recarga = models.DateTimeField(null=True, blank=True, help_text="Fecha cuando se solicitó la recarga")
+    version_datos = models.PositiveIntegerField(default=1, help_text="Versión de los datos consolidados (incrementa con cada recarga)")
+
     # === CAMPOS PARA CONSOLIDACIÓN ===
     estado_consolidacion = models.CharField(
         max_length=30,
@@ -89,6 +97,17 @@ class CierreNomina(models.Model):
     fecha_consolidacion = models.DateTimeField(null=True, blank=True)
     puede_consolidar = models.BooleanField(default=False, help_text="¿Tiene 0 discrepancias y puede consolidarse?")
 
+    # === CAMPOS PARA FINALIZACIÓN ===
+    fecha_finalizacion = models.DateTimeField(null=True, blank=True, help_text="Fecha cuando se finalizó el cierre")
+    usuario_finalizacion = models.ForeignKey(
+        User, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='cierres_finalizados',
+        help_text="Usuario que finalizó el cierre"
+    )
+
     class Meta:
         unique_together = ('cliente', 'periodo')
 
@@ -102,8 +121,8 @@ class CierreNomina(models.Model):
         """
         from django.utils import timezone
         
-        # Si ya está completado, no cambiar
-        if self.estado == 'completado':
+        # Si ya está finalizado, no cambiar
+        if self.estado == 'finalizado':
             return self.estado
             
         # Verificar el estado de todos los archivos necesarios
@@ -841,12 +860,27 @@ class ResolucionIncidencia(models.Model):
         ('solicitud_cambio', 'Solicitud de Cambio'),
     ])
     
+    # Estado del proceso de resolución
+    estado = models.CharField(max_length=30, choices=[
+        ('pendiente', 'Pendiente'),
+        ('resuelta_analista', 'Resuelta por Analista'),
+        ('aprobada_supervisor', 'Aprobada por Supervisor'),
+        ('rechazada_supervisor', 'Rechazada por Supervisor'),
+    ], default='pendiente')
+    
     # Contenido de la resolución
     comentario = models.TextField()
     adjunto = models.FileField(upload_to=resolucion_upload_to, null=True, blank=True)
     
-    # Metadatos
+    # Metadatos de fechas
     fecha_resolucion = models.DateTimeField(auto_now_add=True)
+    fecha_supervision = models.DateTimeField(null=True, blank=True)
+    
+    # Referencias a supervisor
+    supervisor = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='resoluciones_supervisadas')
+    comentario_supervisor = models.TextField(blank=True)
+    
+    # Estados para auditoría
     estado_anterior = models.CharField(max_length=20)
     estado_nuevo = models.CharField(max_length=20)
     
@@ -1148,6 +1182,58 @@ class NominaConsolidada(models.Model):
     
     def __str__(self):
         return f"{self.nombre_empleado} - {self.cierre.periodo} - ${self.liquido_pagar:,.0f}"
+
+
+class HeaderValorEmpleado(models.Model):
+    """
+    📊 HEADER-VALOR POR EMPLEADO (CONSOLIDACIÓN BÁSICA)
+    
+    Mapeo directo 1:1 de cada celda del libro de remuneraciones.
+    Un registro por cada intersección Empleado x Header del Excel.
+    Base fundamental para reportes y análisis posteriores.
+    """
+    nomina_consolidada = models.ForeignKey(NominaConsolidada, on_delete=models.CASCADE, related_name='header_valores')
+    
+    # Header del libro
+    nombre_header = models.CharField(max_length=200, db_index=True)
+    
+    # Clasificación del header (si existe)
+    concepto_remuneracion = models.ForeignKey(
+        ConceptoRemuneracion, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        help_text="Clasificación del header si está disponible"
+    )
+    
+    # Valor original del Excel
+    valor_original = models.CharField(max_length=500, help_text="Valor tal como viene del Excel")
+    valor_numerico = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True)
+    es_numerico = models.BooleanField(default=False)
+    
+    # Metadatos de origen
+    columna_excel = models.CharField(max_length=10, null=True, blank=True, help_text="Ej: 'D', 'AE'")
+    fila_excel = models.IntegerField(null=True, blank=True)
+    fuente_archivo = models.CharField(max_length=50, default='libro_remuneraciones')
+    
+    # Fechas
+    fecha_consolidacion = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = "Header-Valor por Empleado"
+        verbose_name_plural = "Headers-Valores por Empleado"
+        unique_together = ['nomina_consolidada', 'nombre_header']
+        indexes = [
+            models.Index(fields=['nomina_consolidada', 'nombre_header']),
+            models.Index(fields=['nombre_header']),
+            models.Index(fields=['valor_numerico']),
+            models.Index(fields=['es_numerico']),
+        ]
+        ordering = ['nombre_header']
+    
+    def __str__(self):
+        valor_display = f"${self.valor_numerico:,.2f}" if self.es_numerico and self.valor_numerico else self.valor_original
+        return f"{self.nomina_consolidada.nombre_empleado} - {self.nombre_header}: {valor_display}"
 
 
 class ConceptoConsolidado(models.Model):

@@ -8,6 +8,9 @@ from .views import (
     ConceptoRemuneracionBatchView,
     eliminar_concepto_remuneracion,
     obtener_estado_upload_log_nomina,
+    # Nuevos endpoints para visualización
+    obtener_libro_remuneraciones,
+    obtener_movimientos_mes,
 )
 
 # Importar ViewSets de archivos específicos desde sus módulos dedicados
@@ -193,4 +196,8 @@ urlpatterns = router.urls + [
         name="eliminar-concepto-remuneracion",
     ),
     path('upload-log/<int:upload_log_id>/estado/', obtener_estado_upload_log_nomina, name='estado_upload_log_nomina'),
+    
+    # === URLs para Visualización de Datos Consolidados ===
+    path('cierres/<int:cierre_id>/libro-remuneraciones/', obtener_libro_remuneraciones, name='libro_remuneraciones'),
+    path('cierres/<int:cierre_id>/movimientos/', obtener_movimientos_mes, name='movimientos_mes'),
 ]

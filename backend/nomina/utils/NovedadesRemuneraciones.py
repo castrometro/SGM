@@ -55,7 +55,9 @@ def clasificar_headers_archivo_novedades(headers, cliente):
     headers_sin_clasificar = []
 
     for h in headers:
-        if h.strip().lower() in headers_mapeados:
+        # Convertir a string si es necesario antes de aplicar strip() y lower()
+        header_str = str(h).strip().lower() if h is not None else ""
+        if header_str in headers_mapeados:
             headers_clasificados.append(h)
         else:
             headers_sin_clasificar.append(h)

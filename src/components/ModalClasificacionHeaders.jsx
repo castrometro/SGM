@@ -54,6 +54,12 @@ const ModalClasificacionHeaders = ({
   const [hashtagsSeleccionados, setHashtagsSeleccionados] = useState([]);
   const [originalClasificados, setOriginalClasificados] = useState(new Set());
   const [vista, setVista] = useState("lista"); // "lista" o "categorias"
+  
+  // Estados para clasificación múltiple
+  const [conceptosSeleccionados, setConceptosSeleccionados] = useState(new Set());
+  const [modoSeleccionMultiple, setModoSeleccionMultiple] = useState(false);
+  const [clasificacionMasiva, setClasificacionMasiva] = useState("");
+  const [hashtagsMasivos, setHashtagsMasivos] = useState([]);
 
   const totalConceptos = conceptos.length;
   const conceptosClasificados = conceptos.filter(c => c.clasificacion && c.clasificacion !== 'pendiente').length;
@@ -155,6 +161,70 @@ const ModalClasificacionHeaders = ({
     setConceptos(nuevosConceptos);
   };
 
+  // Funciones para selección múltiple
+  const toggleSeleccionConcepto = (nombreConcepto) => {
+    if (soloLectura) return;
+    
+    const nuevaSeleccion = new Set(conceptosSeleccionados);
+    if (nuevaSeleccion.has(nombreConcepto)) {
+      nuevaSeleccion.delete(nombreConcepto);
+    } else {
+      nuevaSeleccion.add(nombreConcepto);
+    }
+    setConceptosSeleccionados(nuevaSeleccion);
+  };
+
+  const seleccionarTodos = () => {
+    if (soloLectura) return;
+    
+    const conceptosPendientes = conceptos
+      .filter(c => c.clasificacion === 'pendiente')
+      .map(c => c.nombre);
+    setConceptosSeleccionados(new Set(conceptosPendientes));
+  };
+
+  const limpiarSeleccion = () => {
+    setConceptosSeleccionados(new Set());
+  };
+
+  const aplicarClasificacionMasiva = () => {
+    if (!clasificacionMasiva || conceptosSeleccionados.size === 0) return;
+
+    const nuevosConceptos = conceptos.map(c => {
+      if (conceptosSeleccionados.has(c.nombre)) {
+        return {
+          ...c,
+          clasificacion: clasificacionMasiva,
+          hashtags: [...(hashtagsMasivos || [])]
+        };
+      }
+      return c;
+    });
+
+    setConceptos(nuevosConceptos);
+    
+    // Agregar hashtags nuevos a la lista disponible
+    if (hashtagsMasivos && hashtagsMasivos.length > 0) {
+      setHashtagsDisponibles(prev => {
+        const nuevos = hashtagsMasivos.filter(tag => !prev.includes(tag));
+        return [...prev, ...nuevos].sort();
+      });
+    }
+
+    // Limpiar selección y modo masivo
+    setConceptosSeleccionados(new Set());
+    setClasificacionMasiva("");
+    setHashtagsMasivos([]);
+    setModoSeleccionMultiple(false);
+  };
+
+  const cancelarSeleccionMasiva = () => {
+    setConceptosSeleccionados(new Set());
+    setClasificacionMasiva("");
+    setHashtagsMasivos([]);
+    setModoSeleccionMultiple(false);
+  };
+
   const handleGuardar = async () => {
     if (soloLectura) return;
     
@@ -227,9 +297,50 @@ const ModalClasificacionHeaders = ({
                   style={{ width: `${totalConceptos > 0 ? (conceptosClasificados / totalConceptos) * 100 : 0}%` }}
                 />
               </div>
+              {conceptosSeleccionados.size > 0 && (
+                <span className="text-blue-400 font-medium">
+                  🔵 {conceptosSeleccionados.size} seleccionados
+                </span>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {/* Controles de selección múltiple */}
+            {!soloLectura && (
+              <>
+                <button
+                  onClick={() => setModoSeleccionMultiple(!modoSeleccionMultiple)}
+                  className={`px-3 py-1 rounded text-sm transition ${
+                    modoSeleccionMultiple 
+                      ? "bg-blue-600 text-white" 
+                      : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+                  }`}
+                  title="Activar/desactivar modo de selección múltiple"
+                >
+                  Selección múltiple
+                </button>
+                
+                {modoSeleccionMultiple && (
+                  <>
+                    <button
+                      onClick={seleccionarTodos}
+                      className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded"
+                      title="Seleccionar todos los conceptos pendientes"
+                    >
+                      Todos
+                    </button>
+                    <button
+                      onClick={limpiarSeleccion}
+                      className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded"
+                      title="Limpiar selección"
+                    >
+                      Ninguno
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+            
             {/* Selector de vista */}
             <div className="flex bg-gray-800 rounded-lg p-1">
               <button
@@ -262,6 +373,90 @@ const ModalClasificacionHeaders = ({
           </div>
         </div>
 
+        {/* Panel de clasificación masiva */}
+        {modoSeleccionMultiple && conceptosSeleccionados.size > 0 && !soloLectura && (
+          <div className="bg-blue-900/30 border-b border-blue-700/50 p-4">
+            <div className="flex items-center gap-4">
+              <span className="text-blue-300 font-medium">
+                Clasificar {conceptosSeleccionados.size} conceptos seleccionados:
+              </span>
+              
+              <select
+                value={clasificacionMasiva}
+                onChange={(e) => setClasificacionMasiva(e.target.value)}
+                className="px-3 py-1 bg-gray-700 text-white rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+              >
+                <option value="">Seleccionar categoría...</option>
+                {categorias.map(categoria => (
+                  <option key={categoria} value={categoria}>
+                    {iconosCategorias[categoria]} {nombresCategorias[categoria]}
+                  </option>
+                ))}
+              </select>
+              
+              <div className="flex-1">
+                <CreatableSelect
+                  isMulti
+                  value={hashtagsMasivos?.map(tag => ({ value: tag, label: `#${tag}` })) || []}
+                  onChange={(selected) => {
+                    setHashtagsMasivos(selected?.map(option => option.value) || []);
+                  }}
+                  options={hashtagsDisponibles.map(tag => ({ value: tag, label: `#${tag}` }))}
+                  placeholder="Hashtags opcionales..."
+                  className="react-select-container"
+                  classNamePrefix="react-select"
+                  noOptionsMessage={() => "Escribe para crear un nuevo hashtag"}
+                  formatCreateLabel={(inputValue) => `Crear hashtag "#${inputValue}"`}
+                  styles={{
+                    control: (provided) => ({
+                      ...provided,
+                      backgroundColor: '#374151',
+                      borderColor: '#4B5563',
+                      minHeight: '32px',
+                      fontSize: '14px'
+                    }),
+                    multiValue: (provided) => ({
+                      ...provided,
+                      backgroundColor: '#1F2937',
+                    }),
+                    multiValueLabel: (provided) => ({
+                      ...provided,
+                      color: '#D1D5DB',
+                      fontSize: '12px'
+                    }),
+                    placeholder: (provided) => ({
+                      ...provided,
+                      color: '#9CA3AF',
+                      fontSize: '14px'
+                    }),
+                    option: (provided, state) => ({
+                      ...provided,
+                      backgroundColor: state.isFocused ? '#374151' : '#1F2937',
+                      color: '#D1D5DB',
+                      fontSize: '14px'
+                    }),
+                  }}
+                />
+              </div>
+              
+              <button
+                onClick={aplicarClasificacionMasiva}
+                disabled={!clasificacionMasiva}
+                className="px-4 py-1 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 disabled:opacity-50 text-white rounded text-sm font-medium transition"
+              >
+                Aplicar
+              </button>
+              
+              <button
+                onClick={cancelarSeleccionMasiva}
+                className="px-4 py-1 bg-gray-600 hover:bg-gray-500 text-white rounded text-sm font-medium transition"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Contenido */}
         <div className="flex-1 overflow-hidden">
           {vista === "lista" ? (
@@ -272,6 +467,9 @@ const ModalClasificacionHeaders = ({
               soloLectura={soloLectura}
               nombresCategorias={nombresCategorias}
               iconosCategorias={iconosCategorias}
+              modoSeleccionMultiple={modoSeleccionMultiple}
+              conceptosSeleccionados={conceptosSeleccionados}
+              onToggleSeleccion={toggleSeleccionConcepto}
             />
           ) : (
             <VistaCategorias 
@@ -281,6 +479,9 @@ const ModalClasificacionHeaders = ({
               soloLectura={soloLectura}
               nombresCategorias={nombresCategorias}
               categorias={categorias}
+              modoSeleccionMultiple={modoSeleccionMultiple}
+              conceptosSeleccionados={conceptosSeleccionados}
+              onToggleSeleccion={toggleSeleccionConcepto}
             />
           )}
         </div>
@@ -327,7 +528,17 @@ const ModalClasificacionHeaders = ({
 };
 
 // Componente para la vista de lista
-const VistaLista = ({ conceptos, onAbrirModalConcepto, onEliminarClasificacion, soloLectura, nombresCategorias, iconosCategorias }) => {
+const VistaLista = ({ 
+  conceptos, 
+  onAbrirModalConcepto, 
+  onEliminarClasificacion, 
+  soloLectura, 
+  nombresCategorias, 
+  iconosCategorias,
+  modoSeleccionMultiple,
+  conceptosSeleccionados,
+  onToggleSeleccion
+}) => {
   const [filtro, setFiltro] = useState("");
   const [soloSinClasificar, setSoloSinClasificar] = useState(false);
 
@@ -369,30 +580,54 @@ const VistaLista = ({ conceptos, onAbrirModalConcepto, onEliminarClasificacion, 
           {conceptosFiltrados.map(concepto => (
             <div
               key={concepto.nombre}
-              className={`p-4 bg-gray-800 rounded-lg border border-gray-700 transition-all ${
-                !soloLectura ? "hover:border-blue-500 cursor-pointer" : ""
+              className={`p-4 bg-gray-800 rounded-lg border transition-all ${
+                conceptosSeleccionados?.has(concepto.nombre) 
+                  ? "border-blue-500 bg-blue-900/20" 
+                  : "border-gray-700"
+              } ${
+                !soloLectura && !modoSeleccionMultiple ? "hover:border-blue-500 cursor-pointer" : ""
               }`}
-              onClick={() => onAbrirModalConcepto(concepto)}
+              onClick={() => {
+                // Solo abrir modal si no estamos en modo selección múltiple
+                if (!modoSeleccionMultiple) {
+                  onAbrirModalConcepto(concepto);
+                }
+              }}
             >
               <div className="flex justify-between items-start">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-medium text-white">{concepto.nombre}</span>
-                    {concepto.clasificacion && concepto.clasificacion !== 'pendiente' && (
-                      <span className="text-xs px-2 py-1 bg-blue-900 text-blue-300 rounded">
-                        {iconosCategorias[concepto.clasificacion]} {nombresCategorias[concepto.clasificacion]}
-                      </span>
+                <div className="flex items-start gap-3 flex-1">
+                  {/* Checkbox para selección múltiple */}
+                  {modoSeleccionMultiple && !soloLectura && concepto.clasificacion === 'pendiente' && (
+                    <input
+                      type="checkbox"
+                      checked={conceptosSeleccionados?.has(concepto.nombre) || false}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        onToggleSeleccion(concepto.nombre);
+                      }}
+                      className="mt-1 w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
+                    />
+                  )}
+                  
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-white">{concepto.nombre}</span>
+                      {concepto.clasificacion && concepto.clasificacion !== 'pendiente' && (
+                        <span className="text-xs px-2 py-1 bg-blue-900 text-blue-300 rounded">
+                          {iconosCategorias[concepto.clasificacion]} {nombresCategorias[concepto.clasificacion]}
+                        </span>
+                      )}
+                    </div>
+                    {concepto.hashtags && concepto.hashtags.length > 0 && (
+                      <div className="flex gap-1 flex-wrap">
+                        {concepto.hashtags.map(tag => (
+                          <span key={tag} className="text-xs px-2 py-1 bg-gray-700 text-gray-300 rounded">
+                            #{tag}
+                          </span>
+                        ))}
+                      </div>
                     )}
                   </div>
-                  {concepto.hashtags && concepto.hashtags.length > 0 && (
-                    <div className="flex gap-1 flex-wrap">
-                      {concepto.hashtags.map(tag => (
-                        <span key={tag} className="text-xs px-2 py-1 bg-gray-700 text-gray-300 rounded">
-                          #{tag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
                 </div>
                 {concepto.clasificacion !== 'pendiente' && !soloLectura && (
                   <button
@@ -416,7 +651,17 @@ const VistaLista = ({ conceptos, onAbrirModalConcepto, onEliminarClasificacion, 
 };
 
 // Componente para la vista de categorías
-const VistaCategorias = ({ conceptosPorCategoria, onAbrirModalConcepto, onEliminarClasificacion, soloLectura, nombresCategorias, categorias }) => {
+const VistaCategorias = ({ 
+  conceptosPorCategoria, 
+  onAbrirModalConcepto, 
+  onEliminarClasificacion, 
+  soloLectura, 
+  nombresCategorias, 
+  categorias,
+  modoSeleccionMultiple,
+  conceptosSeleccionados,
+  onToggleSeleccion 
+}) => {
   return (
     <div className="h-full overflow-y-auto p-4">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -430,23 +675,46 @@ const VistaCategorias = ({ conceptosPorCategoria, onAbrirModalConcepto, onElimin
               {conceptos.map(concepto => (
                 <div
                   key={concepto.nombre}
-                  className={`p-2 bg-gray-700 rounded border border-gray-600 transition-all ${
-                    !soloLectura ? "hover:border-blue-500 cursor-pointer" : ""
+                  className={`p-2 bg-gray-700 rounded border transition-all ${
+                    conceptosSeleccionados?.has(concepto.nombre) 
+                      ? "border-blue-500 bg-blue-900/20" 
+                      : "border-gray-600"
+                  } ${
+                    !soloLectura && !modoSeleccionMultiple ? "hover:border-blue-500 cursor-pointer" : ""
                   }`}
-                  onClick={() => onAbrirModalConcepto(concepto)}
+                  onClick={() => {
+                    if (!modoSeleccionMultiple) {
+                      onAbrirModalConcepto(concepto);
+                    }
+                  }}
                 >
                   <div className="flex justify-between items-start">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-white truncate">{concepto.nombre}</div>
-                      {concepto.hashtags && concepto.hashtags.length > 0 && (
-                        <div className="flex gap-1 flex-wrap mt-1">
-                          {concepto.hashtags.map(tag => (
-                            <span key={tag} className="text-xs px-1 py-0.5 bg-gray-600 text-gray-300 rounded">
-                              #{tag}
-                            </span>
-                          ))}
-                        </div>
+                    <div className="flex items-start gap-2 flex-1 min-w-0">
+                      {/* Checkbox para selección múltiple */}
+                      {modoSeleccionMultiple && !soloLectura && categoria === 'pendiente' && (
+                        <input
+                          type="checkbox"
+                          checked={conceptosSeleccionados?.has(concepto.nombre) || false}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            onToggleSeleccion(concepto.nombre);
+                          }}
+                          className="mt-0.5 w-3 h-3 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
+                        />
                       )}
+                      
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-white truncate">{concepto.nombre}</div>
+                        {concepto.hashtags && concepto.hashtags.length > 0 && (
+                          <div className="flex gap-1 flex-wrap mt-1">
+                            {concepto.hashtags.map(tag => (
+                              <span key={tag} className="text-xs px-1 py-0.5 bg-gray-600 text-gray-300 rounded">
+                                #{tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     {categoria !== 'pendiente' && !soloLectura && (
                       <button

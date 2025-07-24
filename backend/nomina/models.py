@@ -848,54 +848,56 @@ class IncidenciaCierre(models.Model):
         super().save(*args, **kwargs)
 
 class ResolucionIncidencia(models.Model):
-    """Historial de resoluciones de una incidencia (conversación)"""
+    """Historial de resoluciones de una incidencia (conversación simplificada)"""
     incidencia = models.ForeignKey(IncidenciaCierre, on_delete=models.CASCADE, related_name='resoluciones')
     usuario = models.ForeignKey(User, on_delete=models.CASCADE)
-    tipo_resolucion = models.CharField(max_length=20, choices=[
-        ('justificacion', 'Justificación'),
-        ('correccion', 'Corrección'),
-        ('aprobacion', 'Aprobación'),
-        ('rechazo', 'Rechazo'),
-        ('consulta', 'Consulta'),
-        ('solicitud_cambio', 'Solicitud de Cambio'),
+    
+    # ÚNICO CAMPO DE ESTADO - Más claro y directo
+    tipo_resolucion = models.CharField(max_length=30, choices=[
+        ('justificacion', 'Justificación del Analista'),
+        ('consulta', 'Consulta del Supervisor'), 
+        ('rechazo', 'Rechazo del Supervisor'),
+        ('aprobacion', 'Aprobación del Supervisor'),
     ])
     
-    # Estado del proceso de resolución
-    estado = models.CharField(max_length=30, choices=[
-        ('pendiente', 'Pendiente'),
-        ('resuelta_analista', 'Resuelta por Analista'),
-        ('aprobada_supervisor', 'Aprobada por Supervisor'),
-        ('rechazada_supervisor', 'Rechazada por Supervisor'),
-    ], default='pendiente')
-    
-    # Contenido de la resolución
+    # Contenido esencial
     comentario = models.TextField()
     adjunto = models.FileField(upload_to=resolucion_upload_to, null=True, blank=True)
-    
-    # Metadatos de fechas
     fecha_resolucion = models.DateTimeField(auto_now_add=True)
-    fecha_supervision = models.DateTimeField(null=True, blank=True)
-    
-    # Referencias a supervisor
-    supervisor = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='resoluciones_supervisadas')
-    comentario_supervisor = models.TextField(blank=True)
-    
-    # Estados para auditoría
-    estado_anterior = models.CharField(max_length=20)
-    estado_nuevo = models.CharField(max_length=20)
-    
-    # Para correcciones de datos
-    valor_corregido = models.CharField(max_length=500, null=True, blank=True)
-    campo_corregido = models.CharField(max_length=100, null=True, blank=True)
-    
-    # Referencias a usuarios mencionados
-    usuarios_mencionados = models.ManyToManyField(User, related_name='resoluciones_mencionado', blank=True)
     
     class Meta:
         ordering = ['-fecha_resolucion']
     
     def __str__(self):
         return f"{self.get_tipo_resolucion_display()} por {self.usuario.correo_bdo} - {self.incidencia}"
+    
+    def es_accion_supervisor(self):
+        """Determina si esta resolución fue hecha por un supervisor"""
+        return self.tipo_resolucion.endswith('_supervisor')
+    
+    def permite_siguiente_accion(self, usuario_rol):
+        """
+        Determina qué acciones puede hacer el usuario actual según el estado de la conversación
+        """
+        if usuario_rol == 'analista':
+            # Los analistas pueden actuar si la última acción fue del supervisor o es el inicio
+            ultima_resolucion = self.incidencia.resoluciones.order_by('-fecha_resolucion').first()
+            if not ultima_resolucion:
+                return ['justificacion_analista', 'correccion_analista', 'consulta_analista']
+            elif ultima_resolucion.es_accion_supervisor():
+                return ['justificacion_analista', 'correccion_analista', 'consulta_analista']
+            else:
+                return []  # Ya actuó, debe esperar respuesta del supervisor
+        
+        elif usuario_rol == 'supervisor':
+            # Los supervisores pueden actuar si la última acción fue del analista
+            ultima_resolucion = self.incidencia.resoluciones.order_by('-fecha_resolucion').first()
+            if ultima_resolucion and ultima_resolucion.es_accion_analista():
+                return ['aprobacion_supervisor', 'rechazo_supervisor', 'solicitud_cambio_supervisor']
+            else:
+                return []  # Debe esperar que el analista actúe primero
+        
+        return []
 
 
 # ======== MODELOS PARA ANÁLISIS DE DATOS ========

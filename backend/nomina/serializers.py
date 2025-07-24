@@ -224,25 +224,15 @@ class RegistroConceptoEmpleadoNovedadesSerializer(serializers.ModelSerializer):
 class ResolucionIncidenciaSerializer(serializers.ModelSerializer):
     usuario_nombre = serializers.CharField(source='usuario.get_full_name', read_only=True)
     usuario_correo = serializers.CharField(source='usuario.correo_bdo', read_only=True)
-    supervisor_nombre = serializers.CharField(source='supervisor.get_full_name', read_only=True)
-    supervisor_correo = serializers.CharField(source='supervisor.correo_bdo', read_only=True)
-    usuarios_mencionados_nombres = serializers.SerializerMethodField()
-    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    tipo_resolucion_display = serializers.CharField(source='get_tipo_resolucion_display', read_only=True)
     
     class Meta:
         model = ResolucionIncidencia
         fields = [
-            'id', 'tipo_resolucion', 'comentario', 'adjunto', 'estado',
-            'fecha_resolucion', 'fecha_supervision', 'estado_anterior', 'estado_nuevo',
-            'valor_corregido', 'campo_corregido', 'usuario', 'supervisor',
-            'comentario_supervisor', 'usuario_nombre', 'usuario_correo', 
-            'supervisor_nombre', 'supervisor_correo', 'usuarios_mencionados',
-            'usuarios_mencionados_nombres', 'estado_display'
+            'id', 'tipo_resolucion', 'comentario', 'adjunto',
+            'fecha_resolucion', 'usuario', 'usuario_nombre', 'usuario_correo', 'tipo_resolucion_display'
         ]
-        read_only_fields = ['usuario', 'fecha_resolucion', 'estado_anterior', 'estado_nuevo', 'fecha_supervision']
-    
-    def get_usuarios_mencionados_nombres(self, obj):
-        return [user.get_full_name() or user.correo_bdo for user in obj.usuarios_mencionados.all()]
+        read_only_fields = ['usuario', 'fecha_resolucion']
 
 class IncidenciaCierreSerializer(serializers.ModelSerializer):
     empleado_libro_nombre = serializers.SerializerMethodField()
@@ -292,19 +282,15 @@ class CrearResolucionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ResolucionIncidencia
         fields = [
-            'tipo_resolucion', 'comentario', 'adjunto',
-            'valor_corregido', 'campo_corregido', 'usuarios_mencionados'
+            'incidencia', 'tipo_resolucion', 'comentario', 'adjunto'
         ]
     
     def validate(self, data):
         # Validaciones específicas según tipo de resolución
         tipo = data.get('tipo_resolucion')
         
-        if tipo == 'correccion' and not data.get('valor_corregido'):
-            raise serializers.ValidationError({
-                'valor_corregido': 'El valor corregido es requerido para correcciones.'
-            })
-        
+        # No necesitamos validación específica para correcciones en la nueva arquitectura
+        # Solo validamos que el comentario no esté vacío
         if not data.get('comentario', '').strip():
             raise serializers.ValidationError({
                 'comentario': 'El comentario es requerido.'

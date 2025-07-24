@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { AlertTriangle, CheckCircle, Clock, XCircle, Eye, User, Calendar } from "lucide-react";
-import { obtenerIncidenciasCierre, cambiarEstadoIncidencia, asignarUsuarioIncidencia } from "../../../api/nomina";
+import { AlertTriangle, CheckCircle, Clock, XCircle, Eye, User, Calendar, UserCheck } from "lucide-react";
+import { obtenerIncidenciasCierre } from "../../../api/nomina";
+import { useAuth } from "../../../hooks/useAuth";
+import { obtenerEstadoReal, ESTADOS_INCIDENCIA } from "../../../utils/incidenciaUtils";
 
 const IncidenciasTable = ({ cierreId, filtros = {}, onIncidenciaSeleccionada }) => {
   const [todasLasIncidencias, setTodasLasIncidencias] = useState([]);
@@ -9,6 +11,7 @@ const IncidenciasTable = ({ cierreId, filtros = {}, onIncidenciaSeleccionada }) 
   const [error, setError] = useState("");
   const [paginaActual, setPaginaActual] = useState(1);
   const [incidenciasPorPagina] = useState(10);
+  const { user } = useAuth();
 
   useEffect(() => {
     cargarIncidencias();
@@ -94,28 +97,68 @@ const IncidenciasTable = ({ cierreId, filtros = {}, onIncidenciaSeleccionada }) 
   const incidenciasPagina = incidenciasFiltradas.slice(indiceInicio, indiceFin);
   const totalPaginas = Math.ceil(incidenciasFiltradas.length / incidenciasPorPagina);
 
-  const manejarCambioEstado = async (incidenciaId, nuevoEstado) => {
-    try {
-      await cambiarEstadoIncidencia(incidenciaId, nuevoEstado);
-      cargarIncidencias(); // Recargar lista
-    } catch (err) {
-      console.error("Error cambiando estado:", err);
-      setError("Error al cambiar estado de incidencia");
+  const obtenerIconoEstado = (estadoReal) => {
+    switch (estadoReal) {
+      case ESTADOS_INCIDENCIA.PENDIENTE:
+        return <Clock className="w-4 h-4 text-yellow-500" />;
+      case ESTADOS_INCIDENCIA.RESUELTA_ANALISTA:
+        return <CheckCircle className="w-4 h-4 text-blue-500" />;
+      case ESTADOS_INCIDENCIA.APROBADA_SUPERVISOR:
+        return <CheckCircle className="w-4 h-4 text-green-500" />;
+      case ESTADOS_INCIDENCIA.RECHAZADA_SUPERVISOR:
+        return <XCircle className="w-4 h-4 text-red-500" />;
+      case ESTADOS_INCIDENCIA.RE_RESUELTA:
+        return <CheckCircle className="w-4 h-4 text-purple-500" />;
+      default:
+        return <AlertTriangle className="w-4 h-4 text-gray-500" />;
     }
   };
 
-  const obtenerIconoEstado = (estado) => {
-    switch (estado) {
-      case 'pendiente':
-        return <Clock className="w-4 h-4 text-yellow-500" />;
-      case 'resuelta_analista':
-        return <CheckCircle className="w-4 h-4 text-blue-500" />;
-      case 'aprobada_supervisor':
-        return <CheckCircle className="w-4 h-4 text-green-500" />;
-      case 'rechazada_supervisor':
-        return <XCircle className="w-4 h-4 text-red-500" />;
-      default:
-        return <AlertTriangle className="w-4 h-4 text-gray-500" />;
+  // Función para determinar el turno según la nueva arquitectura
+  const obtenerTurnoIncidencia = (incidencia) => {
+    const esSupervidor = user?.is_staff || user?.is_superuser;
+    const resoluciones = incidencia.resoluciones || [];
+    
+    if (resoluciones.length === 0) {
+      // INICIANDO: Sin mensajes → Turno del Analista
+      return {
+        esMiTurno: !esSupervidor,
+        turno: 'Analista',
+        icono: <User className="w-4 h-4 text-blue-500" />
+      };
+    }
+
+    // Ordenar por fecha y obtener la última resolución
+    const ultimaResolucion = resoluciones.sort((a, b) => 
+      new Date(b.fecha_resolucion) - new Date(a.fecha_resolucion)
+    )[0];
+
+    // APROBADA: Último mensaje es aprobación → Conversación terminada
+    if (ultimaResolucion.tipo_resolucion === 'aprobacion') {
+      return {
+        esMiTurno: false,
+        turno: 'Aprobada',
+        icono: <CheckCircle className="w-4 h-4 text-green-500" />
+      };
+    }
+
+    // Determinar turno basado en el último mensaje
+    const esDelSupervisor = ['consulta', 'rechazo'].includes(ultimaResolucion.tipo_resolucion);
+    
+    if (esDelSupervisor) {
+      // TURNO_ANALISTA: Último mensaje fue de supervisor → Analista debe responder
+      return {
+        esMiTurno: !esSupervidor,
+        turno: 'Analista',
+        icono: <User className="w-4 h-4 text-blue-500" />
+      };
+    } else {
+      // TURNO_SUPERVISOR: Último mensaje fue de analista → Supervisor debe decidir
+      return {
+        esMiTurno: esSupervidor,
+        turno: 'Supervisor',
+        icono: <UserCheck className="w-4 h-4 text-purple-500" />
+      };
     }
   };
 
@@ -212,6 +255,9 @@ const IncidenciasTable = ({ cierreId, filtros = {}, onIncidenciaSeleccionada }) 
                 Estado
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+                Turno
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                 Impacto
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
@@ -254,12 +300,36 @@ const IncidenciasTable = ({ cierreId, filtros = {}, onIncidenciaSeleccionada }) 
                   </span>
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap">
-                  <div className="flex items-center">
-                    {obtenerIconoEstado(incidencia.estado)}
-                    <span className="ml-2 text-sm text-gray-300">
-                      {incidencia.get_estado_display || incidencia.estado}
-                    </span>
-                  </div>
+                  {(() => {
+                    const estadoReal = obtenerEstadoReal(incidencia);
+                    return (
+                      <div className="flex items-center">
+                        {obtenerIconoEstado(estadoReal.estado)}
+                        <span className="ml-2 text-sm text-gray-300">
+                          {estadoReal.display}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </td>
+                <td className="px-4 py-3 whitespace-nowrap">
+                  {(() => {
+                    const turno = obtenerTurnoIncidencia(incidencia);
+                    return (
+                      <div className="flex items-center">
+                        {turno.icono}
+                        <span className={`ml-2 text-sm font-medium ${
+                          turno.esMiTurno 
+                            ? 'text-yellow-400' 
+                            : turno.turno === 'Aprobada' 
+                              ? 'text-green-400' 
+                              : 'text-gray-400'
+                        }`}>
+                          {turno.turno}
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300">
                   {incidencia.impacto_monetario ? (
@@ -280,41 +350,11 @@ const IncidenciasTable = ({ cierreId, filtros = {}, onIncidenciaSeleccionada }) 
                   <div className="flex space-x-2">
                     <button
                       onClick={() => onIncidenciaSeleccionada && onIncidenciaSeleccionada(incidencia)}
-                      className="text-blue-400 hover:text-blue-300"
+                      className="text-blue-400 hover:text-blue-300 p-1 rounded-md hover:bg-blue-500/10 transition-colors"
                       title="Ver detalles"
                     >
                       <Eye className="w-4 h-4" />
                     </button>
-                    
-                    {/* Botones de cambio de estado según el estado actual */}
-                    {incidencia.estado === 'pendiente' && (
-                      <button
-                        onClick={() => manejarCambioEstado(incidencia.id, 'resuelta_analista')}
-                        className="text-green-400 hover:text-green-300"
-                        title="Marcar como resuelta"
-                      >
-                        <CheckCircle className="w-4 h-4" />
-                      </button>
-                    )}
-                    
-                    {incidencia.estado === 'resuelta_analista' && (
-                      <>
-                        <button
-                          onClick={() => manejarCambioEstado(incidencia.id, 'aprobada_supervisor')}
-                          className="text-green-400 hover:text-green-300"
-                          title="Aprobar resolución"
-                        >
-                          <CheckCircle className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => manejarCambioEstado(incidencia.id, 'rechazada_supervisor')}
-                          className="text-red-400 hover:text-red-300"
-                          title="Rechazar resolución"
-                        >
-                          <XCircle className="w-4 h-4" />
-                        </button>
-                      </>
-                    )}
                   </div>
                 </td>
               </tr>

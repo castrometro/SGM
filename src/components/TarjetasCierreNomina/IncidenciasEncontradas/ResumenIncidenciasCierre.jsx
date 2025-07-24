@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle, Clock, AlertTriangle, Users, FileText, RefreshCw } from 'lucide-react';
+import { obtenerIncidenciasCierre } from '../../../api/nomina';
+import { calcularProgresoIncidencias, calcularContadoresEstados, ESTADOS_INCIDENCIA } from '../../../utils/incidenciaUtils';
 
 const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
   const [resumen, setResumen] = useState(null);
@@ -17,11 +19,30 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
     setCargando(true);
     setError('');
     try {
-      const response = await fetch(`/api/nomina/cierres/${cierreId}/estado-incidencias/`);
-      if (!response.ok) throw new Error('Error cargando resumen');
+      // Cargar tanto el estado del cierre como las incidencias detalladas
+      const [estadoResponse, incidenciasData] = await Promise.all([
+        fetch(`/api/nomina/cierres/${cierreId}/estado-incidencias/`),
+        obtenerIncidenciasCierre(cierreId, { page_size: 1000 })
+      ]);
       
-      const data = await response.json();
-      setResumen(data);
+      if (!estadoResponse.ok) throw new Error('Error cargando estado');
+      
+      const estadoData = await estadoResponse.json();
+      const incidencias = Array.isArray(incidenciasData.results) ? incidenciasData.results : incidenciasData;
+      
+      // Calcular estados reales basados en resoluciones
+      const estadosReales = calcularContadoresEstados(incidencias);
+      const progresoReal = calcularProgresoIncidencias(incidencias);
+      
+      // Combinar datos del servidor con cálculos reales
+      const resumenActualizado = {
+        ...estadoData,
+        progreso: progresoReal,
+        estados: estadosReales,
+        total_incidencias: incidencias.length
+      };
+      
+      setResumen(resumenActualizado);
     } catch (err) {
       console.error('Error:', err);
       setError('Error cargando el resumen de incidencias');
@@ -238,7 +259,7 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
         </h4>
         
         <div className="flex flex-col sm:flex-row gap-3">
-          {estados.resuelta_analista > 0 && (
+          {estados[ESTADOS_INCIDENCIA.RESUELTA_ANALISTA] > 0 && (
             <button
               onClick={manejarAprobacionMasiva}
               disabled={ejecutandoAccion}
@@ -249,7 +270,7 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
               ) : (
                 <CheckCircle className="w-4 h-4 mr-2" />
               )}
-              Aprobar Todas ({estados.resuelta_analista})
+              Aprobar Todas ({estados[ESTADOS_INCIDENCIA.RESUELTA_ANALISTA]})
             </button>
           )}
 

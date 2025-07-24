@@ -34,8 +34,14 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false }) => {
 
   // Cargar estado de incidencias automáticamente al montar el componente
   useEffect(() => {
+    console.log("🔍 [useEffect Init] Componente montado, cierre:", cierre);
+    console.log("🔍 [useEffect Init] cierre.id:", cierre?.id);
+    
     if (cierre?.id) {
+      console.log("✅ [useEffect Init] Llamando cargarEstadoIncidencias para cierre:", cierre.id);
       cargarEstadoIncidencias();
+    } else {
+      console.warn("⚠️ [useEffect Init] No se puede cargar estado - cierre.id no disponible");
     }
   }, [cierre?.id]);
 
@@ -53,22 +59,44 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false }) => {
   }, [estadoIncidencias?.total_incidencias]);
 
   const cargarEstadoIncidencias = async () => {
-    if (!cierre?.id) return;
+    if (!cierre?.id) {
+      console.warn("⚠️ [cargarEstadoIncidencias] No hay cierre.id disponible:", cierre);
+      return;
+    }
     
     console.log("🔍 [cargarEstadoIncidencias] Iniciando carga para cierre:", cierre.id);
+    console.log("🔍 [cargarEstadoIncidencias] Cierre completo:", cierre);
     
     try {
       const estado = await obtenerEstadoIncidenciasCierre(cierre.id);
-      console.log("🔍 [cargarEstadoIncidencias] Estado de incidencias recibido:", estado);
-      console.log("🔍 [cargarEstadoIncidencias] Datos del cierre:", cierre);
-      setEstadoIncidencias(estado);
+      console.log("✅ [cargarEstadoIncidencias] Estado de incidencias recibido:", estado);
+      console.log("✅ [cargarEstadoIncidencias] Tipo de dato recibido:", typeof estado);
+      console.log("✅ [cargarEstadoIncidencias] Keys del estado:", Object.keys(estado || {}));
       
-      // También actualizar el prop cierre con el estado administrativo
-      if (estado.estado_cierre && cierre) {
-        cierre.estado_incidencias = estado.estado_cierre;
+      if (estado) {
+        setEstadoIncidencias(estado);
+        console.log("✅ [cargarEstadoIncidencias] Estado guardado exitosamente");
+        
+        // También actualizar el prop cierre con el estado administrativo
+        if (estado.estado_cierre && cierre) {
+          cierre.estado_incidencias = estado.estado_cierre;
+          console.log("✅ [cargarEstadoIncidencias] Estado del cierre actualizado:", estado.estado_cierre);
+        }
+      } else {
+        console.warn("⚠️ [cargarEstadoIncidencias] Estado recibido es null o undefined");
+        setEstadoIncidencias(null);
       }
     } catch (err) {
       console.error("❌ [cargarEstadoIncidencias] Error cargando estado de incidencias:", err);
+      console.error("❌ [cargarEstadoIncidencias] Error detallado:", {
+        message: err.message,
+        status: err.response?.status,
+        statusText: err.response?.statusText,
+        data: err.response?.data,
+        url: err.config?.url
+      });
+      setEstadoIncidencias(null);
+      setError(`Error cargando estado de incidencias: ${err.message}`);
     }
   };
 
@@ -281,6 +309,16 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false }) => {
     }
   };
 
+  const obtenerTextoEstadoIncidencias = (estado) => {
+    switch (estado) {
+      case 'pendiente': return 'Pendiente';
+      case 'detectadas': return 'Detectadas';
+      case 'en_revision': return 'En Revisión';
+      case 'resueltas': return 'Resueltas';
+      default: return 'Pendiente';
+    }
+  };
+
   const puedeGenerarIncidencias = () => {
     return cierre?.estado === 'datos_consolidados' || 
            cierre?.estado === 'con_incidencias' || 
@@ -318,7 +356,7 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false }) => {
               </p>
               {cierre?.estado_incidencias && (
                 <span className={`${obtenerColorEstado(cierre.estado_incidencias)} font-medium`}>
-                  • Estado: {cierre.estado_incidencias}
+                  • Estado: {obtenerTextoEstadoIncidencias(cierre.estado_incidencias)}
                 </span>
               )}
               {estadoIncidencias?.total_incidencias && (
@@ -371,10 +409,7 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false }) => {
                   </div>
                   <p className="text-sm text-gray-400">Estado</p>
                   <p className={`text-sm font-medium ${obtenerColorEstado(cierre?.estado_incidencias || 'pendiente')}`}>
-                    {cierre?.estado_incidencias ? 
-                      cierre.estado_incidencias.charAt(0).toUpperCase() + cierre.estado_incidencias.slice(1).replace('_', ' ') : 
-                      'Pendiente'
-                    }
+                    {obtenerTextoEstadoIncidencias(cierre?.estado_incidencias || 'pendiente')}
                   </p>
                 </div>
 
@@ -383,15 +418,14 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false }) => {
                   <>
                     <div className="text-center">
                       <div className="text-2xl font-bold text-red-400">
-                        {estadoIncidencias.estados?.pendiente || 0}
+                        {(estadoIncidencias.estados?.pendiente || 0) + (estadoIncidencias.estados?.resuelta_analista || 0)}
                       </div>
                       <p className="text-sm text-gray-400">Pendientes</p>
                     </div>
                     
                     <div className="text-center">
                       <div className="text-2xl font-bold text-green-400">
-                        {(estadoIncidencias.estados?.aprobada || 0) + 
-                         (estadoIncidencias.estados?.en_revision || 0)}
+                        {estadoIncidencias.estados?.aprobada_supervisor || 0}
                       </div>
                       <p className="text-sm text-gray-400">Resueltas</p>
                     </div>
@@ -886,7 +920,7 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false }) => {
                     <div>
                       <p className="text-sm text-gray-400">Pendientes</p>
                       <p className="text-2xl font-bold text-yellow-400">
-                        {resumen.por_estado?.pendiente || 0}
+                        {(estadoIncidencias?.estados?.pendiente || 0) + (estadoIncidencias?.estados?.resuelta_analista || 0)}
                       </p>
                     </div>
                     <Loader2 className="w-8 h-8 text-yellow-500" />

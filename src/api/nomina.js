@@ -216,7 +216,7 @@ export const obtenerResumenVariaciones = async (cierreId) => {
 // Crear una nueva resolución para una incidencia
 export const crearResolucionIncidencia = async (incidenciaId, resolucionData) => {
   const response = await api.post('/nomina/resoluciones-incidencias/', {
-    incidencia_id: incidenciaId,
+    incidencia: incidenciaId,
     ...resolucionData
   });
   return response.data;
@@ -233,6 +233,12 @@ export const obtenerResolucionesUsuario = async (usuarioId) => {
   const response = await api.get('/nomina/resoluciones-incidencias/', {
     params: { usuario: usuarioId }
   });
+  return response.data;
+};
+
+// Obtener incidencias que requieren mi atención (según turnos de conversación)
+export const obtenerIncidenciasMiTurno = async () => {
+  const response = await api.get('/nomina/incidencias/mi-turno/');
   return response.data;
 };
 
@@ -594,17 +600,31 @@ export const obtenerMovimientosMes = async (cierreId) => {
 
 // ========== APROBACIÓN Y RECHAZO DE INCIDENCIAS ==========
 
-// Aprobar incidencia (flujo de conversación)
+// Aprobar incidencia (flujo de conversación) - Nueva arquitectura unificada
 export const aprobarIncidencia = async (incidenciaId, comentario = '') => {
-  const response = await api.post(`/nomina/incidencias/${incidenciaId}/aprobar/`, {
+  const response = await api.post('/nomina/resoluciones-incidencias/', {
+    incidencia: incidenciaId,
+    tipo_resolucion: 'aprobacion',
+    comentario: comentario || 'Incidencia aprobada'
+  });
+  return response.data;
+};
+
+// Rechazar incidencia (flujo de conversación) - Nueva arquitectura unificada
+export const rechazarIncidencia = async (incidenciaId, comentario) => {
+  const response = await api.post('/nomina/resoluciones-incidencias/', {
+    incidencia: incidenciaId,
+    tipo_resolucion: 'rechazo',
     comentario
   });
   return response.data;
 };
 
-// Rechazar incidencia (flujo de conversación)  
-export const rechazarIncidencia = async (incidenciaId, comentario) => {
-  const response = await api.post(`/nomina/incidencias/${incidenciaId}/rechazar/`, {
+// Crear consulta sobre incidencia (supervisor) - Nueva arquitectura unificada
+export const consultarIncidencia = async (incidenciaId, comentario) => {
+  const response = await api.post('/nomina/resoluciones-incidencias/', {
+    incidencia: incidenciaId,
+    tipo_resolucion: 'consulta',
     comentario
   });
   return response.data;

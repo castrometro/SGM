@@ -23,17 +23,46 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
   }, [abierto, incidencia]);
 
   const cargarUsuarioActual = () => {
-    // Simulamos obtener el usuario actual del contexto o localStorage
-    // En tu aplicación real, esto vendría del contexto de autenticación
-    const userData = {
-      id: 1,
-      username: 'usuario_actual',
-      first_name: 'Usuario',
-      last_name: 'Actual',
-      is_staff: false, // Cambiar según el rol real
-      is_superuser: false
-    };
-    setUsuarioActual(userData);
+    // Obtener el usuario actual del localStorage como en el resto de la aplicación
+    try {
+      const usuarioData = JSON.parse(localStorage.getItem("usuario"));
+      if (usuarioData) {
+        // Mapear la estructura del usuario de tu sistema al formato esperado
+        const userData = {
+          id: usuarioData.id,
+          username: usuarioData.correo_bdo || usuarioData.correo || 'usuario',
+          first_name: usuarioData.nombre || 'Usuario',
+          last_name: usuarioData.apellido || 'Actual',
+          // Determinar si es supervisor basado en el tipo de usuario
+          is_staff: usuarioData.tipo_usuario === 'supervisor' || usuarioData.tipo_usuario === 'gerente',
+          is_superuser: usuarioData.tipo_usuario === 'gerente'
+        };
+        setUsuarioActual(userData);
+        console.log('Usuario cargado para modal:', userData);
+      } else {
+        console.warn('No se encontró usuario en localStorage');
+        // Fallback en caso de no encontrar usuario
+        setUsuarioActual({
+          id: 0,
+          username: 'desconocido',
+          first_name: 'Usuario',
+          last_name: 'Desconocido',
+          is_staff: false,
+          is_superuser: false
+        });
+      }
+    } catch (error) {
+      console.error('Error cargando usuario actual:', error);
+      // Fallback en caso de error
+      setUsuarioActual({
+        id: 0,
+        username: 'error',
+        first_name: 'Error',
+        last_name: 'Usuario',
+        is_staff: false,
+        is_superuser: false
+      });
+    }
   };
 
   const cargarHistorial = async () => {
@@ -42,27 +71,49 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
     setCargandoHistorial(true);
     try {
       const data = await obtenerHistorialIncidencia(incidencia.id);
+      console.log('📋 Historial cargado:', data);
+      
+      // Debug simplificado - solo mostrar lo esencial
+      if (data.resoluciones && data.resoluciones.length > 0) {
+        console.log('🔄 Estado actual de la conversación:');
+        data.resoluciones.forEach((resolucion, index) => {
+          console.log(`  ${index + 1}. ${resolucion.tipo_resolucion} - ${resolucion.usuario?.first_name} ${resolucion.usuario?.last_name}`);
+        });
+        
+        const ultimaResolucion = data.resoluciones[data.resoluciones.length - 1];
+        console.log(`✅ Último mensaje: ${ultimaResolucion.tipo_resolucion}`);
+        console.log(`🎯 Estado conversación: ${ultimaResolucion.tipo_resolucion === 'aprobacion' ? 'RESUELTA' : 'EN PROGRESO'}`);
+      }
+      
       setHistorial(data.resoluciones || []);
     } catch (err) {
-      console.error("Error cargando historial:", err);
+      console.error("❌ Error cargando historial:", err);
     } finally {
       setCargandoHistorial(false);
     }
   };
 
-  const manejarEnvioJustificacion = async (e) => {
+  const manejarEnviarMensaje = async (e) => {
     e.preventDefault();
     setError('');
     
     if (!comentario.trim()) {
-      setError('La justificación es requerida');
+      setError('El mensaje es requerido');
       return;
     }
 
     setEnviando(true);
     try {
       const formData = new FormData();
-      formData.append('tipo_resolucion', 'justificacion');
+      
+      // Determinar el tipo de resolución basado en el rol
+      if (esAnalista()) {
+        formData.append('tipo_resolucion', 'justificacion');
+      } else {
+        // Para supervisores, usar 'consulta' cuando hacen comentarios
+        formData.append('tipo_resolucion', 'consulta');
+      }
+      
       formData.append('comentario', comentario);
       
       if (adjunto) {
@@ -83,59 +134,32 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
       setAdjunto(null);
       
     } catch (err) {
-      console.error("Error creando justificación:", err);
-      setError('Error al enviar la justificación');
-    } finally {
-      setEnviando(false);
-    }
-  };
-
-  const manejarComentarioSupervisor = async (e) => {
-    e.preventDefault();
-    setError('');
-    
-    if (!comentario.trim()) {
-      setError('El comentario es requerido');
-      return;
-    }
-
-    setEnviando(true);
-    try {
-      const formData = new FormData();
-      formData.append('tipo_resolucion', 'comentario');
-      formData.append('comentario', comentario);
-      
-      if (adjunto) {
-        formData.append('adjunto', adjunto);
-      }
-
-      const resolucionData = Object.fromEntries(formData.entries());
-      await crearResolucionIncidencia(incidencia.id, resolucionData);
-      
-      // Recargar historial y notificar
-      await cargarHistorial();
-      if (onResolucionCreada) {
-        onResolucionCreada();
-      }
-      
-      // Limpiar formulario
-      setComentario('');
-      setAdjunto(null);
-      
-    } catch (err) {
-      console.error("Error creando comentario:", err);
-      setError('Error al enviar el comentario');
+      console.error("Error enviando mensaje:", err);
+      setError('Error al enviar el mensaje');
     } finally {
       setEnviando(false);
     }
   };
 
   const manejarAprobar = async () => {
+    // Verificar que realmente se pueda aprobar
+    if (esIncidenciaResuelta()) {
+      setError('Esta incidencia ya está resuelta');
+      return;
+    }
+
+    if (!puedeAprobarORechazar()) {
+      setError('No tienes permisos para aprobar en este momento');
+      return;
+    }
+
     if (!window.confirm('¿Está seguro de aprobar esta incidencia? Quedará marcada como resuelta.')) {
       return;
     }
 
     setEnviando(true);
+    setError(''); // Limpiar errores previos
+    
     try {
       await aprobarIncidencia(incidencia.id);
       
@@ -152,7 +176,17 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
       
     } catch (err) {
       console.error("Error aprobando incidencia:", err);
-      setError('Error al aprobar la incidencia');
+      
+      // Manejar diferentes tipos de errores
+      if (err.response?.status === 403) {
+        setError('No tienes permisos para aprobar esta incidencia o ya está resuelta');
+      } else if (err.response?.status === 404) {
+        setError('La incidencia no fue encontrada');
+      } else if (err.response?.status === 400) {
+        setError(err.response?.data?.error || 'Error en la solicitud - La incidencia puede estar en un estado inválido');
+      } else {
+        setError('Error al aprobar la incidencia. Intenta nuevamente.');
+      }
     } finally {
       setEnviando(false);
     }
@@ -164,11 +198,24 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
       return;
     }
 
-    if (!window.confirm('¿Está seguro de rechazar esta justificación? La incidencia volverá al estado pendiente.')) {
+    // Verificar permisos antes de proceder
+    if (esIncidenciaResuelta()) {
+      setError('Esta incidencia ya está resuelta y no puede ser rechazada');
+      return;
+    }
+
+    if (!puedeAprobarORechazar()) {
+      setError('No tienes permisos para rechazar en este momento');
+      return;
+    }
+
+    if (!window.confirm('¿Está seguro de rechazar esta justificación? El analista podrá responder y continuar la conversación.')) {
       return;
     }
 
     setEnviando(true);
+    setError(''); // Limpiar errores previos
+    
     try {
       await rechazarIncidencia(incidencia.id, comentario);
       
@@ -183,7 +230,17 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
       
     } catch (err) {
       console.error("Error rechazando incidencia:", err);
-      setError('Error al rechazar la incidencia');
+      
+      // Manejar diferentes tipos de errores
+      if (err.response?.status === 403) {
+        setError('No tienes permisos para rechazar esta incidencia o ya está resuelta');
+      } else if (err.response?.status === 404) {
+        setError('La incidencia no fue encontrada');
+      } else if (err.response?.status === 400) {
+        setError(err.response?.data?.error || 'Error en la solicitud - La incidencia puede estar en un estado inválido');
+      } else {
+        setError('Error al rechazar la incidencia. Intenta nuevamente.');
+      }
     } finally {
       setEnviando(false);
     }
@@ -198,43 +255,55 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
     return !esSupervisor();
   };
 
-  const obtenerEstadoIncidencia = () => {
-    if (!historial.length) return 'pendiente';
+  const obtenerEstadoConversacion = () => {
+    if (!historial.length) {
+      return 'turno_analista'; // El analista inicia la conversación
+    }
     
     const ultimaResolucion = historial[historial.length - 1];
     
+    // ✅ LÓGICA SIMPLIFICADA - Solo verificar tipo_resolucion
     if (ultimaResolucion.tipo_resolucion === 'aprobacion') {
       return 'resuelta';
-    } else if (ultimaResolucion.tipo_resolucion === 'rechazo') {
-      return 'pendiente';
-    } else if (ultimaResolucion.tipo_resolucion === 'justificacion') {
-      return 'en_espera_aprobacion';
     }
     
-    return 'pendiente';
+    // Determinar turno basado en el último mensaje
+    // Supervisor: 'consulta', 'rechazo' → Turno del analista
+    // Analista: 'justificacion' → Turno del supervisor
+    const ultimoEraDeSupervisor = ['consulta', 'rechazo'].includes(ultimaResolucion.tipo_resolucion);
+    
+    return ultimoEraDeSupervisor ? 'turno_analista' : 'turno_supervisor';
   };
 
-  const puedeJustificar = () => {
-    const estado = obtenerEstadoIncidencia();
-    return esAnalista() && (estado === 'pendiente');
+  const puedeEscribirAnalista = () => {
+    const estado = obtenerEstadoConversacion();
+    return esAnalista() && estado === 'turno_analista';
   };
 
-  const puedeComentarSupervisor = () => {
-    const estado = obtenerEstadoIncidencia();
-    return esSupervisor() && estado === 'en_espera_aprobacion';
+  const puedeEscribirSupervisor = () => {
+    const estado = obtenerEstadoConversacion();
+    return esSupervisor() && estado === 'turno_supervisor';
   };
 
   const puedeAprobarORechazar = () => {
-    const estado = obtenerEstadoIncidencia();
-    return esSupervisor() && estado === 'en_espera_aprobacion';
+    const estado = obtenerEstadoConversacion();
+    return esSupervisor() && estado === 'turno_supervisor';
   };
 
   const esIncidenciaResuelta = () => {
-    return obtenerEstadoIncidencia() === 'resuelta';
+    return obtenerEstadoConversacion() === 'resuelta';
   };
 
-  const esIncidenciaEsperandoAprobacion = () => {
-    return obtenerEstadoIncidencia() === 'en_espera_aprobacion';
+  const obtenerMensajeTurno = () => {
+    const estado = obtenerEstadoConversacion();
+    if (estado === 'resuelta') {
+      return 'Incidencia resuelta';
+    } else if (estado === 'turno_analista') {
+      return esAnalista() ? 'Es tu turno para responder' : 'Esperando respuesta del analista';
+    } else if (estado === 'turno_supervisor') {
+      return esSupervisor() ? 'Es tu turno para responder' : 'Esperando respuesta del supervisor';
+    }
+    return '';
   };
 
   const manejarArchivoSeleccionado = (e) => {
@@ -250,22 +319,42 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
   };
 
   const formatearFecha = (fecha) => {
-    return new Date(fecha).toLocaleString('es-CL', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    if (!fecha) return 'Fecha no disponible';
+    
+    try {
+      // Probar diferentes campos de fecha que podrían venir del backend
+      const fechaAUsar = fecha.fecha_creacion || fecha.fecha_resolucion || fecha.created_at || fecha.timestamp || fecha;
+      
+      if (!fechaAUsar) return 'Fecha no disponible';
+      
+      const fechaObj = new Date(fechaAUsar);
+      
+      // Verificar si la fecha es válida
+      if (isNaN(fechaObj.getTime())) {
+        console.warn('Fecha inválida recibida:', fechaAUsar);
+        return 'Fecha inválida';
+      }
+      
+      return fechaObj.toLocaleString('es-CL', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (error) {
+      console.error('Error formateando fecha:', error, fecha);
+      return 'Error en fecha';
+    }
   };
 
   const obtenerIconoEstado = () => {
-    const estado = obtenerEstadoIncidencia();
+    const estado = obtenerEstadoConversacion();
     switch (estado) {
-      case 'pendiente':
-        return <AlertTriangle className="w-5 h-5 text-yellow-400" />;
-      case 'en_espera_aprobacion':
+      case 'turno_analista':
         return <Clock className="w-5 h-5 text-blue-400" />;
+      case 'turno_supervisor':
+        return <Clock className="w-5 h-5 text-purple-400" />;
       case 'resuelta':
         return <CheckCircle className="w-5 h-5 text-green-400" />;
       default:
@@ -274,16 +363,16 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
   };
 
   const obtenerTextoEstado = () => {
-    const estado = obtenerEstadoIncidencia();
+    const estado = obtenerEstadoConversacion();
     switch (estado) {
-      case 'pendiente':
-        return 'Pendiente';
-      case 'en_espera_aprobacion':
-        return 'En Espera de Aprobación';
+      case 'turno_analista':
+        return 'En conversación - Turno del Analista';
+      case 'turno_supervisor':
+        return 'En conversación - Turno del Supervisor';
       case 'resuelta':
         return 'Resuelta';
       default:
-        return 'Desconocido';
+        return 'Pendiente';
     }
   };
 
@@ -291,8 +380,8 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
     switch (tipo) {
       case 'justificacion':
         return <MessageSquare className="w-4 h-4 text-blue-500" />;
-      case 'comentario':
-        return <MessageSquare className="w-4 h-4 text-gray-400" />;
+      case 'consulta':
+        return <MessageSquare className="w-4 h-4 text-purple-500" />;
       case 'aprobacion':
         return <CheckCircle className="w-4 h-4 text-green-600" />;
       case 'rechazo':
@@ -306,14 +395,31 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
     switch (tipo) {
       case 'justificacion':
         return 'border-blue-500';
-      case 'comentario':
-        return 'border-gray-500';
+      case 'consulta':
+        return 'border-purple-500';
       case 'aprobacion':
         return 'border-green-600';
       case 'rechazo':
         return 'border-red-500';
       default:
         return 'border-gray-500';
+    }
+  };
+
+  const obtenerTextoTipoResolucion = (tipo, usuario) => {
+    const esSupervisorMensaje = usuario?.is_staff || usuario?.is_superuser;
+    
+    switch (tipo) {
+      case 'justificacion':
+        return 'Justificación del Analista';
+      case 'consulta':
+        return 'Consulta del Supervisor';
+      case 'aprobacion':
+        return 'Aprobación Final del Supervisor';
+      case 'rechazo':
+        return 'Rechazo del Supervisor';
+      default:
+        return tipo;
     }
   };
 
@@ -331,7 +437,7 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
             <p className="text-gray-400 text-sm mt-1">
               {incidencia.rut_empleado} - {incidencia.get_tipo_incidencia_display || incidencia.tipo_incidencia}
             </p>
-            {/* Indicador de estado */}
+            {/* Indicador de estado y turno */}
             <div className="flex items-center gap-2 mt-2">
               {obtenerIconoEstado()}
               <span className="text-sm font-medium text-white">
@@ -342,6 +448,12 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                   Supervisor
                 </span>
               )}
+            </div>
+            {/* Indicador de turno */}
+            <div className="mt-1">
+              <span className="text-xs text-gray-400">
+                💭 {obtenerMensajeTurno()}
+              </span>
             </div>
           </div>
           <button
@@ -413,14 +525,10 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex items-center space-x-2">
                         {obtenerIconoTipoResolucion(resolucion.tipo_resolucion)}
-                        <span className="font-medium text-white capitalize">
-                          {resolucion.tipo_resolucion === 'justificacion' ? 'Justificación' : 
-                           resolucion.tipo_resolucion === 'comentario' ? 'Comentario' :
-                           resolucion.tipo_resolucion === 'aprobacion' ? 'Aprobación' :
-                           resolucion.tipo_resolucion === 'rechazo' ? 'Rechazo' :
-                           resolucion.tipo_resolucion}
+                        <span className="font-medium text-white">
+                          {obtenerTextoTipoResolucion(resolucion.tipo_resolucion, resolucion.usuario)}
                         </span>
-                        <span className="text-gray-400">por</span>
+                        <span className="text-gray-400">de</span>
                         <span className="text-blue-400 font-medium">
                           {resolucion.usuario?.first_name} {resolucion.usuario?.last_name}
                         </span>
@@ -431,7 +539,7 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                         )}
                       </div>
                       <span className="text-sm text-gray-400">
-                        {formatearFecha(resolucion.fecha_creacion)}
+                        {formatearFecha(resolucion)}
                       </span>
                     </div>
                     
@@ -446,7 +554,7 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                       </div>
                     )}
                     
-                    {/* Indicadores de estado */}
+                    {/* Indicadores de estado específicos - SIMPLIFICADOS */}
                     {resolucion.tipo_resolucion === 'aprobacion' && (
                       <div className="mt-3 inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-900/50 text-green-300 border border-green-500/30">
                         <CheckCircle className="w-4 h-4 mr-1" />
@@ -456,7 +564,14 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                     {resolucion.tipo_resolucion === 'rechazo' && (
                       <div className="mt-3 inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-900/50 text-red-300 border border-red-500/30">
                         <X className="w-4 h-4 mr-1" />
-                        Justificación Rechazada - Vuelve a Pendiente
+                        Justificación Rechazada - El analista puede responder
+                      </div>
+                    )}
+                    
+                    {/* Indicador si es el mensaje más reciente y de quién es el turno */}
+                    {index === historial.length - 1 && !esIncidenciaResuelta() && (
+                      <div className="mt-3 text-xs text-gray-500 italic">
+                        Último mensaje • {obtenerMensajeTurno()}
                       </div>
                     )}
                   </div>
@@ -464,31 +579,37 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
               </div>
             )}
 
-            {/* Formulario de entrada según el estado y rol */}
+            {/* Formulario conversacional según turno y rol */}
             {!esIncidenciaResuelta() && (
               <div className="border-t border-gray-700 pt-4">
-                {/* Caso 1: Analista puede justificar (estado pendiente) */}
-                {puedeJustificar() && (
+                
+                {/* Turno del Analista */}
+                {puedeEscribirAnalista() && (
                   <div>
                     <h4 className="text-md font-medium text-blue-400 mb-3">
-                      📝 Escribir Justificación (Analista)
+                      📝 {historial.length === 0 ? 'Escribir Justificación Inicial' : 'Tu Respuesta'} (Analista)
                     </h4>
                     <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-3 mb-3">
                       <p className="text-blue-300 text-sm">
-                        <strong>Instrucciones:</strong> Explica por qué esta incidencia es correcta o cómo debe resolverse. 
-                        Una vez enviada, la incidencia pasará a "En Espera de Aprobación" y solo el supervisor podrá responder.
+                        <strong>Tu turno:</strong> {historial.length === 0 
+                          ? 'Explica por qué esta incidencia es correcta o cómo debe resolverse.' 
+                          : 'Responde al comentario del supervisor y proporciona información adicional si es necesario.'
+                        }
                       </p>
                     </div>
-                    <form onSubmit={manejarEnvioJustificacion} className="space-y-4">
+                    <form onSubmit={manejarEnviarMensaje} className="space-y-4">
                       <div>
                         <label className="block text-sm font-medium text-gray-300 mb-2">
-                          Justificación *
+                          {historial.length === 0 ? 'Justificación Inicial *' : 'Tu Respuesta *'}
                         </label>
                         <textarea
                           value={comentario}
                           onChange={(e) => setComentario(e.target.value)}
-                          placeholder="Explica por qué esta incidencia es válida o cómo debe resolverse..."
-                          rows={3}
+                          placeholder={historial.length === 0 
+                            ? "Explica por qué esta incidencia es válida o cómo debe resolverse..."
+                            : "Responde al supervisor, proporciona más información o clarifica tu posición..."
+                          }
+                          rows={4}
                           className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                           required
                         />
@@ -505,10 +626,10 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                             onChange={manejarArchivoSeleccionado}
                             accept=".pdf,.doc,.docx,.xlsx,.xls,.png,.jpg,.jpeg"
                             className="hidden"
-                            id="adjunto-input"
+                            id="adjunto-analista-input"
                           />
                           <label
-                            htmlFor="adjunto-input"
+                            htmlFor="adjunto-analista-input"
                             className="flex items-center px-4 py-2 bg-gray-700 text-white rounded-lg cursor-pointer hover:bg-gray-600 transition-colors"
                           >
                             <Upload className="w-4 h-4 mr-2" />
@@ -542,7 +663,7 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                           onClick={onCerrar}
                           className="px-4 py-2 text-gray-300 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors"
                         >
-                          Cancelar
+                          Cerrar
                         </button>
                         <button
                           type="submit"
@@ -557,7 +678,7 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                           ) : (
                             <>
                               <Send className="w-4 h-4 mr-2" />
-                              Enviar Justificación
+                              {historial.length === 0 ? 'Enviar Justificación' : 'Enviar Respuesta'}
                             </>
                           )}
                         </button>
@@ -566,47 +687,28 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                   </div>
                 )}
 
-                {/* Caso 2: Solo lectura para analista cuando está en espera de aprobación */}
-                {esIncidenciaEsperandoAprobacion() && esAnalista() && (
-                  <div className="text-center py-6">
-                    <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-4">
-                      <div className="flex items-center justify-center mb-4">
-                        <Clock className="w-8 h-8 text-blue-400 mr-3" />
-                        <div>
-                          <h4 className="text-lg font-medium text-blue-400">En Espera de Aprobación</h4>
-                          <p className="text-blue-300 text-sm">El supervisor debe revisar y aprobar/rechazar tu justificación</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-center space-x-2 text-blue-300">
-                        <Eye className="w-4 h-4" />
-                        <span className="text-sm">Modo solo lectura para analistas</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Caso 3: Supervisor puede comentar y aprobar/rechazar */}
-                {puedeComentarSupervisor() && (
+                {/* Turno del Supervisor */}
+                {puedeEscribirSupervisor() && (
                   <div>
                     <h4 className="text-md font-medium text-purple-400 mb-3">
-                      👨‍💼 Respuesta del Supervisor
+                      👨‍💼 Tu Respuesta (Supervisor)
                     </h4>
                     <div className="bg-purple-900/20 border border-purple-500/30 rounded-lg p-3 mb-3">
                       <p className="text-purple-300 text-sm">
-                        <strong>Instrucciones:</strong> Puedes comentar la justificación del analista y luego aprobar o rechazar la incidencia.
+                        <strong>Tu turno:</strong> Revisa la justificación del analista. Puedes comentar, hacer preguntas, solicitar más información, o tomar una decisión final (aprobar/rechazar).
                       </p>
                     </div>
 
-                    {/* Formulario de comentario del supervisor */}
-                    <form onSubmit={manejarComentarioSupervisor} className="space-y-3 mb-4">
+                    {/* Formulario de mensaje del supervisor */}
+                    <form onSubmit={manejarEnviarMensaje} className="space-y-3 mb-4">
                       <div>
                         <label className="block text-sm font-medium text-gray-300 mb-2">
-                          Comentario del Supervisor (opcional)
+                          Tu Comentario (opcional antes de decidir)
                         </label>
                         <textarea
                           value={comentario}
                           onChange={(e) => setComentario(e.target.value)}
-                          placeholder="Comentarios adicionales sobre la justificación..."
+                          placeholder="Comenta sobre la justificación, haz preguntas o solicita más información..."
                           rows={3}
                           className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
                         />
@@ -654,55 +756,105 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                           ) : (
                             <>
                               <Send className="w-4 h-4 mr-2" />
-                              Agregar Comentario
+                              Enviar Comentario
                             </>
                           )}
                         </button>
                       </div>
                     </form>
 
-                    {/* Botones de Aprobación/Rechazo */}
-                    <div className="border-t border-gray-700 pt-3">
+                    {/* Botones de Decisión Final */}
+                    <div className="border-t border-gray-600 pt-3">
                       <h5 className="text-sm font-medium text-white mb-3">Decisión Final</h5>
-                      <div className="flex justify-center space-x-4">
-                        <button
-                          onClick={manejarAprobar}
-                          disabled={enviando}
-                          className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        >
-                          {enviando ? (
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                          ) : (
-                            <CheckCircle className="w-4 h-4 mr-2" />
+                      
+                      {/* Mostrar advertencia si la incidencia ya está resuelta */}
+                      {esIncidenciaResuelta() ? (
+                        <div className="text-center py-3">
+                          <div className="bg-green-900/20 border border-green-500/30 rounded-lg p-3">
+                            <div className="flex items-center justify-center text-green-400">
+                              <CheckCircle className="w-4 h-4 mr-2" />
+                              <span className="text-sm">Esta incidencia ya está resuelta</span>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex justify-center space-x-4">
+                          <button
+                            onClick={manejarAprobar}
+                            disabled={enviando || esIncidenciaResuelta() || !puedeAprobarORechazar()}
+                            className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            title={
+                              esIncidenciaResuelta() ? "La incidencia ya está resuelta" :
+                              !puedeAprobarORechazar() ? "No es tu turno o no tienes permisos" :
+                              "Aprobar y marcar como resuelta"
+                            }
+                          >
+                            {enviando ? (
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                            ) : (
+                              <CheckCircle className="w-4 h-4 mr-2" />
+                            )}
+                            Aprobar y Resolver
+                          </button>
+                          
+                          <button
+                            onClick={manejarRechazar}
+                            disabled={enviando || !comentario.trim() || esIncidenciaResuelta() || !puedeAprobarORechazar()}
+                            className="flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            title={
+                              esIncidenciaResuelta() ? "La incidencia ya está resuelta" :
+                              !puedeAprobarORechazar() ? "No es tu turno o no tienes permisos" :
+                              !comentario.trim() ? "Debe agregar un comentario antes de rechazar" : 
+                              "Rechazar justificación y continuar conversación"
+                            }
+                          >
+                            {enviando ? (
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                            ) : (
+                              <X className="w-4 h-4 mr-2" />
+                            )}
+                            Rechazar (Continúa Conversación)
+                          </button>
+                        </div>
+                      )}
+                      
+                      {!esIncidenciaResuelta() && (
+                        <>
+                          <p className="text-center text-gray-400 text-xs mt-2">
+                            💡 Rechazar permite al analista responder y continuar la conversación
+                          </p>
+                          {!comentario.trim() && (
+                            <p className="text-center text-yellow-400 text-sm mt-2">
+                              ⚠️ Agregue un comentario explicando el motivo del rechazo
+                            </p>
                           )}
-                          Aprobar Incidencia
-                        </button>
-                        
-                        <button
-                          onClick={manejarRechazar}
-                          disabled={enviando || !comentario.trim()}
-                          className="flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                          title={!comentario.trim() ? "Debe agregar un comentario antes de rechazar" : ""}
-                        >
-                          {enviando ? (
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                          ) : (
-                            <X className="w-4 h-4 mr-2" />
-                          )}
-                          Rechazar y Volver a Pendiente
-                        </button>
-                      </div>
-                      {!comentario.trim() && (
-                        <p className="text-center text-yellow-400 text-sm mt-2">
-                          💡 Agregue un comentario explicando el motivo del rechazo
-                        </p>
+                        </>
                       )}
                     </div>
                   </div>
                 )}
 
+                {/* Estado de Solo Lectura - No es tu turno */}
+                {!puedeEscribirAnalista() && !puedeEscribirSupervisor() && !esIncidenciaResuelta() && (
+                  <div className="text-center py-6">
+                    <div className="bg-gray-800/50 border border-gray-600 rounded-lg p-4">
+                      <div className="flex items-center justify-center mb-3">
+                        <Clock className="w-6 h-6 text-gray-400 mr-2" />
+                        <div>
+                          <h4 className="text-md font-medium text-gray-300">No es tu turno</h4>
+                          <p className="text-gray-400 text-sm">{obtenerMensajeTurno()}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-center space-x-2 text-gray-400">
+                        <Eye className="w-4 h-4" />
+                        <span className="text-sm">Modo solo lectura</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Error general */}
-                {error && !puedeJustificar() && !puedeComentarSupervisor() && (
+                {error && !puedeEscribirAnalista() && !puedeEscribirSupervisor() && (
                   <div className="bg-red-900/20 border border-red-500 rounded-lg p-3">
                     <div className="flex items-center text-red-400">
                       <AlertTriangle className="w-4 h-4 mr-2" />
@@ -713,22 +865,25 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
               </div>
             )}
 
-            {/* Caso 4: Incidencia resuelta - Solo vista */}
+            {/* Incidencia Resuelta - Vista Final */}
             {esIncidenciaResuelta() && (
               <div className="text-center py-6">
                 <div className="bg-green-900/20 border border-green-500/30 rounded-lg p-4">
                   <div className="flex items-center justify-center mb-3">
-                    <CheckCircle className="w-6 h-6 text-green-400 mr-2" />
+                    <CheckCircle className="w-8 h-8 text-green-400 mr-3" />
                     <div>
-                      <h4 className="text-md font-medium text-green-400">Incidencia Resuelta</h4>
-                      <p className="text-green-300 text-sm">Esta incidencia ha sido aprobada y marcada como resuelta</p>
+                      <h4 className="text-lg font-medium text-green-400">🎉 Incidencia Resuelta</h4>
+                      <p className="text-green-300 text-sm">Esta incidencia ha sido aprobada por el supervisor y marcada como resuelta</p>
                     </div>
+                  </div>
+                  <div className="text-green-300 text-sm mb-4">
+                    La conversación ha finalizado exitosamente
                   </div>
                   <button
                     onClick={onCerrar}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                    className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
                   >
-                    Cerrar
+                    Cerrar Conversación
                   </button>
                 </div>
               </div>

@@ -611,13 +611,12 @@ class IncidenciaCierreAdmin(admin.ModelAdmin):
 
 @admin.register(ResolucionIncidencia)
 class ResolucionIncidenciaAdmin(admin.ModelAdmin):
-    """Administración de resoluciones de incidencias"""
+    """Administración de resoluciones de incidencias - Arquitectura simplificada"""
     list_display = (
         'incidencia_info',
         'tipo_resolucion_display',
         'usuario',
         'comentario_resumido',
-        'valor_corregido',
         'fecha_resolucion'
     )
     list_filter = (
@@ -630,8 +629,6 @@ class ResolucionIncidenciaAdmin(admin.ModelAdmin):
     )
     search_fields = (
         'comentario',
-        'valor_corregido',
-        'campo_corregido',
         'incidencia__rut_empleado',
         'incidencia__descripcion',
         'usuario__correo_bdo',
@@ -651,14 +648,8 @@ class ResolucionIncidenciaAdmin(admin.ModelAdmin):
         ('Resolución', {
             'fields': (
                 'comentario',
-                'valor_corregido',
-                'campo_corregido',
                 'adjunto'
             )
-        }),
-        ('Colaboración', {
-            'fields': ('usuarios_mencionados',),
-            'classes': ('collapse',)
         })
     )
     date_hierarchy = 'fecha_resolucion'
@@ -672,10 +663,10 @@ class ResolucionIncidenciaAdmin(admin.ModelAdmin):
     def tipo_resolucion_display(self, obj):
         """Display mejorado del tipo de resolución"""
         icons = {
-            'comentario': '💬',
-            'solucion': '✅',
-            'correccion': '🔧',
-            'rechazo': '❌'
+            'justificacion': '💬',
+            'consulta': '❓',
+            'rechazo': '❌',
+            'aprobacion': '✅'
         }
         icon = icons.get(obj.tipo_resolucion, '📝')
         return f"{icon} {obj.get_tipo_resolucion_display()}"
@@ -694,7 +685,7 @@ class ResolucionIncidenciaAdmin(admin.ModelAdmin):
             'incidencia__cierre',
             'incidencia__cierre__cliente',
             'usuario'
-        ).prefetch_related('usuarios_mencionados')
+        )
 
 
 # ========== ACCIONES PERSONALIZADAS ==========

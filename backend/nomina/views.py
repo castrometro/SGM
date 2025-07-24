@@ -446,22 +446,25 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         
         # Progreso general
         progreso = {
-            'aprobadas': resoluciones.filter(
-                estado='aprobada_supervisor',
-                incidencia__estado='aprobada'
+            'aprobadas': resoluciones.filter(tipo_resolucion='aprobacion_supervisor').count(),
+            'pendientes': incidencias.exclude(
+                id__in=resoluciones.filter(
+                    tipo_resolucion__in=['aprobacion_supervisor', 'rechazo_supervisor']
+                ).values('incidencia_id')
             ).count(),
-            'pendientes': incidencias.filter(estado='pendiente').count(),
-            'rechazadas': resoluciones.filter(
-                estado='rechazada_supervisor'
-            ).count()
+            'rechazadas': resoluciones.filter(tipo_resolucion='rechazo_supervisor').count()
         }
         
         # Estados de resolución
         estados = {
-            'pendiente': incidencias.filter(estado='pendiente').count(),
-            'resuelta_analista': resoluciones.filter(estado='resuelta_analista').count(),
-            'aprobada_supervisor': resoluciones.filter(estado='aprobada_supervisor').count(),
-            'rechazada_supervisor': resoluciones.filter(estado='rechazada_supervisor').count()
+            'pendiente': incidencias.exclude(
+                id__in=resoluciones.values('incidencia_id')
+            ).count(),
+            'resuelta_analista': resoluciones.filter(
+                tipo_resolucion__in=['justificacion_analista', 'correccion_analista', 'consulta_analista']
+            ).count(),
+            'aprobada_supervisor': resoluciones.filter(tipo_resolucion='aprobacion_supervisor').count(),
+            'rechazada_supervisor': resoluciones.filter(tipo_resolucion='rechazo_supervisor').count()
         }
         
         # Distribución por prioridad
@@ -503,10 +506,15 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
                 "error": "Solo supervisores pueden realizar aprobaciones masivas"
             }, status=status.HTTP_403_FORBIDDEN)
         
-        # Obtener resoluciones pendientes de aprobación
+        # Obtener resoluciones pendientes de aprobación (última resolución del analista)
         resoluciones_pendientes = ResolucionIncidencia.objects.filter(
             incidencia__cierre=cierre,
-            estado='resuelta_analista'
+            tipo_resolucion__in=['justificacion_analista', 'correccion_analista', 'consulta_analista']
+        ).filter(
+            # Solo la última resolución por incidencia
+            id__in=ResolucionIncidencia.objects.filter(
+                incidencia__cierre=cierre
+            ).order_by('incidencia', '-fecha_resolucion').distinct('incidencia').values('id')
         )
         
         if not resoluciones_pendientes.exists():
@@ -2074,6 +2082,93 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
                 "error": f"Error generando preview: {str(e)}"
             }, status=500)
 
+    @action(detail=False, methods=['get'], url_path='mi-turno')
+    def mi_turno(self, request):
+        """
+        Obtiene las incidencias que el usuario actual debe atender según el flujo de conversación
+        """
+        from django.db.models import Prefetch, OuterRef, Subquery
+        
+        # Obtener todas las incidencias con sus resoluciones
+        incidencias = IncidenciaCierre.objects.prefetch_related(
+            'resoluciones'
+        ).filter(estado__in=['pendiente', 'resuelta_analista']).order_by('-fecha_ultima_accion')
+        
+        mi_turno = []
+        
+        for incidencia in incidencias:
+            resoluciones = list(incidencia.resoluciones.all().order_by('fecha_resolucion'))
+            
+            # Determinar el estado de la conversación según la nueva arquitectura
+            if not resoluciones:
+                # INICIANDO: Sin mensajes → Turno del Analista
+                if not (request.user.is_staff or request.user.is_superuser):
+                    mi_turno.append({
+                        'incidencia': incidencia,
+                        'estado_conversacion': 'turno_analista',
+                        'accion_requerida': 'Crear justificación inicial'
+                    })
+            else:
+                ultima_resolucion = resoluciones[-1]
+                
+                # RESUELTA: Último mensaje es aprobación → Conversación terminada
+                if ultima_resolucion.tipo_resolucion == 'aprobacion':
+                    continue  # No requiere acción
+                    
+                # Determinar turno basado en el último mensaje
+                es_del_supervisor = ultima_resolucion.tipo_resolucion in ['consulta', 'rechazo']
+                
+                if es_del_supervisor:
+                    # TURNO_ANALISTA: Último mensaje fue de supervisor → Analista debe responder
+                    if not (request.user.is_staff or request.user.is_superuser):
+                        accion = 'Responder consulta' if ultima_resolucion.tipo_resolucion == 'consulta' else 'Nueva justificación'
+                        mi_turno.append({
+                            'incidencia': incidencia,
+                            'estado_conversacion': 'turno_analista',
+                            'accion_requerida': accion,
+                            'ultimo_mensaje': {
+                                'tipo': ultima_resolucion.tipo_resolucion,
+                                'comentario': ultima_resolucion.comentario,
+                                'usuario': ultima_resolucion.usuario.get_full_name(),
+                                'fecha': ultima_resolucion.fecha_resolucion
+                            }
+                        })
+                else:
+                    # TURNO_SUPERVISOR: Último mensaje fue de analista → Supervisor debe decidir
+                    if request.user.is_staff or request.user.is_superuser:
+                        mi_turno.append({
+                            'incidencia': incidencia,
+                            'estado_conversacion': 'turno_supervisor',
+                            'accion_requerida': 'Revisar y decidir (aprobar/rechazar/consultar)',
+                            'ultimo_mensaje': {
+                                'tipo': ultima_resolucion.tipo_resolucion,
+                                'comentario': ultima_resolucion.comentario,
+                                'usuario': ultima_resolucion.usuario.get_full_name(),
+                                'fecha': ultima_resolucion.fecha_resolucion
+                            }
+                        })
+        
+        # Serializar las incidencias
+        incidencias_data = []
+        for item in mi_turno:
+            incidencia_serializer = IncidenciaCierreSerializer(item['incidencia'])
+            incidencias_data.append({
+                **incidencia_serializer.data,
+                'estado_conversacion': item['estado_conversacion'],
+                'accion_requerida': item['accion_requerida'],
+                'ultimo_mensaje': item.get('ultimo_mensaje')
+            })
+        
+        return Response({
+            'total': len(incidencias_data),
+            'usuario': {
+                'id': request.user.id,
+                'nombre': request.user.get_full_name(),
+                'es_supervisor': request.user.is_staff or request.user.is_superuser
+            },
+            'incidencias': incidencias_data
+        })
+
     @action(detail=True, methods=['post'])
     def aprobar(self, request, pk=None):
         """Aprobar una incidencia de cierre"""
@@ -2179,7 +2274,7 @@ class ResolucionIncidenciaViewSet(viewsets.ModelViewSet):
         if usuario_id:
             queryset = queryset.filter(usuario_id=usuario_id)
             
-        return queryset.select_related('incidencia', 'usuario').order_by('-fecha_resolucion')
+        return queryset.select_related('incidencia', 'usuario').order_by('-fecha_creacion')
     
     def get_serializer_class(self):
         if self.action == 'create':
@@ -2188,76 +2283,10 @@ class ResolucionIncidenciaViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """
-        Crear una nueva resolución para una incidencia con flujo analista-supervisor
+        Crear una nueva resolución con arquitectura simplificada
         """
-        incidencia_id = self.request.data.get('incidencia_id')
-        
-        if not incidencia_id:
-            raise serializers.ValidationError("incidencia_id es requerido")
-        
-        try:
-            incidencia = IncidenciaCierre.objects.get(id=incidencia_id)
-        except IncidenciaCierre.DoesNotExist:
-            raise serializers.ValidationError("Incidencia no encontrada")
-        
-        tipo_resolucion = self.request.data.get('tipo_resolucion')
-        usuario = self.request.user
-        
-        # Obtener el estado actual de la incidencia
-        estado_anterior = incidencia.estado
-        
-        # 🎯 LÓGICA DEL FLUJO ANALISTA-SUPERVISOR
-        if tipo_resolucion in ['comentario', 'justificacion', 'solucion']:
-            # ✅ ANALISTA justifica o propone solución
-            if incidencia.estado == 'pendiente':
-                estado_nuevo = 'resuelta_analista'  # Esperando revisión del supervisor
-                incidencia.asignado_a = None  # Liberar para que supervisor pueda revisar
-            else:
-                estado_nuevo = 'resuelta_analista'  # Re-resolución después de rechazo
-                
-        elif tipo_resolucion == 'aprobacion':
-            # ✅ SUPERVISOR aprueba la justificación del analista
-            if usuario.is_staff or usuario.is_superuser:
-                estado_nuevo = 'aprobada_supervisor'
-            else:
-                raise serializers.ValidationError("Solo supervisores pueden aprobar resoluciones")
-                
-        elif tipo_resolucion == 'rechazo':
-            # ❌ SUPERVISOR rechaza y solicita mejora
-            if usuario.is_staff or usuario.is_superuser:
-                estado_nuevo = 'rechazada_supervisor'
-                # Reasignar al analista original si existe historial
-                resolucion_analista = ResolucionIncidencia.objects.filter(
-                    incidencia=incidencia,
-                    tipo_resolucion__in=['comentario', 'justificacion', 'solucion']
-                ).order_by('-fecha_resolucion').first()
-                
-                if resolucion_analista:
-                    incidencia.asignado_a = resolucion_analista.usuario
-            else:
-                raise serializers.ValidationError("Solo supervisores pueden rechazar resoluciones")
-                
-        else:
-            # Para otros tipos, mantener estado actual
-            estado_nuevo = estado_anterior
-        
-        # Crear la resolución
-        resolucion = serializer.save(
-            incidencia=incidencia,
-            usuario=usuario,
-            estado_anterior=estado_anterior,
-            estado_nuevo=estado_nuevo
-        )
-        
-        # Actualizar estado de la incidencia
-        incidencia.estado = estado_nuevo
-        incidencia.fecha_ultima_accion = timezone.now()
-        incidencia.save(update_fields=['estado', 'fecha_ultima_accion', 'asignado_a'])
-        
-        logger.info(f"📝 Resolución creada por {usuario.correo_bdo}: {tipo_resolucion} para incidencia {incidencia.id}")
-        logger.info(f"🔄 Estado cambiado: {estado_anterior} → {estado_nuevo}")
-        
-        return resolucion
+        # Con el nuevo serializer, la validación se hace automáticamente
+        serializer.save(usuario=self.request.user)
     
     @action(detail=False, methods=['get'], url_path='historial/(?P<incidencia_id>[^/.]+)')
     def historial_incidencia(self, request, incidencia_id=None):
@@ -2498,7 +2527,9 @@ class CierreNominaIncidenciasViewSet(viewsets.ViewSet):
             return Response({"error": "Cierre no encontrado"}, status=404)
         
         # Verificar que existan incidencias rechazadas o que justifiquen la recarga
-        incidencias_rechazadas = cierre.incidencias.filter(estado='rechazada_supervisor').count()
+        incidencias_rechazadas = cierre.incidencias.filter(
+            resoluciones__tipo_resolucion='rechazo_supervisor'
+        ).distinct().count()
         
         if incidencias_rechazadas == 0:
             return Response({
@@ -2619,10 +2650,19 @@ class CierreNominaIncidenciasViewSet(viewsets.ViewSet):
             "estado_incidencias": cierre.estado_incidencias,
             "tiene_incidencias": total_incidencias > 0,
             "total_incidencias": total_incidencias,
-            "incidencias_pendientes": cierre.incidencias.filter(estado='pendiente').count(),
+            "incidencias_pendientes": cierre.incidencias.exclude(
+                id__in=cierre.incidencias.filter(
+                    resoluciones__tipo_resolucion__in=[
+                        'aprobacion_supervisor', 'rechazo_supervisor'
+                    ]
+                ).values('id')
+            ).count(),
             "incidencias_resueltas": cierre.incidencias.filter(
-                estado__in=['aprobada_supervisor', 'resuelta_analista']
-            ).count()
+                resoluciones__tipo_resolucion__in=[
+                    'aprobacion_supervisor', 'justificacion_analista', 
+                    'correccion_analista', 'consulta_analista'
+                ]
+            ).distinct().count()
         })
     
     @action(detail=True, methods=['post'])

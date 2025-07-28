@@ -1,7 +1,8 @@
-// src/components/Gerente/EstadosCierres.jsx
+// src/components/Gerente/EstadosCierresNomina.jsx
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { obtenerEstadosCierres, forzarRecalculoCierre } from '../../api/gerente';
+import { obtenerEstadosCierresNomina, forzarRecalculoCierreNomina } from '../../api/gerenteNomina';
+import { obtenerCliente } from '../../api/clientes';
 import { 
   AlertCircle, 
   CheckCircle, 
@@ -16,7 +17,7 @@ import {
   Search
 } from 'lucide-react';
 
-const EstadosCierres = () => {
+const EstadosCierresNomina = () => {
   const navigate = useNavigate();
   const [cierres, setCierres] = useState([]);
   const [resumen, setResumen] = useState(null);
@@ -25,7 +26,6 @@ const EstadosCierres = () => {
   const [error, setError] = useState('');
   const [filtroEstado, setFiltroEstado] = useState('');
   const [busquedaCliente, setBusquedaCliente] = useState('');
-  // Removed filtroArea - el backend ya filtra por área del gerente
 
   useEffect(() => {
     cargarEstadosCierres();
@@ -37,61 +37,100 @@ const EstadosCierres = () => {
 
   const cargarEstadosCierres = async () => {
     try {
-      const data = await obtenerEstadosCierres();
-      // El backend ahora devuelve la lista directamente
-      setCierres(data || []);
+      const data = await obtenerEstadosCierresNomina();
+      console.log('=== DEBUG: Datos de nómina cargados ===');
+      console.log('Total cierres:', data?.length || 0);
       
-      // Calcular resumen del frontend basado en los datos
+      // Procesar los datos para enriquecer con información de clientes
+      const cierresEnriquecidos = await Promise.all(
+        (data || []).map(async (cierre) => {
+          try {
+            // Obtener información del cliente usando la API
+            const clienteData = await obtenerCliente(cierre.cliente);
+            
+            return {
+              ...cierre,
+              cliente_nombre: clienteData?.nombre || `Cliente ${cierre.cliente}`,
+              cliente_id: cierre.cliente,
+              // Mapear campos para compatibilidad
+              usuario_id: cierre.usuario_analista,
+              area_nombre: 'Nómina' // Siempre es nómina
+            };
+          } catch (error) {
+            console.error(`Error obteniendo cliente ${cierre.cliente}:`, error);
+            return {
+              ...cierre,
+              cliente_nombre: `Cliente ${cierre.cliente}`,
+              cliente_id: cierre.cliente,
+              usuario_id: cierre.usuario_analista,
+              area_nombre: 'Nómina'
+            };
+          }
+        })
+      );
+      
+      setCierres(cierresEnriquecidos);
+      
+      // Calcular resumen del frontend basado en los datos enriquecidos
       const resumenCalculado = {
-        total: data?.length || 0,
-        completados: data?.filter(c => ['completo', 'finalizado', 'cerrado', 'terminado'].includes(c.estado)).length || 0,
-        en_proceso: data?.filter(c => ['procesando', 'clasificacion', 'generando_reportes'].includes(c.estado)).length || 0,
-        error: data?.filter(c => c.estado === 'error').length || 0,
-        pendiente: data?.filter(c => c.estado === 'pendiente').length || 0
+        total: cierresEnriquecidos?.length || 0,
+        completados: cierresEnriquecidos?.filter(c => ['finalizado'].includes(c.estado)).length || 0,
+        en_proceso: cierresEnriquecidos?.filter(c => [
+          'cargando_archivos', 
+          'archivos_completos',
+          'verificacion_datos', 
+          'datos_consolidados',
+          'validacion_final'
+        ].includes(c.estado)).length || 0,
+        con_discrepancias: cierresEnriquecidos?.filter(c => ['con_discrepancias'].includes(c.estado)).length || 0,
+        con_incidencias: cierresEnriquecidos?.filter(c => ['con_incidencias'].includes(c.estado)).length || 0,
+        pendiente: cierresEnriquecidos?.filter(c => c.estado === 'pendiente').length || 0
       };
       setResumen(resumenCalculado);
       setError('');
     } catch (err) {
-      console.error('Error cargando estados de cierres:', err);
-      setError('Error al cargar los estados de cierres');
+      console.error('Error cargando estados de cierres de nómina:', err);
+      setError('Error al cargar los estados de cierres de nómina');
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleForzarRecalculo = async (cierreId) => {
+  };  const handleForzarRecalculo = async (cierreId) => {
     try {
       setRecalculando(prev => ({ ...prev, [cierreId]: true }));
-      await forzarRecalculoCierre(cierreId);
+      await forzarRecalculoCierreNomina(cierreId);
       await cargarEstadosCierres(); // Recargar datos
     } catch (err) {
       console.error('Error forzando recálculo:', err);
-      setError('Error al forzar el recálculo del cierre');
+      setError('Error al forzar el recálculo del cierre de nómina');
     } finally {
       setRecalculando(prev => ({ ...prev, [cierreId]: false }));
     }
   };
 
   const handleVerDetalle = (cierreId) => {
-    // Navegar al detalle del cierre de contabilidad
-    navigate(`/menu/cierres/${cierreId}`);
+    // Navegar al detalle del cierre de nómina
+    navigate(`/menu/nomina/cierres/${cierreId}`);
+  };
+
+  const obtenerNombreCliente = (cierre) => {
+    // Los datos ya están enriquecidos con el nombre del cliente
+    return cierre.cliente_nombre || `Cliente ${cierre.cliente_id || cierre.cliente}`;
   };
 
   const getEstadoColor = (estado) => {
     const colors = {
       'pendiente': 'bg-yellow-100 text-yellow-800 border-yellow-200',
-      'procesando': 'bg-blue-100 text-blue-800 border-blue-200',
-      'clasificacion': 'bg-blue-100 text-blue-800 border-blue-200',
-      'incidencias': 'bg-orange-100 text-orange-800 border-orange-200',
-      'sin_incidencias': 'bg-emerald-100 text-emerald-800 border-emerald-200',
-      'generando_reportes': 'bg-purple-100 text-purple-800 border-purple-200',
-      'en_revision': 'bg-indigo-100 text-indigo-800 border-indigo-200',
-      'rechazado': 'bg-red-100 text-red-800 border-red-200',
-      'aprobado': 'bg-green-100 text-green-800 border-green-200',
-      'finalizado': 'bg-green-500 text-green-800 border-green-500',
-      'completo': 'bg-green-100 text-green-800 border-green-200',
-      'error': 'bg-red-100 text-red-800 border-red-200',
-      'cancelado': 'bg-gray-100 text-gray-800 border-gray-200'
+      'cargando_archivos': 'bg-blue-100 text-blue-800 border-blue-200',
+      'archivos_completos': 'bg-blue-100 text-blue-800 border-blue-200',
+      'verificacion_datos': 'bg-purple-100 text-purple-800 border-purple-200',
+      'verificado_sin_discrepancias': 'bg-emerald-100 text-emerald-800 border-emerald-200',
+      'datos_consolidados': 'bg-green-100 text-green-800 border-green-200',
+      'con_discrepancias': 'bg-orange-100 text-orange-800 border-orange-200',
+      'con_incidencias': 'bg-red-100 text-red-800 border-red-200',
+      'incidencias_resueltas': 'bg-emerald-100 text-emerald-800 border-emerald-200',
+      'requiere_recarga_archivos': 'bg-amber-100 text-amber-800 border-amber-200',
+      'validacion_final': 'bg-indigo-100 text-indigo-800 border-indigo-200',
+      'finalizado': 'bg-green-500 text-white border-green-500'
     };
     return colors[estado] || 'bg-gray-100 text-gray-800 border-gray-200';
   };
@@ -99,16 +138,20 @@ const EstadosCierres = () => {
   const getEstadoIcon = (estado) => {
     switch (estado) {
       case 'finalizado':
-      case 'completo':
-      case 'aprobado':
         return <CheckCircle className="w-4 h-4" />;
-      case 'error':
-      case 'rechazado':
+      case 'con_discrepancias':
+      case 'con_incidencias':
+      case 'requiere_recarga_archivos':
         return <AlertCircle className="w-4 h-4" />;
-      case 'procesando':
-      case 'clasificacion':
-      case 'generando_reportes':
+      case 'cargando_archivos':
+      case 'verificacion_datos':
+      case 'validacion_final':
         return <RefreshCw className="w-4 h-4 animate-spin" />;
+      case 'archivos_completos':
+      case 'verificado_sin_discrepancias':
+      case 'datos_consolidados':
+      case 'incidencias_resueltas':
+        return <CheckCircle className="w-4 h-4" />;
       default:
         return <Clock className="w-4 h-4" />;
     }
@@ -127,13 +170,12 @@ const EstadosCierres = () => {
 
   const cierresFiltrados = cierres.filter(cierre => {
     const matchEstado = !filtroEstado || cierre.estado === filtroEstado;
+    const nombreCliente = obtenerNombreCliente(cierre);
     const matchCliente = !busquedaCliente || 
-      cierre.cliente_nombre.toLowerCase().includes(busquedaCliente.toLowerCase());
-    // Removed area filter - backend handles area-based filtering
+      nombreCliente.toLowerCase().includes(busquedaCliente.toLowerCase());
     return matchEstado && matchCliente;
   });
 
-  // Removed areas extraction - no longer needed
   const estados = [...new Set(cierres.map(c => c.estado))].filter(Boolean);
 
   if (loading) {
@@ -141,7 +183,7 @@ const EstadosCierres = () => {
       <div className="min-h-screen bg-gray-900 text-white p-6">
         <div className="flex justify-center items-center h-64">
           <RefreshCw className="w-8 h-8 animate-spin" />
-          <span className="ml-2">Cargando estados de cierres...</span>
+          <span className="ml-2">Cargando estados de cierres de nómina...</span>
         </div>
       </div>
     );
@@ -153,8 +195,8 @@ const EstadosCierres = () => {
         {/* Header */}
         <div className="flex justify-between items-center mb-6">
           <div>
-            <h1 className="text-3xl font-bold mb-2">Estados de Cierres Contables</h1>
-            <p className="text-gray-400">Monitoreo en tiempo real de procesos de cierre</p>
+            <h1 className="text-3xl font-bold mb-2">Estados de Cierres de Nómina</h1>
+            <p className="text-gray-400">Monitoreo en tiempo real de procesos de cierre de nómina</p>
           </div>
           <button
             onClick={cargarEstadosCierres}
@@ -168,7 +210,7 @@ const EstadosCierres = () => {
 
         {/* Resumen de Estados */}
         {resumen && (
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6">
             <div className="bg-gray-800 p-4 rounded-lg">
               <div className="flex items-center">
                 <BarChart3 className="w-8 h-8 text-blue-500" />
@@ -182,7 +224,7 @@ const EstadosCierres = () => {
               <div className="flex items-center">
                 <CheckCircle className="w-8 h-8 text-green-500" />
                 <div className="ml-3">
-                  <p className="text-sm text-gray-400">Completados</p>
+                  <p className="text-sm text-gray-400">Finalizados</p>
                   <p className="text-2xl font-bold">{resumen.completados || 0}</p>
                 </div>
               </div>
@@ -198,10 +240,19 @@ const EstadosCierres = () => {
             </div>
             <div className="bg-gray-800 p-4 rounded-lg">
               <div className="flex items-center">
+                <AlertCircle className="w-8 h-8 text-orange-500" />
+                <div className="ml-3">
+                  <p className="text-sm text-gray-400">Con Discrepancias</p>
+                  <p className="text-2xl font-bold">{resumen.con_discrepancias || 0}</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-gray-800 p-4 rounded-lg">
+              <div className="flex items-center">
                 <AlertCircle className="w-8 h-8 text-red-500" />
                 <div className="ml-3">
-                  <p className="text-sm text-gray-400">Con Errores</p>
-                  <p className="text-2xl font-bold">{resumen.error || 0}</p>
+                  <p className="text-sm text-gray-400">Con Incidencias</p>
+                  <p className="text-2xl font-bold">{resumen.con_incidencias || 0}</p>
                 </div>
               </div>
             </div>
@@ -226,7 +277,6 @@ const EstadosCierres = () => {
               onClick={() => {
                 setFiltroEstado('');
                 setBusquedaCliente('');
-                // Removed filtroArea reset
               }}
               className="ml-auto text-sm text-blue-400 hover:text-blue-300"
             >
@@ -291,7 +341,7 @@ const EstadosCierres = () => {
                 <div className="flex-1">
                   <div className="flex items-center mb-2">
                     <h3 className="text-lg font-semibold mr-3">
-                      {cierre.cliente_nombre}
+                      {obtenerNombreCliente(cierre)}
                     </h3>
                     <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border ${getEstadoColor(cierre.estado)}`}>
                       {getEstadoIcon(cierre.estado)}
@@ -299,10 +349,10 @@ const EstadosCierres = () => {
                         {cierre.estado.replace('_', ' ')}
                       </span>
                     </span>
-                    {cierre.area_nombre && (
+                    {cierre.usuario_analista && (
                       <span className="ml-2 inline-flex items-center px-2 py-1 rounded text-xs bg-gray-700 text-gray-300">
                         <Users className="w-3 h-3 mr-1" />
-                        {cierre.area_nombre}
+                        {cierre.usuario_analista.username || cierre.usuario_analista}
                       </span>
                     )}
                   </div>
@@ -323,34 +373,43 @@ const EstadosCierres = () => {
                     </div>
                     <div>
                       <p className="text-gray-400 mb-1">
-                        {['finalizado', 'completo', 'aprobado'].includes(cierre.estado) ? 'Completado' : 'Última actualización'}
+                        {['finalizado'].includes(cierre.estado) ? 'Finalizado' : 'Última actualización'}
                       </p>
                       <p className="font-medium">
-                        {formatearFecha(cierre.fecha_finalizacion || cierre.fecha_cierre)}
+                        {formatearFecha(cierre.fecha_finalizacion || cierre.fecha_creacion)}
                       </p>
                     </div>
                   </div>
 
-                  {cierre.tiempo_en_estado_dias !== null && (
+                  {/* Información adicional específica de nómina */}
+                  {cierre.estado_incidencias && cierre.estado_incidencias !== 'pendiente' && (
                     <div className="mt-2">
-                      <p className="text-gray-400 text-sm mb-1">Tiempo en estado actual</p>
+                      <p className="text-gray-400 text-sm mb-1">Estado de Incidencias</p>
                       <p className="text-sm font-medium flex items-center">
                         <TrendingUp className="w-4 h-4 mr-1" />
-                        {cierre.tiempo_en_estado_dias} días
+                        {cierre.estado_incidencias.replace('_', ' ')}
+                        {cierre.total_incidencias > 0 && (
+                          <span className="ml-2 text-xs bg-red-100 text-red-800 px-2 py-1 rounded">
+                            {cierre.total_incidencias} incidencias
+                          </span>
+                        )}
                       </p>
                     </div>
                   )}
 
-                  {cierre.ultima_actividad && (
-                    <div className="mt-3">
-                      <p className="text-gray-400 text-sm mb-1">Última actividad</p>
-                      <p className="text-xs text-gray-400">{formatearFecha(cierre.ultima_actividad)}</p>
+                  {cierre.estado_consolidacion && cierre.estado_consolidacion !== 'pendiente' && (
+                    <div className="mt-2">
+                      <p className="text-gray-400 text-sm mb-1">Estado de Consolidación</p>
+                      <p className="text-sm font-medium flex items-center">
+                        <BarChart3 className="w-4 h-4 mr-1" />
+                        {cierre.estado_consolidacion.replace('_', ' ')}
+                      </p>
                     </div>
                   )}
                 </div>
 
                 <div className="flex flex-col space-y-2 ml-4">
-                  {(cierre.estado === 'error' || cierre.estado === 'cancelado') && (
+                  {(['con_discrepancias', 'con_incidencias', 'requiere_recarga_archivos'].includes(cierre.estado)) && (
                     <button
                       onClick={() => handleForzarRecalculo(cierre.id)}
                       disabled={recalculando[cierre.id]}
@@ -361,7 +420,7 @@ const EstadosCierres = () => {
                       ) : (
                         <RefreshCw className="w-4 h-4 mr-1" />
                       )}
-                      Recalcular
+                      {cierre.estado === 'requiere_recarga_archivos' ? 'Recargar' : 'Reprocesar'}
                     </button>
                   )}
                   <button 
@@ -381,11 +440,11 @@ const EstadosCierres = () => {
         {cierresFiltrados.length === 0 && !loading && (
           <div className="text-center py-12">
             <BarChart3 className="w-16 h-16 mx-auto text-gray-600 mb-4" />
-            <h3 className="text-lg font-medium text-gray-300 mb-2">No se encontraron cierres</h3>
+            <h3 className="text-lg font-medium text-gray-300 mb-2">No se encontraron cierres de nómina</h3>
             <p className="text-gray-400">
               {filtroEstado || busquedaCliente ? 
                 'Intenta ajustar los filtros para ver más resultados' : 
-                'No hay cierres registrados en el sistema'
+                'No hay cierres de nómina registrados en el sistema'
               }
             </p>
           </div>
@@ -401,4 +460,4 @@ const EstadosCierres = () => {
   );
 };
 
-export default EstadosCierres;
+export default EstadosCierresNomina;

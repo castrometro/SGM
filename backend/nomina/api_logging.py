@@ -428,3 +428,72 @@ def get_activity_log(request, cierre_id, tarjeta):
         return Response({
             'error': f"Error obteniendo logs: {str(e)}"
         }, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_all_activity_logs(request):
+    """
+    Obtiene todos los logs de actividad de nómina con filtros opcionales
+    """
+    try:
+        from .models_logging import TarjetaActivityLogNomina
+        
+        # Filtros opcionales
+        cierre_id = request.GET.get('cierre_id')
+        usuario_id = request.GET.get('usuario_id')
+        tarjeta = request.GET.get('tarjeta')
+        limit = request.GET.get('limit', 50)
+        
+        # Construir query
+        query = TarjetaActivityLogNomina.objects.all()
+        
+        if cierre_id:
+            query = query.filter(cierre_id=cierre_id)
+        if usuario_id:
+            query = query.filter(usuario_id=usuario_id)
+        if tarjeta:
+            query = query.filter(tarjeta=tarjeta)
+        
+        query = query.order_by('-timestamp')
+        
+        # Limitar resultados
+        try:
+            limit = int(limit)
+            if limit > 1000:
+                limit = 1000
+        except ValueError:
+            limit = 50
+        
+        logs = query[:limit]
+        
+        # Serializar logs
+        logs_data = []
+        for log in logs:
+            logs_data.append({
+                'id': log.id,
+                'cierre_id': log.cierre_id,
+                'tarjeta': log.tarjeta,
+                'timestamp': log.timestamp.isoformat(),
+                'accion': log.accion,
+                'descripcion': log.descripcion,
+                'usuario': log.usuario.correo_bdo if log.usuario else None,
+                'usuario_id': log.usuario.id if log.usuario else None,
+                'resultado': log.resultado,
+                'detalles': log.detalles,
+                'ip_address': log.ip_address,
+                'upload_log_id': log.upload_log.id if log.upload_log else None
+            })
+        
+        return Response({
+            'success': True,
+            'count': len(logs_data),
+            'total_logs': query.count(),
+            'logs': logs_data
+        })
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo todos los logs de actividad: {e}")
+        return Response({
+            'error': f"Error obteniendo logs: {str(e)}"
+        }, status=500)

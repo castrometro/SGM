@@ -51,7 +51,8 @@ from .api_logging import (
     FileActivityView,
     ClassificationActivityView,
     SessionActivityView,
-    get_activity_log
+    get_activity_log,
+    get_all_activity_logs
 )
 
 from django.urls import path
@@ -184,6 +185,7 @@ urlpatterns = router.urls + [
     path("conceptos/", ConceptoRemuneracionBatchView.as_view(), name="guardar-conceptos"),
     
     # === URLs para Activity Logging ===
+    path('activity-log/all/', get_all_activity_logs, name='get_all_activity_logs'),
     path('activity-log/modal/', ModalActivityView.as_view(), name='modal_activity_log'),
     path('activity-log/file/', FileActivityView.as_view(), name='file_activity_log'),
     path('activity-log/classification/', ClassificationActivityView.as_view(), name='classification_activity_log'),

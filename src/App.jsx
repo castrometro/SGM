@@ -27,6 +27,11 @@ import EstadosCierres from "./components/Gerente/EstadosCierres";
 import CacheRedis from "./components/Gerente/CacheRedis";
 import AdminSistema from "./components/Gerente/AdminSistema";
 
+// Importar componentes de Gerente Nómina
+import EstadosCierresNomina from "./components/Gerente/EstadosCierresNomina";
+import LogsActividadNomina from "./components/Gerente/LogsActividadNomina";
+import CacheRedisNomina from "./components/Gerente/CacheRedisNomina";
+
 // Importar nuevos componentes de Nómina
 import LibroRemuneraciones from "./components/LibroRemuneraciones/LibroRemuneraciones";
 import MovimientosMes from "./components/MovimientosMes/MovimientosMes";
@@ -87,6 +92,11 @@ function App() {
           <Route path="gerente/estados-cierres" element={<EstadosCierres />} />
           <Route path="gerente/cache-redis" element={<CacheRedis />} />
           <Route path="gerente/admin-sistema" element={<AdminSistema />} />
+
+          {/* ----------- ÁREA: GERENTE NÓMINA - FUNCIONES AVANZADAS ------------- */}
+          <Route path="gerente/logs-actividad-nomina" element={<LogsActividadNomina />} />
+          <Route path="gerente/estados-cierres-nomina" element={<EstadosCierresNomina />} />
+          <Route path="gerente/cache-redis-nomina" element={<CacheRedisNomina />} />
 
           {/* ----------- ÁREA: ANALYTICS DE PERFORMANCE ------------- */}
           <Route path="analytics" element={<Dashboard />} />

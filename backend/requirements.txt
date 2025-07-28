@@ -8,6 +8,9 @@ click-plugins==1.1.1
 click-repl==0.3.0
 Django==5.2.1
 django-cors-headers==4.7.0
+django-extensions==3.2.3
+pydotplus==2.0.2
+pyparsing==3.1.2
 djangorestframework==3.16.0
 djangorestframework_simplejwt==5.5.0
 django-redis>=5.4.0

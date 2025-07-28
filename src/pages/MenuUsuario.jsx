@@ -80,6 +80,15 @@ const MenuUsuario = () => {
         { label: "Cache Redis", descripcion: "Estado y gestión del cache Redis de cierres", icon: Database, color: "#10B981", path: "/menu/gerente/cache-redis" }
       );
     }
+
+    // Funcionalidades específicas de Nómina para Gerentes
+    if (tieneNomina) {
+      opciones.push(
+        { label: "Logs y Actividad Nómina", descripcion: "Auditoría y logs de actividades de nómina", icon: FileText, color: "#F97316", path: "/menu/gerente/logs-actividad-nomina" },
+        { label: "Estados de Cierres Nómina", descripcion: "Monitoreo en tiempo real de cierres de nómina", icon: Monitor, color: "#06B6D4", path: "/menu/gerente/estados-cierres-nomina" },
+        { label: "Cache Redis Nómina", descripcion: "Estado y gestión del cache Redis de nómina", icon: Database, color: "#10B981", path: "/menu/gerente/cache-redis-nomina" }
+      );
+    }
     
     opciones.push(
       { label: "Gestión de Analistas", descripcion: "Gestión de analistas y asignaciones", icon: UserCog, color: "#EC4899", path: "/menu/analistas" },

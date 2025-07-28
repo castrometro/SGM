@@ -62,6 +62,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.postgres',  # Para usar características avanzadas de PostgreSQL
+    'django_extensions',  # Para usar características avanzadas de Django
     'rest_framework',
     'api',
     'contabilidad',

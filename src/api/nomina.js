@@ -81,8 +81,15 @@ export const obtenerIncidenciasCierre = async (cierreId, filtros = {}) => {
 };
 
 // Generar incidencias para un cierre
-export const generarIncidenciasCierre = async (cierreId) => {
-  const response = await api.post(`/nomina/incidencias/generar/${cierreId}/`);
+export const generarIncidenciasCierre = async (cierreId, clasificacionesSeleccionadas = null) => {
+  const payload = { cierre_id: cierreId };
+  
+  // Si se proporcionan clasificaciones específicas, incluirlas en el payload
+  if (clasificacionesSeleccionadas && clasificacionesSeleccionadas.length > 0) {
+    payload.clasificaciones_seleccionadas = clasificacionesSeleccionadas;
+  }
+  
+  const response = await api.post(`/nomina/incidencias/generar/${cierreId}/`, payload);
   return response.data;
 };
 

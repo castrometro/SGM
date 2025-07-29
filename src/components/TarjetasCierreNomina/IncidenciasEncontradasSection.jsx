@@ -13,6 +13,29 @@ import {
   limpiarIncidenciasCierre
 } from "../../api/nomina";
 
+// Clasificaciones disponibles para selección
+const clasificacionesDisponibles = [
+  "haberes_imponibles",
+  "haberes_no_imponibles", 
+  "horas_extras",
+  "descuentos_legales",
+  "otros_descuentos",
+  "aportes_patronales",
+  "informacion_adicional",
+  "impuestos"
+];
+
+const nombresClasificaciones = {
+  haberes_imponibles: "💰 Haberes Imponibles",
+  haberes_no_imponibles: "🎁 Haberes No Imponibles",
+  horas_extras: "⏰ Horas Extras",
+  descuentos_legales: "⚖️ Descuentos Legales",
+  otros_descuentos: "📋 Otros Descuentos",
+  aportes_patronales: "🏢 Aportes Patronales",
+  informacion_adicional: "📝 Información Adicional",
+  impuestos: "🏛️ Impuestos",
+};
+
 const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActualizado }) => {
   const [expandido, setExpandido] = useState(true);
   const [incidencias, setIncidencias] = useState([]);
@@ -25,6 +48,10 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActua
   const [modalAbierto, setModalAbierto] = useState(false);
   const [estadoIncidencias, setEstadoIncidencias] = useState(null);
   const [vistaPrevia, setVistaPrevia] = useState(null);
+  
+  // Estados para selección de clasificaciones
+  const [clasificacionesSeleccionadas, setClasificacionesSeleccionadas] = useState(new Set(clasificacionesDisponibles));
+  const [mostrarSeleccionClasificaciones, setMostrarSeleccionClasificaciones] = useState(false);
   const [mostrandoPreview, setMostrandoPreview] = useState(false);
   const [finalizandoCierre, setFinalizandoCierre] = useState(false);
   const [analisisCompleto, setAnalisisCompleto] = useState(null);
@@ -171,12 +198,20 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActua
   const manejarGenerarIncidencias = async () => {
     if (!cierre?.id) return;
     
+    // Validar que hay clasificaciones seleccionadas
+    if (!validarSeleccionClasificaciones()) {
+      return;
+    }
+    
     setGenerando(true);
     setError("");
     
     try {
-      console.log("🔄 Iniciando generación de incidencias temporales...");
-      await generarIncidenciasCierre(cierre.id);
+      console.log("🔄 Iniciando generación de incidencias con clasificaciones seleccionadas...");
+      console.log("📋 Clasificaciones seleccionadas:", Array.from(clasificacionesSeleccionadas));
+      
+      // Pasar las clasificaciones seleccionadas a la API
+      await generarIncidenciasCierre(cierre.id, Array.from(clasificacionesSeleccionadas));
       
       console.log("✅ Incidencias generadas, refrescando estado del cierre...");
       
@@ -333,6 +368,33 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActua
            cierre?.estado === 'sin_incidencias' ||
            cierre?.estado === 'incidencias_resueltas' ||
            cierre?.estado === 'finalizado';
+  };
+
+  // Funciones para manejar selección de clasificaciones
+  const toggleClasificacion = (clasificacion) => {
+    const nuevasSeleccionadas = new Set(clasificacionesSeleccionadas);
+    if (nuevasSeleccionadas.has(clasificacion)) {
+      nuevasSeleccionadas.delete(clasificacion);
+    } else {
+      nuevasSeleccionadas.add(clasificacion);
+    }
+    setClasificacionesSeleccionadas(nuevasSeleccionadas);
+  };
+
+  const seleccionarTodasClasificaciones = () => {
+    setClasificacionesSeleccionadas(new Set(clasificacionesDisponibles));
+  };
+
+  const deseleccionarTodasClasificaciones = () => {
+    setClasificacionesSeleccionadas(new Set());
+  };
+
+  const validarSeleccionClasificaciones = () => {
+    if (clasificacionesSeleccionadas.size === 0) {
+      setError("Debe seleccionar al menos una clasificación para generar incidencias");
+      return false;
+    }
+    return true;
   };
 
   return (
@@ -514,6 +576,65 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActua
               </div>
             )}
           </div>
+
+          {/* Sección de selección de clasificaciones - Solo cuando se puede generar incidencias */}
+          {puedeGenerarIncidencias() && (
+            <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-medium text-white">Seleccionar Clasificaciones a Comparar</h3>
+                  <span className="text-sm text-gray-400">
+                    ({clasificacionesSeleccionadas.size} de {clasificacionesDisponibles.length} seleccionadas)
+                  </span>
+                </div>
+                
+                <div className="flex gap-2">
+                  <button
+                    onClick={seleccionarTodasClasificaciones}
+                    className="px-3 py-1 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded transition"
+                  >
+                    Seleccionar todas
+                  </button>
+                  <button
+                    onClick={deseleccionarTodasClasificaciones}
+                    className="px-3 py-1 text-sm bg-gray-600 hover:bg-gray-500 text-white rounded transition"
+                  >
+                    Deseleccionar todas
+                  </button>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {clasificacionesDisponibles.map(clasificacion => (
+                  <label
+                    key={clasificacion}
+                    className={`flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-all ${
+                      clasificacionesSeleccionadas.has(clasificacion)
+                        ? 'border-blue-500 bg-blue-900/20 text-blue-300'
+                        : 'border-gray-600 hover:border-gray-500 text-gray-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={clasificacionesSeleccionadas.has(clasificacion)}
+                      onChange={() => toggleClasificacion(clasificacion)}
+                      className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-sm font-medium">
+                      {nombresClasificaciones[clasificacion]}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              
+              {clasificacionesSeleccionadas.size === 0 && (
+                <div className="mt-3 text-sm text-red-400 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4" />
+                  <span>Debe seleccionar al menos una clasificación para generar incidencias</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Vista previa */}
           {mostrandoPreview && vistaPrevia && (

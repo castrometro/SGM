@@ -47,7 +47,7 @@ const AdminSistema = () => {
   const [showDebug, setShowDebug] = useState(false);
   
   // Estado para bloqueo de desarrollo
-  const [enDesarrollo] = useState(true); // Cambiar a false cuando esté listo
+  const [enDesarrollo] = useState(false); // Cambiar a false cuando esté listo
   
   // Estados para formularios
   const [showUserForm, setShowUserForm] = useState(false);

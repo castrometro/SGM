@@ -460,6 +460,7 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActua
                   🗑️ Limpiar
                 </button>
 
+
                 <button
                   onClick={manejarGenerarIncidencias}
                   disabled={generando || !puedeGenerarIncidencias()}
@@ -1067,6 +1068,8 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActua
               </p>
             </div>
           )}
+
+         
 
         </div>
       )}

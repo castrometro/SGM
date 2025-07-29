@@ -1,5 +1,4 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
 
 const Footer = () => {
     return (
@@ -7,11 +6,11 @@ const Footer = () => {
             <div className="container mx-auto flex flex-col md:flex-row justify-between items-center">
                 {/* Menú de enlaces */}
                 <ul className="flex flex-wrap justify-center md:justify-start space-x-6 text-sm">
-                    <li><Link to="/contacto" className="hover:underline">Contacto</Link></li>
-                    <li><Link to="/ubicaciones" className="hover:underline">Ubicaciones</Link></li>
-                    <li><Link to="/reglamento" className="hover:underline">Reglamento Interno</Link></li>
-                    <li><Link to="/privacidad" className="hover:underline">Políticas de Privacidad</Link></li>
-                    <li><Link to="/terminos" className="hover:underline">Términos y Condiciones</Link></li>
+                    <li><a href="#" onClick={(e) => e.preventDefault()} className="hover:underline cursor-pointer">Contacto</a></li>
+                    <li><a href="#" onClick={(e) => e.preventDefault()} className="hover:underline cursor-pointer">Ubicaciones</a></li>
+                    <li><a href="#" onClick={(e) => e.preventDefault()} className="hover:underline cursor-pointer">Reglamento Interno</a></li>
+                    <li><a href="#" onClick={(e) => e.preventDefault()} className="hover:underline cursor-pointer">Políticas de Privacidad</a></li>
+                    <li><a href="#" onClick={(e) => e.preventDefault()} className="hover:underline cursor-pointer">Términos y Condiciones</a></li>
                 </ul>
 
                 {/* Redes Sociales */}

@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { AlertOctagon, ChevronDown, ChevronRight, Play, Loader2, CheckCircle, AlertTriangle, Filter, Users, Eye, Lock, TrendingUp } from "lucide-react";
 import IncidenciasTable from "./IncidenciasEncontradas/IncidenciasTable";
 import ModalResolucionIncidencia from "./IncidenciasEncontradas/ModalResolucionIncidencia";
-import BotonFinalizarCierre from "./IncidenciasEncontradas/BotonFinalizarCierre";
 import { 
   obtenerIncidenciasCierre, 
   obtenerResumenIncidencias, 
@@ -14,7 +13,7 @@ import {
   limpiarIncidenciasCierre
 } from "../../api/nomina";
 
-const IncidenciasEncontradasSection = ({ cierre, disabled = false }) => {
+const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActualizado }) => {
   const [expandido, setExpandido] = useState(true);
   const [incidencias, setIncidencias] = useState([]);
   const [resumen, setResumen] = useState(null);
@@ -179,6 +178,13 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false }) => {
       console.log("🔄 Iniciando generación de incidencias temporales...");
       await generarIncidenciasCierre(cierre.id);
       
+      console.log("✅ Incidencias generadas, refrescando estado del cierre...");
+      
+      // Refrescar el estado del cierre para mostrar el cambio automáticamente
+      if (onCierreActualizado) {
+        await onCierreActualizado();
+      }
+      
       console.log("✅ Incidencias generadas, limpiando cache y recargando datos...");
       
       // Limpiar estados para forzar recarga completa
@@ -278,8 +284,10 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false }) => {
               `Estado: ${resultado.estado_final || 'Finalizado'}\n` +
               `Empleados consolidados: ${resultado.resumen?.empleados_consolidados || 'N/A'}`);
         
-        // Recargar la página para mostrar el nuevo estado
-        window.location.reload();
+        // Refrescar el estado del cierre en lugar de recargar toda la página
+        if (onCierreActualizado) {
+          await onCierreActualizado();
+        }
       } else {
         setError(resultado.message || 'Error al finalizar cierre');
         alert(`Error: ${resultado.message || 'Error al finalizar cierre'}`);
@@ -450,24 +458,6 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false }) => {
                   title="Debug: Limpiar todas las incidencias"
                 >
                   🗑️ Limpiar
-                </button>
-
-                <button
-                  onClick={manejarAnalisisCompleto}
-                  disabled={cargandoAnalisis || !puedeGenerarIncidencias()}
-                  className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
-                >
-                  {cargandoAnalisis ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Analizando...
-                    </>
-                  ) : (
-                    <>
-                      <Eye className="w-4 h-4 mr-2" />
-                      Ver Análisis Completo
-                    </>
-                  )}
                 </button>
 
                 <button
@@ -1075,25 +1065,6 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false }) => {
               <p className="text-sm">
                 Los archivos están perfectamente sincronizados o aún no se han generado las incidencias
               </p>
-            </div>
-          )}
-
-          {/* Botón de Finalización cuando hay 0 incidencias o todas están resueltas */}
-          {estadoIncidencias && (
-            <div className="mt-6">
-              <BotonFinalizarCierre 
-                cierre={{
-                  ...cierre,
-                  estado_incidencias: estadoIncidencias.estado_cierre || cierre?.estado_incidencias,
-                  total_incidencias: estadoIncidencias.total_incidencias || 0
-                }}
-                onCierreFinalizado={(resultado) => {
-                  // Actualizar estado local o recargar página
-                  console.log('Cierre finalizado:', resultado);
-                  // Opcional: Recargar la página o navegar a otra vista
-                  window.location.reload();
-                }}
-              />
             </div>
           )}
 

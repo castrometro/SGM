@@ -314,6 +314,7 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
           <IncidenciasEncontradasSection 
             cierre={cierre} 
             disabled={esEstadoFinalizado(cierre.estado)}
+            onCierreActualizado={onCierreActualizado}
           />
         </>
       )}

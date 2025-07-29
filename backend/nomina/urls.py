@@ -11,6 +11,8 @@ from .views import (
     # Nuevos endpoints para visualización
     obtener_libro_remuneraciones,
     obtener_movimientos_mes,
+    # Endpoint para estadísticas del cierre
+    obtener_estadisticas_cierre,
 )
 
 # Importar ViewSets de archivos específicos desde sus módulos dedicados
@@ -202,4 +204,7 @@ urlpatterns = router.urls + [
     # === URLs para Visualización de Datos Consolidados ===
     path('cierres/<int:cierre_id>/libro-remuneraciones/', obtener_libro_remuneraciones, name='libro_remuneraciones'),
     path('cierres/<int:cierre_id>/movimientos/', obtener_movimientos_mes, name='movimientos_mes'),
+    
+    # === URL para Estadísticas del Cierre ===
+    path('cierres/<int:cierre_id>/estadisticas/', obtener_estadisticas_cierre, name='estadisticas_cierre'),
 ]

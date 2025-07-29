@@ -1,5 +1,12 @@
 import { useState, useEffect } from "react";
 import { FileText, Users, Calendar, CheckCircle, Download, Eye, ChevronDown, ChevronRight, Database, UserCheck, ExternalLink } from "lucide-react";
+import { 
+  obtenerLibroRemuneraciones,
+  obtenerEstadoLibroRemuneraciones,
+  obtenerEstadoMovimientosMes,
+  obtenerEstadoArchivoAnalista,
+  obtenerEstadoArchivoNovedades
+} from "../../api/nomina";
 
 const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
   const [expandido, setExpandido] = useState(true);
@@ -15,17 +22,169 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
   const cargarArchivosUsados = async () => {
     setCargando(true);
     try {
-      // TODO: Implementar endpoint para obtener archivos usados y estadísticas del cierre
-      // const archivos = await obtenerArchivosUsadosCierre(cierre.id);
-      // setArchivosUsados(archivos);
+      // Usar el endpoint existente del libro de remuneraciones que ya tiene las estadísticas
+      const libroData = await obtenerLibroRemuneraciones(cierre.id);
       
-      // Datos mock de archivos usados y estadísticas mientras se implementa el endpoint
+      // Transformar los datos del libro a la estructura esperada
+      const estadisticas = {
+        total_empleados: libroData.resumen?.total_empleados || 0,
+        total_ingresos: libroData.empleados?.filter(emp => emp.estado_empleado === 'nueva_incorporacion').length || 0,
+        total_finiquitos: libroData.empleados?.filter(emp => emp.estado_empleado === 'finiquito').length || 0,
+        total_ausentismos: libroData.empleados?.filter(emp => 
+          emp.estado_empleado === 'ausente_total' || emp.estado_empleado === 'ausente_parcial'
+        ).length || 0
+      };
+      
+      // ========== OBTENER DATOS REALES DE ARCHIVOS TALANA ==========
+      const archivos_talana = [];
+      
+      // Verificar Libro de Remuneraciones
+      try {
+        const estadoLibro = await obtenerEstadoLibroRemuneraciones(cierre.id);
+        if (estadoLibro && estadoLibro.estado === 'procesado') {
+          archivos_talana.push({
+            tipo: 'libro_remuneraciones',
+            nombre: estadoLibro.archivo_nombre || 'libro_remuneraciones.xlsx',
+            fecha_subida: estadoLibro.fecha_subida || libroData.cierre?.fecha_consolidacion,
+            estado: 'procesado'
+          });
+        }
+      } catch (err) {
+        console.log('No se pudo obtener estado del libro de remuneraciones');
+      }
+      
+      // Verificar Movimientos del Mes
+      try {
+        const estadoMovimientos = await obtenerEstadoMovimientosMes(cierre.id);
+        if (estadoMovimientos && estadoMovimientos.estado === 'procesado') {
+          archivos_talana.push({
+            tipo: 'movimientos_mes',
+            nombre: estadoMovimientos.archivo_nombre || 'movimientos_mes.xlsx',
+            fecha_subida: estadoMovimientos.fecha_subida || libroData.cierre?.fecha_consolidacion,
+            estado: 'procesado'
+          });
+        }
+      } catch (err) {
+        console.log('No se pudo obtener estado de movimientos del mes');
+      }
+      
+      // ========== OBTENER DATOS REALES DE ARCHIVOS DEL ANALISTA ==========
+      // Definir todos los tipos de archivos del analista (incluyendo novedades)
+      const tiposAnalista = [
+        { tipo: 'finiquitos', endpoint: 'obtenerEstadoArchivoAnalista' },
+        { tipo: 'incidencias', endpoint: 'obtenerEstadoArchivoAnalista' },
+        { tipo: 'ingresos', endpoint: 'obtenerEstadoArchivoAnalista' },
+        { tipo: 'novedades', endpoint: 'obtenerEstadoArchivoNovedades' }
+      ];
+      
+      const archivos_analista = [];
+      
+      // Procesar cada tipo de archivo
+      for (const { tipo, endpoint } of tiposAnalista) {
+        try {
+          let estadoArchivo;
+          
+          if (endpoint === 'obtenerEstadoArchivoAnalista') {
+            estadoArchivo = await obtenerEstadoArchivoAnalista(cierre.id, tipo);
+            
+            // 🐛 DEBUG: Log para ver qué devuelve la API
+            console.log(`🔍 [DEBUG] Archivo ${tipo} - Respuesta completa:`, estadoArchivo);
+            
+            // Detectar diferentes estructuras de respuesta
+            let archivo = null;
+            
+            // Caso 1: Respuesta con results array
+            if (estadoArchivo && estadoArchivo.results && estadoArchivo.results.length > 0) {
+              archivo = estadoArchivo.results[0];
+              console.log(`✅ [DEBUG] Archivo ${tipo} - ENCONTRADO (structure: results):`, archivo);
+            }
+            // Caso 2: Respuesta directa como array
+            else if (Array.isArray(estadoArchivo) && estadoArchivo.length > 0) {
+              archivo = estadoArchivo[0];
+              console.log(`✅ [DEBUG] Archivo ${tipo} - ENCONTRADO (structure: array):`, archivo);
+            }
+            // Caso 3: Respuesta directa como objeto
+            else if (estadoArchivo && typeof estadoArchivo === 'object' && estadoArchivo.id) {
+              archivo = estadoArchivo;
+              console.log(`✅ [DEBUG] Archivo ${tipo} - ENCONTRADO (structure: object):`, archivo);
+            }
+            
+            if (archivo) {
+              archivos_analista.push({
+                tipo: tipo,
+                nombre: archivo.archivo_nombre || `${tipo}.xlsx`,
+                fecha_subida: archivo.fecha_subida || new Date().toISOString(),
+                estado: archivo.estado || 'procesado'
+              });
+            } else {
+              // No se encontró archivo de este tipo
+              console.log(`❌ [DEBUG] Archivo ${tipo} - NO ENCONTRADO, marcando como no_subido`);
+              archivos_analista.push({
+                tipo: tipo,
+                nombre: `${tipo}.xlsx`,
+                fecha_subida: null,
+                estado: 'no_subido'
+              });
+            }
+          } else if (endpoint === 'obtenerEstadoArchivoNovedades') {
+            estadoArchivo = await obtenerEstadoArchivoNovedades(cierre.id);
+            
+            // 🐛 DEBUG: Log para novedades
+            console.log(`🔍 [DEBUG] Novedades - Respuesta:`, estadoArchivo);
+            console.log(`🔍 [DEBUG] Novedades - Estado:`, estadoArchivo?.estado);
+            
+            if (estadoArchivo && estadoArchivo.estado === 'procesado') {
+              console.log(`✅ [DEBUG] Novedades - ENCONTRADO`);
+              archivos_analista.push({
+                tipo: 'novedades',
+                nombre: estadoArchivo.archivo_nombre || 'novedades.xlsx',
+                fecha_subida: estadoArchivo.fecha_subida || new Date().toISOString(),
+                estado: 'procesado'
+              });
+            } else {
+              // No se encontró archivo de novedades
+              console.log(`❌ [DEBUG] Novedades - NO ENCONTRADO, marcando como no_subido`);
+              archivos_analista.push({
+                tipo: 'novedades',
+                nombre: 'novedades.xlsx',
+                fecha_subida: null,
+                estado: 'no_subido'
+              });
+            }
+          }
+        } catch (err) {
+          console.error(`❌ [ERROR] No se pudo obtener estado del archivo ${tipo}:`, err);
+          console.error(`❌ [ERROR] Error details:`, err.response || err.message);
+          // En caso de error, agregar como no subido
+          archivos_analista.push({
+            tipo: tipo,
+            nombre: `${tipo}.xlsx`,
+            fecha_subida: null,
+            estado: 'no_subido'
+          });
+        }
+      }
+      
+      setArchivosUsados({
+        estadisticas,
+        talana: archivos_talana,
+        analista: archivos_analista,
+        resumen_libro: {
+          total_haberes: libroData.resumen?.total_haberes || 0,
+          total_descuentos: libroData.resumen?.total_descuentos || 0,
+          liquido_total: libroData.resumen?.liquido_total || 0
+        }
+      });
+    } catch (err) {
+      console.error("Error cargando datos del libro de remuneraciones:", err);
+      
+      // Fallback a datos mock si hay error
       setArchivosUsados({
         estadisticas: {
-          total_empleados: cierre?.total_empleados || 145,
-          total_ingresos: cierre?.total_ingresos || 12,
-          total_finiquitos: cierre?.total_finiquitos || 8,
-          total_ausentismos: cierre?.total_ausentismos || 23
+          total_empleados: cierre?.total_empleados || 0,
+          total_ingresos: cierre?.total_ingresos || 0,
+          total_finiquitos: cierre?.total_finiquitos || 0,
+          total_ausentismos: cierre?.total_ausentismos || 0
         },
         talana: [
           { 
@@ -46,37 +205,35 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
             tipo: 'finiquitos', 
             nombre: 'finiquitos.xlsx',
             fecha_subida: new Date().toISOString(),
-            estado: 'procesado'
+            estado: 'no_subido'
           },
           { 
             tipo: 'incidencias', 
             nombre: 'incidencias.xlsx',
             fecha_subida: new Date().toISOString(),
-            estado: 'procesado'
+            estado: 'no_subido'
           },
           { 
             tipo: 'ingresos', 
             nombre: 'ingresos.xlsx',
             fecha_subida: new Date().toISOString(),
-            estado: 'procesado'
+            estado: 'no_subido'
           },
           { 
             tipo: 'novedades', 
             nombre: 'novedades.xlsx',
             fecha_subida: new Date().toISOString(),
-            estado: 'procesado'
+            estado: 'no_subido'
           }
         ]
       });
-    } catch (err) {
-      console.error("Error cargando archivos usados:", err);
     } finally {
       setCargando(false);
     }
   };
 
   const formatearFecha = (fecha) => {
-    if (!fecha) return 'N/A';
+    if (!fecha) return 'No subido';
     return new Date(fecha).toLocaleString('es-CL', {
       year: 'numeric',
       month: 'long',
@@ -84,6 +241,36 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  const obtenerEstiloEstado = (estado) => {
+    switch (estado) {
+      case 'procesado':
+        return 'text-green-400 bg-green-900/30';
+      case 'no_subido':
+        return 'text-gray-400 bg-gray-700/30';
+      case 'procesando':
+        return 'text-yellow-400 bg-yellow-900/30';
+      case 'error':
+        return 'text-red-400 bg-red-900/30';
+      default:
+        return 'text-gray-400 bg-gray-700/30';
+    }
+  };
+
+  const obtenerTextEstado = (estado) => {
+    switch (estado) {
+      case 'procesado':
+        return 'Procesado';
+      case 'no_subido':
+        return 'No subido';
+      case 'procesando':
+        return 'Procesando...';
+      case 'error':
+        return 'Error';
+      default:
+        return estado;
+    }
   };
 
   if (cierre?.estado !== 'finalizado') {
@@ -123,61 +310,29 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
 
       {expandido && (
         <div className="space-y-6">
-          {/* Información General */}
-          <div className="bg-gray-800 rounded-lg p-6 border border-green-700/30">
-            <h3 className="text-lg font-medium text-white mb-4 flex items-center">
-              <Calendar className="w-5 h-5 mr-2 text-green-400" />
-              Información del Cierre
-            </h3>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-3">
-                <div>
-                  <p className="text-sm text-gray-400">Periodo</p>
-                  <p className="text-white font-medium">{cierre?.periodo || 'N/A'}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-400">Cliente</p>
-                  <p className="text-white font-medium">{cierre?.cliente?.nombre || 'N/A'}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-400">Estado Final</p>
-                  <p className="text-green-400 font-medium">Finalizado</p>
-                </div>
-              </div>
-              
-              <div className="space-y-3">
-                <div>
-                  <p className="text-sm text-gray-400">Fecha de Finalización</p>
-                  <p className="text-white font-medium">
-                    {formatearFecha(cierre?.fecha_finalizacion)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-400">Finalizado por</p>
-                  <p className="text-white font-medium">{cierre?.usuario_finalizacion || 'Sistema'}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-400">Estado de Incidencias</p>
-                  <p className="text-green-400 font-medium">
-                    {cierre?.estado_incidencias === 'resueltas' ? 'Resueltas' : cierre?.estado_incidencias || 'N/A'}
-                  </p>
-                </div>
+          {/* Indicador de carga */}
+          {cargando && (
+            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+              <div className="flex items-center justify-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                <span className="ml-3 text-gray-400">Cargando datos del cierre...</span>
               </div>
             </div>
-          </div>
+          )}
 
-          {/* Estadísticas del Cierre */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-400">Total Empleados</p>
-                  <p className="text-2xl font-bold text-white">{archivosUsados?.estadisticas?.total_empleados || 0}</p>
+          {!cargando && archivosUsados && (
+            <>
+              {/* Estadísticas del Cierre */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-400">Total Empleados</p>
+                      <p className="text-2xl font-bold text-white">{archivosUsados?.estadisticas?.total_empleados || 0}</p>
+                    </div>
+                    <Users className="w-8 h-8 text-blue-500" />
+                  </div>
                 </div>
-                <Users className="w-8 h-8 text-blue-500" />
-              </div>
-            </div>
             
             <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
               <div className="flex items-center justify-between">
@@ -210,6 +365,39 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
             </div>
           </div>
 
+          {/* Resumen Financiero */}
+          {archivosUsados?.resumen_libro && (
+            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+              <h3 className="text-lg font-medium text-white mb-4 flex items-center">
+                <FileText className="w-5 h-5 mr-2 text-green-400" />
+                Resumen Financiero
+              </h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="text-center p-4 bg-gray-700 rounded-lg">
+                  <p className="text-sm text-gray-400 mb-1">Total Haberes</p>
+                  <p className="text-xl font-bold text-green-400">
+                    ${archivosUsados.resumen_libro.total_haberes?.toLocaleString('es-CL') || '0'}
+                  </p>
+                </div>
+                
+                <div className="text-center p-4 bg-gray-700 rounded-lg">
+                  <p className="text-sm text-gray-400 mb-1">Total Descuentos</p>
+                  <p className="text-xl font-bold text-red-400">
+                    ${archivosUsados.resumen_libro.total_descuentos?.toLocaleString('es-CL') || '0'}
+                  </p>
+                </div>
+                
+                <div className="text-center p-4 bg-gray-700 rounded-lg">
+                  <p className="text-sm text-gray-400 mb-1">Líquido Total</p>
+                  <p className="text-xl font-bold text-blue-400">
+                    ${archivosUsados.resumen_libro.liquido_total?.toLocaleString('es-CL') || '0'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Archivos Usados */}
           <div className="space-y-4">
             {/* Archivos Talana */}
@@ -233,8 +421,8 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
                     </div>
                     
                     <div className="flex items-center gap-2">
-                      <span className="text-green-400 text-sm bg-green-900/30 px-2 py-1 rounded">
-                        {archivo.estado === 'procesado' ? 'Procesado' : archivo.estado}
+                      <span className={`text-sm px-2 py-1 rounded ${obtenerEstiloEstado(archivo.estado)}`}>
+                        {obtenerTextEstado(archivo.estado)}
                       </span>
                     </div>
                   </div>
@@ -263,8 +451,8 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
                     </div>
                     
                     <div className="flex items-center gap-2">
-                      <span className="text-green-400 text-sm bg-green-900/30 px-2 py-1 rounded">
-                        {archivo.estado === 'procesado' ? 'Procesado' : archivo.estado}
+                      <span className={`text-sm px-2 py-1 rounded ${obtenerEstiloEstado(archivo.estado)}`}>
+                        {obtenerTextEstado(archivo.estado)}
                       </span>
                     </div>
                   </div>
@@ -299,6 +487,8 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
               </button>
             </div>
           </div>
+          </>
+          )}
         </div>
       )}
     </section>

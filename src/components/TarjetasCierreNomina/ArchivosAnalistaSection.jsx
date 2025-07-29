@@ -1,14 +1,22 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { UserCheck, ChevronDown, ChevronRight, Lock } from "lucide-react";
 import ArchivosAnalistaContainer from "./ArchivosAnalista/ArchivosAnalistaContainer";
+import { actualizarEstadoCierreNomina } from "../../api/nomina";
 
 const ArchivosAnalistaSection = ({
   cierreId,
   cliente,
-  disabled = false
+  cierre, // Agregar el objeto cierre para verificar su estado
+  disabled = false,
+  onCierreActualizado
 }) => {
   const [expandido, setExpandido] = useState(true);
   const [estadoArchivos, setEstadoArchivos] = useState({});
+  const [estadoCompletadoAnteriormente, setEstadoCompletadoAnteriormente] = useState(false);
+  const procesandoCambioEstado = useRef(false);
+
+  // Lista de archivos requeridos
+  const archivosRequeridos = ['finiquitos', 'incidencias', 'ingresos', 'novedades'];
 
   // Función para determinar el estado general de la sección
   const calcularEstadoGeneral = () => {
@@ -19,6 +27,84 @@ const ArchivosAnalistaSection = ({
     const todosProcessados = estados.every(estado => estado === "procesado");
     return todosProcessados ? "Procesado" : "Pendiente";
   };
+
+  // Función para verificar si todos los archivos están procesados
+  const verificarArchivosCompletos = () => {
+    // Verificar que tenemos todos los archivos requeridos
+    const tieneEstadosTodos = archivosRequeridos.every(tipo => 
+      tipo in estadoArchivos
+    );
+    
+    if (!tieneEstadosTodos) return false;
+
+    // Verificar que todos están procesados
+    const todosProcessados = archivosRequeridos.every(tipo => 
+      estadoArchivos[tipo] === "procesado"
+    );
+
+    return todosProcessados;
+  };
+
+  // Función para verificar si el cierre está en un estado anterior a "archivos_completos"
+  const estaEnEstadoAnteriorAArchivosCompletos = () => {
+    // Estados anteriores a "archivos_completos" donde SÍ se debe hacer la verificación automática
+    const estadosAnteriores = [
+      'creado',
+      'libro_subido',
+      'movimientos_subidos',
+      'archivos_en_proceso'
+    ];
+    
+    return estadosAnteriores.includes(cierre?.estado);
+  };
+
+  // Efecto para detectar cuando todos los archivos están procesados
+  useEffect(() => {
+    const archivosCompletos = verificarArchivosCompletos();
+    const estaEnEstadoAnterior = estaEnEstadoAnteriorAArchivosCompletos();
+    
+    console.log('🔍 [ArchivosAnalistaSection] Verificando condiciones:', {
+      archivosCompletos,
+      estadoCierre: cierre?.estado,
+      estaEnEstadoAnterior,
+      estadoCompletadoAnteriormente,
+      procesandoCambioEstado: procesandoCambioEstado.current
+    });
+    
+    // Solo proceder si:
+    // 1. Todos los archivos están completos
+    // 2. El cierre está en un estado anterior a "archivos_completos" 
+    // 3. No se ha completado anteriormente
+    // 4. No se está procesando actualmente
+    if (archivosCompletos && estaEnEstadoAnterior && !estadoCompletadoAnteriormente && !procesandoCambioEstado.current) {
+      console.log('🎯 [ArchivosAnalistaSection] Condiciones cumplidas - Actualizando estado del cierre a archivos_completos...');
+      
+      procesandoCambioEstado.current = true;
+      setEstadoCompletadoAnteriormente(true);
+      
+      const actualizarEstado = async () => {
+        try {
+          await actualizarEstadoCierreNomina(cierreId);
+          console.log('✅ [ArchivosAnalistaSection] Estado del cierre actualizado por archivos completos');
+          
+          // Refrescar los datos del cierre en el componente padre
+          if (onCierreActualizado) {
+            await onCierreActualizado();
+          }
+        } catch (error) {
+          console.error('❌ [ArchivosAnalistaSection] Error actualizando estado del cierre:', error);
+          // Revertir el flag en caso de error para permitir retry
+          setEstadoCompletadoAnteriormente(false);
+        } finally {
+          procesandoCambioEstado.current = false;
+        }
+      };
+      
+      actualizarEstado();
+    } else if (archivosCompletos && !estaEnEstadoAnterior) {
+      console.log('ℹ️ [ArchivosAnalistaSection] Archivos completos pero cierre ya está en estado posterior - No se actualiza automáticamente');
+    }
+  }, [estadoArchivos, cierreId, cierre?.estado, onCierreActualizado, estadoCompletadoAnteriormente]);
 
   const estadoGeneral = calcularEstadoGeneral();
   const colorEstado = estadoGeneral === "Procesado" ? "text-green-400" : "text-yellow-400";
@@ -87,6 +173,7 @@ const ArchivosAnalistaSection = ({
           cliente={cliente}
           disabled={disabled}
           onEstadosChange={setEstadoArchivos}
+          onCierreActualizado={onCierreActualizado}
         />
       )}
     </section>

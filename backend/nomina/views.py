@@ -3311,3 +3311,121 @@ def obtener_movimientos_mes(request, cierre_id):
             {'error': 'Error interno del servidor'}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['GET'])
+def obtener_estadisticas_cierre(request, cierre_id):
+    """
+    Obtiene las estadísticas completas de un cierre finalizado
+    incluyendo total de empleados, archivos usados, etc.
+    """
+    try:
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        # Verificar si hay datos consolidados
+        from .models import NominaConsolidada
+        
+        if not cierre.nomina_consolidada.exists():
+            # Si no hay datos consolidados, devolver datos básicos
+            return Response({
+                'estadisticas': {
+                    'total_empleados': 0,
+                    'total_ingresos': 0,
+                    'total_finiquitos': 0,
+                    'total_ausentismos': 0
+                },
+                'talana': [],
+                'analista': [],
+                'resumen_ejecutivo': None
+            }, status=status.HTTP_200_OK)
+        
+        # Obtener empleados consolidados
+        empleados = NominaConsolidada.objects.filter(cierre=cierre)
+        
+        # Calcular estadísticas
+        estadisticas = {
+            'total_empleados': empleados.count(),
+            'total_ingresos': empleados.filter(estado_empleado='nueva_incorporacion').count(),
+            'total_finiquitos': empleados.filter(estado_empleado='finiquito').count(),
+            'total_ausentismos': empleados.filter(estado_empleado__in=['ausente_total', 'ausente_parcial']).count()
+        }
+        
+        # Datos de archivos usados
+        archivos_talana = []
+        archivos_analista = []
+        
+        # Archivos Talana
+        if cierre.libro_remuneraciones.filter(estado='procesado').exists():
+            libro = cierre.libro_remuneraciones.filter(estado='procesado').first()
+            archivos_talana.append({
+                'tipo': 'libro_remuneraciones',
+                'nombre': libro.archivo.name.split('/')[-1] if libro.archivo else 'libro_remuneraciones.xlsx',
+                'fecha_subida': libro.fecha_subida.isoformat() if libro.fecha_subida else None,
+                'estado': 'procesado'
+            })
+        
+        if cierre.movimientos_mes.filter(estado='procesado').exists():
+            movimientos = cierre.movimientos_mes.filter(estado='procesado').first()
+            archivos_talana.append({
+                'tipo': 'movimientos_mes',
+                'nombre': movimientos.archivo.name.split('/')[-1] if movimientos.archivo else 'movimientos_mes.xlsx',
+                'fecha_subida': movimientos.fecha_subida.isoformat() if movimientos.fecha_subida else None,
+                'estado': 'procesado'
+            })
+        
+        # Archivos del Analista
+        if cierre.analista_finiquitos.exists():
+            archivos_analista.append({
+                'tipo': 'finiquitos',
+                'nombre': 'finiquitos.xlsx',
+                'fecha_subida': timezone.now().isoformat(),
+                'estado': 'procesado'
+            })
+        
+        if cierre.analista_incidencias.exists():
+            archivos_analista.append({
+                'tipo': 'incidencias',
+                'nombre': 'incidencias.xlsx', 
+                'fecha_subida': timezone.now().isoformat(),
+                'estado': 'procesado'
+            })
+        
+        if cierre.analista_ingresos.exists():
+            archivos_analista.append({
+                'tipo': 'ingresos',
+                'nombre': 'ingresos.xlsx',
+                'fecha_subida': timezone.now().isoformat(),
+                'estado': 'procesado'
+            })
+        
+        # Calcular totales de resumen
+        total_haberes = sum(emp.total_haberes or 0 for emp in empleados)
+        total_descuentos = sum(emp.total_descuentos or 0 for emp in empleados)
+        total_liquido = sum(emp.liquido_pagar or 0 for emp in empleados)
+        
+        # Respuesta completa
+        data = {
+            'estadisticas': estadisticas,
+            'talana': archivos_talana,
+            'analista': archivos_analista,
+            'resumen_ejecutivo': {
+                'total_haberes': str(total_haberes),
+                'total_descuentos': str(total_descuentos),
+                'total_liquido': str(total_liquido),
+                'fecha_consolidacion': cierre.fecha_consolidacion.isoformat() if cierre.fecha_consolidacion else None
+            }
+        }
+        
+        return Response(data, status=status.HTTP_200_OK)
+        
+    except CierreNomina.DoesNotExist:
+        return Response(
+            {'error': 'Cierre no encontrado'}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        logging.error(f"Error obteniendo estadísticas del cierre: {str(e)}")
+        return Response(
+            {'error': f'Error interno del servidor: {str(e)}'}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

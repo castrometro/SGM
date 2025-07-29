@@ -17,7 +17,7 @@ import {
   eliminarConceptoRemuneracion,
 } from "../../api/nomina";
 
-const CierreProgresoNomina = ({ cierre, cliente }) => {
+const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
   const [libro, setLibro] = useState(null);
   const [libroId, setLibroId] = useState(null);
   const [subiendo, setSubiendo] = useState(false);
@@ -294,7 +294,9 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
           <ArchivosAnalistaSection
             cierreId={cierre.id}
             cliente={cliente}
+            cierre={cierre}
             disabled={esEstadoPosteriorAConsolidacion(cierre.estado) || esEstadoFinalizado(cierre.estado)}
+            onCierreActualizado={onCierreActualizado}
           />
 
           {/* Sección 3: Verificación de Datos (Discrepancias) */}
@@ -315,54 +317,6 @@ const CierreProgresoNomina = ({ cierre, cliente }) => {
           />
         </>
       )}
-
-      {/* OPCIÓN 2: Mostrar resumen al principio con otras secciones bloqueadas (descomentar para usar) */}
-      {/*
-      {esEstadoFinalizado(cierre.estado) && (
-        <ResumenCierreSection 
-          cierre={cierre} 
-          onIrDashboard={handleIrDashboard}
-        />
-      )}
-      
-      <ArchivosTalanaSection
-        libro={libro}
-        subiendo={subiendo}
-        onSubirArchivo={handleSubirArchivo}
-        onVerClasificacion={handleVerClasificacion}
-        onProcesarLibro={handleProcesarLibro}
-        onActualizarEstado={handleActualizarEstado}
-        headersSinClasificar={headersSinClasificar}
-        mensajeLibro={mensajeLibro}
-        libroListo={libroListo}
-        movimientos={movimientos}
-        subiendoMov={subiendoMov}
-        onSubirMovimientos={handleSubirMovimientos}
-        onActualizarEstadoMovimientos={handleActualizarEstadoMovimientos}
-        onEliminarLibro={handleEliminarLibro}
-        onEliminarMovimientos={handleEliminarMovimientos}
-        disabled={esEstadoFinalizado(cierre.estado)}
-      />
-      
-      <ArchivosAnalistaSection
-        cierreId={cierre.id}
-        cliente={cliente}
-        disabled={esEstadoPosteriorAConsolidacion(cierre.estado) || esEstadoFinalizado(cierre.estado)}
-      />
-
-      <VerificadorDatosSection 
-        cierre={cierre} 
-        disabled={esEstadoPosteriorAConsolidacion(cierre.estado) || esEstadoFinalizado(cierre.estado)}
-        onCierreActualizado={(nuevoCierre) => {
-          console.log('🔄 Cierre actualizado desde verificador:', nuevoCierre);
-        }}
-      />
-
-      <IncidenciasEncontradasSection 
-        cierre={cierre} 
-        disabled={esEstadoFinalizado(cierre.estado)}
-      />
-      */}
 
       <ModalClasificacionHeaders
         isOpen={modalAbierto}

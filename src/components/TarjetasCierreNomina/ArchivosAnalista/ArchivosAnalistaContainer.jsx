@@ -22,6 +22,7 @@ const ArchivosAnalistaContainer = ({
   disabled = false,
   cliente = null,
   onEstadosChange = null, // Callback para reportar estados al componente padre
+  onCierreActualizado = null, // Callback para refrescar el cierre padre
 }) => {
   const [archivos, setArchivos] = useState({
     finiquitos: { estado: "no_subido", archivo: null, error: "" },
@@ -30,18 +31,35 @@ const ArchivosAnalistaContainer = ({
     novedades: { estado: "no_subido", archivo: null, error: "" }
   });
   const [subiendo, setSubiendo] = useState({});
+  const [pollingActivo, setPollingActivo] = useState(false);
   const pollingRef = useRef(null);
+  const pollCounterRef = useRef(0);
 
-  // Función para verificar si hay archivos en proceso
-  const verificarArchivoEnProceso = useCallback(() => {
-    return Object.values(archivos).some(archivo => 
-      archivo.estado === "en_proceso" || archivo.estado === "procesando"
+  // Función para verificar si hay archivos en proceso o si necesitamos hacer polling
+  const necesitaPolling = useCallback(() => {
+    const estadosQueNecesitanPolling = [
+      "en_proceso", 
+      "procesando", 
+      "subiendo",
+      "analizando",
+      "validando"
+    ];
+    
+    const tieneArchivosEnProceso = Object.values(archivos).some(archivo => 
+      estadosQueNecesitanPolling.includes(archivo.estado)
     );
-  }, [archivos]);
+    
+    const tieneSubidas = Object.values(subiendo).some(estado => estado === true);
+    
+    return tieneArchivosEnProceso || tieneSubidas;
+  }, [archivos, subiendo]);
 
-  // Función para manejar el polling
+  // Función para manejar el polling mejorado
   const manejarPolling = useCallback(async () => {
-    console.log('📡 Polling archivos analista...');
+    pollCounterRef.current += 1;
+    console.log(`📡 [Polling #${pollCounterRef.current}] Verificando estados archivos analista...`);
+    
+    let cambiosDetectados = false;
     
     for (const tipo of ['finiquitos', 'incidencias', 'ingresos', 'novedades']) {
       try {
@@ -65,7 +83,8 @@ const ArchivosAnalistaContainer = ({
             const estadoAnterior = prev[tipo]?.estado;
             
             if (estadoAnterior !== archivo.estado) {
-              console.log(`🔄 ${tipo}: ${estadoAnterior} → ${archivo.estado}`);
+              console.log(`🔄 [${tipo}] Estado cambió: ${estadoAnterior} → ${archivo.estado}`);
+              cambiosDetectados = true;
             }
             
             return {
@@ -83,32 +102,90 @@ const ArchivosAnalistaContainer = ({
           });
         }
       } catch (error) {
-        console.error(`Error polling ${tipo}:`, error);
+        console.error(`❌ Error polling ${tipo}:`, error);
+      }
+    }
+    
+    if (cambiosDetectados) {
+      console.log(`✅ [Polling #${pollCounterRef.current}] Cambios detectados y aplicados`);
+      
+      // Notificar estados al componente padre después de los cambios
+      if (onEstadosChange) {
+        setArchivos(currentArchivos => {
+          const estadosParaPadre = Object.fromEntries(
+            Object.entries(currentArchivos).map(([tipo, datos]) => [tipo, datos.estado])
+          );
+          onEstadosChange(estadosParaPadre);
+          return currentArchivos; // No modificar, solo notificar
+        });
+      }
+
+      // Si hay cambios en estados críticos, refrescar el cierre padre
+      if (onCierreActualizado) {
+        console.log('🔄 [ArchivosAnalistaContainer] Cambios detectados, refrescando cierre padre');
+        onCierreActualizado();
       }
     }
   }, [cierreId]);
 
-  // Efecto para manejar el polling
+  // Efecto para manejar el polling mejorado
   useEffect(() => {
-    const tieneArchivosEnProceso = verificarArchivoEnProceso();
-    console.log('🎯 ArchivosAnalista - checking polling need:', tieneArchivosEnProceso);
+    const deberiaHacerPolling = necesitaPolling();
     
-    if (tieneArchivosEnProceso && !pollingRef.current) {
-      console.log('🔄 Iniciando polling para archivos analista...');
-      pollingRef.current = setInterval(manejarPolling, 2000);
-    } else if (!tieneArchivosEnProceso && pollingRef.current) {
-      console.log('✅ Deteniendo polling - no hay archivos en proceso');
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
-    }
+    console.log('🎯 [ArchivosAnalista] Evaluando necesidad de polling:', {
+      deberiaHacerPolling,
+      pollingActivo,
+      archivos: Object.entries(archivos).map(([tipo, arch]) => ({ tipo, estado: arch.estado })),
+      subiendo: Object.entries(subiendo).filter(([_, estado]) => estado).map(([tipo]) => tipo)
+    });
     
-    return () => {
+    if (deberiaHacerPolling && !pollingActivo) {
+      console.log('🔄 [ArchivosAnalista] Iniciando polling automático...');
+      setPollingActivo(true);
+      pollCounterRef.current = 0;
+      
+      // Primera consulta inmediata
+      manejarPolling();
+      
+      // Configurar intervalo
+      pollingRef.current = setInterval(manejarPolling, 3000); // Cada 3 segundos
+      
+    } else if (!deberiaHacerPolling && pollingActivo) {
+      console.log('✅ [ArchivosAnalista] Deteniendo polling - archivos completados');
+      setPollingActivo(false);
+      
       if (pollingRef.current) {
         clearInterval(pollingRef.current);
         pollingRef.current = null;
       }
+    }
+    
+    // Cleanup al desmontar
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+        setPollingActivo(false);
+      }
     };
-  }, [verificarArchivoEnProceso, manejarPolling]);
+  }, [necesitaPolling, pollingActivo, manejarPolling]);
+
+  // Función para iniciar polling manualmente (usado cuando se sube un archivo)
+  const iniciarPolling = useCallback(() => {
+    console.log('🚀 [ArchivosAnalista] Iniciando polling manual...');
+    if (!pollingActivo) {
+      setPollingActivo(true);
+      pollCounterRef.current = 0;
+      
+      // Primera consulta inmediata
+      manejarPolling();
+      
+      // Configurar intervalo si no existe
+      if (!pollingRef.current) {
+        pollingRef.current = setInterval(manejarPolling, 3000);
+      }
+    }
+  }, [pollingActivo, manejarPolling]);
 
   // useEffect para reportar estados al componente padre
   useEffect(() => {
@@ -213,6 +290,8 @@ const ArchivosAnalistaContainer = ({
   const handleSubirArchivo = async (tipo, archivo) => {
     if (!archivo) return;
     
+    console.log(`📤 [${tipo}] Iniciando subida de archivo...`);
+    
     setArchivos(prev => ({
       ...prev,
       [tipo]: { ...prev[tipo], error: "" }
@@ -244,10 +323,15 @@ const ArchivosAnalistaContainer = ({
         }
       }));
       
-      console.log(`✅ Archivo ${tipo} subido con estado: ${response.estado}`);
+      console.log(`✅ [${tipo}] Archivo subido con estado: ${response.estado}`);
+      
+      // Activar polling automáticamente después de subir
+      setTimeout(() => {
+        iniciarPolling();
+      }, 1000);
       
     } catch (error) {
-      console.error(`Error subiendo ${tipo}:`, error);
+      console.error(`❌ [${tipo}] Error subiendo:`, error);
       setArchivos(prev => ({
         ...prev,
         [tipo]: { 
@@ -265,6 +349,8 @@ const ArchivosAnalistaContainer = ({
     const archivo = archivos[tipo].archivo;
     if (!archivo?.id) return;
     
+    console.log(`🔄 [${tipo}] Iniciando reprocesamiento...`);
+    
     try {
       if (tipo === 'novedades') {
         await reprocesarArchivoNovedades(archivo.id);
@@ -277,10 +363,15 @@ const ArchivosAnalistaContainer = ({
         [tipo]: { ...prev[tipo], estado: "en_proceso", error: "" }
       }));
       
-      console.log(`✅ Reprocesamiento de ${tipo} iniciado`);
+      console.log(`✅ [${tipo}] Reprocesamiento iniciado`);
+      
+      // Activar polling automáticamente después de reprocesar
+      setTimeout(() => {
+        iniciarPolling();
+      }, 1000);
       
     } catch (error) {
-      console.error(`Error reprocesando ${tipo}:`, error);
+      console.error(`❌ [${tipo}] Error reprocesando:`, error);
       setArchivos(prev => ({
         ...prev,
         [tipo]: { 

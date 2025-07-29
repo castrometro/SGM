@@ -68,9 +68,9 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
       const estadoActualizado = await actualizarEstadoCierreNomina(cierre.id);
       console.log(`✅ Estado actualizado:`, estadoActualizado);
       
-      // Notificar al componente padre
+      // Notificar al componente padre para que refresque el cierre
       if (onCierreActualizado) {
-        onCierreActualizado(estadoActualizado);
+        await onCierreActualizado();
       }
       
       // Mostrar notificación al usuario
@@ -114,7 +114,14 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
     
     try {
       await generarDiscrepanciasCierre(cierre.id);
-      // Esperar un momento para que se procese la tarea
+      console.log('✅ [VerificadorDatos] Discrepancias generadas, refrescando estado del cierre...');
+      
+      // Refrescar el estado del cierre para mostrar el cambio automáticamente
+      if (onCierreActualizado) {
+        await onCierreActualizado();
+      }
+      
+      // Esperar un momento para que se procese la tarea y luego cargar datos
       setTimeout(async () => {
         await cargarEstadoDiscrepancias();
         cargarDatos();
@@ -224,12 +231,9 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
           if (estadoTarea.success) {
             console.log(`✅ Consolidación completada:`, estadoTarea.result);
             
-            // Notificar al componente padre si existe callback
+            // Refrescar el estado del cierre en el componente padre
             if (onCierreActualizado) {
-              onCierreActualizado({
-                ...cierre,
-                estado: 'datos_consolidados'
-              });
+              await onCierreActualizado();
             }
             
             // Mostrar mensaje de éxito

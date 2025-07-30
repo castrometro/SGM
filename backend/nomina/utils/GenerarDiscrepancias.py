@@ -119,29 +119,25 @@ def generar_todas_discrepancias(cierre):
     """Función principal para generar todas las discrepancias de un cierre"""
     logger.info(f"Iniciando generación de discrepancias para cierre {cierre.id}")
     
-    discrepancias_generadas = []
-    
     try:
         # Grupo 1: Libro vs Novedades
-        discrepancias_libro_novedades = generar_discrepancias_libro_vs_novedades(cierre)
-        discrepancias_generadas.extend(discrepancias_libro_novedades)
+        resultado_libro_novedades = generar_discrepancias_libro_vs_novedades(cierre)
         
         # Grupo 2: MovimientosMes vs Archivos Analista
-        discrepancias_movimientos_analista = generar_discrepancias_movimientos_vs_analista(cierre)
-        discrepancias_generadas.extend(discrepancias_movimientos_analista)
+        resultado_movimientos_analista = generar_discrepancias_movimientos_vs_analista(cierre)
         
-        # Guardar todas las discrepancias
-        if discrepancias_generadas:
-            DiscrepanciaCierre.objects.bulk_create(discrepancias_generadas)
-            logger.info(f"Generadas {len(discrepancias_generadas)} discrepancias para cierre {cierre.id}")
-        else:
-            logger.info(f"No se encontraron discrepancias para cierre {cierre.id}")
+        # Calcular totales
+        total_discrepancias = resultado_libro_novedades['total_discrepancias'] + resultado_movimientos_analista['total_discrepancias']
+        
+        logger.info(f"Generadas {total_discrepancias} discrepancias para cierre {cierre.id}")
         
         return {
             'cierre_id': cierre.id,
-            'total_discrepancias': len(discrepancias_generadas),
-            'libro_vs_novedades': len(discrepancias_libro_novedades),
-            'movimientos_vs_analista': len(discrepancias_movimientos_analista),
+            'total_discrepancias': total_discrepancias,
+            'libro_vs_novedades': resultado_libro_novedades['total_discrepancias'],
+            'movimientos_vs_analista': resultado_movimientos_analista['total_discrepancias'],
+            'detalle_libro_novedades': resultado_libro_novedades,
+            'detalle_movimientos_analista': resultado_movimientos_analista,
             'estado': 'completado'
         }
         
@@ -222,8 +218,19 @@ def generar_discrepancias_libro_vs_novedades(cierre):
         discrepancias_conceptos = _comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades)
         discrepancias.extend(discrepancias_conceptos)
     
+    # Guardar discrepancias en la base de datos
+    if discrepancias:
+        DiscrepanciaCierre.objects.bulk_create(discrepancias)
+    
     logger.info(f"Generadas {len(discrepancias)} discrepancias Libro vs Novedades ({empleados_solo_novedades} empleados solo en Novedades, {len(discrepancias) - empleados_solo_novedades} diferencias en conceptos)")
-    return discrepancias
+    
+    return {
+        'total_discrepancias': len(discrepancias),
+        'empleados_solo_novedades': empleados_solo_novedades,
+        'diferencias_conceptos': len(discrepancias) - empleados_solo_novedades,
+        'discrepancias_guardadas': len(discrepancias),
+        'estado': 'completado'
+    }
 
 def _comparar_datos_personales(cierre, emp_libro, emp_novedades):
     """Compara datos personales entre empleados del libro y novedades"""
@@ -348,8 +355,17 @@ def generar_discrepancias_movimientos_vs_analista(cierre):
         logger.error(f"Error comparando MovimientosMes vs Analista: {e}")
         raise
     
+    # Guardar discrepancias en la base de datos
+    if discrepancias:
+        DiscrepanciaCierre.objects.bulk_create(discrepancias)
+    
     logger.info(f"Generadas {len(discrepancias)} discrepancias MovimientosMes vs Analista")
-    return discrepancias
+    
+    return {
+        'total_discrepancias': len(discrepancias),
+        'discrepancias_guardadas': len(discrepancias),
+        'estado': 'completado'
+    }
 
 def _comparar_ingresos(cierre):
     """Compara ingresos entre MovimientosMes y Archivos del Analista"""

@@ -153,7 +153,7 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
   };
 
   const manejarLimpiarDiscrepancias = async () => {
-    if (!cierre?.id || !window.confirm("¿Estás seguro de que quieres limpiar todas las discrepancias? Esta acción no se puede deshacer.")) {
+    if (!cierre?.id || !window.confirm("¿Estás seguro de que quieres limpiar todas las discrepancias?\n\nEsta acción:\n• Eliminará todas las discrepancias detectadas\n• Revertirá el cierre al estado 'Archivos Completos'\n• Permitirá ejecutar una nueva verificación\n\nEsta acción no se puede deshacer.")) {
       return;
     }
     
@@ -161,11 +161,30 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
     setError("");
     
     try {
+      console.log('🧹 Limpiando discrepancias y revirtiendo estado del cierre...');
+      
+      // Limpiar discrepancias
       await limpiarDiscrepanciasCierre(cierre.id);
+      
+      // Actualizar estado local
       setDiscrepancias([]);
       setResumen(null);
       setEstadoDiscrepancias(null);
+      
+      // Recargar estado de discrepancias
       await cargarEstadoDiscrepancias();
+      
+      // 🆕 NUEVO: Notificar al componente padre para actualizar el estado del cierre
+      console.log('🔄 Notificando actualización del cierre después de limpiar...');
+      if (onCierreActualizado) {
+        await onCierreActualizado();
+      }
+      
+      console.log('✅ Discrepancias limpiadas y estado revertido exitosamente');
+      
+      // Mostrar mensaje de éxito temporal
+      setError(""); // Limpiar errores previos
+      
     } catch (err) {
       console.error("Error limpiando discrepancias:", err);
       setError("Error al limpiar discrepancias");
@@ -306,13 +325,64 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
   };
 
   const obtenerColorEstado = () => {
-    if (!estadoDiscrepancias) return 'text-gray-400';
+    // Sin datos de verificación aún
+    if (!estadoDiscrepancias) {
+      if (cierre?.estado === 'creado' || cierre?.estado === 'archivos_pendientes') {
+        return 'text-gray-500'; // Más tenue para estados iniciales
+      } else if (cierre?.estado === 'archivos_completos') {
+        return 'text-blue-400'; // Azul para "listo para verificar"
+      } else if (cierre?.estado === 'verificacion_datos') {
+        return 'text-yellow-400'; // Amarillo para "procesando"
+      } else {
+        return 'text-gray-400';
+      }
+    }
+    
+    // Con datos de verificación
     return estadoDiscrepancias.requiere_correccion ? 'text-red-400' : 'text-green-400';
   };
 
   const obtenerTextoEstado = () => {
-    if (!estadoDiscrepancias) return 'Pendiente';
-    return estadoDiscrepancias.requiere_correccion ? 'Con Discrepancias' : 'Verificado';
+    // Sin datos de verificación aún
+    if (!estadoDiscrepancias) {
+      // Determinar texto según el estado del cierre
+      if (cierre?.estado === 'creado' || cierre?.estado === 'archivos_pendientes') {
+        return 'No Disponible';
+      } else if (cierre?.estado === 'archivos_completos') {
+        return 'Listo para Verificar';
+      } else if (cierre?.estado === 'verificacion_datos') {
+        return 'Verificando...';
+      } else {
+        return 'Pendiente';
+      }
+    }
+    
+    // Con datos de verificación
+    if (estadoDiscrepancias.requiere_correccion) {
+      return 'Con Discrepancias';
+    } else if (estadoDiscrepancias.total_discrepancias === 0 && estadoDiscrepancias.verificacion_completada) {
+      return 'Verificado ✓';
+    } else {
+      return 'Verificado';
+    }
+  };
+
+  const obtenerMensajeDescriptivo = () => {
+    if (!estadoDiscrepancias) {
+      // Mensajes según el estado del cierre cuando no hay verificación
+      if (cierre?.estado === 'creado' || cierre?.estado === 'archivos_pendientes') {
+        return 'Complete la carga de archivos para habilitar la verificación';
+      } else if (cierre?.estado === 'archivos_completos') {
+        return 'Todos los archivos cargados - Listo para verificar consistencia de datos';
+      } else if (cierre?.estado === 'verificacion_datos') {
+        return 'Procesando verificación de consistencia...';
+      } else {
+        return 'Verificación de consistencia entre Libro de Remuneraciones y Novedades';
+      }
+    } else {
+      // Mensaje cuando ya hay datos de verificación
+      return 'Verificación de consistencia entre Libro de Remuneraciones y Novedades';
+    }
   };
 
   return (
@@ -349,7 +419,7 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
               <p className="text-gray-400">
                 {disabled 
                   ? 'La verificación está bloqueada porque los datos ya han sido consolidados'
-                  : 'Verificación de consistencia entre Libro de Remuneraciones y Novedades'
+                  : obtenerMensajeDescriptivo()
                 }
               </p>
               {!disabled && estadoDiscrepancias && (

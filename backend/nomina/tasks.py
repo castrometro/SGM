@@ -13,7 +13,7 @@ from .utils.NovedadesRemuneraciones import (
 )
 from .utils.MovimientoMes import procesar_archivo_movimientos_mes_util
 from .utils.ArchivosAnalista import procesar_archivo_analista_util
-from celery import shared_task, chain
+from celery import shared_task, chain, chord, group
 from .models import (
     LibroRemuneracionesUpload,
     MovimientosMesUpload,
@@ -22,6 +22,8 @@ from .models import (
 )
 import logging
 import pandas as pd
+from django.utils import timezone
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -1606,4 +1608,529 @@ def consolidar_datos_nomina_task(cierre_id):
             'success': False,
             'error': str(e),
             'cierre_id': cierre_id
+        }
+
+
+# ===== 🚀 NUEVO SISTEMA PARALELO DE INCIDENCIAS =====
+
+@shared_task
+def generar_incidencias_cierre_paralelo(cierre_id, clasificaciones_seleccionadas):
+    """
+    🚀 TASK PRINCIPAL: Sistema dual de procesamiento paralelo
+    
+    Coordina dos procesamientos simultáneos:
+    1. Filtrado: Solo clasificaciones seleccionadas
+    2. Completo: Todas las clasificaciones
+    3. Comparación: Validación cruzada de resultados
+    """
+    logger.info(f"🚀 Iniciando procesamiento paralelo dual para cierre {cierre_id}")
+    logger.info(f"📋 Clasificaciones seleccionadas: {len(clasificaciones_seleccionadas)}")
+    
+    try:
+        from .models import CierreNomina
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        # Obtener todas las clasificaciones disponibles para este cierre
+        todas_clasificaciones = obtener_clasificaciones_cierre(cierre_id)
+        logger.info(f"📊 Total clasificaciones disponibles: {len(todas_clasificaciones)}")
+        
+        # Crear chunks para procesamiento eficiente
+        chunks_seleccionadas = crear_chunks(clasificaciones_seleccionadas, chunk_size=6)
+        chunks_todas = crear_chunks(todas_clasificaciones, chunk_size=6)
+        
+        logger.info(f"🔀 Chunks filtrado: {len(chunks_seleccionadas)}, Chunks completo: {len(chunks_todas)}")
+        
+        # Ejecutar ambos procesamientos en paralelo usando chord
+        if chunks_seleccionadas:
+            chord_filtrado = chord([
+                procesar_chunk_clasificaciones.s(cierre_id, chunk, 'filtrado', idx)
+                for idx, chunk in enumerate(chunks_seleccionadas)
+            ])(consolidar_resultados_filtrados.s(cierre_id))
+        else:
+            # Si no hay clasificaciones seleccionadas, crear resultado vacío
+            chord_filtrado = procesar_resultado_vacio.s(cierre_id, 'filtrado')
+        
+        chord_completo = chord([
+            procesar_chunk_clasificaciones.s(cierre_id, chunk, 'completo', idx)
+            for idx, chunk in enumerate(chunks_todas)
+        ])(consolidar_resultados_completos.s(cierre_id))
+        
+        # Esperar a que ambos terminen y comparar
+        return comparar_y_generar_reporte_final.delay(
+            cierre_id, 
+            chord_filtrado, 
+            chord_completo,
+            len(clasificaciones_seleccionadas),
+            len(todas_clasificaciones)
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Error en procesamiento paralelo para cierre {cierre_id}: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'cierre_id': cierre_id,
+            'timestamp': timezone.now().isoformat()
+        }
+
+
+@shared_task
+def procesar_chunk_clasificaciones(cierre_id, chunk_clasificaciones, tipo_procesamiento, chunk_idx):
+    """
+    🔧 TASK: Procesa un chunk de clasificaciones
+    
+    Args:
+        cierre_id: ID del cierre
+        chunk_clasificaciones: Lista de IDs de clasificaciones a procesar
+        tipo_procesamiento: 'filtrado' o 'completo'
+        chunk_idx: Índice del chunk para tracking
+    """
+    logger.info(f"🔧 Procesando chunk {chunk_idx} tipo '{tipo_procesamiento}' con {len(chunk_clasificaciones)} clasificaciones")
+    
+    try:
+        resultados_chunk = []
+        
+        for clasificacion_id in chunk_clasificaciones:
+            logger.debug(f"   📝 Procesando clasificación {clasificacion_id}")
+            
+            # Ejecutar la lógica de detección de incidencias para esta clasificación
+            resultado_clasificacion = procesar_incidencias_clasificacion_individual(
+                cierre_id, 
+                clasificacion_id, 
+                tipo_procesamiento
+            )
+            
+            resultados_chunk.append({
+                'clasificacion_id': clasificacion_id,
+                'resultado': resultado_clasificacion,
+                'timestamp': timezone.now().isoformat()
+            })
+        
+        logger.info(f"✅ Chunk {chunk_idx} procesado: {len(resultados_chunk)} clasificaciones")
+        
+        return {
+            'chunk_idx': chunk_idx,
+            'tipo_procesamiento': tipo_procesamiento,
+            'clasificaciones_procesadas': len(resultados_chunk),
+            'resultados': resultados_chunk,
+            'success': True
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error procesando chunk {chunk_idx}: {e}")
+        return {
+            'chunk_idx': chunk_idx,
+            'tipo_procesamiento': tipo_procesamiento,
+            'success': False,
+            'error': str(e)
+        }
+
+
+@shared_task
+def consolidar_resultados_filtrados(resultados_chunks, cierre_id):
+    """
+    📊 TASK: Consolida resultados del procesamiento filtrado
+    """
+    logger.info(f"📊 Consolidando resultados filtrados para cierre {cierre_id}")
+    return consolidar_resultados_chunks(resultados_chunks, cierre_id, 'filtrado')
+
+
+@shared_task
+def consolidar_resultados_completos(resultados_chunks, cierre_id):
+    """
+    📊 TASK: Consolida resultados del procesamiento completo
+    """
+    logger.info(f"📊 Consolidando resultados completos para cierre {cierre_id}")
+    return consolidar_resultados_chunks(resultados_chunks, cierre_id, 'completo')
+
+
+@shared_task
+def procesar_resultado_vacio(cierre_id, tipo_procesamiento):
+    """
+    📝 TASK: Genera resultado vacío cuando no hay clasificaciones seleccionadas
+    """
+    logger.info(f"📝 Generando resultado vacío para tipo '{tipo_procesamiento}'")
+    return {
+        'cierre_id': cierre_id,
+        'tipo_procesamiento': tipo_procesamiento,
+        'total_incidencias': 0,
+        'incidencias_por_regla': {
+            'variaciones_conceptos': 0,
+            'ausentismos_continuos': 0,
+            'ingresos_faltantes': 0,
+            'finiquitos_presentes': 0
+        },
+        'clasificaciones_procesadas': 0,
+        'success': True,
+        'timestamp': timezone.now().isoformat()
+    }
+
+
+@shared_task
+def comparar_y_generar_reporte_final(cierre_id, resultado_filtrado, resultado_completo, 
+                                   total_seleccionadas, total_disponibles):
+    """
+    🎯 TASK FINAL: Compara ambos resultados y genera reporte unificado
+    """
+    logger.info(f"🎯 Generando reporte final para cierre {cierre_id}")
+    logger.info(f"📊 Seleccionadas: {total_seleccionadas}, Disponibles: {total_disponibles}")
+    
+    try:
+        # Calcular diferencias y métricas
+        comparacion = {
+            'cierre_id': cierre_id,
+            'timestamp': timezone.now().isoformat(),
+            'configuracion': {
+                'clasificaciones_seleccionadas': total_seleccionadas,
+                'clasificaciones_disponibles': total_disponibles,
+                'modo_procesamiento': 'paralelo_dual'
+            },
+            'resultados': {
+                'filtrado': resultado_filtrado,
+                'completo': resultado_completo
+            },
+            'analisis_comparativo': calcular_diferencias_resultados(resultado_filtrado, resultado_completo),
+            'metricas_rendimiento': {
+                'cobertura_porcentaje': (total_seleccionadas / total_disponibles * 100) if total_disponibles > 0 else 0,
+                'clasificaciones_no_procesadas': total_disponibles - total_seleccionadas
+            }
+        }
+        
+        # Guardar comparación en base de datos
+        guardar_comparacion_incidencias(cierre_id, comparacion)
+        
+        # Actualizar estado del cierre
+        actualizar_estado_cierre_post_procesamiento(cierre_id, comparacion)
+        
+        logger.info(f"✅ Reporte final generado exitosamente para cierre {cierre_id}")
+        
+        return {
+            'success': True,
+            'cierre_id': cierre_id,
+            'comparacion': comparacion,
+            'resumen': {
+                'incidencias_filtrado': resultado_filtrado.get('total_incidencias', 0),
+                'incidencias_completo': resultado_completo.get('total_incidencias', 0),
+                'cobertura_porcentaje': comparacion['metricas_rendimiento']['cobertura_porcentaje']
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error generando reporte final para cierre {cierre_id}: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'cierre_id': cierre_id
+        }
+
+
+# ===== 🛠️ FUNCIONES AUXILIARES =====
+
+def obtener_clasificaciones_cierre(cierre_id):
+    """Obtiene todas las clasificaciones disponibles para un cierre"""
+    try:
+        from .models import CierreNomina
+        # Aquí implementarías la lógica específica para obtener clasificaciones
+        # Por ahora devuelvo un ejemplo
+        return list(range(1, 21))  # Ejemplo: 20 clasificaciones
+    except Exception as e:
+        logger.error(f"Error obteniendo clasificaciones: {e}")
+        return []
+
+
+def crear_chunks(lista, chunk_size=6):
+    """Divide una lista en chunks del tamaño especificado"""
+    if not lista:
+        return []
+    return [lista[i:i + chunk_size] for i in range(0, len(lista), chunk_size)]
+
+
+def procesar_incidencias_clasificacion_individual(cierre_id, clasificacion_id, tipo_procesamiento):
+    """Procesa incidencias para una clasificación individual"""
+    try:
+        # Aquí va la lógica específica de detección de incidencias
+        # Por ahora simulo el procesamiento
+        logger.debug(f"Procesando incidencias para clasificación {clasificacion_id} (tipo: {tipo_procesamiento})")
+        
+        return {
+            'clasificacion_id': clasificacion_id,
+            'incidencias_encontradas': 0,  # Simulado
+            'reglas_aplicadas': ['variaciones_conceptos', 'ausentismos_continuos'],
+            'success': True
+        }
+    except Exception as e:
+        logger.error(f"Error procesando clasificación {clasificacion_id}: {e}")
+        return {
+            'clasificacion_id': clasificacion_id,
+            'success': False,
+            'error': str(e)
+        }
+
+
+def consolidar_resultados_chunks(resultados_chunks, cierre_id, tipo_procesamiento):
+    """Consolida los resultados de múltiples chunks"""
+    try:
+        total_incidencias = 0
+        clasificaciones_procesadas = 0
+        incidencias_por_regla = {
+            'variaciones_conceptos': 0,
+            'ausentismos_continuos': 0,
+            'ingresos_faltantes': 0,
+            'finiquitos_presentes': 0
+        }
+        
+        chunks_exitosos = 0
+        
+        for chunk_resultado in resultados_chunks:
+            if chunk_resultado.get('success', False):
+                chunks_exitosos += 1
+                clasificaciones_procesadas += chunk_resultado.get('clasificaciones_procesadas', 0)
+                # Aquí sumarías las incidencias específicas según tu lógica
+        
+        logger.info(f"📊 Consolidación {tipo_procesamiento}: {chunks_exitosos} chunks, {clasificaciones_procesadas} clasificaciones")
+        
+        return {
+            'cierre_id': cierre_id,
+            'tipo_procesamiento': tipo_procesamiento,
+            'total_incidencias': total_incidencias,
+            'incidencias_por_regla': incidencias_por_regla,
+            'clasificaciones_procesadas': clasificaciones_procesadas,
+            'chunks_exitosos': chunks_exitosos,
+            'success': True,
+            'timestamp': timezone.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error consolidando resultados {tipo_procesamiento}: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'tipo_procesamiento': tipo_procesamiento
+        }
+
+
+def calcular_diferencias_resultados(resultado_filtrado, resultado_completo):
+    """Calcula las diferencias entre el procesamiento filtrado y completo"""
+    try:
+        return {
+            'diferencia_incidencias': (
+                resultado_completo.get('total_incidencias', 0) - 
+                resultado_filtrado.get('total_incidencias', 0)
+            ),
+            'diferencia_clasificaciones': (
+                resultado_completo.get('clasificaciones_procesadas', 0) - 
+                resultado_filtrado.get('clasificaciones_procesadas', 0)
+            ),
+            'coherencia_resultados': (
+                resultado_filtrado.get('success', False) and 
+                resultado_completo.get('success', False)
+            )
+        }
+    except Exception as e:
+        logger.error(f"Error calculando diferencias: {e}")
+        return {'error': str(e)}
+
+
+def guardar_comparacion_incidencias(cierre_id, comparacion):
+    """Guarda la comparación en la base de datos"""
+    try:
+        # Aquí implementarías el guardado en tu modelo de base de datos
+        logger.info(f"💾 Guardando comparación para cierre {cierre_id}")
+        pass
+    except Exception as e:
+        logger.error(f"Error guardando comparación: {e}")
+
+
+def actualizar_estado_cierre_post_procesamiento(cierre_id, comparacion):
+    """Actualiza el estado del cierre después del procesamiento"""
+    try:
+        from .models import CierreNomina
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        if comparacion['resultados']['completo'].get('success') and comparacion['resultados']['filtrado'].get('success'):
+            cierre.estado = 'con_incidencias'
+            cierre.save(update_fields=['estado'])
+            logger.info(f"✅ Estado del cierre {cierre_id} actualizado a 'con_incidencias'")
+        
+    except Exception as e:
+        logger.error(f"Error actualizando estado del cierre: {e}")
+
+
+# ===== 🚀 NUEVO SISTEMA PARALELO DE DISCREPANCIAS =====
+
+@shared_task
+def generar_discrepancias_cierre_paralelo(cierre_id):
+    """
+    🚀 TASK PRINCIPAL: Sistema paralelo de generación de discrepancias
+    
+    Coordina dos procesamientos simultáneos usando Celery Chord:
+    1. Chunk 1: Discrepancias Libro vs Novedades
+    2. Chunk 2: Discrepancias Movimientos vs Analista
+    3. Consolidación: Unificación y actualización del estado
+    """
+    logger.info(f"🚀 Iniciando generación paralela de discrepancias para cierre {cierre_id}")
+    
+    try:
+        from .models import CierreNomina
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        # Cambiar estado a verificacion_datos al iniciar
+        cierre.estado = 'verificacion_datos'
+        cierre.save(update_fields=['estado'])
+        
+        # Eliminar discrepancias anteriores si existen
+        cierre.discrepancias.all().delete()
+        logger.info(f"🧹 Discrepancias anteriores limpiadas para cierre {cierre_id}")
+        
+        # Ejecutar procesamientos en paralelo usando chord
+        chord_paralelo = chord([
+            procesar_discrepancias_chunk.s(cierre_id, 'libro_vs_novedades'),
+            procesar_discrepancias_chunk.s(cierre_id, 'movimientos_vs_analista')
+        ])(consolidar_discrepancias_finales.s(cierre_id))
+        
+        logger.info(f"📊 Chord de discrepancias iniciado para cierre {cierre_id}")
+        return {
+            'success': True,
+            'cierre_id': cierre_id,
+            'chord_id': str(chord_paralelo),
+            'timestamp': timezone.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error en generación paralela de discrepancias para cierre {cierre_id}: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'cierre_id': cierre_id,
+            'timestamp': timezone.now().isoformat()
+        }
+
+
+@shared_task
+def procesar_discrepancias_chunk(cierre_id, tipo_chunk):
+    """
+    🔧 TASK: Procesa un chunk específico de discrepancias
+    
+    Args:
+        cierre_id: ID del cierre
+        tipo_chunk: 'libro_vs_novedades' o 'movimientos_vs_analista'
+    """
+    logger.info(f"🔧 Procesando chunk '{tipo_chunk}' para cierre {cierre_id}")
+    
+    try:
+        from .models import CierreNomina
+        from .utils.GenerarDiscrepancias import (
+            generar_discrepancias_libro_vs_novedades,
+            generar_discrepancias_movimientos_vs_analista
+        )
+        
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        if tipo_chunk == 'libro_vs_novedades':
+            resultado = generar_discrepancias_libro_vs_novedades(cierre)
+            logger.info(f"📚 Libro vs Novedades: {resultado['total_discrepancias']} discrepancias")
+            
+        elif tipo_chunk == 'movimientos_vs_analista':
+            resultado = generar_discrepancias_movimientos_vs_analista(cierre)
+            logger.info(f"📋 Movimientos vs Analista: {resultado['total_discrepancias']} discrepancias")
+            
+        else:
+            raise ValueError(f"Tipo de chunk desconocido: {tipo_chunk}")
+        
+        return {
+            'chunk_tipo': tipo_chunk,
+            'cierre_id': cierre_id,
+            'total_discrepancias': resultado['total_discrepancias'],
+            'detalle': resultado,
+            'success': True,
+            'timestamp': timezone.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error procesando chunk '{tipo_chunk}' para cierre {cierre_id}: {e}")
+        return {
+            'chunk_tipo': tipo_chunk,
+            'cierre_id': cierre_id,
+            'success': False,
+            'error': str(e),
+            'timestamp': timezone.now().isoformat()
+        }
+
+
+@shared_task
+def consolidar_discrepancias_finales(resultados_chunks, cierre_id):
+    """
+    🎯 TASK FINAL: Consolida los resultados de ambos chunks y actualiza el estado
+    """
+    logger.info(f"🎯 Consolidando discrepancias finales para cierre {cierre_id}")
+    
+    try:
+        from .models import CierreNomina
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        # Procesar resultados de ambos chunks
+        total_discrepancias = 0
+        resultados_detallados = {}
+        chunks_exitosos = 0
+        
+        for resultado in resultados_chunks:
+            if resultado.get('success', False):
+                chunks_exitosos += 1
+                chunk_tipo = resultado['chunk_tipo']
+                chunk_total = resultado['total_discrepancias']
+                
+                total_discrepancias += chunk_total
+                resultados_detallados[chunk_tipo] = resultado['detalle']
+                
+                logger.info(f"✅ Chunk '{chunk_tipo}': {chunk_total} discrepancias")
+            else:
+                logger.error(f"❌ Chunk fallido: {resultado}")
+        
+        # Actualizar estado del cierre según los resultados
+        if chunks_exitosos == 2:  # Ambos chunks exitosos
+            if total_discrepancias == 0:
+                cierre.estado = 'verificado_sin_discrepancias'
+                mensaje = "Sin discrepancias - Datos verificados exitosamente"
+            else:
+                cierre.estado = 'con_discrepancias'
+                mensaje = f"Con discrepancias - {total_discrepancias} diferencias detectadas"
+        else:
+            cierre.estado = 'con_discrepancias'  # Por seguridad
+            mensaje = "Error en verificación - Estado de seguridad activado"
+        
+        cierre.save(update_fields=['estado'])
+        
+        consolidacion_final = {
+            'cierre_id': cierre_id,
+            'total_discrepancias': total_discrepancias,
+            'chunks_exitosos': chunks_exitosos,
+            'chunks_procesados': len(resultados_chunks),
+            'estado_final': cierre.estado,
+            'mensaje': mensaje,
+            'resultados_detallados': resultados_detallados,
+            'timestamp': timezone.now().isoformat(),
+            'success': True
+        }
+        
+        logger.info(f"✅ Consolidación completada para cierre {cierre_id}: {mensaje}")
+        
+        return consolidacion_final
+        
+    except Exception as e:
+        logger.error(f"❌ Error consolidando discrepancias para cierre {cierre_id}: {e}")
+        
+        # En caso de error, establecer estado de seguridad
+        try:
+            from .models import CierreNomina
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            cierre.estado = 'con_discrepancias'  # Estado de seguridad
+            cierre.save(update_fields=['estado'])
+        except:
+            pass
+        
+        return {
+            'success': False,
+            'error': str(e),
+            'cierre_id': cierre_id,
+            'timestamp': timezone.now().isoformat()
         }

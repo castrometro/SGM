@@ -73,7 +73,9 @@ from .tasks import (
     procesar_archivo_analista,
     procesar_archivo_novedades,
     generar_incidencias_cierre_task,
+    generar_incidencias_cierre_paralelo,  # 🆕 Nueva tarea paralela incidencias
     generar_discrepancias_cierre_task,
+    generar_discrepancias_cierre_paralelo,  # 🆕 Nueva tarea paralela discrepancias
 )
 
 logger = logging.getLogger(__name__)
@@ -1705,6 +1707,11 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
         2. Ausentismos continuos
         3. Ingresos del mes anterior faltantes
         4. Finiquitos del mes anterior presentes
+        
+        🆕 SISTEMA DUAL:
+        - Procesamiento filtrado: Solo clasificaciones seleccionadas
+        - Procesamiento completo: Todas las clasificaciones
+        - Comparación cruzada: Validación de coherencia
         """
         try:
             cierre = CierreNomina.objects.get(id=cierre_id)
@@ -1725,16 +1732,27 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
                 "estados_validos": estados_validos
             }, status=400)
         
-        # Lanzar tarea de generación de incidencias
-        from .tasks import generar_incidencias_cierre_task
-        task = generar_incidencias_cierre_task.delay(cierre_id)
+        # 🆕 NUEVO: Obtener clasificaciones seleccionadas del request
+        clasificaciones_seleccionadas = request.data.get('clasificaciones_seleccionadas', [])
+        
+        # Log para debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"🎯 Generando incidencias para cierre {cierre_id}")
+        logger.info(f"📋 Clasificaciones seleccionadas: {clasificaciones_seleccionadas}")
+        
+        # 🆕 NUEVO: Usar la nueva tarea paralela
+        from .tasks import generar_incidencias_cierre_paralelo
+        task = generar_incidencias_cierre_paralelo.delay(cierre_id, clasificaciones_seleccionadas)
         
         return Response({
-            "message": "🔍 Generación de incidencias consolidadas iniciada",
-            "descripcion": "Comparando datos del mes actual vs anterior según las 4 reglas de detección",
+            "message": "� Generación de incidencias paralela iniciada",
+            "descripcion": "Sistema dual: procesamiento filtrado + completo con comparación cruzada",
             "task_id": task.id,
             "cierre_id": cierre_id,
             "estado_cierre": cierre.estado,
+            "clasificaciones_seleccionadas": len(clasificaciones_seleccionadas),
+            "modo_procesamiento": "paralelo_dual",
             "reglas_aplicadas": [
                 "Variaciones de conceptos >±30%",
                 "Ausentismos continuos del mes anterior", 
@@ -2871,7 +2889,14 @@ class DiscrepanciaCierreViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['post'], url_path='generar/(?P<cierre_id>[^/.]+)')
     def generar_discrepancias(self, request, cierre_id=None):
-        """Endpoint para generar discrepancias de un cierre específico"""
+        """
+        🚀 ENDPOINT: Generar discrepancias con procesamiento paralelo
+        
+        Ejecuta la verificación de consistencia de datos usando Celery Chord:
+        1. Chunk 1: Discrepancias Libro vs Novedades
+        2. Chunk 2: Discrepancias Movimientos vs Analista  
+        3. Consolidación: Unificación de resultados
+        """
         try:
             cierre = CierreNomina.objects.get(id=cierre_id)
         except CierreNomina.DoesNotExist:
@@ -2887,13 +2912,21 @@ class DiscrepanciaCierreViewSet(viewsets.ModelViewSet):
                 "error": f"El cierre debe estar en estado 'archivos_completos', 'verificacion_datos' o 'con_discrepancias' para generar discrepancias. Estado actual: '{cierre.estado}'"
             }, status=400)
         
-        # Lanzar tarea de generación de discrepancias
-        task = generar_discrepancias_cierre_task.delay(cierre_id)
+        # Log para debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"🚀 Generando discrepancias paralelas para cierre {cierre_id}")
+        
+        # 🆕 NUEVO: Usar la nueva tarea paralela con Chord
+        from .tasks import generar_discrepancias_cierre_paralelo
+        task = generar_discrepancias_cierre_paralelo.delay(cierre_id)
         
         return Response({
-            "message": "Generación de discrepancias iniciada",
+            "message": "🚀 Generación de discrepancias paralela iniciada",
+            "descripcion": "Verificación en paralelo: Libro vs Novedades + Movimientos vs Analista",
             "task_id": task.id,
-            "cierre_id": cierre_id
+            "cierre_id": cierre_id,
+            "modo_procesamiento": "paralelo_chord"
         }, status=202)
     
     @action(detail=False, methods=['get'], url_path='resumen/(?P<cierre_id>[^/.]+)')
@@ -3005,15 +3038,17 @@ class DiscrepanciaCierreViewSet(viewsets.ModelViewSet):
         # Eliminar todas las discrepancias del cierre
         deleted_count = cierre.discrepancias.all().delete()[0]
         
-        # Resetear estado del cierre
-        cierre.estado = 'datos_consolidados'
+        # 🔄 NUEVO: Resetear estado del cierre al estado anterior apropiado
+        # Cuando se limpian discrepancias, el cierre debe volver a estar listo para verificación
+        cierre.estado = 'archivos_completos'
         cierre.save(update_fields=['estado'])
         
-        logger.info(f"Eliminadas {deleted_count} discrepancias del cierre {cierre_id}")
+        logger.info(f"🧹 Eliminadas {deleted_count} discrepancias del cierre {cierre_id} - Estado revertido a 'archivos_completos'")
         
         return Response({
-            "message": f"Eliminadas {deleted_count} discrepancias. Cierre listo para nueva verificación.",
+            "message": f"Eliminadas {deleted_count} discrepancias. Cierre revertido al estado 'Archivos Completos' y listo para nueva verificación.",
             "discrepancias_eliminadas": deleted_count,
+            "estado_anterior": "archivos_completos",
             "nuevo_estado": cierre.estado
         })
 

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { AlertTriangle, User, FileText, Eye } from "lucide-react";
 import { obtenerDiscrepanciasCierre } from "../../../api/nomina";
+import { formatearMonedaChilena } from "../../../utils/formatters";
 
 const DiscrepanciasTable = ({ cierreId, filtros }) => {
   const [discrepancias, setDiscrepancias] = useState([]);
@@ -51,6 +52,25 @@ const DiscrepanciasTable = ({ cierreId, filtros }) => {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  // Función para formatear valores que pueden ser monetarios
+  const formatearValor = (valor, tipo_discrepancia) => {
+    if (!valor) return valor;
+    
+    // Tipos de discrepancias que manejan montos
+    const tiposMonetarios = [
+      'diff_sueldo_base', 
+      'diff_concepto_monto'
+    ];
+    
+    // Si es un tipo monetario y el valor es numérico, formatear como moneda
+    if (tiposMonetarios.includes(tipo_discrepancia) && !isNaN(parseFloat(valor))) {
+      return formatearMonedaChilena(valor);
+    }
+    
+    // Si no es monetario, devolver el valor tal como está
+    return valor;
   };
 
   const obtenerIconoTipo = (tipo) => {
@@ -192,13 +212,13 @@ const DiscrepanciasTable = ({ cierreId, filtros }) => {
                       {discrepancia.valor_libro && (
                         <div className="text-xs">
                           <span className="font-medium text-blue-300">📚 Libro:</span> 
-                          <span className="text-gray-300 ml-2">{discrepancia.valor_libro}</span>
+                          <span className="text-gray-300 ml-2">{formatearValor(discrepancia.valor_libro, discrepancia.tipo_discrepancia)}</span>
                         </div>
                       )}
                       {discrepancia.valor_novedades && (
                         <div className="text-xs">
                           <span className="font-medium text-green-300">📝 Novedades:</span>
-                          <span className="text-gray-300 ml-2">{discrepancia.valor_novedades}</span>
+                          <span className="text-gray-300 ml-2">{formatearValor(discrepancia.valor_novedades, discrepancia.tipo_discrepancia)}</span>
                         </div>
                       )}
                     </div>
@@ -210,13 +230,13 @@ const DiscrepanciasTable = ({ cierreId, filtros }) => {
                       {discrepancia.valor_movimientos && (
                         <div className="text-xs">
                           <span className="font-medium text-purple-300">📊 MovimientosMes:</span>
-                          <span className="text-gray-300 ml-2">{discrepancia.valor_movimientos}</span>
+                          <span className="text-gray-300 ml-2">{formatearValor(discrepancia.valor_movimientos, discrepancia.tipo_discrepancia)}</span>
                         </div>
                       )}
                       {discrepancia.valor_analista && (
                         <div className="text-xs">
                           <span className="font-medium text-yellow-300">👥 Analista:</span>
-                          <span className="text-gray-300 ml-2">{discrepancia.valor_analista}</span>
+                          <span className="text-gray-300 ml-2">{formatearValor(discrepancia.valor_analista, discrepancia.tipo_discrepancia)}</span>
                         </div>
                       )}
                     </div>

@@ -265,8 +265,10 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
                     "error": "No hay archivo de movimientos procesado disponible"
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Lanzar tarea asíncrona de consolidación
-            task = consolidar_datos_nomina_task.delay(cierre.id)
+            # Lanzar tarea asíncrona de consolidación OPTIMIZADA
+            # Por defecto usa modo 'optimizado' con Celery Chord para mejor rendimiento
+            modo_consolidacion = request.data.get('modo', 'optimizado')  # Permitir override
+            task = consolidar_datos_nomina_task.delay(cierre.id, modo=modo_consolidacion)
             
             # Registrar inicio de la actividad
             registrar_actividad_tarjeta_nomina(
@@ -2974,55 +2976,6 @@ class DiscrepanciaCierreViewSet(viewsets.ModelViewSet):
             "empleados_afectados": cierre.discrepancias.values('rut_empleado').distinct().count(),
             "fecha_ultima_verificacion": cierre.discrepancias.first().fecha_detectada if total_discrepancias > 0 else None
         })
-    
-    @action(detail=False, methods=['post'], url_path='preview/(?P<cierre_id>[^/.]+)')
-    def preview_discrepancias(self, request, cierre_id=None):
-        """Endpoint para previsualizar qué discrepancias se generarían sin crearlas"""
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        from .utils.GenerarDiscrepancias import (
-            generar_discrepancias_libro_vs_novedades,
-            generar_discrepancias_movimientos_vs_analista
-        )
-        
-        try:
-            # Generar discrepancias preview sin guardarlas
-            discrepancias_libro_novedades = generar_discrepancias_libro_vs_novedades(cierre)
-            discrepancias_movimientos_analista = generar_discrepancias_movimientos_vs_analista(cierre)
-            
-            todas_discrepancias = discrepancias_libro_novedades + discrepancias_movimientos_analista
-            
-            # Convertir discrepancias a formato serializable
-            discrepancias_preview = []
-            for discrepancia in todas_discrepancias:
-                discrepancias_preview.append({
-                    'tipo_discrepancia': discrepancia.tipo_discrepancia,
-                    'tipo_discrepancia_display': discrepancia.get_tipo_discrepancia_display(),
-                    'rut_empleado': discrepancia.rut_empleado,
-                    'descripcion': discrepancia.descripcion,
-                    'concepto_afectado': discrepancia.concepto_afectado,
-                    'valor_libro': discrepancia.valor_libro,
-                    'valor_novedades': discrepancia.valor_novedades,
-                    'valor_movimientos': discrepancia.valor_movimientos,
-                    'valor_analista': discrepancia.valor_analista,
-                })
-            
-            return Response({
-                'total_discrepancias': len(todas_discrepancias),
-                'libro_vs_novedades': len(discrepancias_libro_novedades),
-                'movimientos_vs_analista': len(discrepancias_movimientos_analista),
-                'discrepancias': discrepancias_preview,
-                'mensaje': 'Vista previa generada - no se guardaron discrepancias'
-            })
-            
-        except Exception as e:
-            logger.error(f"Error generando preview de discrepancias: {e}")
-            return Response({
-                "error": f"Error generando preview: {str(e)}"
-            }, status=500)
     
     @action(detail=False, methods=['delete'], url_path='limpiar/(?P<cierre_id>[^/.]+)')
     def limpiar_discrepancias(self, request, cierre_id=None):

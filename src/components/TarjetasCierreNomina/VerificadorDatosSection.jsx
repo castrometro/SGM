@@ -1,16 +1,16 @@
 import { useState, useEffect, useRef } from "react";
-import { ShieldCheck, ChevronDown, ChevronRight, Loader2, CheckCircle, AlertTriangle, Filter, Eye, RefreshCw, X, Lock } from "lucide-react";
+import { ShieldCheck, ChevronDown, ChevronRight, Loader2, CheckCircle, AlertTriangle, Filter, RefreshCw, X, Lock } from "lucide-react";
 import DiscrepanciasTable from "./VerificadorDatos/DiscrepanciasTable";
 import { 
   obtenerDiscrepanciasCierre, 
   obtenerResumenDiscrepancias, 
   generarDiscrepanciasCierre,
   obtenerEstadoDiscrepanciasCierre,
-  previewDiscrepanciasCierre,
   limpiarDiscrepanciasCierre,
   actualizarEstadoCierreNomina,
   consolidarDatosTalana,
-  consultarEstadoTarea
+  consultarEstadoTarea,
+  obtenerCierreNominaPorId
 } from "../../api/nomina";
 
 const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado }) => {
@@ -22,8 +22,6 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
   const [error, setError] = useState("");
   const [filtros, setFiltros] = useState({});
   const [estadoDiscrepancias, setEstadoDiscrepancias] = useState(null);
-  const [vistaPrevia, setVistaPrevia] = useState(null);
-  const [mostrandoPreview, setMostrandoPreview] = useState(false);
   const [actualizandoEstado, setActualizandoEstado] = useState(false);
   const [consolidando, setConsolidando] = useState(false);
   const [taskIdConsolidacion, setTaskIdConsolidacion] = useState(null);
@@ -113,42 +111,30 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
     setError("");
     
     try {
-      await generarDiscrepanciasCierre(cierre.id);
-      console.log('✅ [VerificadorDatos] Discrepancias generadas, refrescando estado del cierre...');
+      const resultado = await generarDiscrepanciasCierre(cierre.id);
+      console.log('✅ [VerificadorDatos] Respuesta completa del backend:', resultado);
+      console.log('✅ [VerificadorDatos] Task ID recibido:', resultado.task_id);
       
-      // Refrescar el estado del cierre para mostrar el cambio automáticamente
-      if (onCierreActualizado) {
-        await onCierreActualizado();
+      // Iniciar polling automático para seguir el progreso
+      if (resultado.task_id) {
+        console.log('🚀 [VerificadorDatos] Iniciando polling con task_id:', resultado.task_id);
+        iniciarPollingEstado(resultado.task_id, 'verificacion');
+      } else {
+        console.error('❌ [VerificadorDatos] No se recibió task_id en la respuesta');
+        // Fallback si no hay task_id
+        setTimeout(async () => {
+          await Promise.all([
+            cargarEstadoDiscrepancias(),
+            actualizarEstadoCierre()
+          ]);
+          setGenerando(false);
+        }, 3000);
       }
       
-      // Esperar un momento para que se procese la tarea y luego cargar datos
-      setTimeout(async () => {
-        await cargarEstadoDiscrepancias();
-        cargarDatos();
-      }, 2000);
     } catch (err) {
       console.error("Error generando discrepancias:", err);
       setError("Error al generar verificación de datos");
-    } finally {
       setGenerando(false);
-    }
-  };
-
-  const manejarVistaPrevia = async () => {
-    if (!cierre?.id) return;
-    
-    setCargando(true);
-    setError("");
-    
-    try {
-      const preview = await previewDiscrepanciasCierre(cierre.id);
-      setVistaPrevia(preview);
-      setMostrandoPreview(true);
-    } catch (err) {
-      console.error("Error generando vista previa:", err);
-      setError("Error al generar vista previa de verificación");
-    } finally {
-      setCargando(false);
     }
   };
 
@@ -171,14 +157,12 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
       setResumen(null);
       setEstadoDiscrepancias(null);
       
-      // Recargar estado de discrepancias
-      await cargarEstadoDiscrepancias();
-      
-      // 🆕 NUEVO: Notificar al componente padre para actualizar el estado del cierre
-      console.log('🔄 Notificando actualización del cierre después de limpiar...');
-      if (onCierreActualizado) {
-        await onCierreActualizado();
-      }
+      // 🆕 NUEVO: Actualizar estado del cierre automáticamente 
+      console.log('🔄 Actualizando estado del cierre después de limpiar...');
+      await Promise.all([
+        cargarEstadoDiscrepancias(),
+        actualizarEstadoCierre()
+      ]);
       
       console.log('✅ Discrepancias limpiadas y estado revertido exitosamente');
       
@@ -193,7 +177,72 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
     }
   };
 
-  const manejarFiltroChange = (nuevosFiltros) => {
+  // Función para actualizar estado del cierre automáticamente
+  const actualizarEstadoCierre = async () => {
+    try {
+      const cierreActualizado = await obtenerCierreNominaPorId(cierre.id);
+      if (onCierreActualizado) {
+        onCierreActualizado(cierreActualizado);
+      }
+    } catch (error) {
+      console.error("Error actualizando estado del cierre:", error);
+    }
+  };
+
+  // Función para hacer polling del estado durante operaciones
+  const iniciarPollingEstado = (taskId, tipoOperacion = 'verificacion') => {
+    console.log('🔄 [PollingEstado] Iniciando polling para:', { taskId, tipoOperacion, cierreId: cierre?.id });
+    
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+    }
+
+    pollingRef.current = setInterval(async () => {
+      try {
+        // Consultar estado de la tarea
+        console.log('🔍 [PollingEstado] Consultando estado de tarea:', taskId);
+        const estadoTarea = await consultarEstadoTarea(cierre?.id, taskId);
+        console.log('📊 [PollingEstado] Estado recibido:', estadoTarea);
+        
+        if (estadoTarea.status === 'SUCCESS') {
+          console.log(`✅ ${tipoOperacion} completada exitosamente`);
+          
+          // Actualizar estados locales
+          await Promise.all([
+            cargarEstadoDiscrepancias(),
+            actualizarEstadoCierre()
+          ]);
+          
+          // Detener polling
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+          
+          // Resetear estados de carga
+          if (tipoOperacion === 'verificacion') {
+            setGenerando(false);
+          } else if (tipoOperacion === 'consolidacion') {
+            setConsolidando(false);
+            setTaskIdConsolidacion(null);
+            setMostrarModalConsolidacion(false);
+          }
+          
+        } else if (estadoTarea.status === 'FAILURE') {
+          console.error(`❌ Error en ${tipoOperacion}:`, estadoTarea.result);
+          setError(`Error en ${tipoOperacion}: ${estadoTarea.result?.error || 'Error desconocido'}`);
+          
+          // Detener polling y resetear estados
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+          setGenerando(false);
+          setConsolidando(false);
+          setTaskIdConsolidacion(null);
+        }
+        } catch (error) {
+        console.error(`❌ [PollingEstado] Error consultando estado de ${tipoOperacion}:`, error);
+        console.error('❌ [PollingEstado] Detalles del error:', { taskId, cierreId: cierre?.id, tipoOperacion });
+      }
+    }, 2000); // Consultar cada 2 segundos
+  };  const manejarFiltroChange = (nuevosFiltros) => {
     setFiltros({ ...filtros, ...nuevosFiltros });
   };
 
@@ -220,7 +269,7 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
         setTaskIdConsolidacion(resultado.task_id);
         
         // Iniciar polling para verificar estado de la tarea
-        iniciarPollingTarea(resultado.task_id);
+        iniciarPollingEstado(resultado.task_id, 'consolidacion');
         
       } else {
         throw new Error(resultado.error || "Error desconocido al iniciar consolidación");
@@ -234,58 +283,11 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
     }
   };
 
-  // 🔄 FUNCIÓN: Polling para verificar estado de tarea
-  const iniciarPollingTarea = (taskId) => {
-    const verificarEstado = async () => {
-      try {
-        const estadoTarea = await consultarEstadoTarea(cierre.id, taskId);
-        console.log(`📊 Estado tarea ${taskId}:`, estadoTarea);
-        
-        if (estadoTarea.ready) {
-          // Tarea terminó
-          setConsolidando(false);
-          setTaskIdConsolidacion(null);
-          pollingRef.current = null;
-          
-          if (estadoTarea.success) {
-            console.log(`✅ Consolidación completada:`, estadoTarea.result);
-            
-            // Refrescar el estado del cierre en el componente padre
-            if (onCierreActualizado) {
-              await onCierreActualizado();
-            }
-            
-            // Mostrar mensaje de éxito
-            setError(""); 
-            setMostrarModalConsolidacion(false);
-            
-          } else {
-            console.error("❌ Error en consolidación:", estadoTarea.error);
-            setError(`Error en consolidación: ${estadoTarea.error}`);
-          }
-        } else {
-          // Tarea aún en proceso, continuar polling
-          pollingRef.current = setTimeout(verificarEstado, 2000); // Verificar cada 2 segundos
-        }
-        
-      } catch (error) {
-        console.error("Error verificando estado de tarea:", error);
-        setError("Error verificando estado de consolidación");
-        setConsolidando(false);
-        setTaskIdConsolidacion(null);
-        pollingRef.current = null;
-      }
-    };
-    
-    // Iniciar el polling
-    pollingRef.current = setTimeout(verificarEstado, 1000); // Primera verificación en 1 segundo
-  };
-
   // 🧹 LIMPIEZA: Cancelar polling al desmontar componente
   useEffect(() => {
     return () => {
       if (pollingRef.current) {
-        clearTimeout(pollingRef.current);
+        clearInterval(pollingRef.current);
       }
     };
   }, []);
@@ -465,58 +467,54 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
               {/* Lado izquierdo - Estado y contadores */}
               <div className="flex items-center gap-6">
                 {/* Estado de verificación */}
-                <div className="text-center">
-                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-2 ${
+                <div className="flex flex-col items-center justify-center min-w-[120px]">
+                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-3 shadow-lg ${
                     estadoDiscrepancias 
                       ? (estadoDiscrepancias.requiere_correccion ? 'bg-red-500/20 border-2 border-red-500' : 'bg-green-500/20 border-2 border-green-500')
                       : 'bg-gray-500/20 border-2 border-gray-500'
                   }`}>
                     <ShieldCheck size={24} className={obtenerColorEstado()} />
                   </div>
-                  <p className="text-sm text-gray-400">Estado</p>
-                  <p className={`text-sm font-medium ${obtenerColorEstado()}`}>
+                  <p className="text-xs text-gray-400 mb-1">Estado</p>
+                  <p className={`text-sm font-medium text-center ${obtenerColorEstado()}`}>
                     {obtenerTextoEstado()}
                   </p>
                 </div>
 
-                {/* Contadores */}
+                {/* Separador visual */}
                 {estadoDiscrepancias && estadoDiscrepancias.total_discrepancias > 0 && (
-                  <>
+                  <div className="w-px h-16 bg-gray-600"></div>
+                )}
+
+                {/* Contadores de discrepancias */}
+                {estadoDiscrepancias && estadoDiscrepancias.total_discrepancias > 0 && (
+                  <div className="flex items-center gap-6">
                     <div className="text-center">
-                      <div className="text-2xl font-bold text-white">
+                      <div className="text-3xl font-bold text-white mb-1">
                         {estadoDiscrepancias.total_discrepancias || 0}
                       </div>
-                      <p className="text-sm text-gray-400">Total</p>
+                      <p className="text-xs text-gray-400">Total Discrepancias</p>
                     </div>
                     
                     <div className="text-center">
-                      <div className="text-2xl font-bold text-blue-400">
-                        {resumen?.libro_vs_novedades || 0}
+                      <div className="text-2xl font-bold text-blue-400 mb-1">
+                        {resumen?.total_libro_vs_novedades || 0}
                       </div>
-                      <p className="text-sm text-gray-400">Libro vs Novedades</p>
+                      <p className="text-xs text-gray-400">Libro vs Novedades</p>
                     </div>
                     
                     <div className="text-center">
-                      <div className="text-2xl font-bold text-green-400">
-                        {resumen?.movimientos_vs_analista || 0}
+                      <div className="text-2xl font-bold text-purple-400 mb-1">
+                        {resumen?.total_movimientos_vs_analista || 0}
                       </div>
-                      <p className="text-sm text-gray-400">Movimientos vs Analista</p>
+                      <p className="text-xs text-gray-400">Movimientos vs Analista</p>
                     </div>
-                  </>
+                  </div>
                 )}
               </div>
 
               {/* Lado derecho - Botones de acción */}
               <div className="flex gap-3">
-                <button
-                  onClick={manejarVistaPrevia}
-                  disabled={cargando || !puedeGenerarDiscrepancias()}
-                  className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  <Eye className="w-4 h-4 mr-2" />
-                  Vista Previa
-                </button>
-
                 <button
                   onClick={manejarGenerarDiscrepancias}
                   disabled={generando || !puedeGenerarDiscrepancias()}
@@ -609,38 +607,6 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
             )}
           </div>
 
-          {/* Vista previa */}
-          {mostrandoPreview && vistaPrevia && (
-            <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-lg font-medium text-blue-400">Vista Previa de Discrepancias</h3>
-                <button
-                  onClick={() => setMostrandoPreview(false)}
-                  className="text-gray-400 hover:text-white"
-                >
-                  ×
-                </button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                <div className="bg-gray-800 rounded p-3">
-                  <p className="text-sm text-gray-400">Total a generar</p>
-                  <p className="text-xl font-bold text-white">{vistaPrevia.total_discrepancias}</p>
-                </div>
-                <div className="bg-gray-800 rounded p-3">
-                  <p className="text-sm text-gray-400">Libro vs Novedades</p>
-                  <p className="text-xl font-bold text-blue-400">{vistaPrevia.libro_vs_novedades}</p>
-                </div>
-                <div className="bg-gray-800 rounded p-3">
-                  <p className="text-sm text-gray-400">Movimientos vs Analista</p>
-                  <p className="text-xl font-bold text-green-400">{vistaPrevia.movimientos_vs_analista}</p>
-                </div>
-              </div>
-              <p className="text-sm text-blue-300">
-                {vistaPrevia.mensaje}
-              </p>
-            </div>
-          )}
-
           {/* Resumen de discrepancias */}
           {resumen && (
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -654,28 +620,34 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
                 </div>
               </div>
               
-              <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+              <div className="bg-gray-800 rounded-lg p-4 border border-blue-700/50">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-gray-400">Libro vs Novedades</p>
                     <p className="text-2xl font-bold text-blue-400">
-                      {resumen.libro_vs_novedades || 0}
+                      {resumen.total_libro_vs_novedades || 0}
                     </p>
                   </div>
-                  <ShieldCheck className="w-8 h-8 text-blue-500" />
+                  <div className="bg-blue-500/20 p-2 rounded-full">
+                    <ShieldCheck className="w-6 h-6 text-blue-400" />
+                  </div>
                 </div>
+                <p className="text-xs text-blue-300 mt-2">Comparación entre fuentes principales</p>
               </div>
               
-              <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+              <div className="bg-gray-800 rounded-lg p-4 border border-purple-700/50">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-gray-400">Movimientos vs Analista</p>
-                    <p className="text-2xl font-bold text-green-400">
-                      {resumen.movimientos_vs_analista || 0}
+                    <p className="text-2xl font-bold text-purple-400">
+                      {resumen.total_movimientos_vs_analista || 0}
                     </p>
                   </div>
-                  <CheckCircle className="w-8 h-8 text-green-500" />
+                  <div className="bg-purple-500/20 p-2 rounded-full">
+                    <CheckCircle className="w-6 h-6 text-purple-400" />
+                  </div>
                 </div>
+                <p className="text-xs text-purple-300 mt-2">Validación con datos del analista</p>
               </div>
               
               <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
@@ -686,7 +658,7 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
                       {resumen.empleados_afectados || 0}
                     </p>
                   </div>
-                  <span className="text-yellow-400 text-xl">👥</span>
+                  <span className="text-yellow-400 text-2xl">👥</span>
                 </div>
               </div>
             </div>

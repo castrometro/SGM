@@ -218,14 +218,48 @@ def guardar_registros_nomina_util(libro):
             try:
                 valor_raw = row.get(h)
                 
-                # Convertir todo a string y limpiar
+                # Procesamiento mejorado de valores (igual que en NovedadesRemuneraciones)
                 if pd.isna(valor_raw) or valor_raw == '':
                     valor = ""  # Valor vacío
                 else:
-                    valor = str(valor_raw).strip()
-                    # Si es "nan" como string, convertir a vacío
-                    if valor.lower() == 'nan':
-                        valor = ""
+                    # Si es un número, preservar su precisión original
+                    if isinstance(valor_raw, (int, float)):
+                        # Para números enteros, mantener sin decimales
+                        if isinstance(valor_raw, int) or (isinstance(valor_raw, float) and valor_raw.is_integer()):
+                            valor = str(int(valor_raw))
+                        else:
+                            # Para decimales, usar precisión limitada
+                            valor = f"{valor_raw:.2f}".rstrip('0').rstrip('.')
+                        
+                        # Log para valores numéricos grandes (posible problema)
+                        if isinstance(valor_raw, (int, float)) and abs(valor_raw) > 10000000:  # > 10 millones
+                            logger.debug(f"⚠️ Valor numérico grande detectado en '{h}' para RUT {rut}: {valor_raw} → {valor}")
+                    else:
+                        # Para strings, limpiar y validar
+                        valor = str(valor_raw).strip()
+                        # Si es "nan" como string, convertir a vacío
+                        if valor.lower() == 'nan':
+                            valor = ""
+                        # Intentar limpiar formato monetario si existe
+                        elif valor:
+                            # Remover símbolos de moneda y espacios
+                            valor_limpio = valor.replace('$', '').replace(',', '').replace('.', '').strip()
+                            # Si después de limpiar es un número válido, usar esa representación
+                            try:
+                                numero = float(valor_limpio) if '.' in valor else int(valor_limpio)
+                                if isinstance(numero, int) or numero.is_integer():
+                                    valor_final = str(int(numero))
+                                else:
+                                    valor_final = f"{numero:.2f}".rstrip('0').rstrip('.')
+                                
+                                # Log si hubo transformación significativa
+                                if valor != valor_final:
+                                    logger.debug(f"🔧 Valor transformado en '{h}' para RUT {rut}: '{valor}' → '{valor_final}'")
+                                valor = valor_final
+                                
+                            except (ValueError, TypeError):
+                                # Si no se puede convertir a número, mantener el valor original limpio
+                                pass
 
                 concepto = ConceptoRemuneracion.objects.filter(
                     cliente=libro.cierre.cliente, nombre_concepto=h, vigente=True

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { AlertTriangle, CheckCircle, Clock, XCircle, Eye, User, Calendar, UserCheck } from "lucide-react";
 import { obtenerIncidenciasCierre } from "../../../api/nomina";
+import { formatearMonedaChilena } from "../../../utils/formatters";
 import { useAuth } from "../../../hooks/useAuth";
 import { obtenerEstadoReal, ESTADOS_INCIDENCIA } from "../../../utils/incidenciaUtils";
 
@@ -334,7 +335,7 @@ const IncidenciasTable = ({ cierreId, filtros = {}, onIncidenciaSeleccionada }) 
                 <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300">
                   {incidencia.impacto_monetario ? (
                     <span className="font-medium">
-                      ${Number(incidencia.impacto_monetario).toLocaleString('es-CL')}
+                      {formatearMonedaChilena(incidencia.impacto_monetario)}
                     </span>
                   ) : (
                     '-'

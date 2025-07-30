@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { AlertOctagon, ChevronDown, ChevronRight, Play, Loader2, CheckCircle, AlertTriangle, Filter, Users, Eye, Lock, TrendingUp } from "lucide-react";
+import { formatearMonedaChilena } from "../../utils/formatters";
 import IncidenciasTable from "./IncidenciasEncontradas/IncidenciasTable";
 import ModalResolucionIncidencia from "./IncidenciasEncontradas/ModalResolucionIncidencia";
 import { 
@@ -1044,7 +1045,7 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActua
                     <div>
                       <p className="text-sm text-gray-400">Impacto Total</p>
                       <p className="text-lg font-bold text-white">
-                        ${Number(resumen.impacto_monetario_total || 0).toLocaleString('es-CL')}
+                        {formatearMonedaChilena(resumen.impacto_monetario_total || 0)}
                       </p>
                     </div>
                     <span className="text-green-400 text-xl">$</span>

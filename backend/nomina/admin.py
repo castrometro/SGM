@@ -241,9 +241,20 @@ CierreNominaAdmin.actions = [
 
 @admin.register(EmpleadoCierre)
 class EmpleadoCierreAdmin(admin.ModelAdmin):
-    list_display = ('rut', 'nombre', 'apellido_paterno', 'apellido_materno', 'rut_empresa', 'dias_trabajados', 'cierre')
-    search_fields = ('rut', 'nombre', 'apellido_paterno', 'apellido_materno')
-    list_filter = ('cierre__cliente', 'cierre__periodo')
+    list_display = ('rut', 'nombre', 'apellido_paterno', 'apellido_materno', 'rut_empresa', 'dias_trabajados', 'cierre_info', 'cierre_id_display')
+    search_fields = ('rut', 'nombre', 'apellido_paterno', 'apellido_materno', 'cierre__id')
+    list_filter = ('cierre__cliente', 'cierre__periodo', 'cierre__estado')
+    readonly_fields = ('cierre_id_display', 'cierre_info')
+    
+    def cierre_id_display(self, obj):
+        """Muestra el ID del cierre de forma clara"""
+        return f"ID: {obj.cierre.id}"
+    cierre_id_display.short_description = "Cierre ID"
+    
+    def cierre_info(self, obj):
+        """Muestra información completa del cierre"""
+        return f"{obj.cierre.cliente.nombre} - {obj.cierre.periodo} (ID: {obj.cierre.id})"
+    cierre_info.short_description = "Información del Cierre"
 
 
 @admin.register(ConceptoRemuneracion)
@@ -427,10 +438,20 @@ class AnalistaIngresoAdmin(admin.ModelAdmin):
 
 @admin.register(EmpleadoCierreNovedades)
 class EmpleadoCierreNovedadesAdmin(admin.ModelAdmin):
-    list_display = ('rut', 'nombre', 'apellido_paterno', 'apellido_materno', 'cierre')
-    search_fields = ('rut', 'nombre', 'apellido_paterno', 'apellido_materno')
-    list_filter = ('cierre__cliente', 'cierre__periodo')
-    readonly_fields = ('cierre',)
+    list_display = ('rut', 'nombre', 'apellido_paterno', 'apellido_materno', 'cierre_info', 'cierre_id_display')
+    search_fields = ('rut', 'nombre', 'apellido_paterno', 'apellido_materno', 'cierre__id')
+    list_filter = ('cierre__cliente', 'cierre__periodo', 'cierre__estado')
+    readonly_fields = ('cierre', 'cierre_id_display', 'cierre_info')
+    
+    def cierre_id_display(self, obj):
+        """Muestra el ID del cierre de forma clara"""
+        return f"ID: {obj.cierre.id}"
+    cierre_id_display.short_description = "Cierre ID"
+    
+    def cierre_info(self, obj):
+        """Muestra información completa del cierre"""
+        return f"{obj.cierre.cliente.nombre} - {obj.cierre.periodo} (ID: {obj.cierre.id})"
+    cierre_info.short_description = "Información del Cierre"
 
 
 @admin.register(ConceptoRemuneracionNovedades)
@@ -451,11 +472,21 @@ class ConceptoRemuneracionNovedadesAdmin(admin.ModelAdmin):
 
 @admin.register(RegistroConceptoEmpleadoNovedades)
 class RegistroConceptoEmpleadoNovedadesAdmin(admin.ModelAdmin):
-    list_display = ('empleado', 'concepto', 'nombre_concepto_original', 'monto', 'fecha_registro')
-    search_fields = ('empleado__rut', 'nombre_concepto_original')
-    list_filter = ('concepto__concepto_libro__clasificacion', 'concepto__activo', 'fecha_registro')
-    readonly_fields = ('fecha_registro',)
+    list_display = ('empleado_info', 'cierre_id_display', 'concepto', 'nombre_concepto_original', 'monto', 'fecha_registro')
+    search_fields = ('empleado__rut', 'empleado__nombre', 'nombre_concepto_original', 'empleado__cierre__id')
+    list_filter = ('concepto__concepto_libro__clasificacion', 'concepto__activo', 'fecha_registro', 'empleado__cierre__cliente')
+    readonly_fields = ('fecha_registro', 'empleado_info', 'cierre_id_display')
     date_hierarchy = 'fecha_registro'
+    
+    def empleado_info(self, obj):
+        """Información del empleado con RUT"""
+        return f"{obj.empleado.nombre} {obj.empleado.apellido_paterno} ({obj.empleado.rut})"
+    empleado_info.short_description = "Empleado"
+    
+    def cierre_id_display(self, obj):
+        """Muestra el ID del cierre desde el empleado"""
+        return f"ID: {obj.empleado.cierre.id}"
+    cierre_id_display.short_description = "Cierre ID"
 
 
 # ========== ADMINISTRACIÓN DE INCIDENCIAS ==========

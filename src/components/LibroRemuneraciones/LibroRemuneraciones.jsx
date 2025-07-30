@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { obtenerLibroRemuneraciones } from '../../api/nomina';
+import { formatearMonedaChilena } from '../../utils/formatters';
 import { 
   ArrowLeft, 
   Users, 
@@ -65,14 +66,7 @@ const LibroRemuneraciones = () => {
     : datos?.headers || [];
 
   const formatearMonto = (valor) => {
-    if (!valor) return '-';
-    const numero = parseFloat(valor.toString().replace(/[,$]/g, ''));
-    if (isNaN(numero)) return valor;
-    return new Intl.NumberFormat('es-CL', {
-      style: 'currency',
-      currency: 'CLP',
-      minimumFractionDigits: 0
-    }).format(numero);
+    return formatearMonedaChilena(valor);
   };
 
   const esMontoNumerico = (valor) => {

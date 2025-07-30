@@ -16,11 +16,12 @@
 
 ## 🎯 Resumen Ejecutivo
 
-El **Sistema Paralelo de Generación de Discrepancias** es una arquitectura avanzada que procesa la verificación de datos de nómina utilizando **Celery Chord** para ejecutar múltiples comparaciones simultáneamente, optimizando el tiempo de procesamiento y garantizando la integridad de los datos.
+El **Sistema Paralelo de Generación de Discrepancias** es una arquitectura avanzada de **reconciliación de datos** que mapea diferencias entre fuentes heterogéneas (Talana vs Analista) utilizando **Celery Chord** para ejecutar múltiples comparaciones simultáneamente, preparando un dataset limpio para el procesamiento de nómina.
 
 ### ⚡ Características Principales:
 - **Procesamiento Paralelo**: 2 chunks simultáneos usando Celery Chord
-- **Detección Inteligente**: Solo reporta discrepancias accionables
+- **Mapeo Exhaustivo**: Detecta TODAS las diferencias entre fuentes de datos
+- **Reconciliación Inteligente**: Categoriza y clasifica tipos de discrepancias
 - **Escalabilidad**: Aprovecha múltiples workers de Celery
 - **Robustez**: Sistema de consolidación y manejo de errores
 - **Trazabilidad**: Logging detallado en cada etapa
@@ -740,9 +741,9 @@ URL: http://localhost:5555
 - Peak concurrency: 6 workers
 ```
 
-### **Alertas y Notificaciones**
+### **Logging de Reconciliación de Datos**
 ```python
-# Sistema de alertas personalizadas
+# Sistema de logging especializado para reconciliación
 LOGGING = {
     'handlers': {
         'discrepancias_handler': {
@@ -755,10 +756,17 @@ LOGGING = {
     }
 }
 
-# Alertas críticas
-if total_discrepancias > 50:
-    logger.critical(f"🚨 ALERTA: {total_discrepancias} discrepancias en cierre {cierre_id}")
-    # Enviar notificación por email/Slack
+# Log de estadísticas de reconciliación
+logger.info(f"📊 Reconciliación completada para cierre {cierre_id}")
+logger.info(f"📋 Diferencias mapeadas: {total_discrepancias}")
+logger.info(f"🔄 Datos listos para consolidación")
+```
+
+**Propósito del Logging:**
+- ✅ **Documentar el proceso de mapeo** entre fuentes de datos
+- ✅ **Facilitar auditorías** de reconciliación  
+- ✅ **Proporcionar métricas** de calidad de datos
+- ✅ **Apoyar la optimización** del proceso de limpieza
 ```
 
 ---
@@ -809,16 +817,17 @@ if total_discrepancias > 50:
 
 ## 🔚 Conclusión
 
-El **Sistema Paralelo de Generación de Discrepancias** representa una solución arquitectónica robusta que:
+El **Sistema Paralelo de Generación de Discrepancias** representa una solución arquitectónica robusta de **reconciliación de datos** que:
 
+✅ **Mapea exhaustivamente** todas las diferencias entre fuentes heterogéneas
 ✅ **Optimiza el rendimiento** mediante procesamiento paralelo  
-✅ **Garantiza la integridad** con validaciones cruzadas  
+✅ **Garantiza completitud** en la detección de variaciones de datos
 ✅ **Escala horizontalmente** agregando más workers  
-✅ **Proporciona trazabilidad** completa del proceso  
+✅ **Proporciona trazabilidad** completa del proceso de reconciliación
 ✅ **Maneja errores graciosamente** con estados de seguridad  
 ✅ **Facilita el monitoreo** con logs detallados y métricas
 
-Este sistema es la base para el flujo de verificación de datos de nómina, permitiendo detectar inconsistencias críticas antes de proceder con la consolidación de información.
+Este sistema es la **base preparatoria** para el flujo de nómina, permitiendo limpiar y reconciliar datos heterogéneos antes de proceder con la consolidación y procesamiento real de nóminas.
 
 ---
 

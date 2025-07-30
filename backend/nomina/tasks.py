@@ -28,6 +28,28 @@ import json
 logger = logging.getLogger(__name__)
 
 
+def calcular_chunk_size_dinamico(empleados_count):
+    """
+    🧮 Calcula el tamaño de chunk óptimo basado en el número de empleados
+    
+    Args:
+        empleados_count: Número total de empleados a procesar
+        
+    Returns:
+        int: Tamaño de chunk optimizado
+    """
+    if empleados_count <= 50:
+        return 25  # Chunks pequeños para pocos empleados
+    elif empleados_count <= 200:
+        return 50  # Chunks medianos para empresas pequeñas-medianas
+    elif empleados_count <= 500:
+        return 100  # Chunks grandes para empresas medianas
+    elif empleados_count <= 1000:
+        return 150  # Chunks muy grandes para empresas grandes
+    else:
+        return 200  # Chunks extremos para corporaciones
+
+
 @shared_task
 def analizar_headers_libro_remuneraciones(libro_id):
     logger.info(f"Procesando libro de remuneraciones id={libro_id}")
@@ -1189,7 +1211,671 @@ def generar_incidencias_consolidadas_task(cierre_id):
 
 
 @shared_task
-def consolidar_datos_nomina_task(cierre_id):
+def consolidar_datos_nomina_task_optimizado(cierre_id):
+    """
+    🚀 TAREA OPTIMIZADA: CONSOLIDACIÓN DE DATOS DE NÓMINA CON CELERY CHORD
+    
+    Utiliza paralelización para optimizar el proceso de consolidación:
+    1. Ejecuta tareas en paralelo usando chord
+    2. Consolida resultados al final
+    3. Reduce significativamente el tiempo de procesamiento
+    """
+    import logging
+    from django.utils import timezone
+    from celery import chord
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"🚀 Iniciando consolidación OPTIMIZADA de datos para cierre {cierre_id}")
+    
+    try:
+        # 1. VERIFICAR PRERREQUISITOS
+        from .models import CierreNomina, NominaConsolidada, HeaderValorEmpleado, MovimientoPersonal
+        
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        logger.info(f"📋 Cierre obtenido: {cierre} - Estado: {cierre.estado}")
+        
+        # Verificar estado
+        if cierre.estado not in ['verificado_sin_discrepancias', 'datos_consolidados']:
+            raise ValueError(f"El cierre debe estar en 'verificado_sin_discrepancias' o 'datos_consolidados', actual: {cierre.estado}")
+        
+        # Cambiar estado a procesando
+        cierre.estado = 'consolidando'
+        cierre.save(update_fields=['estado'])
+        
+        # 2. VERIFICAR ARCHIVOS PROCESADOS
+        libro = cierre.libros_remuneraciones.filter(estado='procesado').first()
+        movimientos = cierre.movimientos_mes.filter(estado='procesado').first()
+        
+        if not libro:
+            raise ValueError("No hay libro de remuneraciones procesado")
+        if not movimientos:
+            raise ValueError("No hay archivo de movimientos procesado")
+            
+        logger.info(f"📚 Libro: {libro.archivo.name}")
+        logger.info(f"🔄 Movimientos: {movimientos.archivo.name}")
+        
+        # 3. LIMPIAR CONSOLIDACIÓN ANTERIOR (SI EXISTE)
+        consolidaciones_eliminadas = cierre.nomina_consolidada.count()
+        if consolidaciones_eliminadas > 0:
+            logger.info(f"🗑️ Eliminando {consolidaciones_eliminadas} registros de consolidación anterior...")
+            # Limpiar también MovimientoPersonal relacionados
+            movimientos_eliminados = MovimientoPersonal.objects.filter(nomina_consolidada__cierre=cierre).count()
+            MovimientoPersonal.objects.filter(nomina_consolidada__cierre=cierre).delete()
+            
+            cierre.nomina_consolidada.all().delete()
+            logger.info(f"✅ {consolidaciones_eliminadas} registros de consolidación anterior eliminados exitosamente")
+            logger.info(f"✅ {movimientos_eliminados} movimientos de personal anteriores eliminados exitosamente")
+        else:
+            logger.info("ℹ️ No hay consolidación anterior que eliminar")
+        
+        # 3.5. CÁLCULO DINÁMICO DE CHUNKS
+        from .models import EmpleadoCierre
+        empleados_count = EmpleadoCierre.objects.filter(cierre=cierre).count()
+        chunk_size = calcular_chunk_size_dinamico(empleados_count)
+        logger.info(f"📊 Procesando {empleados_count} empleados con chunk size dinámico: {chunk_size}")
+        
+        # 4. INICIAR PROCESAMIENTO PARALELO CON CHORD
+        logger.info("🎯 Iniciando procesamiento paralelo con Celery Chord...")
+        
+        # Definir el chord con tareas paralelas
+        chord_procesamiento = chord([
+            procesar_empleados_libro_paralelo.s(cierre_id, chunk_size),
+            procesar_movimientos_personal_paralelo.s(cierre_id),
+            procesar_conceptos_consolidados_paralelo.s(cierre_id)
+        ])(consolidar_resultados_finales.s(cierre_id))
+        
+        logger.info(f"📊 Chord de consolidación iniciado para cierre {cierre_id}")
+        logger.info(f"🔗 Chord ID: {chord_procesamiento}")
+        
+        return {
+            'success': True,
+            'cierre_id': cierre_id,
+            'chord_id': str(chord_procesamiento),
+            'modo': 'optimizado_paralelo',
+            'timestamp': timezone.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error en consolidación optimizada para cierre {cierre_id}: {e}")
+        
+        # Revertir estado en caso de error
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            cierre.estado = 'verificado_sin_discrepancias'
+            cierre.save(update_fields=['estado'])
+        except:
+            pass
+            
+        return {
+            'success': False,
+            'error': str(e),
+            'cierre_id': cierre_id,
+            'modo': 'optimizado_paralelo'
+        }
+
+
+@shared_task
+def procesar_empleados_libro_paralelo(cierre_id, chunk_size=50):
+    """
+    📚 TAREA PARALELA: Procesar empleados del libro de remuneraciones
+    
+    Args:
+        cierre_id: ID del cierre a procesar
+        chunk_size: Tamaño dinámico de chunks para optimizar el procesamiento
+    """
+    import logging
+    from django.utils import timezone
+    from decimal import Decimal, InvalidOperation
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"📚 [PARALELO] Procesando empleados del libro para cierre {cierre_id} (chunk_size: {chunk_size})")
+    
+    try:
+        from .models import CierreNomina, NominaConsolidada, HeaderValorEmpleado
+        
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        libro = cierre.libros_remuneraciones.filter(estado='procesado').first()
+        
+        if not libro:
+            raise ValueError("No hay libro de remuneraciones procesado")
+        
+        empleados_consolidados = 0
+        headers_consolidados = 0
+        
+        # Procesar empleados del libro en lotes para optimizar
+        empleados = cierre.empleados.all()
+        total_empleados = empleados.count()
+        logger.info(f"👥 Procesando {total_empleados} empleados en lotes (chunk_size: {chunk_size})")
+        
+        # Procesar en lotes usando el chunk_size dinámico
+        for i in range(0, total_empleados, chunk_size):
+            batch_empleados = empleados[i:i + chunk_size]
+            
+            # Crear registros de nómina consolidada en lote
+            nominas_batch = []
+            headers_batch = []
+            
+            for empleado in batch_empleados:
+                # Crear registro de nómina consolidada
+                nomina_consolidada = NominaConsolidada(
+                    cierre=cierre,
+                    rut_empleado=empleado.rut,
+                    nombre_empleado=f"{empleado.nombre} {empleado.apellido_paterno} {empleado.apellido_materno}".strip(),
+                    estado_empleado='activo',
+                    dias_trabajados=empleado.dias_trabajados,
+                    fecha_consolidacion=timezone.now(),
+                    fuente_datos={
+                        'libro_id': libro.id,
+                        'consolidacion_version': '2.0_optimizada',
+                        'procesamiento': 'paralelo'
+                    }
+                )
+                nominas_batch.append(nomina_consolidada)
+            
+            # Bulk create nóminas
+            NominaConsolidada.objects.bulk_create(nominas_batch)
+            empleados_consolidados += len(nominas_batch)
+            
+            # Procesar headers para este lote
+            for j, empleado in enumerate(batch_empleados):
+                nomina_consolidada = nominas_batch[j]
+                # Necesitamos obtener el ID después del bulk_create
+                nomina_consolidada = NominaConsolidada.objects.get(
+                    cierre=cierre, 
+                    rut_empleado=empleado.rut
+                )
+                
+                # Crear HeaderValorEmpleado para cada concepto
+                conceptos_empleado = empleado.registroconceptoempleado_set.all()
+                
+                for concepto in conceptos_empleado:
+                    # Determinar si es numérico
+                    valor_numerico = None
+                    es_numerico = False
+                    
+                    if concepto.monto:
+                        try:
+                            # Limpiar el valor mejorado
+                            valor_limpio = str(concepto.monto).replace('$', '').replace(',', '').strip()
+                            if valor_limpio and (valor_limpio.replace('-', '').replace('.', '').isdigit()):
+                                valor_numerico = Decimal(valor_limpio)
+                                es_numerico = True
+                        except (ValueError, InvalidOperation, AttributeError):
+                            pass
+                    
+                    # Crear registro HeaderValorEmpleado
+                    header = HeaderValorEmpleado(
+                        nomina_consolidada=nomina_consolidada,
+                        nombre_header=concepto.nombre_concepto_original,
+                        concepto_remuneracion=concepto.concepto,
+                        valor_original=concepto.monto or '',
+                        valor_numerico=valor_numerico,
+                        es_numerico=es_numerico,
+                        fuente_archivo='libro_remuneraciones',
+                        fecha_consolidacion=timezone.now()
+                    )
+                    headers_batch.append(header)
+            
+            # Bulk create headers cada cierto número para evitar memoria excesiva
+            if len(headers_batch) >= 500:
+                HeaderValorEmpleado.objects.bulk_create(headers_batch)
+                headers_consolidados += len(headers_batch)
+                headers_batch = []
+                
+            logger.info(f"📊 Progreso: {empleados_consolidados}/{total_empleados} empleados procesados")
+        
+        # Insertar headers restantes
+        if headers_batch:
+            HeaderValorEmpleado.objects.bulk_create(headers_batch)
+            headers_consolidados += len(headers_batch)
+        
+        logger.info(f"✅ [PARALELO] Empleados procesados: {empleados_consolidados}, Headers: {headers_consolidados}")
+        
+        return {
+            'success': True,
+            'task': 'procesar_empleados_libro',
+            'empleados_consolidados': empleados_consolidados,
+            'headers_consolidados': headers_consolidados,
+            'cierre_id': cierre_id
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ [PARALELO] Error procesando empleados para cierre {cierre_id}: {e}")
+        return {
+            'success': False,
+            'task': 'procesar_empleados_libro',
+            'error': str(e),
+            'cierre_id': cierre_id
+        }
+
+
+@shared_task
+def procesar_movimientos_personal_paralelo(cierre_id):
+    """
+    🔄 TAREA PARALELA: Procesar movimientos de personal
+    """
+    import logging
+    from django.utils import timezone
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"🔄 [PARALELO] Procesando movimientos de personal para cierre {cierre_id}")
+    
+    try:
+        from .models import (
+            CierreNomina, NominaConsolidada, MovimientoPersonal,
+            MovimientoAltaBaja, MovimientoAusentismo, MovimientoVacaciones,
+            MovimientoVariacionSueldo, MovimientoVariacionContrato
+        )
+        
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        movimientos_creados = 0
+        
+        # Crear lista para bulk_create
+        movimientos_batch = []
+        
+        # 1. Procesar ALTAS y BAJAS
+        altas_bajas = MovimientoAltaBaja.objects.filter(cierre=cierre)
+        logger.info(f"📊 Procesando {altas_bajas.count()} movimientos de altas/bajas")
+        
+        for movimiento in altas_bajas:
+            try:
+                nomina_consolidada = NominaConsolidada.objects.get(
+                    cierre=cierre, 
+                    rut_empleado=movimiento.rut
+                )
+                
+                # Actualizar estado del empleado
+                if movimiento.alta_o_baja == 'ALTA':
+                    nomina_consolidada.estado_empleado = 'nueva_incorporacion'
+                elif movimiento.alta_o_baja == 'BAJA':
+                    nomina_consolidada.estado_empleado = 'finiquito'
+                
+                nomina_consolidada.save(update_fields=['estado_empleado'])
+                
+                # Crear MovimientoPersonal
+                mov_personal = MovimientoPersonal(
+                    nomina_consolidada=nomina_consolidada,
+                    tipo_movimiento='ingreso' if movimiento.alta_o_baja == 'ALTA' else 'finiquito',
+                    motivo=movimiento.motivo,
+                    fecha_movimiento=movimiento.fecha_ingreso if movimiento.alta_o_baja == 'ALTA' else movimiento.fecha_retiro,
+                    observaciones=f"Tipo contrato: {movimiento.tipo_contrato}, Sueldo base: ${movimiento.sueldo_base:,.0f}",
+                    fecha_deteccion=timezone.now(),
+                    detectado_por_sistema='consolidacion_paralela_v2'
+                )
+                movimientos_batch.append(mov_personal)
+                
+            except NominaConsolidada.DoesNotExist:
+                # Crear empleado si no existe (caso de finiquitos)
+                if movimiento.alta_o_baja == 'BAJA':
+                    nomina_consolidada = NominaConsolidada.objects.create(
+                        cierre=cierre,
+                        rut_empleado=movimiento.rut,
+                        nombre_empleado=movimiento.nombres_apellidos,
+                        estado_empleado='finiquito',
+                        fecha_consolidacion=timezone.now(),
+                        fuente_datos={'movimiento_finiquito': True}
+                    )
+                    
+                    mov_personal = MovimientoPersonal(
+                        nomina_consolidada=nomina_consolidada,
+                        tipo_movimiento='finiquito',
+                        motivo=movimiento.motivo,
+                        fecha_movimiento=movimiento.fecha_retiro,
+                        fecha_deteccion=timezone.now(),
+                        detectado_por_sistema='consolidacion_paralela_v2'
+                    )
+                    movimientos_batch.append(mov_personal)
+        
+        # 2. Procesar AUSENTISMOS
+        ausentismos = MovimientoAusentismo.objects.filter(cierre=cierre)
+        logger.info(f"📊 Procesando {ausentismos.count()} movimientos de ausentismo")
+        
+        for ausentismo in ausentismos:
+            try:
+                nomina_consolidada = NominaConsolidada.objects.get(
+                    cierre=cierre, 
+                    rut_empleado=ausentismo.rut
+                )
+                
+                # Actualizar estado si es ausencia total
+                if ausentismo.dias >= 30:
+                    nomina_consolidada.estado_empleado = 'ausente_total'
+                    nomina_consolidada.dias_ausencia = ausentismo.dias
+                else:
+                    nomina_consolidada.estado_empleado = 'ausente_parcial'
+                    nomina_consolidada.dias_ausencia = ausentismo.dias
+                
+                nomina_consolidada.save(update_fields=['estado_empleado', 'dias_ausencia'])
+                
+                mov_personal = MovimientoPersonal(
+                    nomina_consolidada=nomina_consolidada,
+                    tipo_movimiento='ausentismo',
+                    motivo=f"{ausentismo.tipo} - {ausentismo.motivo}",
+                    dias_ausencia=ausentismo.dias,
+                    fecha_movimiento=ausentismo.fecha_inicio_ausencia,
+                    observaciones=f"Desde: {ausentismo.fecha_inicio_ausencia} hasta: {ausentismo.fecha_fin_ausencia}",
+                    fecha_deteccion=timezone.now(),
+                    detectado_por_sistema='consolidacion_paralela_v2'
+                )
+                movimientos_batch.append(mov_personal)
+                
+            except NominaConsolidada.DoesNotExist:
+                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {ausentismo.rut} en ausentismo")
+                continue
+        
+        # 3. Procesar VACACIONES
+        vacaciones = MovimientoVacaciones.objects.filter(cierre=cierre)
+        logger.info(f"📊 Procesando {vacaciones.count()} movimientos de vacaciones")
+        
+        for vacacion in vacaciones:
+            try:
+                nomina_consolidada = NominaConsolidada.objects.get(
+                    cierre=cierre, 
+                    rut_empleado=vacacion.rut
+                )
+                
+                mov_personal = MovimientoPersonal(
+                    nomina_consolidada=nomina_consolidada,
+                    tipo_movimiento='ausentismo',
+                    motivo='Vacaciones',
+                    dias_ausencia=vacacion.cantidad_dias,
+                    fecha_movimiento=vacacion.fecha_inicio,
+                    observaciones=f"Vacaciones desde: {vacacion.fecha_inicio} hasta: {vacacion.fecha_fin_vacaciones}",
+                    fecha_deteccion=timezone.now(),
+                    detectado_por_sistema='consolidacion_paralela_v2'
+                )
+                movimientos_batch.append(mov_personal)
+                
+            except NominaConsolidada.DoesNotExist:
+                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {vacacion.rut} en vacaciones")
+                continue
+        
+        # Bulk create movimientos en lotes
+        if movimientos_batch:
+            batch_size = 100
+            for i in range(0, len(movimientos_batch), batch_size):
+                batch = movimientos_batch[i:i + batch_size]
+                MovimientoPersonal.objects.bulk_create(batch)
+                movimientos_creados += len(batch)
+        
+        logger.info(f"✅ [PARALELO] Movimientos de personal procesados: {movimientos_creados}")
+        
+        return {
+            'success': True,
+            'task': 'procesar_movimientos_personal',
+            'movimientos_creados': movimientos_creados,
+            'cierre_id': cierre_id
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ [PARALELO] Error procesando movimientos para cierre {cierre_id}: {e}")
+        return {
+            'success': False,
+            'task': 'procesar_movimientos_personal',
+            'error': str(e),
+            'cierre_id': cierre_id
+        }
+
+
+@shared_task
+def procesar_conceptos_consolidados_paralelo(cierre_id):
+    """
+    💰 TAREA PARALELA: Procesar conceptos consolidados y calcular totales
+    """
+    import logging
+    from django.utils import timezone
+    from decimal import Decimal
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"💰 [PARALELO] Procesando conceptos consolidados para cierre {cierre_id}")
+    
+    try:
+        from .models import CierreNomina, NominaConsolidada, HeaderValorEmpleado, ConceptoConsolidado
+        
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        conceptos_consolidados = 0
+        
+        # Obtener todas las nóminas consolidadas
+        nominas = NominaConsolidada.objects.filter(cierre=cierre).prefetch_related(
+            'headers_valores__concepto_remuneracion'
+        )
+        
+        conceptos_batch = []
+        
+        logger.info(f"📊 Procesando conceptos para {nominas.count()} empleados")
+        
+        for nomina_consolidada in nominas:
+            # Obtener todos los headers para este empleado
+            headers_empleado = nomina_consolidada.headers_valores.filter(
+                es_numerico=True,
+                concepto_remuneracion__isnull=False
+            )
+            
+            total_haberes = Decimal('0')
+            total_descuentos = Decimal('0')
+            
+            # Agrupar por concepto y sumar
+            conceptos_agrupados = {}
+            
+            for header in headers_empleado:
+                concepto_nombre = header.concepto_remuneracion.nombre_concepto
+                clasificacion = header.concepto_remuneracion.clasificacion
+                
+                if concepto_nombre not in conceptos_agrupados:
+                    conceptos_agrupados[concepto_nombre] = {
+                        'clasificacion': clasificacion,
+                        'monto_total': Decimal('0'),
+                        'cantidad': 0,
+                        'concepto_obj': header.concepto_remuneracion
+                    }
+                
+                conceptos_agrupados[concepto_nombre]['monto_total'] += header.valor_numerico
+                conceptos_agrupados[concepto_nombre]['cantidad'] += 1
+                
+                # Sumar a haberes o descuentos según clasificación
+                if clasificacion in ['haberes_imponibles', 'haberes_no_imponibles', 'horas_extras']:
+                    total_haberes += header.valor_numerico
+                elif clasificacion in ['descuentos_legales', 'otros_descuentos']:
+                    total_descuentos += header.valor_numerico
+            
+            # Crear ConceptoConsolidado para cada concepto agrupado
+            for concepto_nombre, datos in conceptos_agrupados.items():
+                # Mapear clasificación a tipo_concepto
+                clasificacion_mapping = {
+                    'haberes_imponibles': 'haber_imponible',
+                    'haberes_no_imponibles': 'haber_no_imponible',
+                    'descuentos_legales': 'descuento_legal',
+                    'otros_descuentos': 'otro_descuento'
+                }
+                
+                tipo_concepto = clasificacion_mapping.get(datos['clasificacion'], 'informativo')
+                codigo_concepto = str(datos['concepto_obj'].id) if datos['concepto_obj'] else None
+                
+                concepto_consolidado = ConceptoConsolidado(
+                    nomina_consolidada=nomina_consolidada,
+                    codigo_concepto=codigo_concepto,
+                    nombre_concepto=concepto_nombre,
+                    tipo_concepto=tipo_concepto,
+                    monto_total=datos['monto_total'],
+                    cantidad=datos['cantidad'],
+                    es_numerico=True,
+                    fuente_archivo='libro_remuneraciones'
+                )
+                conceptos_batch.append(concepto_consolidado)
+            
+            # Actualizar totales en la nómina consolidada
+            nomina_consolidada.total_haberes = total_haberes
+            nomina_consolidada.total_descuentos = total_descuentos
+            nomina_consolidada.liquido_pagar = total_haberes - total_descuentos
+            nomina_consolidada.save(update_fields=['total_haberes', 'total_descuentos', 'liquido_pagar'])
+        
+        # Bulk create conceptos
+        if conceptos_batch:
+            batch_size = 200
+            for i in range(0, len(conceptos_batch), batch_size):
+                batch = conceptos_batch[i:i + batch_size]
+                ConceptoConsolidado.objects.bulk_create(batch)
+                conceptos_consolidados += len(batch)
+        
+        logger.info(f"✅ [PARALELO] Conceptos consolidados procesados: {conceptos_consolidados}")
+        
+        return {
+            'success': True,
+            'task': 'procesar_conceptos_consolidados',
+            'conceptos_consolidados': conceptos_consolidados,
+            'cierre_id': cierre_id
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ [PARALELO] Error procesando conceptos para cierre {cierre_id}: {e}")
+        return {
+            'success': False,
+            'task': 'procesar_conceptos_consolidados',
+            'error': str(e),
+            'cierre_id': cierre_id
+        }
+
+
+@shared_task
+def consolidar_resultados_finales(resultados_paralelos, cierre_id):
+    """
+    🎯 TAREA FINAL: Consolidar resultados de todas las tareas paralelas
+    """
+    import logging
+    from django.utils import timezone
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"🎯 [FINAL] Consolidando resultados finales para cierre {cierre_id}")
+    
+    try:
+        from .models import CierreNomina
+        
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        # Procesar resultados de todas las tareas paralelas
+        empleados_consolidados = 0
+        headers_consolidados = 0
+        movimientos_creados = 0
+        conceptos_consolidados = 0
+        
+        errores = []
+        tareas_exitosas = 0
+        
+        for resultado in resultados_paralelos:
+            if resultado.get('success', False):
+                tareas_exitosas += 1
+                task_name = resultado.get('task', 'unknown')
+                
+                if task_name == 'procesar_empleados_libro':
+                    empleados_consolidados = resultado.get('empleados_consolidados', 0)
+                    headers_consolidados = resultado.get('headers_consolidados', 0)
+                elif task_name == 'procesar_movimientos_personal':
+                    movimientos_creados = resultado.get('movimientos_creados', 0)
+                elif task_name == 'procesar_conceptos_consolidados':
+                    conceptos_consolidados = resultado.get('conceptos_consolidados', 0)
+                    
+                logger.info(f"✅ Tarea {task_name} completada exitosamente")
+            else:
+                error = resultado.get('error', 'Error desconocido')
+                task_name = resultado.get('task', 'unknown')
+                errores.append(f"{task_name}: {error}")
+                logger.error(f"❌ Error en tarea {task_name}: {error}")
+        
+        # Verificar si todas las tareas fueron exitosas
+        if len(errores) > 0:
+            logger.error(f"❌ Consolidación falló. Errores en {len(errores)} tareas:")
+            for error in errores:
+                logger.error(f"  - {error}")
+            
+            # Cambiar estado a error
+            cierre.estado = 'error_consolidacion'
+            cierre.save(update_fields=['estado'])
+            
+            return {
+                'success': False,
+                'cierre_id': cierre_id,
+                'errores': errores,
+                'tareas_exitosas': tareas_exitosas,
+                'total_tareas': len(resultados_paralelos)
+            }
+        
+        # FINALIZAR CONSOLIDACIÓN EXITOSA
+        cierre.estado = 'datos_consolidados'
+        cierre.fecha_consolidacion = timezone.now()
+        cierre.save(update_fields=['estado', 'fecha_consolidacion'])
+        
+        logger.info(f"✅ [FINAL] Consolidación OPTIMIZADA completada exitosamente:")
+        logger.info(f"   📊 {empleados_consolidados} empleados consolidados")
+        logger.info(f"   📋 {headers_consolidados} headers-valores creados")
+        logger.info(f"   🔄 {movimientos_creados} movimientos de personal creados")
+        logger.info(f"   💰 {conceptos_consolidados} conceptos consolidados creados")
+        logger.info(f"   ⚡ Todas las tareas ejecutadas en PARALELO")
+        
+        return {
+            'success': True,
+            'cierre_id': cierre_id,
+            'modo': 'optimizado_paralelo',
+            'empleados_consolidados': empleados_consolidados,
+            'headers_consolidados': headers_consolidados,
+            'movimientos_creados': movimientos_creados,
+            'conceptos_consolidados': conceptos_consolidados,
+            'tareas_exitosas': tareas_exitosas,
+            'tiempo_finalizacion': timezone.now().isoformat(),
+            'nuevo_estado': cierre.estado
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ [FINAL] Error crítico consolidando resultados para cierre {cierre_id}: {e}")
+        
+        # Revertir estado en caso de error crítico
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            cierre.estado = 'verificado_sin_discrepancias'
+            cierre.save(update_fields=['estado'])
+        except:
+            pass
+            
+        return {
+            'success': False,
+            'error': str(e),
+            'cierre_id': cierre_id,
+            'modo': 'optimizado_paralelo'
+        }
+
+
+@shared_task
+def consolidar_datos_nomina_task(cierre_id, modo='optimizado'):
+    """
+    🔄 TAREA: CONSOLIDACIÓN DE DATOS DE NÓMINA
+    
+    Ahora con soporte para dos modos:
+    - 'optimizado': Usa Celery Chord para procesamiento paralelo (RECOMENDADO)
+    - 'secuencial': Versión original con procesamiento secuencial
+    
+    Toma un cierre en estado 'verificado_sin_discrepancias' y:
+    1. Lee los archivos procesados (Libro, Movimientos, Analista)
+    2. Genera registros de NominaConsolidada
+    3. Genera registros de HeaderValorEmpleado (mapeo 1:1 Excel)
+    4. Genera registros de MovimientoPersonal
+    5. Cambia estado a 'datos_consolidados'
+    """
+    import logging
+    from django.utils import timezone
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"🔄 Iniciando consolidación de datos para cierre {cierre_id} - Modo: {modo}")
+    
+    # Elegir versión según el modo
+    if modo == 'optimizado':
+        logger.info("🚀 Usando versión OPTIMIZADA con Celery Chord")
+        return consolidar_datos_nomina_task_optimizado(cierre_id)
+    else:
+        logger.info("⏳ Usando versión SECUENCIAL (original)")
+        return consolidar_datos_nomina_task_secuencial(cierre_id)
+
+
+@shared_task
+def consolidar_datos_nomina_task_secuencial(cierre_id):
     """
     🔄 TAREA: CONSOLIDACIÓN DE DATOS DE NÓMINA
     

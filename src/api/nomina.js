@@ -577,12 +577,6 @@ export const obtenerEstadoDiscrepanciasCierre = async (cierreId) => {
   return response.data;
 };
 
-// Vista previa de discrepancias (sin guardar)
-export const previewDiscrepanciasCierre = async (cierreId) => {
-  const response = await api.get(`/nomina/discrepancias/preview/${cierreId}/`);
-  return response.data;
-};
-
 // Limpiar discrepancias de un cierre
 export const limpiarDiscrepanciasCierre = async (cierreId) => {
   const response = await api.delete(`/nomina/discrepancias/limpiar/${cierreId}/`);

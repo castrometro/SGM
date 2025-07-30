@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { FileText, Users, Calendar, CheckCircle, Download, Eye, ChevronDown, ChevronRight, Database, UserCheck, ExternalLink } from "lucide-react";
+import { formatearMonedaChilena } from "../../utils/formatters";
 import { 
   obtenerLibroRemuneraciones,
   obtenerEstadoLibroRemuneraciones,
@@ -377,21 +378,21 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
                 <div className="text-center p-4 bg-gray-700 rounded-lg">
                   <p className="text-sm text-gray-400 mb-1">Total Haberes</p>
                   <p className="text-xl font-bold text-green-400">
-                    ${archivosUsados.resumen_libro.total_haberes?.toLocaleString('es-CL') || '0'}
+                    {formatearMonedaChilena(archivosUsados.resumen_libro.total_haberes)}
                   </p>
                 </div>
                 
                 <div className="text-center p-4 bg-gray-700 rounded-lg">
                   <p className="text-sm text-gray-400 mb-1">Total Descuentos</p>
                   <p className="text-xl font-bold text-red-400">
-                    ${archivosUsados.resumen_libro.total_descuentos?.toLocaleString('es-CL') || '0'}
+                    {formatearMonedaChilena(archivosUsados.resumen_libro.total_descuentos)}
                   </p>
                 </div>
                 
                 <div className="text-center p-4 bg-gray-700 rounded-lg">
                   <p className="text-sm text-gray-400 mb-1">Líquido Total</p>
                   <p className="text-xl font-bold text-blue-400">
-                    ${archivosUsados.resumen_libro.liquido_total?.toLocaleString('es-CL') || '0'}
+                    {formatearMonedaChilena(archivosUsados.resumen_libro.liquido_total)}
                   </p>
                 </div>
               </div>

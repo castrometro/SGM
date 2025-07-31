@@ -2,6 +2,7 @@ import streamlit as st
 from layout.sidebar import mostrar_sidebar
 from layout.header import mostrar_header
 from data.loader import cargar_datos
+from data.loader_nomina import cargar_datos_redis, obtener_info_redis_completa
 from views import dashboard_general
 
 st.set_page_config(layout="wide", page_title="SGM - Dashboard Nómina", page_icon="💼")
@@ -11,12 +12,44 @@ if st.session_state.get('scroll_to_top', False):
     top_placeholder = st.empty()
     top_placeholder.markdown("")
 
-selected_tab = mostrar_sidebar()
+# Sidebar con selección de fuente de datos
+selected_tab, selected_config = mostrar_sidebar()
 
-if 'data' in st.session_state:
-    data = st.session_state.data
+# Determinar qué datos cargar según la configuración
+if selected_config and selected_config.get('fuente') == 'redis':
+    # Cargar desde Redis
+    cliente_id = selected_config.get('cliente_id', 6)
+    periodo = selected_config.get('periodo', '2025-03')
+    
+    # Mostrar información de Redis
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.info(f"📡 **Fuente:** Redis DB2 | **Cliente:** {cliente_id} | **Período:** {periodo}")
+    with col2:
+        if st.button("🔄 Recargar desde Redis"):
+            st.session_state.pop('data', None)
+            st.rerun()
+    
+    # Cargar datos desde Redis
+    if 'data' not in st.session_state or st.session_state.get('last_config') != selected_config:
+        with st.spinner(f"🔍 Cargando datos desde Redis..."):
+            data = cargar_datos_redis(cliente_id=cliente_id, periodo=periodo)
+            if data:
+                st.session_state.data = data
+                st.session_state.last_config = selected_config
+                st.success(f"✅ Datos cargados desde Redis: {data.get('cliente_nombre')} - {periodo}")
+            else:
+                st.error(f"❌ No se encontraron datos en Redis para cliente {cliente_id}, período {periodo}")
+                st.info("💡 **Posibles soluciones:**\n- Verifica que el cierre esté finalizado\n- Confirma que los datos estén en Redis DB2")
+                st.stop()
+    else:
+        data = st.session_state.data
 else:
-    data = cargar_datos()
+    # Cargar desde archivos locales (comportamiento original)
+    if 'data' in st.session_state:
+        data = st.session_state.data
+    else:
+        data = cargar_datos()
 
 if not data:
     st.error("🚨 No se pudieron cargar los datos")

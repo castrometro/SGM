@@ -64,6 +64,16 @@ from .views_informes import (
     listar_informes_cliente,
 )
 
+# Importar views de Redis
+from .views_redis import (
+    enviar_informe_redis,
+    obtener_informe_redis,
+    estadisticas_redis,
+    limpiar_cache_cliente,
+    listar_informes_redis,
+    health_check_redis,
+)
+
 from django.urls import path
 from django.conf import settings
 from django.views.static import serve
@@ -219,4 +229,12 @@ urlpatterns = router.urls + [
     path('cierres/<int:cierre_id>/informe/', obtener_informe_cierre, name='obtener_informe_cierre'),
     path('cierres/<int:cierre_id>/informe/resumen/', obtener_resumen_informe, name='obtener_resumen_informe'),
     path('clientes/<int:cliente_id>/informes/', listar_informes_cliente, name='listar_informes_cliente'),
+    
+    # === URLs para Redis Cache ===
+    path('informes/<int:informe_id>/enviar-redis/', enviar_informe_redis, name='enviar_informe_redis'),
+    path('redis/<int:cliente_id>/<str:periodo>/', obtener_informe_redis, name='obtener_informe_redis'),
+    path('redis/estadisticas/', estadisticas_redis, name='estadisticas_redis'),
+    path('redis/limpiar-cliente/<int:cliente_id>/', limpiar_cache_cliente, name='limpiar_cache_cliente'),
+    path('redis/informes/', listar_informes_redis, name='listar_informes_redis'),
+    path('redis/health/', health_check_redis, name='health_check_redis'),
 ]

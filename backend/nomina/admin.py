@@ -2123,7 +2123,8 @@ class InformeNominaAdmin(admin.ModelAdmin):
         'fecha_generacion',
         'kpis_principales_display',
         'tiempo_calculo',
-        'version_calculo'
+        'version_calculo',
+        'estado_redis_display'
     )
     
     list_filter = (
@@ -2142,7 +2143,8 @@ class InformeNominaAdmin(admin.ModelAdmin):
         'cierre',
         'fecha_generacion',
         'tiempo_calculo',
-        'datos_cierre_display'
+        'datos_cierre_display',
+        'estado_redis_display'
     )
     
     fieldsets = (
@@ -2151,7 +2153,8 @@ class InformeNominaAdmin(admin.ModelAdmin):
                 'cierre',
                 'fecha_generacion',
                 'version_calculo',
-                'tiempo_calculo'
+                'tiempo_calculo',
+                'estado_redis_display'
             )
         }),
         ('Datos del Cierre', {
@@ -2160,6 +2163,7 @@ class InformeNominaAdmin(admin.ModelAdmin):
         })
     )
     
+    actions = ['enviar_a_redis_action']
     date_hierarchy = 'fecha_generacion'
     list_per_page = 50
     
@@ -2210,6 +2214,39 @@ class InformeNominaAdmin(admin.ModelAdmin):
             return "Error al mostrar métricas"
     kpis_principales_display.short_description = 'Métricas Principales'
     
+    def estado_redis_display(self, obj):
+        """Estado del informe en Redis"""
+        try:
+            from .cache_redis import get_cache_system_nomina
+            cache_system = get_cache_system_nomina()
+            
+            # Verificar si existe en Redis
+            datos_redis = cache_system.get_informe_nomina(
+                obj.cierre.cliente.id, 
+                obj.cierre.periodo
+            )
+            
+            if datos_redis:
+                cached_at = datos_redis.get('_metadata', {}).get('cached_at', 'N/A')
+                return format_html(
+                    '<span style="color: #10b981;">✅ En Redis</span><br/>'
+                    '<small>Actualizado: {}</small>',
+                    cached_at[:16] if cached_at != 'N/A' else 'N/A'
+                )
+            else:
+                return format_html(
+                    '<span style="color: #ef4444;">❌ No en Redis</span><br/>'
+                    '<small><a href="#" onclick="document.querySelector(\'select[name=action]\').value=\'enviar_a_redis_action\'; document.querySelector(\'input[name=_selected_action][value={}]\').checked=true; document.querySelector(\'button[name=index]\').click(); return false;">Enviar a Redis</a></small>',
+                    obj.id
+                )
+        except Exception as e:
+            return format_html(
+                '<span style="color: #f59e0b;">⚠️ Error verificando</span><br/>'
+                '<small>{}</small>',
+                str(e)[:50]
+            )
+    estado_redis_display.short_description = 'Estado Redis'
+    
     def datos_cierre_display(self, obj):
         """Datos del cierre formateados"""
         try:
@@ -2219,6 +2256,53 @@ class InformeNominaAdmin(admin.ModelAdmin):
         except:
             return str(obj.datos_cierre)
     datos_cierre_display.short_description = 'Datos del Cierre (JSON)'
+    
+    def enviar_a_redis_action(self, request, queryset):
+        """Acción para enviar informes seleccionados a Redis"""
+        from django.contrib import messages
+        
+        enviados = 0
+        errores = 0
+        
+        for informe in queryset:
+            try:
+                resultado = informe.enviar_a_redis(ttl_hours=24)
+                if resultado['success']:
+                    enviados += 1
+                    messages.success(
+                        request,
+                        f"✅ {informe.cierre.cliente.nombre} - {informe.cierre.periodo}: "
+                        f"Enviado a Redis ({resultado['size_kb']:.1f} KB)"
+                    )
+                else:
+                    errores += 1
+                    messages.error(
+                        request,
+                        f"❌ {informe.cierre.cliente.nombre} - {informe.cierre.periodo}: "
+                        f"Error: {resultado['error']}"
+                    )
+            except Exception as e:
+                errores += 1
+                messages.error(
+                    request,
+                    f"❌ {informe.cierre.cliente.nombre} - {informe.cierre.periodo}: "
+                    f"Excepción: {str(e)}"
+                )
+        
+        # Mensaje resumen
+        if enviados > 0:
+            messages.success(
+                request,
+                f"🎯 Resumen: {enviados} informes enviados a Redis exitosamente"
+            )
+        
+        if errores > 0:
+            messages.warning(
+                request,
+                f"⚠️ {errores} informes tuvieron errores al enviar a Redis"
+            )
+    
+    enviar_a_redis_action.short_description = "🚀 Enviar a Redis (DB 2)"
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(

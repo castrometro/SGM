@@ -1092,14 +1092,13 @@ EmpleadoCierre                  ──┐
                                   ├── EmpleadoConsolidado
 EmpleadoCierreNovedades         ──┤    ├─ rut (normalizado)
 ├─ rut, nombre, cargo (PRIORIDAD)─┤    ├─ nombre_completo
-└─ centro_costo                 ──┤    ├─ cargo
-                                  ├──  ├─ centro_costo
-MovimientoAltaBaja              ──┤    ├─ es_ingreso
-├─ ingresos del mes             ──┤    ├─ es_finiquito
-└─ finiquitos del mes           ──┤    ├─ tiene_ausentismo
-                                  ├──  ├─ total_haberes
-MovimientoAusentismo            ──┤    ├─ total_descuentos
-└─ ausentismos del mes          ──┘    └─ liquido_pagar
+└─ centro_costo                 ──┤    ├─ es_ingreso
+MovimientoAltaBaja              ──┤    ├─ es_finiquito
+├─ ingresos del mes             ──┤    ├─ tiene_ausentismo
+└─ finiquitos del mes           ──┤    ├─ total_haberes
+                                  ├──  ├─ total_descuentos
+MovimientoAusentismo            ──┤    
+└─ ausentismos del mes          ──┘    
 
 RegistroConceptoEmpleado        ──┐
 ├─ conceptos del Libro          ──┤

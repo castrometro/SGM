@@ -71,7 +71,7 @@ class InformeNomina(models.Model):
         """📊 Datos básicos del cierre de nómina"""
         nominas = NominaConsolidada.objects.filter(cierre=self.cierre)
         conceptos = ConceptoConsolidado.objects.filter(nomina_consolidada__cierre=self.cierre)
-        movimientos = MovimientoPersonal.objects.filter(cierre=self.cierre)
+        movimientos = MovimientoPersonal.objects.filter(nomina_consolidada__cierre=self.cierre)
         
         # MÉTRICAS BÁSICAS
         dotacion_total = nominas.count()
@@ -88,7 +88,7 @@ class InformeNomina(models.Model):
         rotacion_porcentaje = (egresos / dotacion_total * 100) if dotacion_total > 0 else 0
         
         # AUSENTISMO
-        empleados_con_ausencias = movimientos.filter(tipo_movimiento='ausentismo').values('rut_empleado').distinct().count()
+        empleados_con_ausencias = movimientos.filter(tipo_movimiento='ausentismo').values('nomina_consolidada__rut_empleado').distinct().count()
         ausentismo_porcentaje = (empleados_con_ausencias / dotacion_total * 100) if dotacion_total > 0 else 0
         
         # HORAS EXTRAS
@@ -156,3 +156,107 @@ class InformeNomina(models.Model):
     @property
     def rotacion_porcentaje(self):
         return self.get_kpi_principal('rotacion_porcentaje')
+    
+    def enviar_a_redis(self, ttl_hours: int = 24) -> dict:
+        """
+        🚀 Envía el informe completo a Redis DB 2
+        
+        Args:
+            ttl_hours: Tiempo de vida en Redis en horas (default: 24h)
+            
+        Returns:
+            dict: Resultado de la operación
+        """
+        from .cache_redis import get_cache_system_nomina
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Obtener sistema de cache
+            cache_system = get_cache_system_nomina()
+            
+            # Preparar datos para Redis
+            datos_redis = {
+                'informe_id': self.id,
+                'cliente_id': self.cierre.cliente.id,
+                'cliente_nombre': self.cierre.cliente.nombre,
+                'periodo': self.cierre.periodo,
+                'estado_cierre': self.cierre.estado,
+                'fecha_generacion': self.fecha_generacion.isoformat(),
+                'fecha_finalizacion': self.cierre.fecha_finalizacion.isoformat() if self.cierre.fecha_finalizacion else None,
+                'usuario_finalizacion': self.cierre.usuario_finalizacion.correo_bdo if self.cierre.usuario_finalizacion else None,
+                'version_calculo': self.version_calculo,
+                'tiempo_calculo_segundos': self.tiempo_calculo.total_seconds() if self.tiempo_calculo else None,
+                
+                # Datos del cierre completos
+                'datos_cierre': self.datos_cierre,
+                
+                # KPIs principales para acceso rápido
+                'kpis_principales': {
+                    'dotacion_total': self.get_kpi_principal('dotacion_total'),
+                    'costo_empresa_total': self.get_kpi_principal('costo_empresa_total'),
+                    'rotacion_porcentaje': self.get_kpi_principal('rotacion_porcentaje'),
+                    'ausentismo_porcentaje': self.get_kpi_principal('ausentismo_porcentaje'),
+                    'promedio_sueldo_base': self.get_kpi_principal('promedio_sueldo_base'),
+                    'total_horas_extras': self.get_kpi_principal('total_horas_extras'),
+                    'empleados_activos': self.get_kpi_principal('empleados_activos'),
+                    'nuevos_ingresos': self.get_kpi_principal('nuevos_ingresos'),
+                    'salidas_periodo': self.get_kpi_principal('salidas_periodo'),
+                    'total_vacaciones': self.get_kpi_principal('total_vacaciones'),
+                    'promedio_dias_trabajados': self.get_kpi_principal('promedio_dias_trabajados')
+                }
+            }
+            
+            # Convertir TTL a segundos
+            ttl_seconds = ttl_hours * 3600
+            
+            # Enviar a Redis
+            success = cache_system.set_informe_nomina(
+                cliente_id=self.cierre.cliente.id,
+                periodo=self.cierre.periodo,
+                informe_data=datos_redis,
+                ttl=ttl_seconds
+            )
+            
+            if success:
+                logger.info(f"✅ Informe enviado a Redis: {self.cierre.cliente.nombre} - {self.cierre.periodo}")
+                return {
+                    'success': True,
+                    'mensaje': 'Informe enviado exitosamente a Redis',
+                    'clave_redis': f"sgm:nomina:{self.cierre.cliente.id}:{self.cierre.periodo}:informe",
+                    'ttl_hours': ttl_hours,
+                    'size_kb': len(str(datos_redis)) / 1024
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': 'Error al enviar informe a Redis'
+                }
+                
+        except Exception as e:
+            logger.error(f"❌ Error enviando informe a Redis: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    @classmethod
+    def obtener_desde_redis(cls, cliente_id: int, periodo: str) -> dict:
+        """
+        📥 Obtiene un informe desde Redis
+        
+        Args:
+            cliente_id: ID del cliente
+            periodo: Período del cierre
+            
+        Returns:
+            dict: Datos del informe o None si no existe
+        """
+        from .cache_redis import get_cache_system_nomina
+        
+        try:
+            cache_system = get_cache_system_nomina()
+            return cache_system.get_informe_nomina(cliente_id, periodo)
+        except Exception as e:
+            return None

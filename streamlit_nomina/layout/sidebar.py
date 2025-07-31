@@ -13,47 +13,128 @@ def mostrar_sidebar():
     
     st.sidebar.markdown("---")
     
-    st.sidebar.markdown("📁 **Seleccionar Datos:**")
+    # 🚀 NUEVA SECCIÓN: Selección de fuente de datos
+    st.sidebar.markdown("� **Fuente de Datos:**")
     
-    current_dir = pathlib.Path(__file__).parent.parent.resolve() / "data"
-    archivos_disponibles = []
-    
-    try:
-        for archivo in current_dir.glob("*.json"):
-            if archivo.name.startswith("payroll_") and archivo.exists():
-                archivos_disponibles.append(archivo.name)
-    except:
-        archivos_disponibles = ["payroll_prueba.json"]
-    
-    archivos_disponibles = [archivo for archivo in archivos_disponibles if (current_dir / archivo).exists()]
-    
-    if not archivos_disponibles:
-        archivos_disponibles = ["payroll_prueba.json"]
-    
-    archivo_seleccionado = st.sidebar.selectbox(
-        "Período Actual:",
-        sorted(archivos_disponibles),
+    fuente_datos = st.sidebar.radio(
+        "Seleccionar fuente:",
+        ["�📁 Archivos Locales", "📡 Redis (Tiempo Real)"],
         index=0,
-        format_func=lambda x: x.replace("payroll_", "").replace(".json", "").replace("_", " ").title()
+        key="fuente_datos"
     )
     
-    archivo_comparar = st.sidebar.selectbox(
-        "Período a Comparar:",
-        sorted(archivos_disponibles),
-        index=1 if len(archivos_disponibles) > 1 else 0,
-        format_func=lambda x: x.replace("payroll_", "").replace(".json", "").replace("_", " ").title()
-    )
+    selected_config = None
     
-    if st.sidebar.button("🔄 **Actualizar**", use_container_width=True, help="Recargar datos manteniendo selecciones"):
-        st.rerun()
+    if fuente_datos == "📡 Redis (Tiempo Real)":
+        # Configuración Redis
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("⚙️ **Configuración Redis:**")
+        
+        # Obtener información de Redis
+        try:
+            from data.loader_nomina import obtener_info_redis_completa
+            info_redis = obtener_info_redis_completa()
+            
+            st.sidebar.info(f"🔗 **Ruta Redis:**\n{info_redis.get('ruta_redis', 'N/A')}")
+            
+            # Selector de cliente
+            cliente_id = st.sidebar.number_input(
+                "ID Cliente:",
+                min_value=1,
+                max_value=999,
+                value=6,
+                key="cliente_id_redis"
+            )
+            
+            # Selector de período
+            periodo = st.sidebar.text_input(
+                "Período (YYYY-MM):",
+                value="2025-03",
+                key="periodo_redis"
+            )
+            
+            # Mostrar cierres disponibles si hay información
+            cierres = info_redis.get('cierres_disponibles', [])
+            if cierres:
+                st.sidebar.success(f"✅ {len(cierres)} informes en Redis")
+                
+                # Mostrar lista de períodos disponibles
+                with st.sidebar.expander("📋 Informes Disponibles"):
+                    for cierre in cierres[:5]:  # Mostrar máximo 5
+                        st.write(f"• **{cierre['periodo']}** - {cierre['cliente_nombre']}")
+                        if cierre['ttl_segundos'] > 0:
+                            st.write(f"  TTL: {cierre['ttl_segundos']//3600}h {(cierre['ttl_segundos']%3600)//60}m")
+            else:
+                error_info = info_redis.get('error', None)
+                if error_info:
+                    st.sidebar.error(f"❌ Error Redis: {error_info}")
+                else:
+                    st.sidebar.warning("⚠️ No hay informes en Redis")
+            
+            selected_config = {
+                'fuente': 'redis',
+                'cliente_id': cliente_id,
+                'periodo': periodo
+            }
+            
+        except Exception as e:
+            st.sidebar.error(f"❌ Error conectando a Redis: {e}")
+            selected_config = None
     
-    data_actual = cargar_datos_sidebar(archivo_seleccionado)
-    data_comparar = cargar_datos_sidebar(archivo_comparar)
+    else:
+        # Configuración de archivos locales (comportamiento original)
+        st.sidebar.markdown("📁 **Seleccionar Datos:**")
+        
+        current_dir = pathlib.Path(__file__).parent.parent.resolve() / "data"
+        archivos_disponibles = []
+        
+        try:
+            for archivo in current_dir.glob("*.json"):
+                if archivo.name.startswith("payroll_") and archivo.exists():
+                    archivos_disponibles.append(archivo.name)
+        except:
+            archivos_disponibles = ["payroll_prueba.json"]
+        
+        archivos_disponibles = [archivo for archivo in archivos_disponibles if (current_dir / archivo).exists()]
+        
+        if not archivos_disponibles:
+            archivos_disponibles = ["payroll_prueba.json"]
+        
+        archivo_seleccionado = st.sidebar.selectbox(
+            "Período Actual:",
+            sorted(archivos_disponibles),
+            index=0,
+            format_func=lambda x: x.replace("payroll_", "").replace(".json", "").replace("_", " ").title()
+        )
+        
+        archivo_comparar = st.sidebar.selectbox(
+            "Período a Comparar:",
+            sorted(archivos_disponibles),
+            index=1 if len(archivos_disponibles) > 1 else 0,
+            format_func=lambda x: x.replace("payroll_", "").replace(".json", "").replace("_", " ").title()
+        )
+        
+        if st.sidebar.button("🔄 **Actualizar**", use_container_width=True, help="Recargar datos manteniendo selecciones"):
+            st.rerun()
+        
+        # Cargar y almacenar datos de archivos locales
+        data_actual = cargar_datos_sidebar(archivo_seleccionado)
+        data_comparar = cargar_datos_sidebar(archivo_comparar)
+        
+        st.session_state.archivo_seleccionado = archivo_seleccionado
+        st.session_state.archivo_comparar = archivo_comparar
+        st.session_state.data = data_actual
+        st.session_state.data_comparar = data_comparar
+        
+        selected_config = {
+            'fuente': 'archivos',
+            'archivo_actual': archivo_seleccionado,
+            'archivo_comparar': archivo_comparar
+        }
     
-    st.session_state.archivo_seleccionado = archivo_seleccionado
-    st.session_state.archivo_comparar = archivo_comparar
-    st.session_state.data = data_actual
-    st.session_state.data_comparar = data_comparar
+    # Selección de pestañas (común para ambas fuentes)
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("📊 **Reportes Disponibles:**")
     
     opciones_reportes = [
         "📊 Dashboard General",
@@ -79,19 +160,23 @@ def mostrar_sidebar():
     if st.session_state.selected_tab != selected_tab:
         st.session_state.selected_tab = selected_tab
     
-    st.sidebar.markdown("---")
+    # Información del cliente (solo si hay datos cargados)
+    if fuente_datos == "📁 Archivos Locales" and 'data' in st.session_state:
+        data_actual = st.session_state.data
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("💼 **Información del Cliente**")
+        st.sidebar.markdown(f"**Cliente:** {data_actual.get('cliente_nombre', 'N/A')}")
+        st.sidebar.markdown(f"**RUT:** {data_actual.get('cliente_rut', 'N/A')}")
+        st.sidebar.markdown(f"**Período:** {data_actual.get('periodo', 'N/A')}")
+        st.sidebar.markdown(f"**Generado por:** {data_actual.get('generado_por', 'N/A')}")
+        
+        st.sidebar.markdown("---")
+        
+        mostrar_excepciones_extraordinarias(data_actual, st.session_state.get('data_comparar'), 
+                                          st.session_state.get('archivo_seleccionado'), 
+                                          st.session_state.get('archivo_comparar'))
     
-    st.sidebar.markdown("💼 **Información del Cliente**")
-    st.sidebar.markdown(f"**Cliente:** {data_actual.get('cliente_nombre', 'N/A')}")
-    st.sidebar.markdown(f"**RUT:** {data_actual.get('cliente_rut', 'N/A')}")
-    st.sidebar.markdown(f"**Período:** {data_actual.get('periodo', 'N/A')}")
-    st.sidebar.markdown(f"**Generado por:** {data_actual.get('generado_por', 'N/A')}")
-    
-    st.sidebar.markdown("---")
-    
-    mostrar_excepciones_extraordinarias(data_actual, data_comparar, archivo_seleccionado, archivo_comparar)
-    
-    return st.session_state.get('selected_tab', selected_tab)
+    return st.session_state.get('selected_tab', selected_tab), selected_config
 
 
 def cargar_datos_sidebar(archivo_nombre):

@@ -2882,12 +2882,12 @@ class CierreNominaIncidenciasViewSet(viewsets.ViewSet):
         
         # Cambiar estado del cierre para permitir recarga
         cierre.estado = 'requiere_recarga_archivos'
-        cierre.observaciones_recarga = f"Solicitado por {request.user.username}: {motivo}"
+        cierre.observaciones_recarga = f"Solicitado por {request.user.correo_bdo}: {motivo}"
         cierre.fecha_solicitud_recarga = timezone.now()
         cierre.save(update_fields=['estado', 'observaciones_recarga', 'fecha_solicitud_recarga'])
         
         # Registrar la solicitud en el historial (si existe modelo de historial)
-        logger.info(f"🔄 Recarga de archivos solicitada para cierre {pk} por {request.user.username}: {motivo}")
+        logger.info(f"🔄 Recarga de archivos solicitada para cierre {pk} por {request.user.correo_bdo}: {motivo}")
         
         return Response({
             "mensaje": "Solicitud de recarga de archivos registrada",
@@ -2959,7 +2959,7 @@ class CierreNominaIncidenciasViewSet(viewsets.ViewSet):
             cierre.estado_incidencias = 'resueltas'
             cierre.save(update_fields=['estado', 'estado_incidencias'])
         
-        logger.info(f"✅ Aprobación masiva realizada por {request.user.username} en cierre {pk}: {len(resoluciones_creadas)} incidencias aprobadas")
+        logger.info(f"✅ Aprobación masiva realizada por {request.user.correo_bdo} en cierre {pk}: {len(resoluciones_creadas)} incidencias aprobadas")
         
         return Response({
             "mensaje": f"{len(resoluciones_creadas)} incidencias aprobadas exitosamente",

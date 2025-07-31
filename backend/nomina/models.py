@@ -269,8 +269,8 @@ class CierreNomina(models.Model):
         # Verificar que no haya incidencias pendientes críticas
         if hasattr(self, 'incidencias'):
             incidencias_criticas = self.incidencias.filter(
-                criticidad='critica',
-                estado_resolucion__in=['pendiente', 'en_revision']
+                prioridad='critica',
+                estado__in=['pendiente', 'en_revision']
             ).count()
             
             if incidencias_criticas > 0:
@@ -306,6 +306,18 @@ class CierreNomina(models.Model):
             # Generar informe comprehensivo
             print(f"🎯 Generando informe para cierre {self.cliente.nombre} - {self.periodo}")
             informe = InformeNomina.generar_informe_completo(self)
+            
+            # 🚀 ENVIAR AUTOMÁTICAMENTE A REDIS
+            print(f"🚀 Enviando informe a Redis...")
+            try:
+                resultado_redis = informe.enviar_a_redis(ttl_hours=24)
+                if resultado_redis['success']:
+                    print(f"✅ Informe enviado a Redis: {resultado_redis['clave_redis']}")
+                    print(f"📏 Tamaño en Redis: {resultado_redis['size_kb']:.1f} KB")
+                else:
+                    print(f"⚠️ Error enviando a Redis: {resultado_redis['error']}")
+            except Exception as e:
+                print(f"⚠️ Error al enviar a Redis: {e}")
             
             print(f"✅ Cierre finalizado exitosamente")
             print(f"📊 Informe generado con {informe.get_kpi_principal('dotacion_total')} empleados")

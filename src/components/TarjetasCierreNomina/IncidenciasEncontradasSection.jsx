@@ -37,7 +37,7 @@ const nombresClasificaciones = {
   impuestos: "🏛️ Impuestos",
 };
 
-const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActualizado }) => {
+const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActualizado, onEstadoChange }) => {
   const [expandido, setExpandido] = useState(true);
   const [incidencias, setIncidencias] = useState([]);
   const [resumen, setResumen] = useState(null);
@@ -50,9 +50,11 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActua
   const [estadoIncidencias, setEstadoIncidencias] = useState(null);
   const [vistaPrevia, setVistaPrevia] = useState(null);
   
-  // Estados para selección de clasificaciones
-  const [clasificacionesSeleccionadas, setClasificacionesSeleccionadas] = useState(new Set(clasificacionesDisponibles));
-  const [mostrarSeleccionClasificaciones, setMostrarSeleccionClasificaciones] = useState(false);
+  // 🎯 CONFIGURACIÓN PABLO - SIN CHECKBOXES
+  // Los conceptos están configurados automáticamente en el backend:
+  // - Análisis detallado: haberes_imponibles, haberes_no_imponibles, otros_descuentos
+  // - Solo resumen: descuentos_legales, aportes_patronales, informacion_adicional, impuestos, horas_extras
+  
   const [mostrandoPreview, setMostrandoPreview] = useState(false);
   const [finalizandoCierre, setFinalizandoCierre] = useState(false);
   const [analisisCompleto, setAnalisisCompleto] = useState(null);
@@ -84,6 +86,28 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActua
       console.log("🔍 [useEffect] No hay incidencias para cargar");
     }
   }, [estadoIncidencias?.total_incidencias]);
+
+  // 🎯 Efecto para reportar el estado de la sección al componente padre
+  useEffect(() => {
+    if (estadoIncidencias && onEstadoChange) {
+      // Determinar el estado: procesado si todas las incidencias están resueltas
+      const estadoFinal = (estadoIncidencias.total_incidencias_resueltas === estadoIncidencias.total_incidencias && 
+                          estadoIncidencias.total_incidencias >= 0) 
+        ? "procesado" 
+        : "pendiente";
+      
+      console.log('📊 [IncidenciasEncontradasSection] Reportando estado:', estadoFinal, {
+        totalIncidencias: estadoIncidencias.total_incidencias,
+        incidenciasResueltas: estadoIncidencias.total_incidencias_resueltas
+      });
+      
+      onEstadoChange(estadoFinal);
+    }
+  }, [
+    estadoIncidencias?.total_incidencias, 
+    estadoIncidencias?.total_incidencias_resueltas, 
+    onEstadoChange
+  ]);
 
   const cargarEstadoIncidencias = async () => {
     if (!cierre?.id) {
@@ -199,20 +223,16 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActua
   const manejarGenerarIncidencias = async () => {
     if (!cierre?.id) return;
     
-    // Validar que hay clasificaciones seleccionadas
-    if (!validarSeleccionClasificaciones()) {
-      return;
-    }
-    
     setGenerando(true);
     setError("");
     
     try {
-      console.log("🔄 Iniciando generación de incidencias con clasificaciones seleccionadas...");
-      console.log("📋 Clasificaciones seleccionadas:", Array.from(clasificacionesSeleccionadas));
+      console.log("🔄 Iniciando generación de incidencias con configuración automática de Pablo...");
+      console.log("📋 Análisis detallado: haberes imponibles, haberes no imponibles y descuentos");
+      console.log("📋 Solo resumen: descuentos legales, aportes patronales, información adicional, impuestos, horas extras");
       
-      // Pasar las clasificaciones seleccionadas a la API
-      await generarIncidenciasCierre(cierre.id, Array.from(clasificacionesSeleccionadas));
+      // Usar configuración automática del backend (sin clasificaciones manuales)
+      await generarIncidenciasCierre(cierre.id);
       
       console.log("✅ Incidencias generadas, refrescando estado del cierre...");
       
@@ -371,32 +391,7 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActua
            cierre?.estado === 'finalizado';
   };
 
-  // Funciones para manejar selección de clasificaciones
-  const toggleClasificacion = (clasificacion) => {
-    const nuevasSeleccionadas = new Set(clasificacionesSeleccionadas);
-    if (nuevasSeleccionadas.has(clasificacion)) {
-      nuevasSeleccionadas.delete(clasificacion);
-    } else {
-      nuevasSeleccionadas.add(clasificacion);
-    }
-    setClasificacionesSeleccionadas(nuevasSeleccionadas);
-  };
-
-  const seleccionarTodasClasificaciones = () => {
-    setClasificacionesSeleccionadas(new Set(clasificacionesDisponibles));
-  };
-
-  const deseleccionarTodasClasificaciones = () => {
-    setClasificacionesSeleccionadas(new Set());
-  };
-
-  const validarSeleccionClasificaciones = () => {
-    if (clasificacionesSeleccionadas.size === 0) {
-      setError("Debe seleccionar al menos una clasificación para generar incidencias");
-      return false;
-    }
-    return true;
-  };
+  // Funciones de selección de clasificaciones eliminadas - ahora usa configuración automática de Pablo
 
   return (
     <section className="space-y-6">
@@ -578,62 +573,40 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActua
             )}
           </div>
 
-          {/* Sección de selección de clasificaciones - Solo cuando se puede generar incidencias */}
+          {/* Información sobre configuración automática de Pablo */}
           {puedeGenerarIncidencias() && (
-            <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-lg font-medium text-white">Seleccionar Clasificaciones a Comparar</h3>
-                  <span className="text-sm text-gray-400">
-                    ({clasificacionesSeleccionadas.size} de {clasificacionesDisponibles.length} seleccionadas)
-                  </span>
+            <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+                <h3 className="text-lg font-medium text-blue-300">Configuración Automática de Análisis</h3>
+              </div>
+              
+              <div className="space-y-3">
+                <div>
+                  <h4 className="text-sm font-medium text-blue-200 mb-1">Análisis Detallado (Individual + Agregado):</h4>
+                  <div className="text-sm text-blue-100 pl-4">
+                    • Haberes Imponibles<br/>
+                    • Haberes No Imponibles<br/>
+                    • Otros Descuentos
+                  </div>
                 </div>
                 
-                <div className="flex gap-2">
-                  <button
-                    onClick={seleccionarTodasClasificaciones}
-                    className="px-3 py-1 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded transition"
-                  >
-                    Seleccionar todas
-                  </button>
-                  <button
-                    onClick={deseleccionarTodasClasificaciones}
-                    className="px-3 py-1 text-sm bg-gray-600 hover:bg-gray-500 text-white rounded transition"
-                  >
-                    Deseleccionar todas
-                  </button>
+                <div>
+                  <h4 className="text-sm font-medium text-blue-200 mb-1">Solo Resumen Agregado:</h4>
+                  <div className="text-sm text-blue-100 pl-4">
+                    • Descuentos Legales<br/>
+                    • Aportes Patronales<br/>
+                    • Información Adicional<br/>
+                    • Impuestos<br/>
+                    • Horas Extras
+                  </div>
+                </div>
+                
+                <div className="text-xs text-blue-300 bg-blue-900/30 p-2 rounded border-l-2 border-blue-400">
+                  <strong>Nota:</strong> Esta configuración fue definida por Pablo para optimizar el análisis 
+                  de incidencias enfocándose en los conceptos más relevantes para el negocio.
                 </div>
               </div>
-              
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {clasificacionesDisponibles.map(clasificacion => (
-                  <label
-                    key={clasificacion}
-                    className={`flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-all ${
-                      clasificacionesSeleccionadas.has(clasificacion)
-                        ? 'border-blue-500 bg-blue-900/20 text-blue-300'
-                        : 'border-gray-600 hover:border-gray-500 text-gray-300'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={clasificacionesSeleccionadas.has(clasificacion)}
-                      onChange={() => toggleClasificacion(clasificacion)}
-                      className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
-                    />
-                    <span className="text-sm font-medium">
-                      {nombresClasificaciones[clasificacion]}
-                    </span>
-                  </label>
-                ))}
-              </div>
-              
-              {clasificacionesSeleccionadas.size === 0 && (
-                <div className="mt-3 text-sm text-red-400 flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4" />
-                  <span>Debe seleccionar al menos una clasificación para generar incidencias</span>
-                </div>
-              )}
             </div>
           )}
 

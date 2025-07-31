@@ -20,6 +20,9 @@ from .tasks import (
     clasificar_headers_libro_remuneraciones_con_logging,
     actualizar_empleados_desde_libro,
     guardar_registros_nomina,
+    # 🚀 NUEVAS TASKS OPTIMIZADAS CON CHORD
+    actualizar_empleados_desde_libro_optimizado,
+    guardar_registros_nomina_optimizado,
 )
 
 logger = logging.getLogger(__name__)
@@ -228,7 +231,8 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def procesar(self, request, pk=None):
         """
-        Procesar libro completo: actualizar empleados y guardar registros
+        🚀 Procesar libro completo: actualizar empleados y guardar registros
+        Versión optimizada con Celery Chord para mejor rendimiento.
         """
         libro = self.get_object()
         
@@ -242,31 +246,60 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
         libro.estado = 'procesando'
         libro.save(update_fields=['estado'])
         
+        # Leer parámetros opcionales - optimización activada por defecto
+        usar_optimizacion = request.data.get('usar_optimizacion', True) if hasattr(request, 'data') and request.data else True
+        
+        logger.info(f"🔄 Iniciando procesamiento de libro {libro.id}, optimización: {usar_optimizacion}")
+        
         # Registrar actividad
         registrar_actividad_tarjeta_nomina(
             cierre_id=libro.cierre.id,
             tarjeta="libro_remuneraciones",
             accion="procesar_libro",
-            descripcion="Iniciando procesamiento completo del libro de remuneraciones",
+            descripcion=f"Iniciando procesamiento completo del libro de remuneraciones (optimizado: {usar_optimizacion})",
             usuario=request.user,
             detalles={
                 "libro_id": libro.id,
+                "optimizado": usar_optimizacion
             },
             ip_address=get_client_ip(request)
         )
         
-        # Chain de procesamiento completo
-        result = chain(
-            actualizar_empleados_desde_libro.s(libro.id),
-            guardar_registros_nomina.s(),
-        ).apply_async()
+        if usar_optimizacion:
+            # 🚀 USAR VERSIONES OPTIMIZADAS CON CHORD
+            try:
+                result = chain(
+                    actualizar_empleados_desde_libro_optimizado.s(libro.id),
+                    guardar_registros_nomina_optimizado.s(),
+                ).apply_async()
+                
+                mensaje = 'Procesamiento optimizado iniciado (usando Celery Chord para mejor rendimiento)'
+                logger.info(f"🚀 Chain optimizado iniciado para libro {libro.id}")
+                
+            except Exception as e:
+                # Fallback a versión no optimizada
+                logger.warning(f"⚠️ Error iniciando procesamiento optimizado: {e}, usando fallback")
+                result = chain(
+                    actualizar_empleados_desde_libro.s(libro.id),
+                    guardar_registros_nomina.s(),
+                ).apply_async()
+                mensaje = 'Procesamiento iniciado (fallback a modo clásico)'
+        else:
+            # 📝 USAR VERSIONES CLÁSICAS
+            result = chain(
+                actualizar_empleados_desde_libro.s(libro.id),
+                guardar_registros_nomina.s(),
+            ).apply_async()
+            mensaje = 'Procesamiento clásico iniciado'
+            logger.info(f"📝 Chain clásico iniciado para libro {libro.id}")
         
         logger.info(f"Procesamiento completo iniciado para libro {libro.id}")
         
         return Response({
             'task_id': result.id if hasattr(result, 'id') else str(result), 
-            'mensaje': 'Procesamiento completo iniciado',
-            'libro_id': libro.id
+            'mensaje': mensaje,
+            'libro_id': libro.id,
+            'optimizado': usar_optimizacion
         }, status=status.HTTP_202_ACCEPTED)
     
     def perform_destroy(self, instance):

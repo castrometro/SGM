@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import ArchivosTalanaSection from "./ArchivosTalanaSection";
 import ArchivosAnalistaSection from "./ArchivosAnalistaSection";
 import VerificadorDatosSection from "./VerificadorDatosSection";
@@ -15,6 +15,7 @@ import {
   eliminarMovimientosMes,
   guardarConceptosRemuneracion,
   eliminarConceptoRemuneracion,
+  actualizarEstadoCierreNomina,
 } from "../../api/nomina";
 
 const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
@@ -27,8 +28,21 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
   const [libroListo, setLibroListo] = useState(false);
   const [mensajeLibro, setMensajeLibro] = useState("");
   const [modoSoloLectura, setModoSoloLectura] = useState(false);
+  
+  // 🔄 REF: Para trackear si el componente está montado y controlar polling
+  const isMountedRef = useRef(true);
+  
+  // Estados para tracking de secciones
+  const [estadosSeccion, setEstadosSeccion] = useState({
+    archivosTalana: 'pendiente',     // Estado de libros + movimientos
+    archivosAnalista: 'pendiente',   // Estado de archivos del analista  
+    verificadorDatos: 'pendiente',   // Estado de verificación de datos
+    incidencias: 'pendiente'         // Estado de incidencias
+  });
 
   const esEstadoPosteriorAConsolidacion = (estado) => {
+    // Estados posteriores a la consolidación donde se aplican restricciones específicas
+    // NOTA: 'incidencias_resueltas' tiene manejo específico en el switch, no se bloquea automáticamente
     const estadosPosteriores = [
       'datos_consolidados', 'con_incidencias', 'incidencias_resueltas', 'validacion_final', 'finalizado'
     ];
@@ -37,6 +51,123 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
 
   const esEstadoFinalizado = (estado) => {
     return estado === 'finalizado';
+  };
+
+  // 🎯 Función para verificar si todas las secciones están procesadas
+  const verificarTodasLasSeccionesProcesadas = () => {
+    const { archivosTalana, archivosAnalista, verificadorDatos, incidencias } = estadosSeccion;
+    
+    console.log('🔍 [CierreProgresoNomina] Verificando estados de secciones:', {
+      archivosTalana,
+      archivosAnalista, 
+      verificadorDatos,
+      incidencias,
+      estadoCierre: cierre?.estado
+    });
+    
+    return archivosTalana === 'procesado' && 
+           archivosAnalista === 'procesado' && 
+           verificadorDatos === 'procesado' && 
+           incidencias === 'procesado';
+  };
+
+  // 🎯 Efecto para detectar cuando todas las secciones están procesadas
+  useEffect(() => {
+    const todasProcesadas = verificarTodasLasSeccionesProcesadas();
+    const puedeActualizar = cierre?.estado !== 'finalizado' && 
+                           cierre?.estado !== 'validacion_final' && 
+                           cierre?.estado !== 'datos_consolidados';
+    
+    if (todasProcesadas && puedeActualizar) {
+      console.log('🎯 [CierreProgresoNomina] Todas las secciones procesadas - Actualizando estado del cierre...');
+      
+      const actualizarEstadoFinal = async () => {
+        try {
+          await actualizarEstadoCierreNomina(cierre.id);
+          console.log('✅ [CierreProgresoNomina] Estado del cierre actualizado automáticamente');
+          
+          if (onCierreActualizado) {
+            await onCierreActualizado();
+          }
+        } catch (error) {
+          console.error('❌ [CierreProgresoNomina] Error actualizando estado del cierre:', error);
+        }
+      };
+      
+      actualizarEstadoFinal();
+    }
+  }, [estadosSeccion, cierre?.id, cierre?.estado, onCierreActualizado]);
+
+  // 🎯 Funciones para actualizar estados de las secciones
+  const actualizarEstadoSeccion = useCallback((seccion, nuevoEstado) => {
+    console.log(`📊 [CierreProgresoNomina] Actualizando estado ${seccion}: ${nuevoEstado} (${Date.now()})`);
+    setEstadosSeccion(prev => {
+      // Evitar actualizaciones innecesarias si el estado no cambió
+      if (prev[seccion] === nuevoEstado) {
+        console.log(`📊 [CierreProgresoNomina] Estado ${seccion} ya es ${nuevoEstado} - evitando actualización`);
+        return prev;
+      }
+      
+      return {
+        ...prev,
+        [seccion]: nuevoEstado
+      };
+    });
+  }, []);
+
+  // 🎯 Funciones memoizadas específicas para cada sección (evitar infinite polling)
+  const onEstadoChangeAnalista = useCallback((nuevoEstado) => {
+    console.log('🔄 [onEstadoChangeAnalista] CALLBACK EJECUTADO para:', nuevoEstado);
+    actualizarEstadoSeccion('archivosAnalista', nuevoEstado);
+  }, [actualizarEstadoSeccion]);
+
+  const onEstadoChangeVerificador = useCallback((nuevoEstado) => {
+    console.log('🔄 [onEstadoChangeVerificador] CALLBACK EJECUTADO para:', nuevoEstado);
+    actualizarEstadoSeccion('verificadorDatos', nuevoEstado);
+  }, [actualizarEstadoSeccion]);
+
+  const onEstadoChangeIncidencias = useCallback((nuevoEstado) => {
+    console.log('🔄 [onEstadoChangeIncidencias] CALLBACK EJECUTADO para:', nuevoEstado);
+    actualizarEstadoSeccion('incidencias', nuevoEstado);
+  }, [actualizarEstadoSeccion]);
+
+  // 🎯 Función para determinar si una sección debe estar bloqueada
+  const estaSeccionBloqueada = (seccion) => {
+    // Si el cierre está finalizado, todo está bloqueado
+    if (esEstadoFinalizado(cierre?.estado)) {
+      return true;
+    }
+    
+    // Determinar bloqueo según estado del cierre
+    switch (cierre?.estado) {
+      case 'pendiente':
+      case 'cargando_archivos':
+        // Solo archivos Talana y Analista están desbloqueados
+        return !['archivosTalana', 'archivosAnalista'].includes(seccion);
+        
+      case 'archivos_completos':
+      case 'verificacion_datos':
+      case 'verificado_sin_discrepancias': 
+        // Archivos + Verificador están desbloqueados
+        return !['archivosTalana', 'archivosAnalista', 'verificadorDatos'].includes(seccion);
+        
+      case 'datos_consolidados':
+        // Solo Talana + Verificador + Incidencias están desbloqueados (bloquear archivos analista)
+        return !['archivosTalana', 'verificadorDatos', 'incidencias'].includes(seccion);
+        
+      case 'con_incidencias':
+        // Solo Talana + Verificador + Incidencias están desbloqueados (mantener archivos analista bloqueados)
+        return !['archivosTalana', 'verificadorDatos', 'incidencias'].includes(seccion);
+        
+      case 'incidencias_resueltas':
+        // 🎯 ESTADO ESPECIAL: Solo la sección de incidencias debe estar desbloqueada para mostrar el botón "Finalizar Cierre"
+        // Las demás secciones se bloquean para evitar cambios mientras se prepara la finalización
+        return seccion !== 'incidencias';
+        
+      default:
+        // Estados posteriores: bloquear según la lógica existente
+        return esEstadoPosteriorAConsolidacion(cierre?.estado);
+    }
   };
 
   const handleGuardarClasificaciones = async ({ guardar, eliminar }) => {
@@ -103,6 +234,24 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     }
   }, [libro, libroListo]);
 
+  // 🎯 Efecto para detectar cambios en el estado de Archivos Talana
+  useEffect(() => {
+    const estadoLibro = libro?.estado === "procesando" || libro?.estado === "procesado"
+      ? libro?.estado
+      : libroListo
+      ? "clasificado"
+      : libro?.estado || "no_subido";
+      
+    const estadoMovimientos = movimientos?.estado || "pendiente";
+    
+    // Determinar el estado general: Procesado si ambos están procesados
+    const estadoGeneral = (estadoLibro === "procesado" && estadoMovimientos === "procesado") 
+      ? "procesado" 
+      : "pendiente";
+    
+    actualizarEstadoSeccion('archivosTalana', estadoGeneral);
+  }, [libro, movimientos, libroListo]);
+
   // Función para ir al Dashboard
   const handleIrDashboard = () => {
     // Redirigir al dashboard principal
@@ -116,14 +265,15 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
       if (res?.id) {
         setLibroId(res.id);
       }
-      setTimeout(() => {
-        obtenerEstadoLibroRemuneraciones(cierre.id).then((data) => {
-          setLibro(data);
-          if (data?.id) {
-            setLibroId(data.id);
-          }
-        });
-      }, 1200);
+      console.log('🔄 [PAUSADO] Polling post-subida de libro pausado temporalmente');
+      // setTimeout(() => {
+      //   obtenerEstadoLibroRemuneraciones(cierre.id).then((data) => {
+      //     setLibro(data);
+      //     if (data?.id) {
+      //       setLibroId(data.id);
+      //     }
+      //   });
+      // }, 1200);
     } finally {
       setSubiendo(false);
     }
@@ -135,9 +285,10 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
       const formData = new FormData();
       formData.append("archivo", archivo);
       await subirMovimientosMes(cierre.id, formData);
-      setTimeout(() => {
-        obtenerEstadoMovimientosMes(cierre.id).then(setMovimientos);
-      }, 1200);
+      console.log('🔄 [PAUSADO] Polling post-subida de movimientos pausado temporalmente');
+      // setTimeout(() => {
+      //   obtenerEstadoMovimientosMes(cierre.id).then(setMovimientos);
+      // }, 1200);
     } finally {
       setSubiendoMov(false);
     }
@@ -178,16 +329,30 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     }
   };
 
-  const handleActualizarEstadoMovimientos = async () => {
+  const handleActualizarEstadoMovimientos = useCallback(async () => {
+    // Verificar si el componente aún está montado
+    if (!isMountedRef.current) {
+      console.log('🚫 [handleActualizarEstadoMovimientos] Componente desmontado, cancelando operación');
+      return;
+    }
+    
     try {
       const estado = await obtenerEstadoMovimientosMes(cierre.id);
-      setMovimientos(estado);
+      if (isMountedRef.current) {
+        setMovimientos(estado);
+      }
     } catch (error) {
       console.error("Error al actualizar estado de movimientos:", error);
     }
-  };
+  }, [cierre?.id]);
 
-  const handleActualizarEstado = async () => {
+  const handleActualizarEstado = useCallback(async () => {
+    // Verificar si el componente aún está montado
+    if (!isMountedRef.current) {
+      console.log('🚫 [handleActualizarEstado] Componente desmontado, cancelando operación');
+      return;
+    }
+    
     try {
       console.log('📡 Consultando estado actual del libro...');
       const estadoActual = await obtenerEstadoLibroRemuneraciones(cierre.id);
@@ -195,17 +360,19 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
       console.log('📊 Estado anterior:', libro?.estado);
       console.log('📊 Estado nuevo:', estadoActual?.estado);
       
-      setLibro(estadoActual);
-      
-      // Log adicional para verificar el cambio
-      if (estadoActual?.estado !== libro?.estado) {
-        console.log(`🔄 Estado cambió de "${libro?.estado}" a "${estadoActual?.estado}"`);
+      if (isMountedRef.current) {
+        setLibro(estadoActual);
+        
+        // Log adicional para verificar el cambio
+        if (estadoActual?.estado !== libro?.estado) {
+          console.log(`🔄 Estado cambió de "${libro?.estado}" a "${estadoActual?.estado}"`);
+        }
       }
       
     } catch (error) {
       console.error('❌ Error actualizando estado:', error);
     }
-  };
+  }, [cierre?.id, libro?.estado]);
 
   const handleVerClasificacion = (soloLectura = false) => {
     // Si el libro ya está procesado, forzar modo solo lectura
@@ -258,6 +425,9 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     }
   };
 
+  // 🛑 Determinar si se debe detener el polling globalmente
+  const deberiaDetenerPolling = esEstadoFinalizado(cierre?.estado) || !isMountedRef.current;
+
   const esCierreFinalizadoSoloResumen = esEstadoFinalizado(cierre.estado);
 
   return (
@@ -287,7 +457,9 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
             onActualizarEstadoMovimientos={handleActualizarEstadoMovimientos}
             onEliminarLibro={handleEliminarLibro}
             onEliminarMovimientos={handleEliminarMovimientos}
-            disabled={esEstadoFinalizado(cierre.estado)}
+            disabled={estaSeccionBloqueada('archivosTalana')}
+            deberiaDetenerPolling={deberiaDetenerPolling}
+            cierreId={cierre?.id}
           />
           
           {/* Sección 2: Archivos del Analista */}
@@ -295,26 +467,31 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
             cierreId={cierre.id}
             cliente={cliente}
             cierre={cierre}
-            disabled={esEstadoPosteriorAConsolidacion(cierre.estado) || esEstadoFinalizado(cierre.estado)}
+            disabled={estaSeccionBloqueada('archivosAnalista')}
             onCierreActualizado={onCierreActualizado}
+            onEstadoChange={onEstadoChangeAnalista}
+            deberiaDetenerPolling={deberiaDetenerPolling}
           />
 
           {/* Sección 3: Verificación de Datos (Discrepancias) */}
           <VerificadorDatosSection 
             cierre={cierre} 
-            disabled={esEstadoPosteriorAConsolidacion(cierre.estado) || esEstadoFinalizado(cierre.estado)}
+            disabled={estaSeccionBloqueada('verificadorDatos')}
             onCierreActualizado={(nuevoCierre) => {
               // Callback para actualizar el cierre en el componente padre
               console.log('🔄 Cierre actualizado desde verificador:', nuevoCierre);
               // Aquí podrías refrescar el estado completo del cierre si fuera necesario
             }}
+            onEstadoChange={onEstadoChangeVerificador}
+            deberiaDetenerPolling={deberiaDetenerPolling}
           />
 
           {/* Sección 4: Sistema de Incidencias */}
           <IncidenciasEncontradasSection 
             cierre={cierre} 
-            disabled={esEstadoFinalizado(cierre.estado)}
+            disabled={estaSeccionBloqueada('incidencias')}
             onCierreActualizado={onCierreActualizado}
+            onEstadoChange={onEstadoChangeIncidencias}
           />
         </>
       )}

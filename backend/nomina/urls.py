@@ -57,6 +57,13 @@ from .api_logging import (
     get_all_activity_logs
 )
 
+# Importar views de informes
+from .views_informes import (
+    obtener_informe_cierre,
+    obtener_resumen_informe,
+    listar_informes_cliente,
+)
+
 from django.urls import path
 from django.conf import settings
 from django.views.static import serve
@@ -207,4 +214,9 @@ urlpatterns = router.urls + [
     
     # === URL para Estadísticas del Cierre ===
     path('cierres/<int:cierre_id>/estadisticas/', obtener_estadisticas_cierre, name='estadisticas_cierre'),
+    
+    # === URLs para Informes de Cierre ===
+    path('cierres/<int:cierre_id>/informe/', obtener_informe_cierre, name='obtener_informe_cierre'),
+    path('cierres/<int:cierre_id>/informe/resumen/', obtener_resumen_informe, name='obtener_resumen_informe'),
+    path('clientes/<int:cliente_id>/informes/', listar_informes_cliente, name='listar_informes_cliente'),
 ]

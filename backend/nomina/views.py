@@ -37,6 +37,9 @@ from .models import (
     DiscrepanciaCierre,
 )
 
+# Importar modelo de informes
+from .models_informe import InformeNomina
+
 from .serializers import (
     CierreNominaSerializer, 
     LibroRemuneracionesUploadSerializer, 
@@ -70,6 +73,9 @@ from .tasks import (
     clasificar_headers_libro_remuneraciones_con_logging,
     actualizar_empleados_desde_libro,
     guardar_registros_nomina,
+    # 🚀 NUEVAS TASKS OPTIMIZADAS
+    actualizar_empleados_desde_libro_optimizado,
+    guardar_registros_nomina_optimizado,
     procesar_archivo_analista,
     procesar_archivo_novedades,
     generar_incidencias_cierre_task,
@@ -436,10 +442,148 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
                 "error": f"Error interno: {str(e)}"
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=True, methods=['post'], url_path='generar-incidencias-dual')
+    def generar_incidencias_dual(self, request, pk=None):
+        """
+        🚀 NUEVA API: Sistema Dual de Detección de Incidencias con Celery Chord
+        
+        Genera incidencias usando dos tipos de comparación paralela:
+        1. Comparación Individual (elemento a elemento) para conceptos seleccionados
+        2. Comparación Suma Total (agregada) para todos los conceptos
+        
+        Body esperado:
+        {
+            "clasificaciones_seleccionadas": [
+                "haberes_imponibles",
+                "descuentos_legales", 
+                "aportes_patronales"
+            ]
+        }
+        """
+        from .models_logging import registrar_actividad_tarjeta_nomina
+        from .utils.clientes import get_client_ip
+        from .utils.DetectarIncidenciasConsolidadas import generar_incidencias_consolidados_v2
+        
+        cierre = self.get_object()
+        
+        # Validar datos del request
+        clasificaciones_seleccionadas = request.data.get('clasificaciones_seleccionadas', [])
+        
+        if not clasificaciones_seleccionadas:
+            return Response({
+                "success": False,
+                "error": "Debe seleccionar al menos una clasificación para análisis individual"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Clasificaciones válidas disponibles
+        clasificaciones_validas = [
+            'haberes_imponibles',
+            'haberes_no_imponibles', 
+            'horas_extras',
+            'descuentos_legales',
+            'otros_descuentos',
+            'aportes_patronales',
+            'informacion_adicional',
+            'impuestos'
+        ]
+        
+        # Validar clasificaciones enviadas
+        clasificaciones_invalidas = set(clasificaciones_seleccionadas) - set(clasificaciones_validas)
+        if clasificaciones_invalidas:
+            return Response({
+                "success": False,
+                "error": f"Clasificaciones inválidas: {list(clasificaciones_invalidas)}",
+                "clasificaciones_validas": clasificaciones_validas
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Verificar que el cierre esté consolidado
+        if not cierre.puede_generar_incidencias():
+            return Response({
+                "success": False,
+                "error": f"El cierre debe estar consolidado para generar incidencias. Estado actual: {cierre.estado_consolidacion}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Verificar si ya tiene incidencias del sistema dual (permitir regenerar)
+        # pero notificar si existen incidencias previas
+        incidencias_existentes = cierre.incidencias.filter(tipo_comparacion__in=['individual', 'suma_total']).count()
+        
+        try:
+            # Ejecutar la tarea del sistema dual usando Celery Chord
+            resultado = generar_incidencias_consolidados_v2.delay(cierre.id, clasificaciones_seleccionadas)
+            
+            # Actualizar estado del cierre
+            cierre.estado_incidencias = 'generando_incidencias_dual'
+            cierre.save(update_fields=['estado_incidencias'])
+            
+            # Registrar la actividad
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=cierre.id,
+                tarjeta="incidencias",
+                accion="iniciar_sistema_dual_incidencias",
+                descripcion="Iniciado sistema dual de detección de incidencias (Celery Chord)",
+                usuario=request.user,
+                detalles={
+                    "task_id": resultado.id,
+                    "clasificaciones_seleccionadas": clasificaciones_seleccionadas,
+                    "sistema": "dual_comparacion",
+                    "incidencias_existentes": incidencias_existentes,
+                    "tipos_analisis": ["individual", "suma_total"]
+                },
+                ip_address=get_client_ip(request)
+            )
+            
+            mensaje = "Sistema dual de incidencias iniciado exitosamente"
+            if incidencias_existentes > 0:
+                mensaje += f" (se regenerará sobre {incidencias_existentes} incidencias existentes)"
+            
+            return Response({
+                "success": True,
+                "mensaje": mensaje,
+                "task_id": resultado.id,
+                "estado_incidencias": cierre.estado_incidencias,
+                "sistema": "dual_comparacion",
+                "analisis_configurado": {
+                    "comparacion_individual": {
+                        "activa": True,
+                        "clasificaciones": clasificaciones_seleccionadas,
+                        "descripcion": "Análisis elemento a elemento por empleado"
+                    },
+                    "comparacion_suma_total": {
+                        "activa": True,
+                        "clasificaciones": "todas",
+                        "descripcion": "Análisis agregado de sumas totales"
+                    }
+                },
+                "clasificaciones_seleccionadas": clasificaciones_seleccionadas,
+                "total_clasificaciones_disponibles": len(clasificaciones_validas)
+            })
+                
+        except Exception as e:
+            # Registrar el error
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=cierre.id,
+                tarjeta="incidencias",
+                accion="error_sistema_dual_incidencias",
+                descripcion=f"Error iniciando sistema dual: {str(e)}",
+                usuario=request.user,
+                detalles={
+                    "error": str(e),
+                    "clasificaciones_seleccionadas": clasificaciones_seleccionadas,
+                    "sistema": "dual_comparacion"
+                },
+                ip_address=get_client_ip(request)
+            )
+            
+            return Response({
+                "success": False,
+                "error": f"Error iniciando sistema dual: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=True, methods=['get'], url_path='estado-incidencias')
     def estado_incidencias(self, request, pk=None):
         """
         Obtiene el resumen completo del estado de las incidencias para el dashboard
+        ACTUALIZADO: Soporte para sistema dual de comparación
         """
         cierre = self.get_object()
         
@@ -447,6 +591,11 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         from .models import IncidenciaCierre, ResolucionIncidencia
         incidencias = IncidenciaCierre.objects.filter(cierre=cierre)
         resoluciones = ResolucionIncidencia.objects.filter(incidencia__cierre=cierre)
+        
+        # NUEVO: Estadísticas por tipo de comparación del sistema dual
+        incidencias_individuales = incidencias.filter(tipo_comparacion='individual')
+        incidencias_suma_total = incidencias.filter(tipo_comparacion='suma_total')  
+        incidencias_legacy = incidencias.filter(tipo_comparacion='legacy')
         
         # Progreso general
         progreso = {
@@ -473,14 +622,76 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         
         # Distribución por prioridad
         prioridades = {
+            'critica': incidencias.filter(prioridad='critica').count(),
             'alta': incidencias.filter(prioridad='alta').count(),
             'media': incidencias.filter(prioridad='media').count(),
             'baja': incidencias.filter(prioridad='baja').count()
         }
         
+        # NUEVO: Estadísticas del sistema dual
+        sistema_dual = {
+            'activo': incidencias_individuales.exists() or incidencias_suma_total.exists(),
+            'comparacion_individual': {
+                'total': incidencias_individuales.count(),
+                'pendientes': incidencias_individuales.exclude(
+                    id__in=resoluciones.filter(
+                        tipo_resolucion__in=['aprobacion_supervisor', 'rechazo_supervisor']
+                    ).values('incidencia_id')
+                ).count(),
+                'tipos_detectados': list(incidencias_individuales.values_list(
+                    'tipo_incidencia', flat=True
+                ).distinct()),
+                'prioridades': {
+                    'critica': incidencias_individuales.filter(prioridad='critica').count(),
+                    'alta': incidencias_individuales.filter(prioridad='alta').count(),
+                    'media': incidencias_individuales.filter(prioridad='media').count(),
+                    'baja': incidencias_individuales.filter(prioridad='baja').count()
+                }
+            },
+            'comparacion_suma_total': {
+                'total': incidencias_suma_total.count(),
+                'pendientes': incidencias_suma_total.exclude(
+                    id__in=resoluciones.filter(
+                        tipo_resolucion__in=['aprobacion_supervisor', 'rechazo_supervisor']
+                    ).values('incidencia_id')  
+                ).count(),
+                'tipos_detectados': list(incidencias_suma_total.values_list(
+                    'tipo_incidencia', flat=True
+                ).distinct()),
+                'prioridades': {
+                    'critica': incidencias_suma_total.filter(prioridad='critica').count(),
+                    'alta': incidencias_suma_total.filter(prioridad='alta').count(),
+                    'media': incidencias_suma_total.filter(prioridad='media').count(),
+                    'baja': incidencias_suma_total.filter(prioridad='baja').count()
+                }
+            },
+            'resumen_tipos': {
+                'individual': incidencias_individuales.count(),
+                'suma_total': incidencias_suma_total.count(),
+                'legacy': incidencias_legacy.count()
+            }
+        }
+        
         # Verificar si puede finalizar (todas aprobadas)
         total_incidencias = incidencias.count()
         puede_finalizar = total_incidencias > 0 and progreso['aprobadas'] == total_incidencias
+        
+        # NUEVO: Información de rendimiento si el sistema dual está activo
+        rendimiento_info = {}
+        if sistema_dual['activo']:
+            # Buscar en logs la información del Chord si está disponible
+            rendimiento_info = {
+                'sistema_utilizado': 'dual_paralelo',
+                'comparaciones_ejecutadas': ['individual', 'suma_total'],
+                'paralelizacion': True,
+                'optimizado': True
+            }
+        else:
+            rendimiento_info = {
+                'sistema_utilizado': 'legacy',
+                'paralelizacion': False,
+                'optimizado': False
+            }
         
         return Response({
             'total_incidencias': total_incidencias,
@@ -489,7 +700,10 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
             'prioridades': prioridades,
             'puede_finalizar': puede_finalizar,
             'estado_cierre': cierre.estado_incidencias,
-            'estado_consolidacion': cierre.estado_consolidacion
+            'estado_consolidacion': cierre.estado_consolidacion,
+            # NUEVOS CAMPOS DEL SISTEMA DUAL
+            'sistema_dual': sistema_dual,
+            'rendimiento': rendimiento_info
         })
 
     @action(detail=True, methods=['post'], url_path='marcar-todas-como-justificadas')
@@ -1117,20 +1331,51 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def procesar(self, request, pk=None):
-        """Procesar libro completo: actualizar empleados y guardar registros"""
+        """
+        🚀 Procesar libro completo: actualizar empleados y guardar registros.
+        Versión optimizada con Celery Chord para mejor rendimiento.
+        """
         libro = self.get_object()
         libro.estado = 'procesando'
         libro.save(update_fields=['estado'])
         
-        # Chain de procesamiento completo
-        result = chain(
-            actualizar_empleados_desde_libro.s(libro.id),
-            guardar_registros_nomina.s(),
-        )()
+        # Leer parámetros opcionales - optimización activada por defecto
+        usar_optimizacion = request.data.get('usar_optimizacion', True) if hasattr(request, 'data') and request.data else True
+        
+        logger.info(f"🔄 Iniciando procesamiento de libro {libro.id}, optimización: {usar_optimizacion}")
+        
+        if usar_optimizacion:
+            # 🚀 USAR VERSIONES OPTIMIZADAS CON CHORD
+            try:
+                result = chain(
+                    actualizar_empleados_desde_libro_optimizado.s(libro.id),
+                    guardar_registros_nomina_optimizado.s(),
+                ).apply_async()
+                
+                mensaje = 'Procesamiento optimizado iniciado (usando Celery Chord para mejor rendimiento)'
+                logger.info(f"🚀 Chain optimizado iniciado para libro {libro.id}")
+                
+            except Exception as e:
+                # Fallback a versión no optimizada
+                logger.warning(f"⚠️ Error iniciando procesamiento optimizado: {e}, usando fallback")
+                result = chain(
+                    actualizar_empleados_desde_libro.s(libro.id),
+                    guardar_registros_nomina.s(),
+                ).apply_async()
+                mensaje = 'Procesamiento iniciado (fallback a modo clásico)'
+        else:
+            # 📝 USAR VERSIONES CLÁSICAS
+            result = chain(
+                actualizar_empleados_desde_libro.s(libro.id),
+                guardar_registros_nomina.s(),
+            ).apply_async()
+            mensaje = 'Procesamiento clásico iniciado'
+            logger.info(f"📝 Chain clásico iniciado para libro {libro.id}")
         
         return Response({
             'task_id': result.id if hasattr(result, 'id') else str(result), 
-            'mensaje': 'Procesamiento iniciado'
+            'mensaje': mensaje,
+            'optimizado': usar_optimizacion
         }, status=status.HTTP_202_ACCEPTED)
     
     def perform_destroy(self, instance):
@@ -1881,17 +2126,8 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
         
         # Proceder con la finalización
         try:
-            # Cambiar estado del cierre a finalizado
-            cierre.estado = 'finalizado'
-            cierre.estado_incidencias = 'finalizado'
-            cierre.fecha_finalizacion = timezone.now()
-            cierre.usuario_finalizacion = request.user
-            cierre.save(update_fields=['estado', 'estado_incidencias', 'fecha_finalizacion', 'usuario_finalizacion'])
-            
-            # TODO: Aquí se pueden lanzar tareas para generar informes
-            # - Generar informe consolidado
-            # - Generar reportes financieros
-            # - Notificar a usuarios relevantes
+            # 🎯 USAR EL MÉTODO DEL MODELO QUE GENERA EL INFORME AUTOMÁTICAMENTE
+            resultado = cierre.finalizar_cierre(request.user)
             
             return Response({
                 "success": True,
@@ -1900,11 +2136,17 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
                 "estado_final": cierre.estado,
                 "fecha_finalizacion": cierre.fecha_finalizacion,
                 "usuario_finalizacion": request.user.correo_bdo,
+                "informe": {
+                    "informe_id": resultado['informe_id'],
+                    "datos_cierre": resultado.get('datos_cierre', {})
+                },
                 "resumen": {
                     "empleados_consolidados": cierre.nomina_consolidada.count(),
                     "total_incidencias_resueltas": cierre.incidencias.count(),
                     "periodo": str(cierre.periodo),
-                    "cliente": cierre.cliente.nombre
+                    "cliente": cierre.cliente.nombre,
+                    "dotacion_total": resultado.get('datos_cierre', {}).get('metricas_basicas', {}).get('dotacion_total', 0),
+                    "costo_empresa_total": resultado.get('datos_cierre', {}).get('metricas_basicas', {}).get('costo_empresa_total', 0)
                 },
                 "siguiente_paso": "Cierre completado. Informes disponibles en el sistema."
             }, status=200)
@@ -1914,6 +2156,84 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
                 "error": "Error interno",
                 "message": f"Error al finalizar cierre: {str(e)}"
             }, status=500)
+    
+    @action(detail=False, methods=['get'], url_path='informe/(?P<cierre_id>[^/.]+)')
+    def obtener_informe_cierre(self, request, cierre_id=None):
+        """
+        📊 ENDPOINT: Obtener informe comprehensivo de un cierre finalizado
+        
+        Retorna el informe completo con todas las métricas de RRHH
+        """
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        # Verificar que el cierre esté finalizado
+        if cierre.estado != 'finalizado':
+            return Response({
+                "error": "Cierre no finalizado",
+                "message": "El informe solo está disponible para cierres finalizados",
+                "estado_actual": cierre.estado
+            }, status=400)
+        
+        # Verificar que existe el informe
+        if not cierre.tiene_informe:
+            return Response({
+                "error": "Informe no encontrado",
+                "message": "No se ha generado informe para este cierre"
+            }, status=404)
+        
+        # Obtener el informe
+        informe = cierre.informe
+        
+        return Response({
+            "success": True,
+            "informe": {
+                "id": informe.id,
+                "cierre_id": cierre.id,
+                "periodo": str(cierre.periodo),
+                "cliente": cierre.cliente.nombre,
+                "fecha_generacion": informe.fecha_generacion,
+                "version_calculo": informe.version_calculo,
+                "tiempo_calculo": str(informe.tiempo_calculo) if informe.tiempo_calculo else None,
+                
+                # Datos del informe
+                "datos_cierre": informe.datos_cierre
+            }
+        }, status=200)
+    
+    @action(detail=False, methods=['get'], url_path='informe-resumen/(?P<cierre_id>[^/.]+)')
+    def obtener_resumen_informe(self, request, cierre_id=None):
+        """
+        📊 ENDPOINT: Obtener solo el resumen ejecutivo del informe (KPIs principales)
+        
+        Versión ligera para dashboards o vistas rápidas
+        """
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+        
+        if not cierre.tiene_informe:
+            return Response({
+                "error": "Informe no encontrado",
+                "message": "No se ha generado informe para este cierre"
+            }, status=404)
+        
+        informe = cierre.informe
+        
+        return Response({
+            "success": True,
+            "resumen": {
+                "periodo": str(cierre.periodo),
+                "cliente": cierre.cliente.nombre,
+                "fecha_generacion": informe.fecha_generacion,
+                "metricas_basicas": informe.datos_cierre.get('metricas_basicas', {}),
+                "movimientos": informe.datos_cierre.get('movimientos', {}),
+                "afp_isapre": informe.datos_cierre.get('afp_isapre', [])
+            }
+        }, status=200)
         
         # CÓDIGO ORIGINAL COMENTADO:
         # try:

@@ -315,6 +315,65 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({"error": str(e)}, status=500)
 
+    @action(detail=True, methods=['post'])
+    def procesar_final_optimizado(self, request, pk=None):
+        """🚀 Versión optimizada con Celery Chord para procesamiento paralelo"""
+        from nomina.tasks import actualizar_empleados_desde_novedades_task_optimizado, guardar_registros_novedades_task_optimizado
+        from nomina.models_logging import registrar_actividad_tarjeta_nomina
+        from celery import chain
+        
+        archivo = self.get_object()
+        
+        if archivo.estado != 'clasificado':
+            return Response({
+                "error": "El archivo debe estar clasificado completamente para procesamiento optimizado"
+            }, status=400)
+        
+        try:
+            # Crear chain optimizado con chord interno
+            workflow = chain(
+                actualizar_empleados_desde_novedades_task_optimizado.s({"archivo_id": archivo.id}),
+                guardar_registros_novedades_task_optimizado.s()
+            )
+            
+            # Ejecutar con tracking
+            result = workflow.apply_async()
+            
+            # Registrar inicio optimizado
+            try:
+                headers_clasificados = len(archivo.header_json.get('headers_clasificados', {})) if archivo.header_json else 0
+                
+                registrar_actividad_tarjeta_nomina(
+                    cierre_id=archivo.cierre.id,
+                    tarjeta="novedades", 
+                    accion="procesar_final_optimizado",
+                    descripcion="Iniciando procesamiento paralelo de novedades con chunks",
+                    detalles={
+                        "archivo_id": archivo.id,
+                        "chain_id": str(result),
+                        "modo": "chord_paralelo",
+                        "headers_clasificados": headers_clasificados,
+                        "archivo_nombre": archivo.archivo.name if archivo.archivo else "N/A"
+                    },
+                    resultado="procesando"
+                )
+            except Exception as e:
+                # No fallar si no se puede registrar actividad
+                logger.warning(f"⚠️ Error registrando actividad optimizada: {e}")
+            
+            return Response({
+                "mensaje": "Procesamiento paralelo optimizado iniciado",
+                "chain_id": str(result),
+                "modo": "optimizado_chord",
+                "estado": archivo.estado,
+                "headers_clasificados": headers_clasificados,
+                "optimizacion_activa": True
+            })
+            
+        except Exception as e:
+            logger.error(f"❌ Error en procesamiento optimizado: {e}")
+            return Response({"error": str(e)}, status=500)
+
     def perform_destroy(self, instance):
         """
         Eliminar archivo de novedades y todos sus datos relacionados

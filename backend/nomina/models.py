@@ -257,6 +257,80 @@ class CierreNomina(models.Model):
             return False
         
         return True
+    
+    def puede_finalizar(self):
+        """
+        Verifica si el cierre puede ser finalizado
+        """
+        # Debe estar en estado 'incidencias_resueltas' o 'validacion_final'
+        if self.estado not in ['incidencias_resueltas', 'validacion_final']:
+            return False, "El cierre debe estar con incidencias resueltas o en validación final"
+        
+        # Verificar que no haya incidencias pendientes críticas
+        if hasattr(self, 'incidencias'):
+            incidencias_criticas = self.incidencias.filter(
+                criticidad='critica',
+                estado_resolucion__in=['pendiente', 'en_revision']
+            ).count()
+            
+            if incidencias_criticas > 0:
+                return False, f"Hay {incidencias_criticas} incidencias críticas pendientes"
+        
+        return True, "El cierre puede ser finalizado"
+    
+    def finalizar_cierre(self, usuario):
+        """
+        🎯 FINALIZA EL CIERRE Y GENERA EL INFORME COMPREHENSIVO
+        
+        Esta función:
+        1. Verifica que se puede finalizar
+        2. Cambia el estado a 'finalizado'
+        3. Genera el informe completo de nómina
+        4. Registra metadatos de finalización
+        """
+        from django.utils import timezone
+        from .models_informe import InformeNomina
+        
+        # Verificar que se puede finalizar
+        puede, razon = self.puede_finalizar()
+        if not puede:
+            raise ValueError(f"No se puede finalizar el cierre: {razon}")
+        
+        try:
+            # Actualizar estado y metadatos
+            self.estado = 'finalizado'
+            self.fecha_finalizacion = timezone.now()
+            self.usuario_finalizacion = usuario
+            self.save(update_fields=['estado', 'fecha_finalizacion', 'usuario_finalizacion'])
+            
+            # Generar informe comprehensivo
+            print(f"🎯 Generando informe para cierre {self.cliente.nombre} - {self.periodo}")
+            informe = InformeNomina.generar_informe_completo(self)
+            
+            print(f"✅ Cierre finalizado exitosamente")
+            print(f"📊 Informe generado con {informe.get_kpi_principal('dotacion_total')} empleados")
+            print(f"💰 Costo empresa total: ${informe.get_kpi_principal('costo_empresa_total'):,.0f}")
+            
+            return {
+                'success': True,
+                'informe_id': informe.id,
+                'mensaje': 'Cierre finalizado e informe generado exitosamente',
+                'datos_cierre': informe.datos_cierre
+            }
+            
+        except Exception as e:
+            # Revertir estado si hay error
+            self.estado = 'incidencias_resueltas'
+            self.fecha_finalizacion = None
+            self.usuario_finalizacion = None
+            self.save(update_fields=['estado', 'fecha_finalizacion', 'usuario_finalizacion'])
+            
+            raise Exception(f"Error al finalizar cierre: {str(e)}")
+    
+    @property
+    def tiene_informe(self):
+        """Verifica si el cierre tiene informe generado"""
+        return hasattr(self, 'informe') and self.informe is not None
 
 
 class EmpleadoCierre(models.Model):
@@ -748,13 +822,29 @@ class EstadoCierreIncidencias(models.TextChoices):
     CIERRE_COMPLETADO = 'cierre_completado', 'Cierre Completado'
 
 class TipoIncidencia(models.TextChoices):
-    # Nuevos 6 tipos de incidencias para comparación entre períodos consolidados
+    # Tipos base para comparación entre períodos consolidados
     VARIACION_CONCEPTO = 'variacion_concepto', 'Variación de Concepto (>30%)'
     CONCEPTO_NUEVO = 'concepto_nuevo', 'Concepto Nuevo'
     CONCEPTO_PERDIDO = 'concepto_perdido', 'Concepto Perdido'
     EMPLEADO_DEBERIA_INGRESAR = 'empleado_deberia_ingresar', 'Empleado que Debería Ingresar'
     EMPLEADO_NO_DEBERIA_ESTAR = 'empleado_no_deberia_estar', 'Empleado que No Debería Estar'
     AUSENTISMO_CONTINUO = 'ausentismo_continuo', 'Ausentismo Continuo'
+    
+    # NUEVOS TIPOS ESPECÍFICOS DEL SISTEMA DUAL
+    # Comparación Individual (elemento a elemento)
+    VARIACION_CONCEPTO_INDIVIDUAL = 'variacion_concepto_individual', 'Variación Individual en Concepto'
+    CONCEPTO_NUEVO_EMPLEADO = 'concepto_nuevo_empleado', 'Concepto Nuevo para Empleado'
+    CONCEPTO_ELIMINADO_EMPLEADO = 'concepto_eliminado_empleado', 'Concepto Eliminado de Empleado'
+    EMPLEADO_NUEVO = 'empleado_nuevo', 'Empleado Nuevo sin Período Anterior'
+    
+    # Comparación Agregada (suma total)
+    VARIACION_SUMA_TOTAL = 'variacion_suma_total', 'Variación en Suma Total de Concepto'
+    CONCEPTO_NUEVO_PERIODO = 'concepto_nuevo_periodo', 'Concepto Nuevo en Período'
+    CONCEPTO_ELIMINADO_PERIODO = 'concepto_eliminado_periodo', 'Concepto Eliminado del Período'
+    
+    # Validaciones de Reglas de Negocio
+    REGLA_NEGOCIO_VIOLADA = 'regla_negocio_violada', 'Violación de Regla de Negocio'
+    CALCULO_INCORRECTO = 'calculo_incorrecto', 'Error en Cálculo'
 
 class EstadoIncidencia(models.TextChoices):
     PENDIENTE = 'pendiente', 'Pendiente de Resolución'
@@ -768,14 +858,34 @@ def resolucion_upload_to(instance, filename):
     return f"resoluciones/{instance.incidencia.cierre.cliente.id}/{instance.incidencia.cierre.periodo}/{now}_{filename}"
 
 class IncidenciaCierre(models.Model):
-    """Incidencias detectadas en la comparación de archivos de un cierre"""
+    """
+    Incidencias detectadas en la comparación de archivos de un cierre
+    VERSIÓN 2.0: Sistema Dual con soporte para comparación individual y suma total
+    """
     cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE, related_name='incidencias')
     tipo_incidencia = models.CharField(max_length=50, choices=TipoIncidencia.choices)
     
-    # Empleado afectado
+    # NUEVO: Tipo de comparación que generó la incidencia
+    TIPO_COMPARACION_CHOICES = [
+        ('individual', 'Comparación Individual (Elemento a Elemento)'),
+        ('suma_total', 'Comparación Suma Total (Agregada)'),
+        ('regla_negocio', 'Validación Regla de Negocio'),
+        ('legacy', 'Sistema Legacy (Compatibilidad)'),
+    ]
+    tipo_comparacion = models.CharField(
+        max_length=20, 
+        choices=TIPO_COMPARACION_CHOICES, 
+        default='legacy',
+        help_text="Tipo de análisis que detectó esta incidencia"
+    )
+    
+    # Empleado afectado (campos existentes para compatibilidad)
     empleado_libro = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE, null=True, blank=True)
     empleado_novedades = models.ForeignKey('EmpleadoCierreNovedades', on_delete=models.CASCADE, null=True, blank=True)
-    rut_empleado = models.CharField(max_length=20)
+    rut_empleado = models.CharField(max_length=20, db_index=True)
+    
+    # NUEVO: Información del empleado para sistema consolidado
+    empleado_nombre = models.CharField(max_length=200, null=True, blank=True, help_text="Nombre del empleado (desde consolidación)")
     
     # Detalles de la incidencia
     descripcion = models.TextField()
@@ -788,7 +898,13 @@ class IncidenciaCierre(models.Model):
     concepto_afectado = models.CharField(max_length=200, null=True, blank=True)
     fecha_detectada = models.DateTimeField(auto_now_add=True)
     
-    # NUEVOS CAMPOS PARA RESOLUCIÓN COLABORATIVA
+    # NUEVO: Datos adicionales específicos del sistema dual
+    datos_adicionales = models.JSONField(
+        default=dict, 
+        help_text="Datos específicos según tipo de incidencia y comparación"
+    )
+    
+    # CAMPOS PARA RESOLUCIÓN COLABORATIVA
     estado = models.CharField(max_length=20, choices=EstadoIncidencia.choices, default='pendiente')
     prioridad = models.CharField(max_length=10, choices=[
         ('baja', 'Baja'),
@@ -807,6 +923,11 @@ class IncidenciaCierre(models.Model):
     fecha_primera_resolucion = models.DateTimeField(null=True, blank=True)
     fecha_ultima_accion = models.DateTimeField(auto_now=True)
     
+    # NUEVO: Resolución específica del sistema dual
+    resuelto_por = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='incidencias_resueltas')
+    fecha_resolucion = models.DateTimeField(null=True, blank=True)
+    comentario_resolucion = models.TextField(blank=True)
+    
     class Meta:
         indexes = [
             models.Index(fields=['cierre', 'tipo_incidencia']),
@@ -814,14 +935,38 @@ class IncidenciaCierre(models.Model):
             models.Index(fields=['rut_empleado', 'cierre']),
             models.Index(fields=['estado', 'prioridad']),
             models.Index(fields=['asignado_a', 'estado']),
+            # NUEVOS ÍNDICES para sistema dual
+            models.Index(fields=['cierre', 'tipo_comparacion']),
+            models.Index(fields=['tipo_comparacion', 'estado']),
+            models.Index(fields=['prioridad', 'fecha_detectada']),
         ]
+        ordering = ['-fecha_detectada', '-impacto_monetario']
     
     def __str__(self):
-        return f"{self.get_tipo_incidencia_display()} - {self.rut_empleado} - {self.cierre}"
+        tipo_comp = f"[{self.get_tipo_comparacion_display()}]" if self.tipo_comparacion != 'legacy' else ""
+        empleado_info = self.empleado_nombre or self.rut_empleado
+        return f"{tipo_comp} {self.get_tipo_incidencia_display()} - {empleado_info}"
 
     def calcular_impacto_monetario(self):
-        """Calcula el impacto monetario de la incidencia"""
+        """
+        Calcula el impacto monetario de la incidencia
+        ACTUALIZADO: Soporte para sistema dual con datos_adicionales
+        """
         try:
+            # SISTEMA DUAL: Usar datos_adicionales si están disponibles
+            if self.datos_adicionales and self.tipo_comparacion in ['individual', 'suma_total']:
+                if 'variacion_absoluta' in self.datos_adicionales:
+                    return abs(float(self.datos_adicionales['variacion_absoluta']))
+                elif 'monto_actual' in self.datos_adicionales:
+                    monto_actual = float(self.datos_adicionales['monto_actual'])
+                    monto_anterior = float(self.datos_adicionales.get('monto_anterior', 0))
+                    return abs(monto_actual - monto_anterior)
+                elif 'suma_actual' in self.datos_adicionales:
+                    suma_actual = float(self.datos_adicionales['suma_actual'])
+                    suma_anterior = float(self.datos_adicionales.get('suma_anterior', 0))
+                    return abs(suma_actual - suma_anterior)
+            
+            # SISTEMA LEGACY: Lógica original para compatibilidad
             if self.tipo_incidencia == TipoIncidencia.VARIACION_CONCEPTO:
                 if self.valor_libro and self.valor_novedades:
                     # Limpiar y convertir valores
@@ -837,9 +982,60 @@ class IncidenciaCierre(models.Model):
                 if self.valor_libro:
                     liquido = float(str(self.valor_libro).replace(',', '').replace('$', '').strip())
                     return abs(liquido)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, KeyError):
             pass
         return 0
+    
+    def get_contexto_comparacion(self):
+        """
+        Retorna información contextual específica del tipo de comparación
+        """
+        if self.tipo_comparacion == 'individual':
+            return {
+                'tipo': 'Análisis Individual',
+                'descripcion': 'Comparación elemento a elemento por empleado',
+                'alcance': 'Solo conceptos seleccionados',
+                'precision': 'Alta granularidad'
+            }
+        elif self.tipo_comparacion == 'suma_total':
+            return {
+                'tipo': 'Análisis Agregado',
+                'descripcion': 'Comparación de sumas totales por concepto',
+                'alcance': 'Todos los conceptos',
+                'precision': 'Tendencias generales'
+            }
+        elif self.tipo_comparacion == 'regla_negocio':
+            return {
+                'tipo': 'Validación de Reglas',
+                'descripcion': 'Verificación de reglas de negocio',
+                'alcance': 'Validaciones específicas',
+                'precision': 'Cumplimiento normativo'
+            }
+        else:
+            return {
+                'tipo': 'Sistema Legacy',
+                'descripcion': 'Detección tradicional',
+                'alcance': 'Comparación general',
+                'precision': 'Estándar'
+            }
+    
+    def es_incidencia_critica(self):
+        """Determina si la incidencia es crítica basada en múltiples factores"""
+        return (
+            self.prioridad == 'critica' or
+            (self.impacto_monetario and self.impacto_monetario >= 10000000) or  # 10M+
+            self.tipo_incidencia in [
+                TipoIncidencia.EMPLEADO_NO_DEBERIA_ESTAR,
+                TipoIncidencia.CONCEPTO_PERDIDO
+            ]
+        )
+    
+    def get_variacion_porcentual(self):
+        """Obtiene la variación porcentual si está disponible"""
+        if (self.datos_adicionales and 
+            'variacion_porcentual' in self.datos_adicionales):
+            return self.datos_adicionales['variacion_porcentual']
+        return None
 
     def save(self, *args, **kwargs):
         # Calcular impacto monetario automáticamente

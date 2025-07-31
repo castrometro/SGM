@@ -282,7 +282,7 @@ useEffect(() => {
   if (estado === "procesando" && !pollingRef.current && onActualizarEstado) {
     pollingRef.current = setInterval(async () => {
       await onActualizarEstado();
-    }, 40000); // cada 40 segundos
+    }, 5000); // cada 5 segundos
   }
 }, [estado, onActualizarEstado]);
 ```

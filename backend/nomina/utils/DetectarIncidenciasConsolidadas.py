@@ -1,11 +1,18 @@
 # backend/nomina/utils/DetectarIncidenciasConsolidadas.py
 """
 Sistema de detección de incidencias entre períodos consolidados de nómina
+VERSIÓN 2.0: Sistema Dual con Celery Chord
+- Comparación Individual (elemento a elemento) para conceptos seleccionados
+- Comparación Suma Total (agregada) para todos los conceptos
 """
 
 import logging
+import time
 from decimal import Decimal
-from django.db.models import Q
+from django.db.models import Q, Sum, Count
+from django.contrib.auth.models import User
+from django.utils import timezone
+from celery import shared_task, chord
 from ..models import (
     CierreNomina, 
     NominaConsolidada, 
@@ -15,957 +22,1055 @@ from ..models import (
     TipoIncidencia
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('nomina.incidencias')
 
-def detectar_incidencias_consolidadas_simple(cierre_actual):
+# ================================
+# 🎯 CONFIGURACIÓN PABLO - CONCEPTOS A ANALIZAR
+# ================================
+
+# Conceptos que Pablo quiere analizar en DETALLE (empleado por empleado)
+CONCEPTOS_ANALISIS_DETALLADO = [
+    'haberes_imponibles',     # 💰 Sueldos - Cambios requieren autorización
+    'haberes_no_imponibles',  # 🎁 Bonos - Decisiones de gestión  
+    'otros_descuentos'        # 📋 Descuentos discrecionales
+]
+
+# Conceptos que Pablo quiere SOLO como resumen (totales)
+CONCEPTOS_SOLO_RESUMEN = [
+    'descuentos_legales',     # 🤖 Se calculan automáticamente por ley
+    'aportes_patronales',     # 🏢 Los paga la empresa, no el empleado
+    'informacion_adicional',  # 📄 No son montos
+    'impuestos',              # 💸 Se calculan automáticamente
+    'horas_extras'            # ⏰ Muy variables por naturaleza
+]
+
+# ================================
+# 🚀 SISTEMA DUAL CON CELERY CHORD
+# ================================
+
+@shared_task
+def generar_incidencias_consolidados_v2(cierre_id, clasificaciones_seleccionadas=None):
     """
-    🎯 DETECCIÓN SIMPLIFICADA DE INCIDENCIAS
+    🎯 TAREA ORQUESTADORA PRINCIPAL - SISTEMA DUAL CON CONFIGURACIÓN PABLO
     
-    Enfoque directo en 2 pasos:
-    1. Comparar nóminas de empleados comunes (variaciones de conceptos/montos)
-    2. Revisar empleados únicos (verificar documentación de ingresos/finiquitos)
+    Coordina dos tipos de comparación usando Celery Chord:
+    1. Comparación Individual: elemento a elemento (SOLO conceptos de Pablo)  
+    2. Comparación Suma Total: agregada (TODOS los conceptos)
     
     Args:
-        cierre_actual: CierreNomina - Cierre actual consolidado
+        cierre_id: ID del cierre actual
+        clasificaciones_seleccionadas: IGNORADO - ahora usa configuración automática de Pablo
         
     Returns:
-        dict: Resultado de la detección con estadísticas
+        dict: Resultado de la coordinación con estadísticas del Chord
     """
-    logger.info(f"🎯 Iniciando detección simplificada para {cierre_actual}")
+    # 🎯 USAR CONFIGURACIÓN AUTOMÁTICA DE PABLO (ignorar parámetro)
+    clasificaciones_pablo = CONCEPTOS_ANALISIS_DETALLADO
     
-    # 1. OBTENER CIERRE ANTERIOR
-    cierre_anterior = CierreNomina.objects.filter(
-        cliente=cierre_actual.cliente,
-        periodo__lt=cierre_actual.periodo,
-        estado='finalizado'
-    ).order_by('-periodo').first()
+    logger.info(f"🚀 Iniciando sistema dual para cierre {cierre_id}")
+    logger.info(f"🔍 Conceptos para análisis detallado (Pablo): {clasificaciones_pablo}")
+    logger.info(f"📊 Conceptos solo resumen: {CONCEPTOS_SOLO_RESUMEN}")
     
-    if not cierre_anterior:
-        logger.info(f"⚠️ No hay período anterior finalizado para {cierre_actual}")
+    try:
+        cierre_actual = CierreNomina.objects.get(id=cierre_id)
+        cierre_anterior = obtener_cierre_anterior_finalizado(cierre_actual)
+        
+        if not cierre_anterior:
+            logger.info(f"🆕 Primer cierre del cliente {cierre_actual.cliente.nombre}")
+            logger.info(f"📊 Generando análisis informativo sin comparación para {cierre_actual.periodo}")
+            
+            # Generar análisis informativo para el primer cierre
+            return generar_analisis_primer_cierre(cierre_actual, clasificaciones_pablo)
+        
+        logger.info(f"📊 Comparando {cierre_actual.periodo} vs {cierre_anterior.periodo}")
+        
+        # 1. PREPARAR EMPLEADOS PARA COMPARACIÓN INDIVIDUAL
+        empleados_consolidados = NominaConsolidada.objects.filter(
+            cierre=cierre_actual
+        ).select_related('cierre').prefetch_related('conceptos_consolidados')
+        
+        total_empleados = empleados_consolidados.count()
+        logger.info(f"👥 Total empleados a procesar: {total_empleados}")
+        
+        if total_empleados == 0:
+            logger.warning("⚠️ No hay empleados consolidados para procesar")
+            return {'success': False, 'message': 'No hay empleados consolidados'}
+        
+        # 2. CREAR CHUNKS DINÁMICOS PARA COMPARACIÓN INDIVIDUAL
+        chunks_empleados = crear_chunks_empleados_dinamicos(empleados_consolidados)
+        logger.info(f"📦 Creados {len(chunks_empleados)} chunks para comparación individual")
+        
+        # 3. CREAR TAREAS PARALELAS
+        tasks = []
+        
+        # TAREAS TIPO A: Comparación individual (chunks paralelos) - SOLO CONCEPTOS DE PABLO
+        for i, chunk_empleados_ids in enumerate(chunks_empleados):
+            tasks.append(
+                procesar_chunk_comparacion_individual.s(
+                    chunk_empleados_ids,
+                    cierre_id,
+                    cierre_anterior.id,
+                    clasificaciones_pablo,  # 🎯 USAR CONFIGURACIÓN DE PABLO
+                    f"individual_chunk_{i+1}"
+                )
+            )
+        
+        # TAREA TIPO B: Comparación suma total (tarea única dedicada) - TODOS LOS CONCEPTOS
+        tasks.append(
+            procesar_comparacion_suma_total.s(
+                cierre_id,
+                cierre_anterior.id,
+                "suma_total_global"
+            )
+        )
+        
+        # 4. EJECUTAR CHORD
+        logger.info(f"🎼 Ejecutando Chord con {len(tasks)} tareas")
+        logger.info(f"   🔍 {len(chunks_empleados)} chunks individuales (solo conceptos críticos)")
+        logger.info(f"   📊 1 comparación suma total (todos los conceptos)")
+        
+        job = chord(tasks)(consolidar_resultados_incidencias.s(cierre_id, len(chunks_empleados)))
+        
+        logger.info(f"✅ Chord iniciado exitosamente: {job.id}")
+        
         return {
             'success': True,
-            'total_incidencias': 0,
-            'incidencias_variaciones': 0,
-            'incidencias_faltantes': 0,
-            'mensaje': 'Sin período anterior para comparar'
+            'chord_id': job.id,
+            'chunks_individuales': len(chunks_empleados),
+            'comparacion_suma_total': True,
+            'total_tasks': len(tasks),
+            'empleados_total': total_empleados,
+            'clasificaciones_detalladas': clasificaciones_pablo,  # 🎯 CONCEPTOS PABLO
+            'clasificaciones_solo_resumen': CONCEPTOS_SOLO_RESUMEN,
+            'configuracion': 'pablo_automatica',
+            'mensaje': f'Sistema Pablo: {len(chunks_empleados)} chunks individuales + suma total automática'
         }
-    
-    logger.info(f"📊 Comparando {cierre_actual.periodo} vs {cierre_anterior.periodo}")
-    
-    # 2. OBTENER NÓMINAS DE AMBOS PERÍODOS
-    nominas_actual = NominaConsolidada.objects.filter(cierre=cierre_actual)
-    nominas_anterior = NominaConsolidada.objects.filter(cierre=cierre_anterior)
-    
-    # Crear mapas por RUT para comparación eficiente
-    ruts_actual = set(nominas_actual.values_list('rut_empleado', flat=True))
-    ruts_anterior = set(nominas_anterior.values_list('rut_empleado', flat=True))
-    
-    logger.info(f"📋 Empleados actual: {len(ruts_actual)}, anterior: {len(ruts_anterior)}")
-    
-    # 3. PASO 1: COMPARAR EMPLEADOS COMUNES (variaciones)
-    ruts_comunes = ruts_actual & ruts_anterior
-    logger.info(f"👥 Empleados comunes: {len(ruts_comunes)}")
-    
-    incidencias_variaciones = _comparar_nominas_empleados_comunes(
-        cierre_actual, cierre_anterior, ruts_comunes
-    )
-    
-    # 4. PASO 2: ANALIZAR EMPLEADOS ÚNICOS (diferencias)
-    ruts_solo_anterior = ruts_anterior - ruts_actual  # Posibles finiquitos
-    ruts_solo_actual = ruts_actual - ruts_anterior    # Posibles ingresos
-    
-    logger.info(f"📤 Solo en anterior: {len(ruts_solo_anterior)}, Solo en actual: {len(ruts_solo_actual)}")
-    
-    incidencias_faltantes = _analizar_empleados_unicos(
-        cierre_actual, cierre_anterior, ruts_solo_anterior, ruts_solo_actual
-    )
-    
-    # 5. CONSOLIDAR RESULTADOS
-    total_incidencias = len(incidencias_variaciones) + len(incidencias_faltantes)
-    
-    # Actualizar estado del cierre
-    if total_incidencias > 0:
-        cierre_actual.estado = 'con_incidencias'
-        cierre_actual.estado_incidencias = 'pendientes'
-    else:
-        cierre_actual.estado = 'incidencias_resueltas'
-        cierre_actual.estado_incidencias = 'sin_incidencias'
-    
-    cierre_actual.total_incidencias = total_incidencias
-    cierre_actual.save(update_fields=['estado', 'estado_incidencias', 'total_incidencias'])
-    
-    logger.info(f"✅ Detección completada: {len(incidencias_variaciones)} variaciones, {len(incidencias_faltantes)} faltantes")
-    
-    return {
-        'success': True,
-        'total_incidencias': total_incidencias,
-        'incidencias_variaciones': len(incidencias_variaciones),
-        'incidencias_faltantes': len(incidencias_faltantes),
-        'ruts_comunes': len(ruts_comunes),
-        'ruts_solo_anterior': len(ruts_solo_anterior),
-        'ruts_solo_actual': len(ruts_solo_actual)
-    }
+        
+    except Exception as e:
+        logger.error(f"❌ Error en sistema dual: {str(e)}")
+        return {'success': False, 'error': str(e)}
 
-
-def _comparar_nominas_empleados_comunes(cierre_actual, cierre_anterior, ruts_comunes):
-    """
-    Compara conceptos y montos entre empleados que existen en ambos meses
-    """
-    logger.info(f"🔍 Comparando {len(ruts_comunes)} empleados comunes")
-    incidencias = []
-    
-    tolerancia_porcentaje = Decimal('30.0')  # 30% de tolerancia
-    
-    for rut in ruts_comunes:
-        # Obtener nóminas de ambos períodos
-        try:
-            nomina_actual = NominaConsolidada.objects.get(cierre=cierre_actual, rut_empleado=rut)
-            nomina_anterior = NominaConsolidada.objects.get(cierre=cierre_anterior, rut_empleado=rut)
-        except NominaConsolidada.DoesNotExist:
-            continue
-        
-        # Comparar conceptos consolidados
-        conceptos_actual = {c.nombre_concepto: c.monto_total 
-                           for c in ConceptoConsolidado.objects.filter(nomina_consolidada=nomina_actual)
-                           if c.es_numerico and c.monto_total}
-        
-        conceptos_anterior = {c.nombre_concepto: c.monto_total 
-                             for c in ConceptoConsolidado.objects.filter(nomina_consolidada=nomina_anterior)
-                             if c.es_numerico and c.monto_total}
-        
-        # Comparar cada concepto
-        todos_conceptos = set(conceptos_actual.keys()) | set(conceptos_anterior.keys())
-        
-        for concepto in todos_conceptos:
-            monto_actual = conceptos_actual.get(concepto, Decimal('0'))
-            monto_anterior = conceptos_anterior.get(concepto, Decimal('0'))
-            
-            # Solo comparar si hay valores significativos
-            if abs(monto_anterior) < Decimal('1000'):  # Menos de $1,000 se ignora
-                continue
-            
-            # Calcular variación
-            if monto_anterior != 0:
-                variacion = abs((monto_actual - monto_anterior) / monto_anterior) * 100
-                
-                if variacion > tolerancia_porcentaje:
-                    # Crear incidencia
-                    incidencia = IncidenciaCierre.objects.create(
-                        cierre=cierre_actual,
-                        tipo_incidencia=TipoIncidencia.VARIACION_CONCEPTO,
-                        rut_empleado=rut,
-                        descripcion=f"Variación {variacion:.1f}% en {concepto}: ${monto_anterior:,.0f} → ${monto_actual:,.0f}",
-                        concepto_afectado=concepto,
-                        valor_libro=str(monto_actual),  # Valor actual
-                        valor_novedades=str(monto_anterior),  # Valor anterior
-                        prioridad='media',
-                        estado='pendiente',
-                        impacto_monetario=abs(monto_actual - monto_anterior)
-                    )
-                    incidencias.append(incidencia)
-    
-    logger.info(f"📊 {len(incidencias)} incidencias de variación detectadas")
-    return incidencias
-
-
-def _analizar_empleados_unicos(cierre_actual, cierre_anterior, ruts_solo_anterior, ruts_solo_actual):
-    """
-    Analiza empleados que están solo en un período y verifica documentación
-    """
-    from ..models import AnalistaIngreso, AnalistaFiniquito
-    
-    logger.info(f"🔍 Analizando empleados únicos: {len(ruts_solo_anterior)} + {len(ruts_solo_actual)}")
-    incidencias = []
-    
-    # 1. EMPLEADOS SOLO EN ANTERIOR (verificar finiquitos)
-    for rut in ruts_solo_anterior:
-        # Obtener información del empleado
-        try:
-            nomina_anterior = NominaConsolidada.objects.get(cierre=cierre_anterior, rut_empleado=rut)
-        except NominaConsolidada.DoesNotExist:
-            continue
-        
-        # Verificar si tiene finiquito documentado en el período anterior
-        tiene_finiquito = AnalistaFiniquito.objects.filter(
-            cierre=cierre_anterior,
-            rut=rut
-        ).exists()
-        
-        if not tiene_finiquito:
-            # No tiene finiquito documentado - crear incidencia
-            incidencia = IncidenciaCierre.objects.create(
-                cierre=cierre_actual,
-                tipo_incidencia=TipoIncidencia.EMPLEADO_NO_DEBERIA_ESTAR,
-                rut_empleado=rut,
-                descripcion=f"Empleado {nomina_anterior.nombre_empleado} no está en nómina actual pero no tiene finiquito documentado en período anterior",
-                concepto_afectado='finiquito_faltante',
-                valor_libro='ausente',
-                valor_novedades='presente_sin_finiquito',
-                prioridad='alta',
-                estado='pendiente'
-            )
-            incidencias.append(incidencia)
-    
-    # 2. EMPLEADOS SOLO EN ACTUAL (verificar ingresos)
-    for rut in ruts_solo_actual:
-        # Obtener información del empleado
-        try:
-            nomina_actual = NominaConsolidada.objects.get(cierre=cierre_actual, rut_empleado=rut)
-        except NominaConsolidada.DoesNotExist:
-            continue
-        
-        # Verificar si tiene ingreso documentado en el período actual
-        tiene_ingreso = AnalistaIngreso.objects.filter(
-            cierre=cierre_actual,
-            rut=rut
-        ).exists()
-        
-        if not tiene_ingreso:
-            # No tiene ingreso documentado - crear incidencia
-            incidencia = IncidenciaCierre.objects.create(
-                cierre=cierre_actual,
-                tipo_incidencia=TipoIncidencia.EMPLEADO_DEBERIA_INGRESAR,
-                rut_empleado=rut,
-                descripcion=f"Empleado {nomina_actual.nombre_empleado} está en nómina actual pero no tiene ingreso documentado",
-                concepto_afectado='ingreso_faltante',
-                valor_libro='presente_sin_ingreso',
-                valor_novedades='ausente',
-                prioridad='alta',
-                estado='pendiente'
-            )
-            incidencias.append(incidencia)
-    
-    logger.info(f"📊 {len(incidencias)} incidencias de documentación faltante detectadas")
-    return incidencias
-
-
-def detectar_incidencias_consolidadas(cierre_actual):
-    """
-    🔍 DETECCIÓN DE INCIDENCIAS: Compara el cierre actual consolidado vs el período anterior
-    
-    Implementa las 4 reglas principales:
-    1. Variaciones de valor header-empleado superior a ±30%
-    2. Ausentismos del mes anterior que deberían continuar
-    3. Personas que ingresaron el mes anterior y no están presentes
-    4. Personas que finiquitaron el mes anterior y siguen presentes
-    """
-    # Verificar que el cierre esté en un estado válido para detectar incidencias
-    estados_validos = ['datos_consolidados', 'con_incidencias', 'incidencias_resueltas']
-    if cierre_actual.estado not in estados_validos:
-        raise ValueError(f"El cierre debe estar en estado válido para detectar incidencias. Estado actual: {cierre_actual.estado}, Estados válidos: {estados_validos}")
-    
-    # Obtener período anterior FINALIZADO del mismo cliente (comparación directa)
-    periodo_anterior = CierreNomina.objects.filter(
+def obtener_cierre_anterior_finalizado(cierre_actual):
+    """Obtiene el cierre anterior finalizado para comparación"""
+    return CierreNomina.objects.filter(
         cliente=cierre_actual.cliente,
         periodo__lt=cierre_actual.periodo,
         estado='finalizado'
     ).order_by('-periodo').first()
+
+# ================================
+# 🔍 COMPARACIÓN INDIVIDUAL
+# ================================
+
+@shared_task
+def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierre_anterior_id, 
+                                        clasificaciones_seleccionadas, chunk_id):
+    """
+    🔍 COMPARACIÓN ELEMENTO A ELEMENTO
     
-    if not periodo_anterior:
-        logger.info(f"⚠️ No hay período anterior FINALIZADO para {cierre_actual}. Marcando como 'sin_incidencias'")
+    Procesa un chunk de empleados comparando conceptos individuales
+    SOLO para clasificaciones con checkbox marcado
+    
+    Args:
+        empleados_ids: Lista de IDs de empleados a procesar
+        cierre_actual_id: ID del cierre actual
+        cierre_anterior_id: ID del cierre anterior
+        clasificaciones_seleccionadas: Tipos de conceptos para analizar
+        chunk_id: Identificador del chunk para logging
         
-        # Actualizar estado del cierre cuando no hay período anterior finalizado
-        cierre_actual.estado_incidencias = 'sin_incidencias'
-        cierre_actual.estado = 'incidencias_resueltas'
-        cierre_actual.total_incidencias = 0
-        cierre_actual.save(update_fields=['estado_incidencias', 'total_incidencias', 'estado'])
-        
-        return []
-    
-    logger.info(f"Comparando {cierre_actual.periodo} vs {periodo_anterior.periodo}")
-    
-    incidencias = []
-    
-    # 1. Detectar variaciones de conceptos (>30%)
-    incidencias.extend(_detectar_variaciones_conceptos(cierre_actual, periodo_anterior))
-    
-    # 2. Detectar conceptos nuevos
-    incidencias.extend(_detectar_conceptos_nuevos(cierre_actual, periodo_anterior))
-    
-    # 3. Detectar conceptos perdidos
-    incidencias.extend(_detectar_conceptos_perdidos(cierre_actual, periodo_anterior))
-    
-    # 4. Detectar empleados que deberían ingresar
-    incidencias.extend(_detectar_empleados_deberian_ingresar(cierre_actual, periodo_anterior))
-    
-    # 5. Detectar empleados que no deberían estar
-    incidencias.extend(_detectar_empleados_no_deberian_estar(cierre_actual, periodo_anterior))
-    
-    # 6. Detectar ausentismos continuos
-    incidencias.extend(_detectar_ausentismos_continuos(cierre_actual, periodo_anterior))
-    
-    # 7. Detectar finiquitos que no deberían estar presentes
-    incidencias.extend(_detectar_finiquitos_presentes(cierre_actual, periodo_anterior))
-    
-    logger.info(f"Detectadas {len(incidencias)} incidencias entre períodos")
-    return incidencias
-
-
-def _detectar_variaciones_conceptos(cierre_actual, periodo_anterior, umbral=30.0):
+    Returns:
+        dict: Estadísticas del procesamiento del chunk
     """
-    Detecta variaciones >30% en conceptos entre períodos
-    Mejorado para usar modelos de consolidación correctamente
-    """
-    incidencias = []
+    start_time = time.time()
+    incidencias_detectadas = []
     
-    # Obtener conceptos consolidados de ambos períodos
-    conceptos_actual = ConceptoConsolidado.objects.filter(
-        nomina_consolidada__cierre=cierre_actual,
-        es_numerico=True,
-        monto_total__isnull=False
-    ).select_related('nomina_consolidada')
+    logger.info(f"🔍 {chunk_id}: Iniciando comparación individual")
+    logger.info(f"   👥 Empleados: {len(empleados_ids)}")
+    logger.info(f"   📋 Clasificaciones: {clasificaciones_seleccionadas}")
     
-    conceptos_anterior = ConceptoConsolidado.objects.filter(
-        nomina_consolidada__cierre=periodo_anterior,
-        es_numerico=True,
-        monto_total__isnull=False
-    ).select_related('nomina_consolidada')
-    
-    # Crear mapas por empleado+concepto
-    mapa_actual = {}
-    for concepto in conceptos_actual:
-        key = f"{concepto.nomina_consolidada.rut_empleado}_{concepto.nombre_concepto}"
-        mapa_actual[key] = concepto
-    
-    mapa_anterior = {}
-    for concepto in conceptos_anterior:
-        key = f"{concepto.nomina_consolidada.rut_empleado}_{concepto.nombre_concepto}"
-        mapa_anterior[key] = concepto
-    
-    # Comparar conceptos que existen en ambos períodos
-    for key, concepto_actual in mapa_actual.items():
-        if key in mapa_anterior:
-            concepto_anterior = mapa_anterior[key]
-            
-            try:
-                monto_actual = float(concepto_actual.monto_total)
-                monto_anterior = float(concepto_anterior.monto_total)
-                
-                # Filtrar montos muy pequeños que pueden causar variaciones irrelevantes
-                if abs(monto_anterior) < 1000 and abs(monto_actual) < 1000:
-                    continue  # Saltar conceptos con montos menores a $1,000
-                
-                if monto_anterior != 0:  # Evitar división por cero
-                    variacion_pct = ((monto_actual - monto_anterior) / abs(monto_anterior)) * 100
-                    
-                    if abs(variacion_pct) > umbral:
-                        # Determinar prioridad según la magnitud de la variación
-                        if abs(variacion_pct) > 100:
-                            prioridad = 'alta'
-                        elif abs(variacion_pct) > 50:
-                            prioridad = 'media'
-                        else:
-                            prioridad = 'baja'
-                        
-                        # Calcular diferencia absoluta
-                        diferencia_absoluta = abs(monto_actual - monto_anterior)
-                        
-                        incidencias.append(IncidenciaCierre(
-                            cierre=cierre_actual,
-                            tipo_incidencia=TipoIncidencia.VARIACION_CONCEPTO,
-                            rut_empleado=concepto_actual.nomina_consolidada.rut_empleado,
-                            descripcion=f"⏰ TEMPORAL: Variación {variacion_pct:+.1f}% en {concepto_actual.nombre_concepto} para {concepto_actual.nomina_consolidada.nombre_empleado} (${monto_actual:,.0f} vs ${monto_anterior:,.0f} en {periodo_anterior.periodo})",
-                            concepto_afectado=concepto_actual.nombre_concepto,
-                            valor_libro=str(monto_actual),  # Período actual
-                            valor_novedades=str(monto_anterior),  # Período anterior
-                            prioridad=prioridad,
-                            impacto_monetario=Decimal(str(diferencia_absoluta))
-                        ))
-                elif monto_anterior == 0 and monto_actual != 0:
-                    # Concepto que pasó de 0 a tener valor
-                    incidencias.append(IncidenciaCierre(
-                        cierre=cierre_actual,
-                        tipo_incidencia=TipoIncidencia.VARIACION_CONCEPTO,
-                        rut_empleado=concepto_actual.nomina_consolidada.rut_empleado,
-                        descripcion=f"⏰ TEMPORAL: {concepto_actual.nombre_concepto} para {concepto_actual.nomina_consolidada.nombre_empleado} pasó de $0 a ${monto_actual:,.0f} (nuevo valor en período actual)",
-                        concepto_afectado=concepto_actual.nombre_concepto,
-                        valor_libro=str(monto_actual),
-                        valor_novedades="0",
-                        prioridad='media',
-                        impacto_monetario=Decimal(str(abs(monto_actual)))
-                    ))
-                    
-            except (ValueError, TypeError, AttributeError) as e:
-                logger.warning(f"Error calculando variación para {key}: {e}")
-                continue
-    
-    return incidencias
-
-
-def _detectar_conceptos_nuevos(cierre_actual, periodo_anterior):
-    """
-    Detecta conceptos que aparecen por primera vez en el período actual
-    """
-    incidencias = []
-    
-    # Conceptos únicos por período
-    conceptos_actual = set(ConceptoConsolidado.objects.filter(
-        nomina_consolidada__cierre=cierre_actual
-    ).values_list('nombre_concepto', flat=True).distinct())
-    
-    conceptos_anterior = set(ConceptoConsolidado.objects.filter(
-        nomina_consolidada__cierre=periodo_anterior
-    ).values_list('nombre_concepto', flat=True).distinct())
-    
-    # Conceptos nuevos = están en actual pero no en anterior
-    conceptos_nuevos = conceptos_actual - conceptos_anterior
-    
-    for nombre_concepto in conceptos_nuevos:
-        # Contar empleados afectados
-        empleados_afectados = ConceptoConsolidado.objects.filter(
-            nomina_consolidada__cierre=cierre_actual,
-            nombre_concepto=nombre_concepto
-        ).count()
-        
-        incidencias.append(IncidenciaCierre(
-            cierre=cierre_actual,
-            tipo_incidencia=TipoIncidencia.CONCEPTO_NUEVO,
-            rut_empleado='MULTIPLE',  # Afecta múltiples empleados
-            descripcion=f"⏰ TEMPORAL: Concepto nuevo '{nombre_concepto}' detectado en {empleados_afectados} empleados (no existía en {periodo_anterior.periodo})",
-            concepto_afectado=nombre_concepto,
-            prioridad='media',
-        ))
-    
-    return incidencias
-
-
-def _detectar_conceptos_perdidos(cierre_actual, periodo_anterior):
-    """
-    Detecta conceptos que desaparecen completamente del período actual
-    """
-    incidencias = []
-    
-    # Conceptos únicos por período
-    conceptos_actual = set(ConceptoConsolidado.objects.filter(
-        nomina_consolidada__cierre=cierre_actual
-    ).values_list('nombre_concepto', flat=True).distinct())
-    
-    conceptos_anterior = set(ConceptoConsolidado.objects.filter(
-        nomina_consolidada__cierre=periodo_anterior
-    ).values_list('nombre_concepto', flat=True).distinct())
-    
-    # Conceptos perdidos = estaban en anterior pero no en actual
-    conceptos_perdidos = conceptos_anterior - conceptos_actual
-    
-    for nombre_concepto in conceptos_perdidos:
-        # Contar empleados que lo tenían antes
-        empleados_anteriores = ConceptoConsolidado.objects.filter(
-            nomina_consolidada__cierre=periodo_anterior,
-            nombre_concepto=nombre_concepto
-        ).count()
-        
-        incidencias.append(IncidenciaCierre(
-            cierre=cierre_actual,
-            tipo_incidencia=TipoIncidencia.CONCEPTO_PERDIDO,
-            rut_empleado='MULTIPLE',  # Afectaba múltiples empleados
-            descripcion=f"⏰ TEMPORAL: Concepto '{nombre_concepto}' desapareció (existía en {periodo_anterior.periodo} para {empleados_anteriores} empleados)",
-            concepto_afectado=nombre_concepto,
-            prioridad='alta',  # Pérdida de conceptos es más crítica
-        ))
-    
-    return incidencias
-
-
-def _detectar_empleados_deberian_ingresar(cierre_actual, periodo_anterior):
-    """
-    Detecta empleados que tuvieron incorporaciones en el período anterior
-    pero no aparecen en el período actual - usando modelos de consolidación
-    """
-    incidencias = []
-    
-    # 1. EMPLEADOS QUE INGRESARON EN PERÍODO ANTERIOR
-    ingresos_anterior = {}
-    
-    # A. Buscar en MovimientoPersonal por ingresos
-    movimientos_ingreso = MovimientoPersonal.objects.filter(
-        nomina_consolidada__cierre=periodo_anterior,
-        tipo_movimiento='ingreso'
-    ).select_related('nomina_consolidada')
-    
-    for movimiento in movimientos_ingreso:
-        rut = movimiento.nomina_consolidada.rut_empleado
-        ingresos_anterior[rut] = {
-            'nombre': movimiento.nomina_consolidada.nombre_empleado,
-            'fecha_ingreso': movimiento.fecha_movimiento,
-            'observaciones': movimiento.observaciones,
-            'fuente': 'movimiento_personal'
-        }
-    
-    # B. Buscar empleados marcados como "nueva_incorporacion" en estado consolidado
-    nuevas_incorporaciones = NominaConsolidada.objects.filter(
-        cierre=periodo_anterior,
-        estado_empleado='nueva_incorporacion'
-    )
-    
-    for empleado in nuevas_incorporaciones:
-        rut = empleado.rut_empleado
-        if rut not in ingresos_anterior:  # Evitar duplicados
-            ingresos_anterior[rut] = {
-                'nombre': empleado.nombre_empleado,
-                'fecha_ingreso': None,
-                'observaciones': f"Estado: {empleado.estado_empleado}",
-                'fuente': 'estado_consolidado'
-            }
-    
-    # 2. EMPLEADOS PRESENTES EN PERÍODO ACTUAL
-    empleados_actuales = set(NominaConsolidada.objects.filter(
-        cierre=cierre_actual
-    ).values_list('rut_empleado', flat=True))
-    
-    # 3. DETECTAR INGRESOS PERDIDOS
-    for rut_empleado, datos_ingreso in ingresos_anterior.items():
-        if rut_empleado not in empleados_actuales:
-            # Verificar si tiene finiquito documentado en el período anterior o actual
-            tiene_finiquito_anterior = MovimientoPersonal.objects.filter(
-                nomina_consolidada__cierre=periodo_anterior,
-                nomina_consolidada__rut_empleado=rut_empleado,
-                tipo_movimiento='finiquito'
-            ).exists()
-            
-            # También verificar si estaba marcado como finiquito en estado consolidado
-            if not tiene_finiquito_anterior:
-                empleado_anterior = NominaConsolidada.objects.filter(
-                    cierre=periodo_anterior,
-                    rut_empleado=rut_empleado,
-                    estado_empleado='finiquito'
-                ).exists()
-                tiene_finiquito_anterior = empleado_anterior
-            
-            # Determinar prioridad según si tiene finiquito o no
-            if tiene_finiquito_anterior:
-                # Tiene finiquito documentado - prioridad baja
-                prioridad = 'baja'
-                descripcion = f"⏰ TEMPORAL: {datos_ingreso['nombre']} ingresó en {periodo_anterior.periodo} pero tiene finiquito documentado. Verificar coherencia temporal."
-            else:
-                # No tiene finiquito - empleado que ingresó debería estar presente
-                prioridad = 'alta'
-                fecha_info = f" el {datos_ingreso['fecha_ingreso']}" if datos_ingreso['fecha_ingreso'] else ""
-                descripcion = f"⏰ TEMPORAL: {datos_ingreso['nombre']} ingresó en {periodo_anterior.periodo}{fecha_info} pero no aparece en nómina actual (sin finiquito documentado)"
-            
-            incidencias.append(IncidenciaCierre(
-                cierre=cierre_actual,
-                tipo_incidencia=TipoIncidencia.EMPLEADO_DEBERIA_INGRESAR,
-                rut_empleado=rut_empleado,
-                descripcion=descripcion,
-                prioridad=prioridad,
-            ))
-    
-    return incidencias
-
-
-def _detectar_empleados_no_deberian_estar(cierre_actual, periodo_anterior):
-    """
-    Detecta empleados que aparecen en el período actual sin estar en el anterior
-    y sin incorporación documentada - usando modelos de consolidación
-    """
-    incidencias = []
-    
-    # 1. EMPLEADOS EN PERÍODO ACTUAL
-    empleados_actuales = NominaConsolidada.objects.filter(
-        cierre=cierre_actual
-    ).select_related()
-    
-    # 2. EMPLEADOS QUE ESTABAN EN PERÍODO ANTERIOR
-    empleados_anteriores = set(NominaConsolidada.objects.filter(
-        cierre=periodo_anterior
-    ).values_list('rut_empleado', flat=True))
-    
-    # 3. ANALIZAR EMPLEADOS NUEVOS
-    for empleado_actual in empleados_actuales:
-        if empleado_actual.rut_empleado not in empleados_anteriores:
-            # Empleado nuevo - verificar si tiene incorporación documentada
-            
-            # A. Verificar si tiene movimiento de ingreso documentado
-            tiene_incorporacion_movimiento = MovimientoPersonal.objects.filter(
-                nomina_consolidada=empleado_actual,
-                tipo_movimiento='ingreso'
-            ).exists()
-            
-            # B. Verificar si está marcado como nueva incorporación en estado
-            es_nueva_incorporacion = empleado_actual.estado_empleado == 'nueva_incorporacion'
-            
-            # C. Verificar si tiene documentación en archivos analista
-            # Buscar en ingresos del analista para este cierre
-            from ..models import AnalistaIngreso
-            tiene_ingreso_analista = AnalistaIngreso.objects.filter(
-                cierre=cierre_actual,
-                rut=empleado_actual.rut_empleado
-            ).exists()
-            
-            # Determinar si la incorporación está bien documentada
-            incorporacion_documentada = (
-                tiene_incorporacion_movimiento or 
-                es_nueva_incorporacion or 
-                tiene_ingreso_analista
+    try:
+        for empleado_consolidado_id in empleados_ids:
+            empleado_actual = NominaConsolidada.objects.select_related('cierre').get(
+                id=empleado_consolidado_id
             )
             
-            if not incorporacion_documentada:
-                # Empleado sin documentación de ingreso
-                incidencias.append(IncidenciaCierre(
-                    cierre=cierre_actual,
-                    tipo_incidencia=TipoIncidencia.EMPLEADO_NO_DEBERIA_ESTAR,
-                    rut_empleado=empleado_actual.rut_empleado,
-                    descripcion=f"⏰ TEMPORAL: {empleado_actual.nombre_empleado} aparece en nómina sin documentación de ingreso (no estaba en {periodo_anterior.periodo} y sin registro de incorporación)",
-                    prioridad='alta',
-                ))
-            else:
-                # Empleado con documentación pero verificar coherencia
-                documentacion_info = []
-                if tiene_incorporacion_movimiento:
-                    documentacion_info.append("movimiento de ingreso")
-                if es_nueva_incorporacion:
-                    documentacion_info.append("marcado como nueva incorporación")
-                if tiene_ingreso_analista:
-                    documentacion_info.append("archivo del analista")
+            # Buscar empleado equivalente en período anterior
+            empleado_anterior = NominaConsolidada.objects.filter(
+                cierre_id=cierre_anterior_id,
+                rut_empleado=empleado_actual.rut_empleado
+            ).first()
+            
+            if empleado_anterior:
+                # FILTRAR: Solo conceptos seleccionados para análisis detallado
+                conceptos_actuales = ConceptoConsolidado.objects.filter(
+                    nomina_consolidada=empleado_actual,
+                    tipo_concepto__in=clasificaciones_seleccionadas  # ⭐ FILTRO CLAVE
+                ).select_related('nomina_consolidada')
                 
-                # Crear incidencia informativa de baja prioridad
-                incidencias.append(IncidenciaCierre(
-                    cierre=cierre_actual,
-                    tipo_incidencia=TipoIncidencia.EMPLEADO_NO_DEBERIA_ESTAR,
-                    rut_empleado=empleado_actual.rut_empleado,
-                    descripcion=f"⏰ TEMPORAL: {empleado_actual.nombre_empleado} es empleado nuevo (no estaba en {periodo_anterior.periodo}). Documentación: {', '.join(documentacion_info)}. Verificar coherencia.",
-                    prioridad='baja',
-                ))
-    
-    return incidencias
-
-
-def _detectar_ausentismos_continuos(cierre_actual, periodo_anterior):
-    """
-    Detecta empleados con ausentismos en período anterior que cambiaron de estado
-    Usa los modelos de consolidación para mejor precisión en la detección
-    """
-    incidencias = []
-    
-    # 1. EMPLEADOS CON AUSENTISMOS EN PERÍODO ANTERIOR
-    # Buscar tanto en MovimientoPersonal como en estado_empleado de NominaConsolidada
-    empleados_ausentes_anterior = {}
-    
-    # A. Ausentismos registrados como movimientos
-    ausentismos_movimientos = MovimientoPersonal.objects.filter(
-        nomina_consolidada__cierre=periodo_anterior,
-        tipo_movimiento='ausentismo'
-    ).select_related('nomina_consolidada')
-    
-    for movimiento in ausentismos_movimientos:
-        rut = movimiento.nomina_consolidada.rut_empleado
-        empleados_ausentes_anterior[rut] = {
-            'nombre': movimiento.nomina_consolidada.nombre_empleado,
-            'motivo': movimiento.motivo,
-            'dias_ausencia': movimiento.dias_ausencia,
-            'fuente': 'movimiento_personal'
-        }
-    
-    # B. Empleados marcados como ausentes en estado consolidado
-    empleados_ausentes_estado = NominaConsolidada.objects.filter(
-        cierre=periodo_anterior,
-        estado_empleado__in=['ausente_total', 'ausente_parcial']
-    )
-    
-    for empleado in empleados_ausentes_estado:
-        rut = empleado.rut_empleado
-        if rut not in empleados_ausentes_anterior:  # Evitar duplicados
-            empleados_ausentes_anterior[rut] = {
-                'nombre': empleado.nombre_empleado,
-                'motivo': f"Estado: {empleado.estado_empleado}",
-                'dias_ausencia': empleado.dias_ausencia,
-                'fuente': 'estado_consolidado'
-            }
-    
-    # 2. EMPLEADOS EN PERÍODO ACTUAL
-    empleados_actuales = {}
-    nominas_actuales = NominaConsolidada.objects.filter(
-        cierre=cierre_actual
-    )
-    
-    for nomina in nominas_actuales:
-        empleados_actuales[nomina.rut_empleado] = {
-            'nombre': nomina.nombre_empleado,
-            'estado': nomina.estado_empleado,
-            'dias_ausencia': nomina.dias_ausencia,
-            'presente': True
-        }
-    
-    # Empleados con ausentismos actuales
-    ausentismos_actuales = set()
-    
-    # A. Por movimientos
-    movimientos_actuales = MovimientoPersonal.objects.filter(
-        nomina_consolidada__cierre=cierre_actual,
-        tipo_movimiento='ausentismo'
-    ).values_list('nomina_consolidada__rut_empleado', flat=True)
-    ausentismos_actuales.update(movimientos_actuales)
-    
-    # B. Por estado consolidado
-    estados_ausentes = NominaConsolidada.objects.filter(
-        cierre=cierre_actual,
-        estado_empleado__in=['ausente_total', 'ausente_parcial']
-    ).values_list('rut_empleado', flat=True)
-    ausentismos_actuales.update(estados_ausentes)
-    
-    # 3. ANÁLISIS DE CONTINUIDAD DE AUSENTISMOS
-    for rut_empleado, datos_anterior in empleados_ausentes_anterior.items():
-        
-        # Caso 1: Estaba ausente, ahora está presente y activo (reintegro no documentado)
-        if rut_empleado in empleados_actuales:
-            empleado_actual = empleados_actuales[rut_empleado]
-            
-            if (rut_empleado not in ausentismos_actuales and 
-                empleado_actual['estado'] == 'activo'):
+                for concepto_actual in conceptos_actuales:
+                    concepto_anterior = ConceptoConsolidado.objects.filter(
+                        nomina_consolidada=empleado_anterior,
+                        nombre_concepto=concepto_actual.nombre_concepto,
+                        tipo_concepto=concepto_actual.tipo_concepto
+                    ).first()
+                    
+                    if concepto_anterior:
+                        # Calcular variación individual
+                        variacion_pct = calcular_variacion_porcentual(
+                            concepto_actual.monto_total, 
+                            concepto_anterior.monto_total
+                        )
+                        
+                        # Umbral diferenciado por tipo de concepto
+                        umbral = obtener_umbral_individual(concepto_actual.tipo_concepto)
+                        
+                        if abs(variacion_pct) >= umbral:
+                            incidencias_detectadas.append(
+                                crear_incidencia_variacion_individual(
+                                    empleado_actual, concepto_actual, concepto_anterior, variacion_pct
+                                )
+                            )
+                    else:
+                        # Concepto nuevo para este empleado
+                        incidencias_detectadas.append(
+                            crear_incidencia_concepto_nuevo_empleado(empleado_actual, concepto_actual)
+                        )
+                        
+                # Buscar conceptos eliminados (estaban en anterior pero no en actual)
+                conceptos_anteriores = ConceptoConsolidado.objects.filter(
+                    nomina_consolidada=empleado_anterior,
+                    tipo_concepto__in=clasificaciones_seleccionadas
+                )
                 
-                incidencias.append(IncidenciaCierre(
-                    cierre=cierre_actual,
-                    tipo_incidencia=TipoIncidencia.AUSENTISMO_CONTINUO,
-                    rut_empleado=rut_empleado,
-                    descripcion=f"⏰ TEMPORAL: {datos_anterior['nombre']} tenía ausentismo en {periodo_anterior.periodo} ({datos_anterior['motivo']}) y ahora está presente/activo. ¿Se reintegró correctamente?",
-                    prioridad='media',
-                ))
-        
-        # Caso 2: Estaba ausente, sigue ausente (verificar continuidad lógica)
-        elif rut_empleado in ausentismos_actuales:
-            empleado_actual = empleados_actuales[rut_empleado]
-            
-            # Verificar si la ausencia tiene lógica de continuidad
-            motivo_anterior = datos_anterior['motivo'].lower()
-            estado_actual = empleado_actual['estado']
-            
-            # Si era una ausencia temporal y sigue ausente mucho tiempo
-            if ('parcial' in motivo_anterior or 'temporal' in motivo_anterior) and estado_actual == 'ausente_total':
-                incidencias.append(IncidenciaCierre(
-                    cierre=cierre_actual,
-                    tipo_incidencia=TipoIncidencia.AUSENTISMO_CONTINUO,
-                    rut_empleado=rut_empleado,
-                    descripcion=f"⏰ TEMPORAL: {datos_anterior['nombre']} tenía ausentismo parcial/temporal en {periodo_anterior.periodo} pero ahora aparece como ausencia total. Verificar evolución.",
-                    prioridad='media',
-                ))
-        
-        # Caso 3: Estaba ausente, ahora no aparece en nómina (continuidad esperada pero verificar)
-        elif rut_empleado not in empleados_actuales:
-            # Verificar si tiene finiquito documentado
-            tiene_finiquito = MovimientoPersonal.objects.filter(
-                nomina_consolidada__cierre=cierre_actual,
-                nomina_consolidada__rut_empleado=rut_empleado,
-                tipo_movimiento='finiquito'
-            ).exists()
-            
-            if not tiene_finiquito:
-                # También buscar en período actual por si está en consolidación
-                tiene_finiquito = MovimientoPersonal.objects.filter(
-                    nomina_consolidada__cierre=periodo_anterior,
-                    nomina_consolidada__rut_empleado=rut_empleado,
-                    tipo_movimiento='finiquito'
-                ).exists()
-            
-            prioridad = 'baja' if tiene_finiquito else 'media'
-            finiquito_info = " (tiene finiquito documentado)" if tiene_finiquito else " (sin finiquito documentado)"
-            
-            incidencias.append(IncidenciaCierre(
-                cierre=cierre_actual,
-                tipo_incidencia=TipoIncidencia.AUSENTISMO_CONTINUO,
-                rut_empleado=rut_empleado,
-                descripcion=f"⏰ TEMPORAL: {datos_anterior['nombre']} ausente desde {periodo_anterior.periodo} no aparece en nómina actual{finiquito_info}. Verificar estado.",
-                prioridad=prioridad,
-            ))
-    
-    return incidencias
-
-
-def _detectar_finiquitos_presentes(cierre_actual, periodo_anterior):
-    """
-    Detecta empleados que finiquitaron en el período anterior
-    pero aparecen en el período actual - usando modelos de consolidación
-    """
-    incidencias = []
-    
-    # 1. EMPLEADOS QUE FINIQUITARON EN PERÍODO ANTERIOR
-    finiquitos_anterior = {}
-    
-    # A. Buscar en MovimientoPersonal por finiquitos
-    movimientos_finiquito = MovimientoPersonal.objects.filter(
-        nomina_consolidada__cierre=periodo_anterior,
-        tipo_movimiento='finiquito'
-    ).select_related('nomina_consolidada')
-    
-    for movimiento in movimientos_finiquito:
-        rut = movimiento.nomina_consolidada.rut_empleado
-        finiquitos_anterior[rut] = {
-            'nombre': movimiento.nomina_consolidada.nombre_empleado,
-            'fecha_finiquito': movimiento.fecha_movimiento,
-            'motivo': movimiento.motivo,
-            'observaciones': movimiento.observaciones,
-            'fuente': 'movimiento_personal'
-        }
-    
-    # B. Buscar empleados marcados como "finiquito" en estado consolidado
-    empleados_finiquitados = NominaConsolidada.objects.filter(
-        cierre=periodo_anterior,
-        estado_empleado='finiquito'
-    )
-    
-    for empleado in empleados_finiquitados:
-        rut = empleado.rut_empleado
-        if rut not in finiquitos_anterior:  # Evitar duplicados
-            finiquitos_anterior[rut] = {
-                'nombre': empleado.nombre_empleado,
-                'fecha_finiquito': None,
-                'motivo': f"Estado: {empleado.estado_empleado}",
-                'observaciones': '',
-                'fuente': 'estado_consolidado'
-            }
-    
-    # C. Buscar también en archivos del analista (finiquitos documentados)
-    from ..models import AnalistaFiniquito
-    finiquitos_analista = AnalistaFiniquito.objects.filter(
-        cierre=periodo_anterior
-    )
-    
-    for finiquito in finiquitos_analista:
-        rut = finiquito.rut
-        if rut not in finiquitos_anterior:  # Evitar duplicados
-            finiquitos_anterior[rut] = {
-                'nombre': f"{finiquito.nombres} {finiquito.apellidos}",
-                'fecha_finiquito': finiquito.fecha_finiquito,
-                'motivo': finiquito.tipo_finiquito,
-                'observaciones': finiquito.observaciones or '',
-                'fuente': 'archivo_analista'
-            }
-    
-    # 2. EMPLEADOS PRESENTES EN PERÍODO ACTUAL
-    empleados_actuales = {}
-    nominas_actuales = NominaConsolidada.objects.filter(
-        cierre=cierre_actual
-    )
-    
-    for nomina in nominas_actuales:
-        empleados_actuales[nomina.rut_empleado] = {
-            'nombre': nomina.nombre_empleado,
-            'estado': nomina.estado_empleado,
-            'presente': True
-        }
-    
-    # 3. DETECTAR FINIQUITOS QUE APARECEN EN NÓMINA ACTUAL
-    for rut_empleado, datos_finiquito in finiquitos_anterior.items():
-        if rut_empleado in empleados_actuales:
-            empleado_actual = empleados_actuales[rut_empleado]
-            
-            # Verificar si tiene reingreso documentado
-            tiene_reingreso = MovimientoPersonal.objects.filter(
-                nomina_consolidada__cierre=cierre_actual,
-                nomina_consolidada__rut_empleado=rut_empleado,
-                tipo_movimiento='ingreso'
-            ).exists()
-            
-            # También verificar en archivos del analista si hay reingreso
-            from ..models import AnalistaIngreso
-            tiene_reingreso_analista = AnalistaIngreso.objects.filter(
-                cierre=cierre_actual,
-                rut=rut_empleado
-            ).exists()
-            
-            reingreso_documentado = tiene_reingreso or tiene_reingreso_analista
-            
-            if reingreso_documentado:
-                # Tiene reingreso documentado - incidencia informativa
-                prioridad = 'baja'
-                descripcion = f"⏰ TEMPORAL: {datos_finiquito['nombre']} finiquitó en {periodo_anterior.periodo} pero tiene reingreso documentado en período actual. Verificar coherencia temporal."
+                for concepto_anterior in conceptos_anteriores:
+                    concepto_actual = ConceptoConsolidado.objects.filter(
+                        nomina_consolidada=empleado_actual,
+                        nombre_concepto=concepto_anterior.nombre_concepto,
+                        tipo_concepto=concepto_anterior.tipo_concepto
+                    ).first()
+                    
+                    if not concepto_actual:
+                        # Concepto eliminado para este empleado
+                        incidencias_detectadas.append(
+                            crear_incidencia_concepto_eliminado_empleado(empleado_anterior, concepto_anterior)
+                        )
             else:
-                # No tiene reingreso documentado - inconsistencia
-                prioridad = 'alta'
-                fecha_info = f" el {datos_finiquito['fecha_finiquito']}" if datos_finiquito['fecha_finiquito'] else ""
-                descripcion = f"⏰ TEMPORAL: {datos_finiquito['nombre']} finiquitó en {periodo_anterior.periodo}{fecha_info} pero aparece en nómina actual sin reingreso documentado. Motivo anterior: {datos_finiquito['motivo']}"
+                # Empleado nuevo - crear incidencia informativa
+                incidencias_detectadas.append(
+                    crear_incidencia_empleado_nuevo(empleado_actual)
+                )
+        
+        # Batch insert optimizado
+        if incidencias_detectadas:
+            IncidenciaCierre.objects.bulk_create(
+                incidencias_detectadas, 
+                batch_size=100,
+                ignore_conflicts=True
+            )
+        
+        tiempo_procesamiento = time.time() - start_time
+        
+        resultado = {
+            'chunk_id': chunk_id,
+            'tipo_comparacion': 'individual',
+            'empleados_procesados': len(empleados_ids),
+            'incidencias_detectadas': len(incidencias_detectadas),
+            'tiempo_procesamiento': round(tiempo_procesamiento, 2),
+            'throughput': round(len(empleados_ids) / tiempo_procesamiento, 2) if tiempo_procesamiento > 0 else 0,
+            'clasificaciones_analizadas': clasificaciones_seleccionadas
+        }
+        
+        logger.info(f"✅ {chunk_id}: {len(incidencias_detectadas)} incidencias individuales detectadas "
+                   f"en {tiempo_procesamiento:.2f}s ({resultado['throughput']} emp/s)")
+        
+        return resultado
+        
+    except Exception as e:
+        logger.error(f"❌ Error en {chunk_id}: {str(e)}")
+        return {
+            'chunk_id': chunk_id,
+            'error': str(e),
+            'tipo_comparacion': 'individual',
+            'empleados_procesados': 0,
+            'incidencias_detectadas': 0
+        }
+
+# ================================
+# 📊 COMPARACIÓN SUMA TOTAL  
+# ================================
+
+@shared_task  
+def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_id):
+    """
+    📊 COMPARACIÓN SUMA TOTAL
+    
+    Procesa comparación de sumas agregadas por concepto
+    TODOS los conceptos (con y sin checkbox marcado)
+    
+    Args:
+        cierre_actual_id: ID del cierre actual
+        cierre_anterior_id: ID del cierre anterior  
+        task_id: Identificador de la tarea
+        
+    Returns:
+        dict: Estadísticas del procesamiento agregado
+    """
+    start_time = time.time()
+    incidencias_detectadas = []
+    
+    logger.info(f"📊 {task_id}: Iniciando comparación suma total")
+    
+    try:
+        # 1. OBTENER TODOS LOS CONCEPTOS ÚNICOS (SIN FILTRO)
+        conceptos_actuales = ConceptoConsolidado.objects.filter(
+            nomina_consolidada__cierre_id=cierre_actual_id
+        ).values('nombre_concepto', 'tipo_concepto').distinct()
+        
+        conceptos_anteriores = ConceptoConsolidado.objects.filter(
+            nomina_consolidada__cierre_id=cierre_anterior_id
+        ).values('nombre_concepto', 'tipo_concepto').distinct()
+        
+        # Crear conjunto único de conceptos (TODOS)
+        conceptos_unicos = set()
+        for concepto in conceptos_actuales:
+            conceptos_unicos.add((concepto['nombre_concepto'], concepto['tipo_concepto']))
+        for concepto in conceptos_anteriores:
+            conceptos_unicos.add((concepto['nombre_concepto'], concepto['tipo_concepto']))
+        
+        logger.info(f"📊 Analizando {len(conceptos_unicos)} conceptos únicos para suma total")
+        
+        # 2. COMPARAR SUMA TOTAL POR CONCEPTO
+        for nombre_concepto, tipo_concepto in conceptos_unicos:
+            # Suma actual
+            suma_actual = ConceptoConsolidado.objects.filter(
+                nomina_consolidada__cierre_id=cierre_actual_id,
+                nombre_concepto=nombre_concepto,
+                tipo_concepto=tipo_concepto
+            ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
             
-            incidencias.append(IncidenciaCierre(
-                cierre=cierre_actual,
-                tipo_incidencia=TipoIncidencia.EMPLEADO_NO_DEBERIA_ESTAR,  # Usar el tipo existente más apropiado
-                rut_empleado=rut_empleado,
-                descripcion=descripcion,
-                prioridad=prioridad,
-            ))
-    
-    return incidencias
+            # Suma anterior
+            suma_anterior = ConceptoConsolidado.objects.filter(
+                nomina_consolidada__cierre_id=cierre_anterior_id,
+                nombre_concepto=nombre_concepto,
+                tipo_concepto=tipo_concepto
+            ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
+            
+            # Calcular variación de la suma total
+            variacion_pct = calcular_variacion_porcentual(suma_actual, suma_anterior)
+            
+            # Umbral diferenciado para sumas totales (más sensible)
+            umbral_suma = obtener_umbral_suma_total(tipo_concepto)
+            
+            if abs(variacion_pct) >= umbral_suma:
+                incidencias_detectadas.append(
+                    crear_incidencia_suma_total(
+                        cierre_actual_id, nombre_concepto, tipo_concepto, 
+                        suma_actual, suma_anterior, variacion_pct
+                    )
+                )
+        
+        # Detectar conceptos completamente nuevos o eliminados
+        conceptos_solo_actual = set(c['nombre_concepto'] + '|' + c['tipo_concepto'] for c in conceptos_actuales) - \
+                              set(c['nombre_concepto'] + '|' + c['tipo_concepto'] for c in conceptos_anteriores)
+        
+        conceptos_solo_anterior = set(c['nombre_concepto'] + '|' + c['tipo_concepto'] for c in conceptos_anteriores) - \
+                                 set(c['nombre_concepto'] + '|' + c['tipo_concepto'] for c in conceptos_actuales)
+        
+        # Incidencias por conceptos nuevos
+        for concepto_key in conceptos_solo_actual:
+            nombre_concepto, tipo_concepto = concepto_key.split('|')
+            incidencias_detectadas.append(
+                crear_incidencia_concepto_nuevo_periodo(cierre_actual_id, nombre_concepto, tipo_concepto)
+            )
+        
+        # Incidencias por conceptos eliminados
+        for concepto_key in conceptos_solo_anterior:
+            nombre_concepto, tipo_concepto = concepto_key.split('|')
+            incidencias_detectadas.append(
+                crear_incidencia_concepto_eliminado_periodo(cierre_actual_id, nombre_concepto, tipo_concepto)
+            )
+        
+        # Batch insert
+        if incidencias_detectadas:
+            IncidenciaCierre.objects.bulk_create(
+                incidencias_detectadas, 
+                batch_size=100,
+                ignore_conflicts=True
+            )
+        
+        tiempo_procesamiento = time.time() - start_time
+        
+        resultado = {
+            'task_id': task_id,
+            'tipo_comparacion': 'suma_total',
+            'conceptos_analizados': len(conceptos_unicos),
+            'incidencias_detectadas': len(incidencias_detectadas),
+            'conceptos_nuevos': len(conceptos_solo_actual),
+            'conceptos_eliminados': len(conceptos_solo_anterior),
+            'tiempo_procesamiento': round(tiempo_procesamiento, 2)
+        }
+        
+        logger.info(f"✅ {task_id}: {len(incidencias_detectadas)} incidencias agregadas detectadas "
+                   f"en {tiempo_procesamiento:.2f}s")
+        logger.info(f"   📊 {len(conceptos_unicos)} conceptos analizados")
+        logger.info(f"   🆕 {len(conceptos_solo_actual)} conceptos nuevos")  
+        logger.info(f"   ❌ {len(conceptos_solo_anterior)} conceptos eliminados")
+        
+        return resultado
+        
+    except Exception as e:
+        logger.error(f"❌ Error en comparación suma total: {str(e)}")
+        return {
+            'task_id': task_id,
+            'error': str(e),
+            'tipo_comparacion': 'suma_total',
+            'conceptos_analizados': 0,
+            'incidencias_detectadas': 0
+        }
 
+# ================================
+# 🎯 CONSOLIDACIÓN FINAL
+# ================================
 
-def generar_incidencias_consolidadas_task(cierre_id):
+@shared_task
+def consolidar_resultados_incidencias(resultados_tasks, cierre_id, chunks_individuales):
     """
-    🎯 TAREA SIMPLIFICADA: Generar incidencias de un cierre consolidado
+    🎯 CONSOLIDACIÓN FINAL DE RESULTADOS
     
-    Usa la nueva función simplificada que compara directamente las nóminas
+    Procesa los resultados de todas las tareas del Chord y actualiza el estado del cierre
+    
+    Args:
+        resultados_tasks: Lista de resultados de las tareas paralelas
+        cierre_id: ID del cierre a actualizar
+        chunks_individuales: Número de chunks individuales procesados
+        
+    Returns:
+        dict: Estadísticas consolidadas finales
     """
+    logger.info(f"🎯 Consolidando resultados para cierre {cierre_id}")
+    
     try:
         cierre = CierreNomina.objects.get(id=cierre_id)
         
-        # Verificar que el cierre esté en un estado válido para detectar incidencias
-        estados_validos = ['datos_consolidados', 'con_incidencias', 'incidencias_resueltas']
-        if cierre.estado not in estados_validos:
-            raise ValueError(f"El cierre debe estar en estado válido para detectar incidencias. Estado actual: {cierre.estado}, Estados válidos: {estados_validos}")
+        # Inicializar contadores
+        total_incidencias_individuales = 0
+        total_incidencias_suma = 0
+        tasks_exitosas = 0
+        tasks_con_error = 0
+        tiempo_total_individual = 0
+        tiempo_suma_total = 0
+        empleados_procesados_total = 0
         
-        # Limpiar incidencias anteriores del cierre (sistema legacy o ejecutuciones previas)
-        from ..models import IncidenciaCierre
-        incidencias_existentes = IncidenciaCierre.objects.filter(cierre=cierre)
-        incidencias_borradas = incidencias_existentes.count()
-        if incidencias_borradas > 0:
-            logger.info(f"🗑️ Limpiando {incidencias_borradas} incidencias anteriores del cierre {cierre_id}")
+        # Procesar resultados de cada tarea
+        for resultado in resultados_tasks:
+            if isinstance(resultado, dict):
+                if 'error' in resultado:
+                    tasks_con_error += 1
+                    logger.error(f"❌ Tarea con error: {resultado.get('chunk_id', 'unknown')} - {resultado['error']}")
+                else:
+                    tasks_exitosas += 1
+                    
+                    if resultado.get('tipo_comparacion') == 'individual':
+                        total_incidencias_individuales += resultado.get('incidencias_detectadas', 0)
+                        tiempo_total_individual += resultado.get('tiempo_procesamiento', 0)
+                        empleados_procesados_total += resultado.get('empleados_procesados', 0)
+                    elif resultado.get('tipo_comparacion') == 'suma_total':
+                        total_incidencias_suma += resultado.get('incidencias_detectadas', 0)
+                        tiempo_suma_total = resultado.get('tiempo_procesamiento', 0)
         
-        incidencias_existentes.delete()
-        logger.info(f"✅ Limpiadas {incidencias_borradas} incidencias anteriores del cierre {cierre_id}")
+        total_incidencias = total_incidencias_individuales + total_incidencias_suma
         
-        # 🎯 USAR LA NUEVA FUNCIÓN SIMPLIFICADA
-        resultado = detectar_incidencias_consolidadas_simple(cierre)
-        
-        if not resultado['success']:
-            raise Exception(f"Error en detección simplificada: {resultado.get('error', 'Error desconocido')}")
-        
-        total_incidencias = resultado['total_incidencias']
-        
-        # Debug información
-        logger.info(f"✅ Detección simplificada completada para cierre {cierre_id}:")
-        logger.info(f"   📊 Total incidencias: {total_incidencias}")
-        logger.info(f"   🔄 Variaciones: {resultado['incidencias_variaciones']}")
-        logger.info(f"   📄 Documentación faltante: {resultado['incidencias_faltantes']}")
-        logger.info(f"   � Empleados comunes: {resultado.get('ruts_comunes', 0)}")
-        logger.info(f"   📤 Solo anterior: {resultado.get('ruts_solo_anterior', 0)}")
-        logger.info(f"   � Solo actual: {resultado.get('ruts_solo_actual', 0)}")
-        
-        # Obtener incidencias creadas para información adicional
-        from ..models import IncidenciaCierre
-        incidencias_creadas = IncidenciaCierre.objects.filter(cierre=cierre)
-        
-        # Preparar respuesta según resultado
-        resultado_final = {
-            'success': True,
-            'total_incidencias': total_incidencias,
-            'estado_cierre': cierre.estado,
-            'estado_incidencias': cierre.estado_incidencias,
-            'incidencias_variaciones': resultado['incidencias_variaciones'],
-            'incidencias_faltantes': resultado['incidencias_faltantes'],
-            'empleados_comunes': resultado.get('ruts_comunes', 0),
-            'empleados_solo_anterior': resultado.get('ruts_solo_anterior', 0),
-            'empleados_solo_actual': resultado.get('ruts_solo_actual', 0)
-        }
-        
-        if total_incidencias > 0:
-            # Mostrar tipos de incidencias generadas
-            tipos_incidencias = list(incidencias_creadas.values_list('tipo_incidencia', flat=True).distinct())
-            resultado_final['tipos_detectados'] = tipos_incidencias
-            resultado_final['mensaje'] = f"🔍 {total_incidencias} incidencias detectadas que requieren revisión"
-            resultado_final['siguiente_accion'] = "Resolver incidencias en sistema colaborativo"
-            
-            # Mostrar muestra de incidencias
-            logger.info("📋 Muestra de incidencias generadas:")
-            for i, inc in enumerate(incidencias_creadas[:3]):
-                logger.info(f"  {i+1}. {inc.tipo_incidencia}: {inc.descripcion[:100]}...")
+        # 🎯 ACTUALIZAR ESTADOS DEL CIERRE SEGÚN INCIDENCIAS DETECTADAS
+        if tasks_con_error > 0:
+            # Si hubo errores en el procesamiento, mantener estado de error
+            logger.warning(f"⚠️ Procesamiento completado con {tasks_con_error} errores")
+            cierre.estado_incidencias = 'pendiente'
+            cierre.save()
+            # No cambiar el estado principal si hay errores
         else:
-            resultado_final['tipos_detectados'] = []
-            resultado_final['mensaje'] = "✅ No se detectaron incidencias. Cierre listo para finalizar"
-            resultado_final['siguiente_accion'] = "Generar informes y finalizar cierre"
-            resultado_final['puede_finalizar'] = True
-            logger.info("✅ No se detectaron incidencias - comparación exitosa con período anterior")
+            # Usar función centralizada para actualizar estados
+            actualizar_estado_cierre_por_incidencias(cierre, total_incidencias, es_primer_cierre=False)
+            
+            # Logging detallado por tipo de incidencia
+            if total_incidencias > 0:
+                if total_incidencias_individuales > 0:
+                    logger.info(f"   � {total_incidencias_individuales} incidencias individuales (empleado por empleado)")
+                if total_incidencias_suma > 0:
+                    logger.info(f"   📊 {total_incidencias_suma} incidencias agregadas (sumas totales)")
         
-        return resultado_final
+        # Calcular estadísticas de performance
+        throughput_individual = empleados_procesados_total / tiempo_total_individual if tiempo_total_individual > 0 else 0
+        tiempo_total_sistema = max(tiempo_total_individual, tiempo_suma_total)
+        
+        # Log final detallado
+        logger.info(f"🎯 ===== CONSOLIDACIÓN COMPLETADA =====")
+        logger.info(f"   🔍 Incidencias individuales: {total_incidencias_individuales}")
+        logger.info(f"   📊 Incidencias suma total: {total_incidencias_suma}")
+        logger.info(f"   📈 Total incidencias: {total_incidencias}")
+        logger.info(f"   ✅ Tareas exitosas: {tasks_exitosas}")
+        logger.info(f"   ❌ Tareas con error: {tasks_con_error}") 
+        logger.info(f"   👥 Empleados procesados: {empleados_procesados_total}")
+        logger.info(f"   ⏱️ Tiempo individual: {tiempo_total_individual:.2f}s")
+        logger.info(f"   ⏱️ Tiempo suma total: {tiempo_suma_total:.2f}s")
+        logger.info(f"   🚀 Throughput: {throughput_individual:.2f} emp/s")
+        logger.info(f"   🎯 Estado final: {cierre.estado_incidencias}")
+        logger.info(f"=====================================")
+        
+        return {
+            'success': True,
+            'incidencias_individuales': total_incidencias_individuales,
+            'incidencias_suma_total': total_incidencias_suma,
+            'total_incidencias': total_incidencias,
+            'tasks_exitosas': tasks_exitosas,
+            'tasks_con_error': tasks_con_error,
+            'chunks_procesados': chunks_individuales,
+            'empleados_procesados': empleados_procesados_total,
+            'tiempo_individual': round(tiempo_total_individual, 2),
+            'tiempo_suma_total': round(tiempo_suma_total, 2),
+            'tiempo_total_sistema': round(tiempo_total_sistema, 2),
+            'throughput': round(throughput_individual, 2),
+            'estado_final': cierre.estado_incidencias,
+            'performance_summary': {
+                'chunks_paralelos': chunks_individuales,
+                'suma_total_paralela': True,
+                'empleados_por_segundo': round(throughput_individual, 2),
+                'eficiencia': 'optima' if tasks_con_error == 0 else 'con_errores'
+            }
+        }
         
     except Exception as e:
-        logger.error(f"❌ Error generando incidencias para cierre {cierre_id}: {e}")
-        return {
-            'success': False,
-            'error': str(e)
+        logger.error(f"❌ Error consolidando resultados: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+# ================================
+# 🛠️ FUNCIONES AUXILIARES
+# ================================
+
+# ================================
+# 🛠️ FUNCIONES AUXILIARES
+# ================================
+
+def actualizar_estado_cierre_por_incidencias(cierre, total_incidencias, es_primer_cierre=False):
+    """
+    🎯 FUNCIÓN CENTRALIZADA PARA ACTUALIZAR ESTADOS DEL CIERRE
+    
+    Maneja la lógica de transición de estados basada en incidencias detectadas
+    
+    Args:
+        cierre: Instancia del CierreNomina
+        total_incidencias: Número total de incidencias detectadas
+        es_primer_cierre: Si es True, aplica lógica específica para primer cierre
+    """
+    cierre.total_incidencias = total_incidencias
+    cierre.fecha_ultima_revision = timezone.now()
+    
+    if total_incidencias > 0:
+        # 🔍 HAY INCIDENCIAS DETECTADAS
+        tipo_analisis = "informativas" if es_primer_cierre else "comparativas"
+        logger.info(f"🔍 {total_incidencias} incidencias {tipo_analisis} detectadas")
+        
+        cierre.estado_incidencias = 'detectadas'
+        cierre.estado = 'con_incidencias'
+        
+        accion = "primer cierre" if es_primer_cierre else "análisis comparativo"
+        logger.info(f"🎯 Estado actualizado: {accion} → con_incidencias")
+        
+    else:
+        # ✅ NO HAY INCIDENCIAS DETECTADAS
+        tipo_analisis = "Primer cierre limpio" if es_primer_cierre else "Análisis comparativo limpio"
+        logger.info(f"✅ {tipo_analisis} - Sin incidencias detectadas")
+        
+        cierre.estado_incidencias = 'resueltas'  # Sin incidencias = resueltas automáticamente
+        
+        # Determinar siguiente estado basado en el estado actual
+        if cierre.estado == 'datos_consolidados':
+            cierre.estado = 'incidencias_resueltas'
+            logger.info("🎯 Estado actualizado: datos_consolidados → incidencias_resueltas")
+        elif cierre.estado in ['con_incidencias', 'con_discrepancias']:
+            cierre.estado = 'incidencias_resueltas'
+            logger.info(f"🎯 Estado actualizado: {cierre.estado} → incidencias_resueltas")
+        # Para otros estados, mantener el estado actual
+    
+    # Log del estado final
+    logger.info(f"📊 Estado del cierre actualizado:")
+    logger.info(f"   🎯 Estado principal: {cierre.estado}")
+    logger.info(f"   🔍 Estado incidencias: {cierre.estado_incidencias}")
+    logger.info(f"   📈 Total incidencias: {cierre.total_incidencias}")
+    
+    cierre.save()
+    return cierre
+
+def calcular_variacion_porcentual(valor_actual, valor_anterior):
+    """Calcula variación porcentual entre dos valores"""
+    if valor_anterior == 0:
+        return 100.0 if valor_actual > 0 else 0.0
+    
+    return ((valor_actual - valor_anterior) / valor_anterior) * 100
+
+def obtener_umbral_individual(tipo_concepto):
+    """Umbrales diferenciados por tipo de concepto para comparación individual"""
+    umbrales = {
+        'haberes_imponibles': 15.0,      # Sueldo base más estable
+        'haberes_no_imponibles': 30.0,   # Bonos más variables
+        'horas_extras': 50.0,            # Muy variable
+        'descuentos_legales': 10.0,      # Debe ser estable
+        'otros_descuentos': 25.0,        # Variable
+        'aportes_patronales': 15.0,      # Relacionado con haberes
+        'informacion_adicional': 40.0,   # Informativo
+        'impuestos': 20.0                # Moderadamente variable
+    }
+    return umbrales.get(tipo_concepto, 30.0)  # 30% por defecto
+
+def obtener_umbral_suma_total(tipo_concepto):
+    """Umbrales para sumas totales (más sensibles que individuales)"""
+    umbrales = {
+        'haberes_imponibles': 10.0,      # Masa salarial estable
+        'haberes_no_imponibles': 20.0,   # Bonos agregados
+        'horas_extras': 30.0,            # Variable por temporada
+        'descuentos_legales': 5.0,       # Muy estable en suma
+        'otros_descuentos': 15.0,        # Algo variable
+        'aportes_patronales': 10.0,      # Sigue masa salarial
+        'informacion_adicional': 25.0,   # Informativo
+        'impuestos': 12.0                # Moderadamente estable
+    }
+    return umbrales.get(tipo_concepto, 20.0)  # 20% por defecto
+
+def crear_chunks_empleados_dinamicos(empleados_consolidados):
+    """Crea chunks dinámicos optimizados para comparación"""
+    total_empleados = empleados_consolidados.count()
+    
+    if total_empleados <= 50:
+        chunk_size = max(10, total_empleados // 3)
+    elif total_empleados <= 200:
+        chunk_size = 25
+    elif total_empleados <= 500:
+        chunk_size = 50
+    else:
+        chunk_size = 75
+    
+    empleados_ids = list(empleados_consolidados.values_list('id', flat=True))
+    
+    return [
+        empleados_ids[i:i + chunk_size] 
+        for i in range(0, len(empleados_ids), chunk_size)
+    ]
+
+# ================================
+# 🔍 CREACIÓN DE INCIDENCIAS
+# ================================
+
+def crear_incidencia_variacion_individual(empleado, concepto_actual, concepto_anterior, variacion_pct):
+    """Crea incidencia para variación individual por empleado"""
+    return IncidenciaCierre(
+        cierre=empleado.cierre,
+        empleado_rut=empleado.rut_empleado,
+        empleado_nombre=empleado.nombre_empleado,
+        tipo_incidencia='variacion_concepto_individual',
+        tipo_comparacion='individual',
+        prioridad=determinar_prioridad_individual(variacion_pct),
+        descripcion=f'Variación {variacion_pct:.1f}% en {concepto_actual.nombre_concepto}',
+        impacto_monetario=abs(concepto_actual.monto_total - concepto_anterior.monto_total),
+        datos_adicionales={
+            'concepto': concepto_actual.nombre_concepto,
+            'tipo_concepto': concepto_actual.tipo_concepto,
+            'monto_actual': float(concepto_actual.monto_total),
+            'monto_anterior': float(concepto_anterior.monto_total),
+            'variacion_porcentual': round(variacion_pct, 2),
+            'variacion_absoluta': float(abs(concepto_actual.monto_total - concepto_anterior.monto_total)),
+            'tipo_comparacion': 'individual'
         }
+    )
+
+def crear_incidencia_concepto_nuevo_empleado(empleado, concepto):
+    """Crea incidencia para concepto nuevo en empleado existente"""
+    return IncidenciaCierre(
+        cierre=empleado.cierre,
+        empleado_rut=empleado.rut_empleado,
+        empleado_nombre=empleado.nombre_empleado,
+        tipo_incidencia='concepto_nuevo_empleado',
+        tipo_comparacion='individual',
+        prioridad='media',
+        descripcion=f'Nuevo concepto {concepto.nombre_concepto} para empleado',
+        impacto_monetario=concepto.monto_total,
+        datos_adicionales={
+            'concepto': concepto.nombre_concepto,
+            'tipo_concepto': concepto.tipo_concepto,
+            'monto_actual': float(concepto.monto_total),
+            'monto_anterior': 0.0,
+            'tipo_comparacion': 'individual'
+        }
+    )
+
+def crear_incidencia_concepto_eliminado_empleado(empleado_anterior, concepto_anterior):
+    """Crea incidencia para concepto eliminado de empleado existente"""
+    return IncidenciaCierre(
+        cierre_id=empleado_anterior.cierre.id + 1,  # Se asigna al cierre actual
+        empleado_rut=empleado_anterior.rut_empleado,
+        empleado_nombre=empleado_anterior.nombre_empleado,
+        tipo_incidencia='concepto_eliminado_empleado',
+        tipo_comparacion='individual',
+        prioridad='media',
+        descripcion=f'Concepto {concepto_anterior.nombre_concepto} eliminado del empleado',
+        impacto_monetario=concepto_anterior.monto_total,
+        datos_adicionales={
+            'concepto': concepto_anterior.nombre_concepto,
+            'tipo_concepto': concepto_anterior.tipo_concepto,
+            'monto_actual': 0.0,
+            'monto_anterior': float(concepto_anterior.monto_total),
+            'tipo_comparacion': 'individual'
+        }
+    )
+
+def crear_incidencia_empleado_nuevo(empleado):
+    """Crea incidencia informativa para empleado nuevo"""
+    return IncidenciaCierre(
+        cierre=empleado.cierre,
+        empleado_rut=empleado.rut_empleado,
+        empleado_nombre=empleado.nombre_empleado,
+        tipo_incidencia='empleado_nuevo',
+        tipo_comparacion='individual',
+        prioridad='baja',
+        descripcion=f'Empleado nuevo sin período anterior',
+        impacto_monetario=empleado.total_haberes or Decimal('0'),
+        datos_adicionales={
+            'total_haberes': float(empleado.total_haberes or 0),
+            'total_descuentos': float(empleado.total_descuentos or 0),
+            'tipo_comparacion': 'individual'
+        }
+    )
+
+def crear_incidencia_suma_total(cierre_id, nombre_concepto, tipo_concepto, suma_actual, suma_anterior, variacion_pct):
+    """Crea incidencia para variación en suma total"""
+    return IncidenciaCierre(
+        cierre_id=cierre_id,
+        tipo_incidencia='variacion_suma_total',
+        tipo_comparacion='suma_total',
+        prioridad=determinar_prioridad_suma_total(variacion_pct, abs(suma_actual - suma_anterior)),
+        descripcion=f'Variación {variacion_pct:.1f}% en suma total de {nombre_concepto}',
+        impacto_monetario=abs(suma_actual - suma_anterior),
+        datos_adicionales={
+            'concepto': nombre_concepto,
+            'tipo_concepto': tipo_concepto,
+            'suma_actual': float(suma_actual),
+            'suma_anterior': float(suma_anterior),
+            'variacion_porcentual': round(variacion_pct, 2),
+            'variacion_absoluta': float(abs(suma_actual - suma_anterior)),
+            'tipo_comparacion': 'suma_total'
+        }
+    )
+
+def crear_incidencia_concepto_nuevo_periodo(cierre_id, nombre_concepto, tipo_concepto):
+    """Crea incidencia para concepto completamente nuevo en el período"""
+    return IncidenciaCierre(
+        cierre_id=cierre_id,
+        tipo_incidencia='concepto_nuevo_periodo',
+        tipo_comparacion='suma_total',
+        prioridad='media',
+        descripcion=f'Concepto {nombre_concepto} aparece por primera vez',
+        datos_adicionales={
+            'concepto': nombre_concepto,
+            'tipo_concepto': tipo_concepto,
+            'tipo_comparacion': 'suma_total'
+        }
+    )
+
+def crear_incidencia_concepto_eliminado_periodo(cierre_id, nombre_concepto, tipo_concepto):
+    """Crea incidencia para concepto completamente eliminado del período"""
+    return IncidenciaCierre(
+        cierre_id=cierre_id,
+        tipo_incidencia='concepto_eliminado_periodo',
+        tipo_comparacion='suma_total',
+        prioridad='alta',  # Eliminación completa es más crítica
+        descripcion=f'Concepto {nombre_concepto} desaparece completamente',
+        datos_adicionales={
+            'concepto': nombre_concepto,
+            'tipo_concepto': tipo_concepto,
+            'tipo_comparacion': 'suma_total'
+        }
+    )
+
+def determinar_prioridad_individual(variacion_pct):
+    """Determina prioridad para incidencias individuales"""
+    abs_variacion = abs(variacion_pct)
+    if abs_variacion >= 75:
+        return 'critica'
+    elif abs_variacion >= 50:
+        return 'alta'
+    elif abs_variacion >= 30:
+        return 'media'
+    else:
+        return 'baja'
+
+def determinar_prioridad_suma_total(variacion_pct, impacto_monetario):
+    """Determina prioridad para incidencias de suma total"""
+    abs_variacion = abs(variacion_pct)
+    
+    # Considerar tanto variación porcentual como impacto monetario
+    if abs_variacion >= 50 or impacto_monetario >= 10000000:  # 10M
+        return 'critica'
+    elif abs_variacion >= 30 or impacto_monetario >= 5000000:  # 5M
+        return 'alta'
+    elif abs_variacion >= 15 or impacto_monetario >= 1000000:  # 1M
+        return 'media'
+    else:
+        return 'baja'
+
+# ================================
+# 🔧 FUNCIONES DE COMPATIBILIDAD
+# ================================
+
+def generar_analisis_primer_cierre(cierre_actual, clasificaciones_seleccionadas):
+    """
+    🆕 ANÁLISIS INFORMATIVO PARA PRIMER CIERRE
+    
+    Cuando no hay período anterior, genera incidencias informativas:
+    - Estadísticas generales del cierre
+    - Empleados sin conceptos
+    - Conceptos con montos anómalos
+    - Resumen por clasificación seleccionada
+    
+    Args:
+        cierre_actual: Instancia del cierre a analizar
+        clasificaciones_seleccionadas: Tipos de conceptos seleccionados
+        
+    Returns:
+        dict: Resultado del análisis informativo
+    """
+    logger.info(f"🆕 Iniciando análisis informativo para primer cierre {cierre_actual.id}")
+    
+    try:
+        incidencias_informativas = []
+        
+        # 1. OBTENER EMPLEADOS CONSOLIDADOS
+        empleados_consolidados = NominaConsolidada.objects.filter(
+            cierre=cierre_actual
+        ).prefetch_related('conceptos_consolidados')
+        
+        total_empleados = empleados_consolidados.count()
+        
+        if total_empleados == 0:
+            return {
+                'success': False,
+                'message': 'No hay empleados consolidados en este cierre'
+            }
+        
+        logger.info(f"👥 Analizando {total_empleados} empleados del primer cierre")
+        
+        # 2. ESTADÍSTICAS GENERALES
+        stats = calcular_estadisticas_primer_cierre(empleados_consolidados, clasificaciones_seleccionadas)
+        
+        # 3. DETECTAR ANOMALÍAS INFORMATIVAS
+        empleados_sin_conceptos = 0
+        empleados_con_montos_cero = 0
+        conceptos_anomalos = []
+        
+        for empleado in empleados_consolidados:
+            conceptos = empleado.conceptos_consolidados.filter(
+                tipo_concepto__in=clasificaciones_seleccionadas
+            ) if clasificaciones_seleccionadas else empleado.conceptos_consolidados.all()
+            
+            # Empleados sin conceptos
+            if conceptos.count() == 0:
+                empleados_sin_conceptos += 1
+                incidencias_informativas.append(
+                    crear_incidencia_informativa_sin_conceptos(empleado)
+                )
+            
+            # Empleados con todos los conceptos en 0
+            conceptos_con_monto = conceptos.filter(monto_total__gt=0)
+            if conceptos.count() > 0 and conceptos_con_monto.count() == 0:
+                empleados_con_montos_cero += 1
+                incidencias_informativas.append(
+                    crear_incidencia_informativa_montos_cero(empleado)
+                )
+            
+            # Detectar conceptos con montos muy altos (posibles errores)
+            for concepto in conceptos:
+                if concepto.monto_total > 10000000:  # Más de 10M
+                    conceptos_anomalos.append(concepto)
+                    incidencias_informativas.append(
+                        crear_incidencia_informativa_monto_alto(empleado, concepto)
+                    )
+        
+        # 4. CREAR INCIDENCIA RESUMEN
+        incidencias_informativas.append(
+            crear_incidencia_resumen_primer_cierre(cierre_actual, stats, empleados_sin_conceptos, empleados_con_montos_cero)
+        )
+        
+        # 5. GUARDAR INCIDENCIAS INFORMATIVAS
+        if incidencias_informativas:
+            IncidenciaCierre.objects.bulk_create(
+                incidencias_informativas,
+                batch_size=100,
+                ignore_conflicts=True
+            )
+        
+        # 6. 🎯 ACTUALIZAR ESTADO DEL CIERRE PRIMER ANÁLISIS
+        total_incidencias = len(incidencias_informativas)
+        
+        # Usar función centralizada para actualizar estados
+        actualizar_estado_cierre_por_incidencias(cierre_actual, total_incidencias, es_primer_cierre=True)
+        
+        logger.info(f"✅ Análisis primer cierre completado:")
+        logger.info(f"   📊 {total_empleados} empleados analizados")
+        logger.info(f"   🔍 {len(clasificaciones_seleccionadas)} tipos de conceptos revisados")
+        logger.info(f"   ⚠️ {total_incidencias} incidencias informativas creadas")
+        logger.info(f"   🚫 {empleados_sin_conceptos} empleados sin conceptos")
+        logger.info(f"   💰 {empleados_con_montos_cero} empleados con montos en cero")
+        logger.info(f"   🔥 {len(conceptos_anomalos)} conceptos con montos anómalos")
+        
+        return {
+            'success': True,
+            'tipo_analisis': 'primer_cierre',
+            'total_empleados': total_empleados,
+            'total_incidencias': total_incidencias,
+            'incidencias_informativas': total_incidencias,
+            'empleados_sin_conceptos': empleados_sin_conceptos,
+            'empleados_con_montos_cero': empleados_con_montos_cero,
+            'conceptos_anomalos': len(conceptos_anomalos),
+            'clasificaciones_analizadas': clasificaciones_seleccionadas,
+            'estadisticas': stats,
+            'estado_final': cierre_actual.estado_incidencias,
+            'mensaje': f'Primer cierre analizado: {total_incidencias} incidencias informativas detectadas'
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error en análisis primer cierre: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+def calcular_estadisticas_primer_cierre(empleados_consolidados, clasificaciones_seleccionadas):
+    """Calcula estadísticas generales del primer cierre"""
+    from django.db.models import Sum, Avg, Count
+    
+    stats = {
+        'total_empleados': empleados_consolidados.count(),
+        'total_haberes': 0,
+        'total_descuentos': 0,
+        'promedio_liquido': 0,
+        'conceptos_por_clasificacion': {}
+    }
+    
+    # Calcular totales
+    totales = empleados_consolidados.aggregate(
+        total_haberes=Sum('total_haberes'),
+        total_descuentos=Sum('total_descuentos'),
+        promedio_liquido=Avg('liquido_pagar')
+    )
+    
+    stats.update(totales)
+    
+    # Estadísticas por clasificación seleccionada
+    for clasificacion in clasificaciones_seleccionadas:
+        conceptos_clasificacion = ConceptoConsolidado.objects.filter(
+            nomina_consolidada__in=empleados_consolidados,
+            tipo_concepto=clasificacion
+        ).aggregate(
+            total_monto=Sum('monto_total'),
+            cantidad_conceptos=Count('id'),
+            empleados_con_concepto=Count('nomina_consolidada', distinct=True)
+        )
+        
+        stats['conceptos_por_clasificacion'][clasificacion] = conceptos_clasificacion
+    
+    return stats
+
+def crear_incidencia_informativa_sin_conceptos(empleado):
+    """Crea incidencia informativa para empleado sin conceptos"""
+    return IncidenciaCierre(
+        cierre=empleado.cierre,
+        empleado_rut=empleado.rut_empleado,
+        empleado_nombre=empleado.nombre_empleado,
+        tipo_incidencia='empleado_sin_conceptos',
+        tipo_comparacion='informativo',
+        prioridad='media',
+        descripcion='Empleado sin conceptos de nómina registrados',
+        impacto_monetario=Decimal('0'),
+        datos_adicionales={
+            'tipo_analisis': 'primer_cierre',
+            'problema': 'sin_conceptos',
+            'total_haberes': float(empleado.total_haberes or 0),
+            'total_descuentos': float(empleado.total_descuentos or 0)
+        }
+    )
+
+def crear_incidencia_informativa_montos_cero(empleado):
+    """Crea incidencia informativa para empleado con todos los conceptos en cero"""
+    return IncidenciaCierre(
+        cierre=empleado.cierre,
+        empleado_rut=empleado.rut_empleado,
+        empleado_nombre=empleado.nombre_empleado,
+        tipo_incidencia='empleado_montos_cero',
+        tipo_comparacion='informativo',
+        prioridad='alta',
+        descripcion='Empleado con todos los conceptos en monto cero',
+        impacto_monetario=Decimal('0'),
+        datos_adicionales={
+            'tipo_analisis': 'primer_cierre',
+            'problema': 'montos_cero',
+            'total_conceptos': empleado.conceptos_consolidados.count()
+        }
+    )
+
+def crear_incidencia_informativa_monto_alto(empleado, concepto):
+    """Crea incidencia informativa para concepto con monto anómalamente alto"""
+    return IncidenciaCierre(
+        cierre=empleado.cierre,
+        empleado_rut=empleado.rut_empleado,
+        empleado_nombre=empleado.nombre_empleado,
+        tipo_incidencia='concepto_monto_anomalo',
+        tipo_comparacion='informativo',
+        prioridad='alta',
+        descripcion=f'Monto anómalamente alto en {concepto.nombre_concepto}: ${concepto.monto_total:,.0f}',
+        impacto_monetario=concepto.monto_total,
+        datos_adicionales={
+            'tipo_analisis': 'primer_cierre',
+            'problema': 'monto_anomalo',
+            'concepto': concepto.nombre_concepto,
+            'tipo_concepto': concepto.tipo_concepto,
+            'monto': float(concepto.monto_total)
+        }
+    )
+
+def crear_incidencia_resumen_primer_cierre(cierre, stats, empleados_sin_conceptos, empleados_con_montos_cero):
+    """Crea incidencia resumen del análisis del primer cierre"""
+    return IncidenciaCierre(
+        cierre=cierre,
+        tipo_incidencia='resumen_primer_cierre',
+        tipo_comparacion='informativo',
+        prioridad='baja',
+        descripcion=f'Resumen del primer cierre: {stats["total_empleados"]} empleados analizados',
+        impacto_monetario=stats.get('total_haberes', 0) or Decimal('0'),
+        datos_adicionales={
+            'tipo_analisis': 'primer_cierre',
+            'resumen': True,
+            'estadisticas': stats,
+            'empleados_sin_conceptos': empleados_sin_conceptos,
+            'empleados_con_montos_cero': empleados_con_montos_cero,
+            'total_haberes': float(stats.get('total_haberes', 0) or 0),
+            'total_descuentos': float(stats.get('total_descuentos', 0) or 0),
+            'promedio_liquido': float(stats.get('promedio_liquido', 0) or 0)
+        }
+    )
+
+def detectar_incidencias_consolidadas_simple(cierre_actual):
+    """
+    🔧 FUNCIÓN DE COMPATIBILIDAD CON CONFIGURACIÓN PABLO
+    
+    Mantiene compatibilidad con el sistema anterior pero usa configuración automática.
+    Esta función redirige al sistema dual con la configuración fija de Pablo.
+    """
+    logger.info(f"🔧 Función legacy llamada para {cierre_actual} - Usando configuración Pablo")
+    
+    # 🎯 USAR CONFIGURACIÓN AUTOMÁTICA DE PABLO (sin parámetros)
+    resultado = generar_incidencias_consolidados_v2.apply(
+        args=[cierre_actual.id]  # Sin pasar clasificaciones - usa configuración automática
+    )
+    
+    return {
+        'success': resultado.successful(),
+        'resultado_sistema_dual': resultado.result if resultado else None,
+        'configuracion_usada': 'pablo_automatica',
+        'conceptos_detallados': CONCEPTOS_ANALISIS_DETALLADO,
+        'conceptos_resumen': CONCEPTOS_SOLO_RESUMEN,
+        'message': 'Migrado a sistema dual con configuración automática de Pablo'
+    }

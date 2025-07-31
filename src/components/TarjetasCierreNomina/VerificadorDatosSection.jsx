@@ -13,7 +13,7 @@ import {
   obtenerCierreNominaPorId
 } from "../../api/nomina";
 
-const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado }) => {
+const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado, onEstadoChange, deberiaDetenerPolling = false }) => {
   const [expandido, setExpandido] = useState(true);
   const [discrepancias, setDiscrepancias] = useState([]);
   const [resumen, setResumen] = useState(null);
@@ -39,6 +39,26 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
       cargarDatos();
     }
   }, [cierre?.id, estadoDiscrepancias]);
+
+  // 🎯 Efecto para reportar el estado de la sección al componente padre
+  useEffect(() => {
+    if (estadoDiscrepancias && onEstadoChange) {
+      const estadoFinal = (estadoDiscrepancias.total_discrepancias === 0 && estadoDiscrepancias.verificacion_completada) 
+        ? "procesado" 
+        : "pendiente";
+      
+      console.log('📊 [VerificadorDatosSection] Reportando estado:', estadoFinal, {
+        totalDiscrepancias: estadoDiscrepancias.total_discrepancias,
+        verificacionCompletada: estadoDiscrepancias.verificacion_completada
+      });
+      
+      onEstadoChange(estadoFinal);
+    }
+  }, [
+    estadoDiscrepancias?.total_discrepancias, 
+    estadoDiscrepancias?.verificacion_completada, 
+    onEstadoChange
+  ]);
 
   const cargarEstadoDiscrepancias = async () => {
     if (!cierre?.id) return;
@@ -180,24 +200,46 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
   // Función para actualizar estado del cierre automáticamente
   const actualizarEstadoCierre = async () => {
     try {
-      const cierreActualizado = await obtenerCierreNominaPorId(cierre.id);
+      console.log('🔄 [VerificadorDatos] Actualizando estado del cierre...');
+      
+      // Refrescar el cierre completo desde la API
       if (onCierreActualizado) {
-        onCierreActualizado(cierreActualizado);
+        console.log('🔄 [VerificadorDatos] Llamando onCierreActualizado para refrescar desde API...');
+        await onCierreActualizado();
+        console.log('✅ [VerificadorDatos] Estado del cierre actualizado exitosamente');
       }
     } catch (error) {
-      console.error("Error actualizando estado del cierre:", error);
+      console.error("❌ [VerificadorDatos] Error actualizando estado del cierre:", error);
     }
   };
 
   // Función para hacer polling del estado durante operaciones
   const iniciarPollingEstado = (taskId, tipoOperacion = 'verificacion') => {
-    console.log('🔄 [PollingEstado] Iniciando polling para:', { taskId, tipoOperacion, cierreId: cierre?.id });
+    console.log('🔄 [PollingEstado] Iniciando polling para:', { taskId, tipoOperacion, cierreId: cierre?.id, deberiaDetenerPolling });
+    
+    // No iniciar polling si se debe detener
+    if (deberiaDetenerPolling) {
+      console.log('🛑 [PollingEstado] No se inicia polling - señal global de parada');
+      return;
+    }
     
     if (pollingRef.current) {
       clearInterval(pollingRef.current);
     }
 
+    console.log('🔄 [PAUSADO] Polling de VerificadorDatosSection pausado temporalmente');
+    
+    // PAUSADO TEMPORALMENTE - COMENTADO
+    /*
     pollingRef.current = setInterval(async () => {
+      // Verificar en cada iteración si se debe detener
+      if (deberiaDetenerPolling) {
+        console.log('🛑 [PollingEstado] Deteniendo polling - señal global de parada');
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+        return;
+      }
+      
       try {
         // Consultar estado de la tarea
         console.log('🔍 [PollingEstado] Consultando estado de tarea:', taskId);
@@ -205,13 +247,16 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
         console.log('📊 [PollingEstado] Estado recibido:', estadoTarea);
         
         if (estadoTarea.status === 'SUCCESS') {
-          console.log(`✅ ${tipoOperacion} completada exitosamente`);
+          console.log(`✅ [PollingEstado] ${tipoOperacion} completada exitosamente`);
           
-          // Actualizar estados locales
+          // Actualizar estados locales y cierre
+          console.log('🔄 [PollingEstado] Actualizando estados locales...');
           await Promise.all([
             cargarEstadoDiscrepancias(),
             actualizarEstadoCierre()
           ]);
+          
+          console.log('🔄 [PollingEstado] Estados actualizados, limpiando polling...');
           
           // Detener polling
           clearInterval(pollingRef.current);
@@ -220,11 +265,15 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
           // Resetear estados de carga
           if (tipoOperacion === 'verificacion') {
             setGenerando(false);
+            console.log('✅ [PollingEstado] Estado "generando" reseteado');
           } else if (tipoOperacion === 'consolidacion') {
             setConsolidando(false);
             setTaskIdConsolidacion(null);
             setMostrarModalConsolidacion(false);
+            console.log('✅ [PollingEstado] Estados de consolidación reseteados');
           }
+          
+          console.log('🎉 [PollingEstado] Procesamiento completado exitosamente');
           
         } else if (estadoTarea.status === 'FAILURE') {
           console.error(`❌ Error en ${tipoOperacion}:`, estadoTarea.result);
@@ -237,12 +286,15 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
           setConsolidando(false);
           setTaskIdConsolidacion(null);
         }
-        } catch (error) {
+      } catch (error) {
         console.error(`❌ [PollingEstado] Error consultando estado de ${tipoOperacion}:`, error);
         console.error('❌ [PollingEstado] Detalles del error:', { taskId, cierreId: cierre?.id, tipoOperacion });
       }
-    }, 2000); // Consultar cada 2 segundos
-  };  const manejarFiltroChange = (nuevosFiltros) => {
+    }, 5000); // 🎯 ACTUALIZADO: Consultar cada 5 segundos (igual que LibroRemuneraciones)
+    */
+  };
+  
+  const manejarFiltroChange = (nuevosFiltros) => {
     setFiltros({ ...filtros, ...nuevosFiltros });
   };
 

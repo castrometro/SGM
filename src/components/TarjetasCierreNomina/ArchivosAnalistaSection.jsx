@@ -8,7 +8,9 @@ const ArchivosAnalistaSection = ({
   cliente,
   cierre, // Agregar el objeto cierre para verificar su estado
   disabled = false,
-  onCierreActualizado
+  onCierreActualizado,
+  onEstadoChange, // 🎯 Nuevo callback para reportar estado
+  deberiaDetenerPolling = false,
 }) => {
   const [expandido, setExpandido] = useState(true);
   const [estadoArchivos, setEstadoArchivos] = useState({});
@@ -106,6 +108,22 @@ const ArchivosAnalistaSection = ({
     }
   }, [estadoArchivos, cierreId, cierre?.estado, onCierreActualizado, estadoCompletadoAnteriormente]);
 
+  // 🎯 Efecto para reportar el estado de la sección al componente padre
+  useEffect(() => {
+    const estadoGeneral = calcularEstadoGeneral();
+    const estadoFinal = estadoGeneral === "Procesado" ? "procesado" : "pendiente";
+    
+    console.log('📊 [ArchivosAnalistaSection] Reportando estado:', estadoFinal);
+    
+    if (onEstadoChange) {
+      onEstadoChange(estadoFinal);
+    }
+  }, [
+    // Solo las propiedades específicas que afectan el cálculo
+    JSON.stringify(estadoArchivos), 
+    onEstadoChange
+  ]);
+
   const estadoGeneral = calcularEstadoGeneral();
   const colorEstado = estadoGeneral === "Procesado" ? "text-green-400" : "text-yellow-400";
 
@@ -174,6 +192,7 @@ const ArchivosAnalistaSection = ({
           disabled={disabled}
           onEstadosChange={setEstadoArchivos}
           onCierreActualizado={onCierreActualizado}
+          deberiaDetenerPolling={deberiaDetenerPolling}
         />
       )}
     </section>

@@ -17,8 +17,14 @@ from .models import (
     NominaConsolidada, HeaderValorEmpleado, ConceptoConsolidado, MovimientoPersonal
 )
 
+# Importar modelo de informes
+from .models_informe import InformeNomina
+
 # Importar modelos de logging
 from .models_logging import UploadLogNomina, TarjetaActivityLogNomina
+
+# Importar modelo de informe
+from .models_informe import InformeNomina
 
 
 @admin.register(CierreNomina)
@@ -2097,6 +2103,125 @@ class TarjetaActivityLogNominaAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
             'usuario',
+            'cierre',
+            'cierre__cliente'
+        )
+
+
+# ================================
+# ADMINISTRACIÓN DE INFORMES
+# ================================
+
+@admin.register(InformeNomina)
+class InformeNominaAdmin(admin.ModelAdmin):
+    """Administración de informes de nómina generados automáticamente"""
+    
+    list_display = (
+        'cierre_info',
+        'periodo_display',
+        'cliente_display', 
+        'fecha_generacion',
+        'kpis_principales_display',
+        'tiempo_calculo',
+        'version_calculo'
+    )
+    
+    list_filter = (
+        'fecha_generacion',
+        'version_calculo',
+        'cierre__cliente',
+        'cierre__estado'
+    )
+    
+    search_fields = (
+        'cierre__cliente__nombre',
+        'cierre__periodo'
+    )
+    
+    readonly_fields = (
+        'cierre',
+        'fecha_generacion',
+        'tiempo_calculo',
+        'datos_cierre_display'
+    )
+    
+    fieldsets = (
+        ('Información General', {
+            'fields': (
+                'cierre',
+                'fecha_generacion',
+                'version_calculo',
+                'tiempo_calculo'
+            )
+        }),
+        ('Datos del Cierre', {
+            'fields': ('datos_cierre_display',),
+            'classes': ('collapse',)
+        })
+    )
+    
+    date_hierarchy = 'fecha_generacion'
+    list_per_page = 50
+    
+    def has_add_permission(self, request):
+        """No permitir crear informes manualmente"""
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        """Solo superusuarios pueden eliminar informes"""
+        return request.user.is_superuser
+    
+    def cierre_info(self, obj):
+        """Info del cierre asociado"""
+        return format_html(
+            '<strong>{}</strong><br/>'
+            '<small>Estado: <span style="color: {};">{}</span></small>',
+            str(obj.cierre),
+            '#10b981' if obj.cierre.estado == 'finalizado' else '#f59e0b',
+            obj.cierre.get_estado_display()
+        )
+    cierre_info.short_description = 'Cierre'
+    
+    def periodo_display(self, obj):
+        """Período del cierre"""
+        return obj.cierre.periodo
+    periodo_display.short_description = 'Período'
+    
+    def cliente_display(self, obj):
+        """Cliente del cierre"""
+        return obj.cierre.cliente.nombre
+    cliente_display.short_description = 'Cliente'
+    
+    def kpis_principales_display(self, obj):
+        """KPIs principales en formato compacto"""
+        try:
+            metricas = obj.datos_cierre.get('metricas_basicas', {})
+            return format_html(
+                '<strong>Dotación:</strong> {}<br/>'
+                '<strong>Costo Empresa:</strong> ${:,.0f}<br/>'
+                '<strong>Descuentos Legales:</strong> ${:,.0f}<br/>'
+                '<strong>Rotación:</strong> {}%',
+                metricas.get('dotacion_total', 0),
+                metricas.get('costo_empresa_total', 0),
+                metricas.get('descuentos_legales_total', 0),
+                metricas.get('rotacion_porcentaje', 0)
+            )
+        except:
+            return "Error al mostrar métricas"
+    kpis_principales_display.short_description = 'Métricas Principales'
+    
+    def datos_cierre_display(self, obj):
+        """Datos del cierre formateados"""
+        try:
+            import json
+            formatted = json.dumps(obj.datos_cierre, indent=2, ensure_ascii=False)
+            return format_html(f"<pre style='max-height: 400px; overflow-y: auto;'>{formatted}</pre>")
+        except:
+            return str(obj.datos_cierre)
+    datos_cierre_display.short_description = 'Datos del Cierre (JSON)'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
             'cierre',
             'cierre__cliente'
         )

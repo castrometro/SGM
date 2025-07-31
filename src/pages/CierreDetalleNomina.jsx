@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import CierreInfoBar from "../components/InfoCards/CierreInfoBar"; // Puedes crear uno especial para nómina después
 import { obtenerCierreNominaPorId } from "../api/nomina";
@@ -12,7 +12,7 @@ const CierreDetalleNomina = () => {
   const [cargandoInicial, setCargandoInicial] = useState(true);
 
   // Función para refrescar datos del cierre
-  const refrescarCierre = async () => {
+  const refrescarCierre = useCallback(async () => {
     if (cierreId) {
       try {
         const cierreActualizado = await obtenerCierreNominaPorId(cierreId);
@@ -22,7 +22,7 @@ const CierreDetalleNomina = () => {
         console.error('❌ Error refrescando cierre:', error);
       }
     }
-  };
+  }, [cierreId]);
 
   useEffect(() => {
     const fetchData = async () => {

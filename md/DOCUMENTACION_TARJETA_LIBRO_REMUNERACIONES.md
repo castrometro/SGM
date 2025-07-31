@@ -24,7 +24,7 @@ useEffect(() => {
   if (estado === "procesando" && !pollingRef.current && onActualizarEstado) {
     pollingRef.current = setInterval(async () => {
       await onActualizarEstado();
-    }, 40000);
+    }, 5000);
   }
 }, [estado, onActualizarEstado]);
 ```

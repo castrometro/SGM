@@ -23,6 +23,7 @@ const ArchivosAnalistaContainer = ({
   cliente = null,
   onEstadosChange = null, // Callback para reportar estados al componente padre
   onCierreActualizado = null, // Callback para refrescar el cierre padre
+  deberiaDetenerPolling = false,
 }) => {
   const [archivos, setArchivos] = useState({
     finiquitos: { estado: "no_subido", archivo: null, error: "" },
@@ -139,19 +140,31 @@ const ArchivosAnalistaContainer = ({
       subiendo: Object.entries(subiendo).filter(([_, estado]) => estado).map(([tipo]) => tipo)
     });
     
-    if (deberiaHacerPolling && !pollingActivo) {
-      console.log('🔄 [ArchivosAnalista] Iniciando polling automático...');
-      setPollingActivo(true);
-      pollCounterRef.current = 0;
+    // Verificar si se debe detener el polling globalmente
+    if (deberiaDetenerPolling && pollingActivo) {
+      console.log('🛑 [ArchivosAnalista] Deteniendo polling - señal global de parada');
+      setPollingActivo(false);
+      
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+      return;
+    }
+    
+    if (deberiaHacerPolling && !pollingActivo && !deberiaDetenerPolling) {
+      console.log('🔄 [PAUSADO] Polling de ArchivosAnalistaContainer pausado temporalmente');
+      // setPollingActivo(true);
+      // pollCounterRef.current = 0;
       
       // Primera consulta inmediata
-      manejarPolling();
+      // manejarPolling();
       
-      // Configurar intervalo
-      pollingRef.current = setInterval(manejarPolling, 3000); // Cada 3 segundos
+      // Configurar intervalo - PAUSADO TEMPORALMENTE
+      // pollingRef.current = setInterval(manejarPolling, 3000); // Cada 3 segundos
       
-    } else if (!deberiaHacerPolling && pollingActivo) {
-      console.log('✅ [ArchivosAnalista] Deteniendo polling - archivos completados');
+    } else if ((!deberiaHacerPolling || deberiaDetenerPolling) && pollingActivo) {
+      console.log('✅ [ArchivosAnalista] Deteniendo polling - archivos completados o detención solicitada');
       setPollingActivo(false);
       
       if (pollingRef.current) {
@@ -168,24 +181,32 @@ const ArchivosAnalistaContainer = ({
         setPollingActivo(false);
       }
     };
-  }, [necesitaPolling, pollingActivo, manejarPolling]);
+  }, [necesitaPolling, pollingActivo, manejarPolling, deberiaDetenerPolling]);
 
   // Función para iniciar polling manualmente (usado cuando se sube un archivo)
   const iniciarPolling = useCallback(() => {
     console.log('🚀 [ArchivosAnalista] Iniciando polling manual...');
-    if (!pollingActivo) {
-      setPollingActivo(true);
-      pollCounterRef.current = 0;
-      
-      // Primera consulta inmediata
-      manejarPolling();
-      
-      // Configurar intervalo si no existe
-      if (!pollingRef.current) {
-        pollingRef.current = setInterval(manejarPolling, 3000);
-      }
+    
+    // No iniciar si se debe detener globalmente
+    if (deberiaDetenerPolling) {
+      console.log('🛑 [ArchivosAnalista] No se inicia polling manual - señal global de parada');
+      return;
     }
-  }, [pollingActivo, manejarPolling]);
+    
+    if (!pollingActivo) {
+      console.log('🔄 [PAUSADO] Polling inicial de ArchivosAnalistaContainer pausado temporalmente');
+      // setPollingActivo(true);
+      // pollCounterRef.current = 0;
+      
+      // Primera consulta inmediata - PAUSADO
+      // manejarPolling();
+      
+      // Configurar intervalo si no existe - PAUSADO
+      // if (!pollingRef.current) {
+      //   pollingRef.current = setInterval(manejarPolling, 3000);
+      // }
+    }
+  }, [pollingActivo, manejarPolling, deberiaDetenerPolling]);
 
   // useEffect para reportar estados al componente padre
   useEffect(() => {

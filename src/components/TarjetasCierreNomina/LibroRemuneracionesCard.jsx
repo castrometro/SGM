@@ -17,6 +17,7 @@ const LibroRemuneracionesCard = ({
   mensaje = "",
   onEliminarArchivo,
   libroId,
+  deberiaDetenerPolling = false,
 }) => {
   const fileInputRef = useRef();
   const pollingRef = useRef(null);
@@ -38,29 +39,50 @@ const LibroRemuneracionesCard = ({
 
   // Iniciar polling cuando el estado sea "procesando"
   useEffect(() => {
-    console.log('🎯 useEffect polling - estado actual:', estado);
+    console.log('🎯 useEffect polling - estado actual:', estado, 'deberiaDetener:', deberiaDetenerPolling);
     
-    if (estado === "procesando" && !pollingRef.current && onActualizarEstado) {
-      console.log('🔄 Iniciando polling para monitorear procesamiento...');
+    // Detener polling si se debe detener globalmente
+    if (deberiaDetenerPolling && pollingRef.current) {
+      console.log('🛑 [LibroRemuneracionesCard] Deteniendo polling - señal global de parada');
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+      setProcesandoLocal(false);
+      return;
+    }
+    
+    if (estado === "procesando" && !pollingRef.current && onActualizarEstado && !deberiaDetenerPolling) {
+      console.log('🔄 [PAUSADO] Polling de LibroRemuneracionesCard pausado temporalmente');
       
-      let contadorPolling = 0;
-      pollingRef.current = setInterval(async () => {
-        contadorPolling++;
-        try {
-          console.log(`📡 Polling #${contadorPolling} - Verificando estado...`);
-          await onActualizarEstado();
-        } catch (pollError) {
-          console.error(`❌ Error en polling #${contadorPolling}:`, pollError);
-        }
-      }, 40000); // consultar cada 40 segundos
+      // PAUSADO TEMPORALMENTE - COMENTADO
+      // let contadorPolling = 0;
+      // pollingRef.current = setInterval(async () => {
+      //   contadorPolling++;
+      //   try {
+      //     console.log(`📡 Polling #${contadorPolling} - Verificando estado...`);
+      //     await onActualizarEstado();
+      //   } catch (pollError) {
+      //     console.error(`❌ Error en polling #${contadorPolling}:`, pollError);
+      //   }
+      // }, 5000); // consultar cada 5 segundos
       
-    } else if (estado !== "procesando" && pollingRef.current) {
-      console.log(`✅ Estado cambió a "${estado}" - deteniendo polling`);
+    } else if ((estado !== "procesando" || deberiaDetenerPolling) && pollingRef.current) {
+      console.log(`✅ Estado cambió a "${estado}" o detención solicitada - deteniendo polling`);
       clearInterval(pollingRef.current);
       pollingRef.current = null;
       setProcesandoLocal(false);
     }
-  }, [estado, onActualizarEstado]);
+  }, [estado, onActualizarEstado, deberiaDetenerPolling]);
+
+  // 🧹 LIMPIEZA: Cleanup del polling al desmontar componente
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) {
+        console.log('🧹 [LibroRemuneracionesCard] Limpiando polling al desmontar');
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, []);
 
   // Handler de subida
   const handleSeleccionArchivo = async (e) => {

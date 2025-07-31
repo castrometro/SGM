@@ -25,6 +25,8 @@ const ArchivosTalanaSection = ({
   
   // Props de control
   disabled = false,
+  deberiaDetenerPolling = false,
+  cierreId,
 }) => {
   const [expandido, setExpandido] = useState(true);
   
@@ -118,6 +120,7 @@ const ArchivosTalanaSection = ({
             headerClasificados={libro?.header_json?.headers_clasificados || []}
             mensaje={mensajeLibro}
             disabled={disabled || libro?.estado === "procesando"}
+            deberiaDetenerPolling={deberiaDetenerPolling}
           />
           
           <MovimientosMesCard
@@ -128,6 +131,8 @@ const ArchivosTalanaSection = ({
             onActualizarEstado={onActualizarEstadoMovimientos}
             onEliminarArchivo={onEliminarMovimientos}
             disabled={disabled}
+            deberiaDetenerPolling={deberiaDetenerPolling}
+            cierreId={cierreId}
           />
         </div>
       )}

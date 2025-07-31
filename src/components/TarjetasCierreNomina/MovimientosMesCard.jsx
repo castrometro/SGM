@@ -13,6 +13,7 @@ const MovimientosMesCard = ({
   subiendo = false,
   disabled = false,
   cierreId, // Nueva prop necesaria para logging
+  deberiaDetenerPolling = false,
 }) => {
   const fileInputRef = useRef();
   const pollingRef = useRef(null);
@@ -56,9 +57,20 @@ const MovimientosMesCard = ({
 
   // Iniciar polling cuando el estado sea "en_proceso"
   useEffect(() => {
-    console.log('🎯 MovimientosMes useEffect polling - estado actual:', estado);
+    console.log('🎯 MovimientosMes useEffect polling - estado actual:', estado, 'deberiaDetener:', deberiaDetenerPolling);
     
-    if (estado === "en_proceso" && !pollingRef.current && onActualizarEstado) {
+    // Detener polling si se debe detener globalmente
+    if (deberiaDetenerPolling && pollingRef.current) {
+      console.log('🛑 [MovimientosMesCard] Deteniendo polling - señal global de parada');
+      if (activityLogger.current) {
+        activityLogger.current.logPollingStop('señal global de parada');
+      }
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+      return;
+    }
+    
+    if (estado === "en_proceso" && !pollingRef.current && onActualizarEstado && !deberiaDetenerPolling) {
       console.log('🔄 Iniciando polling para monitorear procesamiento de movimientos...');
       
       // Logging: inicio de polling
@@ -66,29 +78,43 @@ const MovimientosMesCard = ({
         activityLogger.current.logPollingStart(5);
       }
       
-      let contadorPolling = 0;
-      pollingRef.current = setInterval(async () => {
-        contadorPolling++;
-        try {
-          console.log(`📡 MovimientosMes Polling #${contadorPolling} - Verificando estado...`);
-          await onActualizarEstado();
-        } catch (pollError) {
-          console.error(`❌ Error en polling MovimientosMes #${contadorPolling}:`, pollError);
-        }
-      }, 5000); // consultar cada 5 segundos (más frecuente que el libro)
+      console.log('🔄 [PAUSADO] Polling de MovimientosMesCard pausado temporalmente');
       
-    } else if (estado !== "en_proceso" && pollingRef.current) {
-      console.log(`✅ MovimientosMes Estado cambió a "${estado}" - deteniendo polling`);
+      // PAUSADO TEMPORALMENTE - COMENTADO
+      // let contadorPolling = 0;
+      // pollingRef.current = setInterval(async () => {
+      //   contadorPolling++;
+      //   try {
+      //     console.log(`📡 MovimientosMes Polling #${contadorPolling} - Verificando estado...`);
+      //     await onActualizarEstado();
+      //   } catch (pollError) {
+      //     console.error(`❌ Error en polling MovimientosMes #${contadorPolling}:`, pollError);
+      //   }
+      // }, 5000); // consultar cada 5 segundos (más frecuente que el libro)
+      
+    } else if ((estado !== "en_proceso" || deberiaDetenerPolling) && pollingRef.current) {
+      console.log(`✅ MovimientosMes Estado cambió a "${estado}" o detención solicitada - deteniendo polling`);
       
       // Logging: detención de polling
       if (activityLogger.current) {
-        activityLogger.current.logPollingStop(`estado cambió a ${estado}`);
+        activityLogger.current.logPollingStop(`estado cambió a ${estado} o detención solicitada`);
       }
       
       clearInterval(pollingRef.current);
       pollingRef.current = null;
     }
-  }, [estado, onActualizarEstado]);
+  }, [estado, onActualizarEstado, deberiaDetenerPolling]);
+
+  // 🧹 LIMPIEZA: Cleanup del polling al desmontar componente
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) {
+        console.log('🧹 [MovimientosMesCard] Limpiando polling al desmontar');
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, []);
 
   const handleSeleccionArchivo = async (e) => {
     const archivo = e.target.files[0];

@@ -5,6 +5,14 @@ from .utils.LibroRemuneraciones import (
     actualizar_empleados_desde_libro_util,
     guardar_registros_nomina_util,
 )
+# ✨ NUEVOS IMPORTS PARA OPTIMIZACIÓN CON CHORD
+from .utils.LibroRemuneracionesOptimizado import (
+    dividir_dataframe_empleados,
+    procesar_chunk_empleados_util,
+    procesar_chunk_registros_util,
+    consolidar_stats_empleados,
+    consolidar_stats_registros,
+)
 from .utils.NovedadesRemuneraciones import (
     obtener_headers_archivo_novedades,
     clasificar_headers_archivo_novedades,
@@ -598,6 +606,430 @@ def guardar_registros_novedades_task(result):
         raise
 
 
+# ===== 🚀 TASKS OPTIMIZADAS PARA NOVEDADES CON CELERY CHORD =====
+
+@shared_task
+def procesar_chunk_empleados_novedades_task(archivo_id, chunk_data):
+    """
+    👥 Task para procesar un chunk específico de empleados de novedades en paralelo
+    
+    Args:
+        archivo_id: ID del ArchivoNovedadesUpload
+        chunk_data: Datos del chunk a procesar
+        
+    Returns:
+        Dict: Estadísticas del procesamiento del chunk
+    """
+    from .utils.NovedadesOptimizado import procesar_chunk_empleados_novedades_util, validar_chunk_data
+    
+    logger.info(f"🔄 Iniciando procesamiento de chunk empleados novedades {chunk_data.get('chunk_id')}")
+    
+    # Validar datos del chunk
+    if not validar_chunk_data(chunk_data):
+        return {
+            'chunk_id': chunk_data.get('chunk_id', 0),
+            'empleados_actualizados': 0,
+            'errores': ['Datos del chunk inválidos'],
+            'archivo_id': archivo_id,
+            'success': False
+        }
+    
+    try:
+        resultado = procesar_chunk_empleados_novedades_util(archivo_id, chunk_data)
+        logger.info(f"✅ Chunk empleados novedades {chunk_data.get('chunk_id')} completado exitosamente")
+        return resultado
+    except Exception as e:
+        error_msg = f"Error en chunk empleados novedades {chunk_data.get('chunk_id')}: {str(e)}"
+        logger.error(error_msg)
+        return {
+            'chunk_id': chunk_data.get('chunk_id', 0),
+            'empleados_actualizados': 0,
+            'errores': [error_msg],
+            'tiempo_procesamiento': 0,
+            'registros_procesados': 0,
+            'archivo_id': archivo_id,
+            'success': False
+        }
+
+
+@shared_task
+def procesar_chunk_registros_novedades_task(archivo_id, chunk_data):
+    """
+    📝 Task para procesar un chunk específico de registros de novedades en paralelo
+    
+    Args:
+        archivo_id: ID del ArchivoNovedadesUpload
+        chunk_data: Datos del chunk a procesar
+        
+    Returns:
+        Dict: Estadísticas del procesamiento del chunk
+    """
+    from .utils.NovedadesOptimizado import procesar_chunk_registros_novedades_util, validar_chunk_data
+    
+    logger.info(f"💾 Iniciando procesamiento de chunk registros novedades {chunk_data.get('chunk_id')}")
+    
+    # Validar datos del chunk
+    if not validar_chunk_data(chunk_data):
+        return {
+            'chunk_id': chunk_data.get('chunk_id', 0),
+            'registros_creados': 0,
+            'registros_actualizados': 0,
+            'errores': ['Datos del chunk inválidos'],
+            'archivo_id': archivo_id,
+            'success': False
+        }
+    
+    try:
+        resultado = procesar_chunk_registros_novedades_util(archivo_id, chunk_data)
+        logger.info(f"✅ Chunk registros novedades {chunk_data.get('chunk_id')} completado exitosamente")
+        return resultado
+    except Exception as e:
+        error_msg = f"Error en chunk registros novedades {chunk_data.get('chunk_id')}: {str(e)}"
+        logger.error(error_msg)
+        return {
+            'chunk_id': chunk_data.get('chunk_id', 0),
+            'registros_creados': 0,
+            'registros_actualizados': 0,
+            'errores': [error_msg],
+            'tiempo_procesamiento': 0,
+            'registros_procesados': 0,
+            'archivo_id': archivo_id,
+            'success': False
+        }
+
+
+@shared_task
+def consolidar_empleados_novedades_task(resultados_chunks):
+    """
+    📊 Consolida los resultados de múltiples chunks de empleados de novedades
+    
+    Args:
+        resultados_chunks: Lista de resultados de chunks de empleados
+        
+    Returns:
+        Dict: Estadísticas consolidadas
+    """
+    from .utils.NovedadesOptimizado import consolidar_stats_novedades
+    
+    logger.info(f"📊 Consolidando resultados de {len(resultados_chunks)} chunks de empleados novedades")
+    
+    try:
+        consolidado = consolidar_stats_novedades(resultados_chunks, 'empleados')
+        
+        # Obtener archivo_id del primer resultado
+        archivo_id = resultados_chunks[0].get('archivo_id') if resultados_chunks else None
+        
+        # Agregar información específica para la siguiente fase
+        consolidado.update({
+            'fase': 'empleados_completada',
+            'archivo_id': archivo_id,
+            'listo_para_registros': True
+        })
+        
+        logger.info(f"✅ Consolidación empleados completada: {consolidado.get('empleados_actualizados', 0)} empleados actualizados")
+        
+        return consolidado
+        
+    except Exception as e:
+        logger.error(f"❌ Error consolidando empleados novedades: {e}")
+        return {
+            'fase': 'empleados_error',
+            'archivo_id': resultados_chunks[0].get('archivo_id') if resultados_chunks else None,
+            'errores': [str(e)],
+            'success': False
+        }
+
+
+@shared_task
+def finalizar_procesamiento_novedades_task(resultados_chunks):
+    """
+    🎯 Finaliza el procesamiento de novedades y actualiza el estado del archivo
+    
+    Args:
+        resultados_chunks: Lista de resultados de chunks de registros
+        
+    Returns:
+        Dict: Resultado final del procesamiento
+    """
+    from .utils.NovedadesOptimizado import consolidar_stats_novedades
+    from .models_logging import registrar_actividad_tarjeta_nomina
+    
+    logger.info(f"🎯 Finalizando procesamiento de novedades con {len(resultados_chunks)} chunks")
+    
+    try:
+        # Consolidar estadísticas de registros
+        consolidado = consolidar_stats_novedades(resultados_chunks, 'registros')
+        archivo_id = consolidado.get('archivo_id') or (resultados_chunks[0].get('archivo_id') if resultados_chunks else None)
+        
+        if not archivo_id:
+            raise ValueError("No se pudo obtener archivo_id de los resultados")
+        
+        # Obtener archivo y actualizar estado
+        archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
+        
+        # Determinar estado final basado en errores
+        errores_totales = consolidado.get('errores_totales', 0)
+        registros_creados = consolidado.get('registros_creados', 0)
+        registros_actualizados = consolidado.get('registros_actualizados', 0)
+        
+        if errores_totales > 0 and (registros_creados > 0 or registros_actualizados > 0):
+            estado_final = "con_errores_parciales"
+            resultado_actividad = "warning"
+        elif errores_totales > 0:
+            estado_final = "con_error"
+            resultado_actividad = "error"
+        else:
+            estado_final = "procesado"
+            resultado_actividad = "exito"
+        
+        # Actualizar estado del archivo
+        archivo.estado = estado_final
+        archivo.save()
+        
+        # Registrar actividad de finalización
+        try:
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=archivo.cierre.id,
+                tarjeta="novedades",
+                accion="procesamiento_paralelo_completado",
+                descripcion=f"Procesamiento paralelo completado: {registros_creados} registros creados, {registros_actualizados} actualizados",
+                resultado=resultado_actividad,
+                detalles={
+                    "archivo_id": archivo_id,
+                    "estado_final": estado_final,
+                    "estadisticas": consolidado,
+                    "modo": "chord_paralelo"
+                }
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Error registrando actividad final: {e}")
+        
+        resultado_final = {
+            'archivo_id': archivo_id,
+            'estado_final': estado_final,
+            'estadisticas_consolidadas': consolidado,
+            'timestamp_finalizacion': timezone.now().isoformat(),
+            'success': True
+        }
+        
+        logger.info(f"🎯 Procesamiento novedades finalizado exitosamente:")
+        logger.info(f"  - Estado final: {estado_final}")
+        logger.info(f"  - Registros creados: {registros_creados}")
+        logger.info(f"  - Registros actualizados: {registros_actualizados}")
+        logger.info(f"  - Errores totales: {errores_totales}")
+        
+        return resultado_final
+        
+    except Exception as e:
+        logger.error(f"❌ Error finalizando procesamiento novedades: {e}")
+        
+        # Intentar marcar archivo como error
+        try:
+            if 'archivo_id' in locals():
+                archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
+                archivo.estado = "con_error"
+                archivo.save()
+        except:
+            pass
+        
+        return {
+            'archivo_id': archivo_id if 'archivo_id' in locals() else None,
+            'estado_final': 'con_error',
+            'errores': [str(e)],
+            'success': False
+        }
+
+
+@shared_task
+def actualizar_empleados_desde_novedades_task_optimizado(result):
+    """
+    🚀 Versión optimizada que usa Celery Chord para procesar empleados en chunks paralelos
+    
+    Args:
+        result: Resultado de la task anterior (contiene archivo_id)
+        
+    Returns:
+        Dict: Información del procesamiento o referencia al chord
+    """
+    from .utils.NovedadesOptimizado import dividir_dataframe_novedades, obtener_archivo_novedades_path
+    
+    archivo_id = result.get("archivo_id") if isinstance(result, dict) else result
+    
+    logger.info(f"🚀 Iniciando actualización optimizada empleados novedades archivo {archivo_id}")
+    
+    try:
+        archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
+        
+        # Obtener ruta del archivo
+        ruta_archivo = obtener_archivo_novedades_path(archivo_id)
+        if not ruta_archivo:
+            raise ValueError(f"No se pudo obtener ruta del archivo {archivo_id}")
+        
+        # Leer archivo para calcular chunk size
+        import pandas as pd
+        df = pd.read_excel(ruta_archivo, engine="openpyxl")
+        total_filas = len(df)
+        
+        # Calcular chunk size dinámico
+        chunk_size = calcular_chunk_size_dinamico(total_filas)
+        
+        logger.info(f"📊 Total filas novedades: {total_filas}, Chunk size calculado: {chunk_size}")
+        
+        # Para archivos pequeños, usar procesamiento directo
+        if total_filas <= 50:
+            logger.info(f"📝 Archivo pequeño ({total_filas} filas), usando procesamiento directo")
+            from .utils.NovedadesRemuneraciones import actualizar_empleados_desde_novedades
+            count = actualizar_empleados_desde_novedades(archivo)
+            return {
+                "archivo_id": archivo_id,
+                "empleados_actualizados": count,
+                "modo": "directo",
+                "timestamp": timezone.now().isoformat()
+            }
+        
+        # Dividir en chunks para procesamiento paralelo
+        chunks = dividir_dataframe_novedades(ruta_archivo, chunk_size)
+        
+        if not chunks:
+            logger.warning(f"⚠️ No se crearon chunks válidos para archivo {archivo_id}")
+            raise ValueError("No se pudieron crear chunks para el archivo")
+        
+        logger.info(f"📦 Creados {len(chunks)} chunks para procesamiento paralelo")
+        
+        # Crear tasks paralelas usando chord
+        tasks_paralelas = [
+            procesar_chunk_empleados_novedades_task.s(archivo_id, chunk_data) 
+            for chunk_data in chunks
+        ]
+        
+        # Ejecutar chord: tasks paralelas | callback
+        callback = consolidar_empleados_novedades_task.s()
+        resultado_chord = chord(tasks_paralelas)(callback)
+        
+        logger.info(f"🚀 Chord empleados iniciado para archivo {archivo_id}: {len(chunks)} chunks en paralelo")
+        
+        return {
+            "archivo_id": archivo_id,
+            "chord_id": str(resultado_chord),
+            "chunks_totales": len(chunks),
+            "modo": "optimizado_chord_empleados",
+            "timestamp": timezone.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error en empleados optimizado archivo {archivo_id}: {e}")
+        
+        # Marcar archivo como error
+        try:
+            archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
+            archivo.estado = "con_error"
+            archivo.save()
+        except:
+            pass
+        
+        raise
+
+
+@shared_task
+def guardar_registros_novedades_task_optimizado(result):
+    """
+    🚀 Versión optimizada que usa Celery Chord para guardar registros en chunks paralelos
+    
+    Args:
+        result: Resultado de la task anterior (contiene archivo_id)
+        
+    Returns:
+        Dict: Información del procesamiento o referencia al chord
+    """
+    from .utils.NovedadesOptimizado import dividir_dataframe_novedades, obtener_archivo_novedades_path
+    
+    archivo_id = result.get("archivo_id") if isinstance(result, dict) else result
+    
+    logger.info(f"🚀 Iniciando guardado optimizado registros novedades archivo {archivo_id}")
+    
+    try:
+        archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
+        
+        # Verificar que el archivo esté en estado correcto
+        if archivo.estado not in ['clasificado', 'empleados_actualizados']:
+            logger.warning(f"⚠️ Archivo en estado {archivo.estado}, continuando con registros")
+        
+        # Obtener ruta del archivo
+        ruta_archivo = obtener_archivo_novedades_path(archivo_id)
+        if not ruta_archivo:
+            raise ValueError(f"No se pudo obtener ruta del archivo {archivo_id}")
+        
+        # Leer archivo para calcular chunk size
+        import pandas as pd
+        df = pd.read_excel(ruta_archivo, engine="openpyxl")
+        total_filas = len(df)
+        
+        # Calcular chunk size dinámico
+        chunk_size = calcular_chunk_size_dinamico(total_filas)
+        
+        logger.info(f"💾 Iniciando guardado de registros en chunks: {total_filas} filas, chunk size: {chunk_size}")
+        
+        # Para archivos pequeños, usar procesamiento directo
+        if total_filas <= 50:
+            logger.info(f"📝 Archivo pequeño ({total_filas} filas), guardado directo")
+            from .utils.NovedadesRemuneraciones import guardar_registros_novedades
+            count = guardar_registros_novedades(archivo)
+            
+            # Actualizar estado final
+            archivo.estado = "procesado"
+            archivo.save()
+            
+            return {
+                "archivo_id": archivo_id,
+                "registros_guardados": count,
+                "estado_final": "procesado",
+                "modo": "directo",
+                "timestamp": timezone.now().isoformat()
+            }
+        
+        # Dividir en chunks para procesamiento paralelo
+        chunks = dividir_dataframe_novedades(ruta_archivo, chunk_size)
+        
+        if not chunks:
+            logger.warning(f"⚠️ No se crearon chunks válidos para registros archivo {archivo_id}")
+            raise ValueError("No se pudieron crear chunks para registros")
+        
+        logger.info(f"📦 Creados {len(chunks)} chunks para guardado paralelo de registros")
+        
+        # Crear tasks paralelas para registros
+        tasks_paralelas = [
+            procesar_chunk_registros_novedades_task.s(archivo_id, chunk_data) 
+            for chunk_data in chunks
+        ]
+        
+        # Ejecutar chord para registros
+        callback = finalizar_procesamiento_novedades_task.s()
+        resultado_chord = chord(tasks_paralelas)(callback)
+        
+        logger.info(f"🚀 Chord registros iniciado para archivo {archivo_id}: {len(chunks)} chunks en paralelo")
+        
+        return {
+            "archivo_id": archivo_id,
+            "chord_id": str(resultado_chord),
+            "chunks_totales": len(chunks),
+            "modo": "optimizado_chord_registros",
+            "timestamp": timezone.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error en registros optimizado archivo {archivo_id}: {e}")
+        
+        # Marcar archivo como error
+        try:
+            archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
+            archivo.estado = "con_error"
+            archivo.save()
+        except:
+            pass
+        
+        raise
+
+
 # ===== TAREAS PARA SISTEMA DE INCIDENCIAS =====
 
 @shared_task
@@ -643,6 +1075,139 @@ def generar_incidencias_cierre_task(cierre_id):
         except:
             pass
         
+        return {
+            'success': False,
+            'error': str(e),
+            'cierre_id': cierre_id
+        }
+
+
+# ===== NUEVAS TAREAS PARA SISTEMA DUAL DE INCIDENCIAS (CELERY CHORD) =====
+
+@shared_task
+def generar_incidencias_consolidados_v2_task(cierre_id, clasificaciones_seleccionadas=None):
+    """
+    🔄 TASK: GENERACIÓN DUAL DE INCIDENCIAS (CELERY CHORD)
+    
+    Implementa el sistema dual de detección de incidencias:
+    - Comparación individual (elemento por elemento) para clasificaciones seleccionadas
+    - Comparación por suma total para todas las clasificaciones
+    
+    Utiliza Celery Chord para procesamiento paralelo optimizado.
+    Performance target: ~183% improvement (8.2s → 2.9s)
+    """
+    from .utils.DetectarIncidenciasConsolidadas import generar_incidencias_consolidados_v2
+    from .models import CierreNomina
+    
+    logger.info(f"🔄 Iniciando generación dual de incidencias para cierre {cierre_id}")
+    
+    try:
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        # Verificar estado válido
+        estados_validos = ['datos_consolidados', 'con_incidencias', 'incidencias_resueltas'] 
+        if cierre.estado not in estados_validos:
+            raise ValueError(f"Estado inválido: {cierre.estado}. Válidos: {estados_validos}")
+        
+        # Ejecutar detección dual con Celery Chord
+        resultado = generar_incidencias_consolidados_v2(
+            cierre_id=cierre_id,
+            clasificaciones_seleccionadas=clasificaciones_seleccionadas
+        )
+        
+        if resultado['success']:
+            logger.info(f"✅ Sistema dual completado para cierre {cierre_id}:")
+            logger.info(f"   📋 Incidencias individuales: {resultado.get('total_incidencias_individuales', 0)}")
+            logger.info(f"   📊 Incidencias suma total: {resultado.get('total_incidencias_suma', 0)}")
+            logger.info(f"   🎯 Total: {resultado.get('total_incidencias', 0)}")
+            logger.info(f"   ⏱️ Tiempo procesamiento: {resultado.get('tiempo_procesamiento', 'N/A')}")
+            
+            return resultado
+        else:
+            logger.error(f"❌ Error en sistema dual para cierre {cierre_id}: {resultado.get('error')}")
+            return resultado
+        
+    except Exception as e:
+        logger.error(f"❌ Error crítico en sistema dual para cierre {cierre_id}: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'cierre_id': cierre_id
+        }
+
+
+@shared_task
+def procesar_chunk_comparacion_individual_task(chunk_data, cierre_id, clasificaciones_seleccionadas):
+    """
+    🔍 TASK: PROCESAMIENTO DE CHUNK INDIVIDUAL
+    
+    Procesa un chunk de empleados para comparación individual (elemento por elemento).
+    Parte del Celery Chord para procesamiento paralelo.
+    """
+    from .utils.DetectarIncidenciasConsolidadas import procesar_chunk_comparacion_individual
+    
+    try:
+        resultado = procesar_chunk_comparacion_individual(
+            chunk_data=chunk_data,
+            cierre_id=cierre_id,
+            clasificaciones_seleccionadas=clasificaciones_seleccionadas
+        )
+        
+        logger.info(f"✅ Chunk individual procesado: {len(resultado)} incidencias")
+        return resultado
+        
+    except Exception as e:
+        logger.error(f"❌ Error procesando chunk individual: {e}")
+        return []
+
+
+@shared_task
+def procesar_comparacion_suma_total_task(cierre_id):
+    """
+    📊 TASK: PROCESAMIENTO DE SUMA TOTAL
+    
+    Procesa la comparación por suma total de todas las clasificaciones.
+    Ejecuta en paralelo con las comparaciones individuales.
+    """
+    from .utils.DetectarIncidenciasConsolidadas import procesar_comparacion_suma_total
+    
+    try:
+        resultado = procesar_comparacion_suma_total(cierre_id)
+        
+        logger.info(f"✅ Suma total procesada: {len(resultado)} incidencias")
+        return resultado
+        
+    except Exception as e:
+        logger.error(f"❌ Error procesando suma total: {e}")
+        return []
+
+
+@shared_task
+def consolidar_resultados_incidencias_task(resultados_individuales, resultados_suma_total, cierre_id):
+    """
+    🎯 TASK: CONSOLIDACIÓN DE RESULTADOS
+    
+    Consolida los resultados de todas las tareas paralelas del Celery Chord.
+    Callback final que unifica todos los resultados.
+    """
+    from .utils.DetectarIncidenciasConsolidadas import consolidar_resultados_incidencias
+    
+    try:
+        resultado_final = consolidar_resultados_incidencias(
+            resultados_individuales=resultados_individuales,
+            resultados_suma_total=resultados_suma_total,
+            cierre_id=cierre_id
+        )
+        
+        logger.info(f"🎯 Consolidación completada para cierre {cierre_id}:")
+        logger.info(f"   📋 Total incidencias: {resultado_final.get('total_incidencias', 0)}")
+        logger.info(f"   🔄 Individuales: {resultado_final.get('total_incidencias_individuales', 0)}")
+        logger.info(f"   📊 Suma total: {resultado_final.get('total_incidencias_suma', 0)}")
+        
+        return resultado_final
+        
+    except Exception as e:
+        logger.error(f"❌ Error consolidando resultados para cierre {cierre_id}: {e}")
         return {
             'success': False,
             'error': str(e),
@@ -1277,15 +1842,16 @@ def consolidar_datos_nomina_task_optimizado(cierre_id):
         # 4. INICIAR PROCESAMIENTO PARALELO CON CHORD
         logger.info("🎯 Iniciando procesamiento paralelo con Celery Chord...")
         
-        # Definir el chord con tareas paralelas
+        # Definir el chord con tareas que pueden ejecutarse realmente en paralelo
+        # NOTA: procesar_conceptos_consolidados_paralelo se ejecutará en consolidar_resultados_finales
         chord_procesamiento = chord([
             procesar_empleados_libro_paralelo.s(cierre_id, chunk_size),
-            procesar_movimientos_personal_paralelo.s(cierre_id),
-            procesar_conceptos_consolidados_paralelo.s(cierre_id)
+            procesar_movimientos_personal_paralelo.s(cierre_id)
         ])(consolidar_resultados_finales.s(cierre_id))
         
         logger.info(f"📊 Chord de consolidación iniciado para cierre {cierre_id}")
         logger.info(f"🔗 Chord ID: {chord_procesamiento}")
+        logger.info("📝 Nota: Conceptos consolidados se procesarán después de empleados")
         
         return {
             'success': True,
@@ -1470,12 +2036,31 @@ def procesar_movimientos_personal_paralelo(cierre_id):
         cierre = CierreNomina.objects.get(id=cierre_id)
         movimientos_creados = 0
         
-        # Crear lista para bulk_create
+        # Verificar si hay archivo de movimientos procesado
+        movimientos_archivo = cierre.movimientos_mes.filter(estado='procesado').first()
+        if not movimientos_archivo:
+            logger.warning(f"⚠️ [PARALELO] No hay archivo de movimientos procesado para cierre {cierre_id}")
+            return {
+                'success': True,
+                'task': 'procesar_movimientos_personal',
+                'movimientos_creados': 0,
+                'cierre_id': cierre_id,
+                'info': 'No hay archivo de movimientos procesado'
+            }
+        
+        logger.info(f"📁 [PARALELO] Archivo de movimientos encontrado: {movimientos_archivo.archivo.name}")
+        
+        # Crear lista para bulk_create y contadores
         movimientos_batch = []
+        contador_altas_bajas = 0
+        contador_ausentismos = 0
+        contador_vacaciones = 0
+        contador_variaciones_sueldo = 0
+        contador_variaciones_contrato = 0
         
         # 1. Procesar ALTAS y BAJAS
         altas_bajas = MovimientoAltaBaja.objects.filter(cierre=cierre)
-        logger.info(f"📊 Procesando {altas_bajas.count()} movimientos de altas/bajas")
+        logger.info(f"📊 [PARALELO] Encontrados {altas_bajas.count()} registros de altas/bajas en BD")
         
         for movimiento in altas_bajas:
             try:
@@ -1503,6 +2088,7 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                     detectado_por_sistema='consolidacion_paralela_v2'
                 )
                 movimientos_batch.append(mov_personal)
+                contador_altas_bajas += 1
                 
             except NominaConsolidada.DoesNotExist:
                 # Crear empleado si no existe (caso de finiquitos)
@@ -1525,10 +2111,13 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                         detectado_por_sistema='consolidacion_paralela_v2'
                     )
                     movimientos_batch.append(mov_personal)
+                    contador_altas_bajas += 1
+        
+        logger.info(f"✅ [PARALELO] {contador_altas_bajas} movimientos de altas/bajas procesados")
         
         # 2. Procesar AUSENTISMOS
         ausentismos = MovimientoAusentismo.objects.filter(cierre=cierre)
-        logger.info(f"📊 Procesando {ausentismos.count()} movimientos de ausentismo")
+        logger.info(f"📊 [PARALELO] Encontrados {ausentismos.count()} registros de ausentismo en BD")
         
         for ausentismo in ausentismos:
             try:
@@ -1558,14 +2147,17 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                     detectado_por_sistema='consolidacion_paralela_v2'
                 )
                 movimientos_batch.append(mov_personal)
+                contador_ausentismos += 1
                 
             except NominaConsolidada.DoesNotExist:
                 logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {ausentismo.rut} en ausentismo")
                 continue
         
+        logger.info(f"✅ [PARALELO] {contador_ausentismos} movimientos de ausentismo procesados")
+        
         # 3. Procesar VACACIONES
         vacaciones = MovimientoVacaciones.objects.filter(cierre=cierre)
-        logger.info(f"📊 Procesando {vacaciones.count()} movimientos de vacaciones")
+        logger.info(f"📊 [PARALELO] Encontrados {vacaciones.count()} registros de vacaciones en BD")
         
         for vacacion in vacaciones:
             try:
@@ -1585,10 +2177,71 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                     detectado_por_sistema='consolidacion_paralela_v2'
                 )
                 movimientos_batch.append(mov_personal)
+                contador_vacaciones += 1
                 
             except NominaConsolidada.DoesNotExist:
                 logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {vacacion.rut} en vacaciones")
                 continue
+        
+        logger.info(f"✅ [PARALELO] {contador_vacaciones} movimientos de vacaciones procesados")
+        
+        # 4. Procesar VARIACIONES DE SUELDO
+        variaciones_sueldo = MovimientoVariacionSueldo.objects.filter(cierre=cierre)
+        logger.info(f"📊 [PARALELO] Encontrados {variaciones_sueldo.count()} registros de variaciones de sueldo en BD")
+        
+        for variacion in variaciones_sueldo:
+            try:
+                nomina_consolidada = NominaConsolidada.objects.get(
+                    cierre=cierre, 
+                    rut_empleado=variacion.rut
+                )
+                
+                mov_personal = MovimientoPersonal(
+                    nomina_consolidada=nomina_consolidada,
+                    tipo_movimiento='cambio_sueldo',
+                    motivo=f"Cambio de sueldo: {variacion.motivo}",
+                    fecha_movimiento=variacion.fecha_cambio,
+                    observaciones=f"De ${variacion.sueldo_anterior:,.0f} a ${variacion.sueldo_nuevo:,.0f}",
+                    fecha_deteccion=timezone.now(),
+                    detectado_por_sistema='consolidacion_paralela_v2'
+                )
+                movimientos_batch.append(mov_personal)
+                contador_variaciones_sueldo += 1
+                
+            except NominaConsolidada.DoesNotExist:
+                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {variacion.rut} en variación sueldo")
+                continue
+        
+        logger.info(f"✅ [PARALELO] {contador_variaciones_sueldo} movimientos de variación de sueldo procesados")
+        
+        # 5. Procesar VARIACIONES DE CONTRATO
+        variaciones_contrato = MovimientoVariacionContrato.objects.filter(cierre=cierre)
+        logger.info(f"📊 [PARALELO] Encontrados {variaciones_contrato.count()} registros de variaciones de contrato en BD")
+        
+        for variacion in variaciones_contrato:
+            try:
+                nomina_consolidada = NominaConsolidada.objects.get(
+                    cierre=cierre, 
+                    rut_empleado=variacion.rut
+                )
+                
+                mov_personal = MovimientoPersonal(
+                    nomina_consolidada=nomina_consolidada,
+                    tipo_movimiento='cambio_contrato',
+                    motivo=f"Cambio de contrato: {variacion.motivo}",
+                    fecha_movimiento=variacion.fecha_cambio,
+                    observaciones=f"De {variacion.tipo_contrato_anterior} a {variacion.tipo_contrato_nuevo}",
+                    fecha_deteccion=timezone.now(),
+                    detectado_por_sistema='consolidacion_paralela_v2'
+                )
+                movimientos_batch.append(mov_personal)
+                contador_variaciones_contrato += 1
+                
+            except NominaConsolidada.DoesNotExist:
+                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {variacion.rut} en variación contrato")
+                continue
+        
+        logger.info(f"✅ [PARALELO] {contador_variaciones_contrato} movimientos de variación de contrato procesados")
         
         # Bulk create movimientos en lotes
         if movimientos_batch:
@@ -1598,7 +2251,19 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                 MovimientoPersonal.objects.bulk_create(batch)
                 movimientos_creados += len(batch)
         
-        logger.info(f"✅ [PARALELO] Movimientos de personal procesados: {movimientos_creados}")
+        # Resumen detallado
+        total_tipos = contador_altas_bajas + contador_ausentismos + contador_vacaciones + contador_variaciones_sueldo + contador_variaciones_contrato
+        logger.info(f"📋 [PARALELO] RESUMEN DETALLADO DE MOVIMIENTOS:")
+        logger.info(f"    ⬆️ Altas/Bajas: {contador_altas_bajas}")
+        logger.info(f"    🏥 Ausentismos: {contador_ausentismos}")
+        logger.info(f"    🏖️ Vacaciones: {contador_vacaciones}")
+        logger.info(f"    💰 Variaciones Sueldo: {contador_variaciones_sueldo}")
+        logger.info(f"    📑 Variaciones Contrato: {contador_variaciones_contrato}")
+        logger.info(f"    📊 TOTAL TIPOS: {total_tipos}")
+        logger.info(f"    ✅ TOTAL CREADOS: {movimientos_creados}")
+        
+        if total_tipos != movimientos_creados:
+            logger.warning(f"⚠️ [PARALELO] DISCREPANCIA: {total_tipos} tipos procesados vs {movimientos_creados} movimientos creados")
         
         return {
             'success': True,
@@ -1637,7 +2302,7 @@ def procesar_conceptos_consolidados_paralelo(cierre_id):
         
         # Obtener todas las nóminas consolidadas
         nominas = NominaConsolidada.objects.filter(cierre=cierre).prefetch_related(
-            'headers_valores__concepto_remuneracion'
+            'header_valores__concepto_remuneracion'
         )
         
         conceptos_batch = []
@@ -1646,7 +2311,7 @@ def procesar_conceptos_consolidados_paralelo(cierre_id):
         
         for nomina_consolidada in nominas:
             # Obtener todos los headers para este empleado
-            headers_empleado = nomina_consolidada.headers_valores.filter(
+            headers_empleado = nomina_consolidada.header_valores.filter(
                 es_numerico=True,
                 concepto_remuneracion__isnull=False
             )
@@ -1798,6 +2463,21 @@ def consolidar_resultados_finales(resultados_paralelos, cierre_id):
                 'tareas_exitosas': tareas_exitosas,
                 'total_tareas': len(resultados_paralelos)
             }
+        
+        # 🎯 EJECUTAR PROCESAMIENTO DE CONCEPTOS CONSOLIDADOS
+        # (Ahora que los empleados ya están consolidados)
+        logger.info("💰 [FINAL] Iniciando procesamiento de conceptos consolidados...")
+        try:
+            resultado_conceptos = procesar_conceptos_consolidados_paralelo(cierre_id)
+            if resultado_conceptos.get('success', False):
+                conceptos_consolidados = resultado_conceptos.get('conceptos_consolidados', 0)
+                logger.info(f"✅ [FINAL] Conceptos consolidados procesados: {conceptos_consolidados}")
+            else:
+                logger.error(f"❌ [FINAL] Error procesando conceptos: {resultado_conceptos.get('error', 'Error desconocido')}")
+                conceptos_consolidados = 0
+        except Exception as e:
+            logger.error(f"❌ [FINAL] Excepción procesando conceptos: {e}")
+            conceptos_consolidados = 0
         
         # FINALIZAR CONSOLIDACIÓN EXITOSA
         cierre.estado = 'datos_consolidados'
@@ -2327,36 +3007,124 @@ def generar_incidencias_cierre_paralelo(cierre_id, clasificaciones_seleccionadas
         logger.info(f"🔀 Chunks filtrado: {len(chunks_seleccionadas)}, Chunks completo: {len(chunks_todas)}")
         
         # Ejecutar ambos procesamientos en paralelo usando chord
+        # NO PODEMOS USAR .get() dentro de una tarea Celery
+        # En su lugar, configuramos el chord para que se ejecute de forma asíncrona
+        
+        logger.info("🔄 Configurando ejecución asíncrona con callback...")
+        
+        # 1. Configurar procesamiento filtrado
         if chunks_seleccionadas:
+            logger.info("🔍 Configurando procesamiento filtrado...")
             chord_filtrado = chord([
                 procesar_chunk_clasificaciones.s(cierre_id, chunk, 'filtrado', idx)
                 for idx, chunk in enumerate(chunks_seleccionadas)
             ])(consolidar_resultados_filtrados.s(cierre_id))
         else:
             # Si no hay clasificaciones seleccionadas, crear resultado vacío
-            chord_filtrado = procesar_resultado_vacio.s(cierre_id, 'filtrado')
+            chord_filtrado = None
         
+        # 2. Configurar procesamiento completo
+        logger.info("📊 Configurando procesamiento completo...")
         chord_completo = chord([
             procesar_chunk_clasificaciones.s(cierre_id, chunk, 'completo', idx)
             for idx, chunk in enumerate(chunks_todas)
         ])(consolidar_resultados_completos.s(cierre_id))
         
-        # Esperar a que ambos terminen y comparar
-        return comparar_y_generar_reporte_final.delay(
-            cierre_id, 
-            chord_filtrado, 
-            chord_completo,
-            len(clasificaciones_seleccionadas),
-            len(todas_clasificaciones)
-        )
+        # 3. Retornar información de la configuración sin esperar resultados
+        resultado_inmediato = {
+            'success': True,
+            'cierre_id': cierre_id,
+            'timestamp': timezone.now().isoformat(),
+            'configuracion_completada': True,
+            'chunks_filtrado': len(chunks_seleccionadas) if chunks_seleccionadas else 0,
+            'chunks_completo': len(chunks_todas),
+            'clasificaciones_seleccionadas': len(clasificaciones_seleccionadas),
+            'clasificaciones_totales': len(todas_clasificaciones),
+            'chord_filtrado_id': chord_filtrado.id if chord_filtrado else None,
+            'chord_completo_id': chord_completo.id,
+            'mensaje': 'Procesamiento configurado y ejecutándose de forma asíncrona'
+        }
+        
+        logger.info(f"✅ Configuración completada para cierre {cierre_id}")
+        logger.info(f"📊 Chunks configurados: {len(chunks_seleccionadas) if chunks_seleccionadas else 0} filtrado, {len(chunks_todas)} completo")
+        
+        return resultado_inmediato
         
     except Exception as e:
-        logger.error(f"❌ Error en procesamiento paralelo para cierre {cierre_id}: {e}")
+        logger.error(f"❌ Error configurando procesamiento paralelo para cierre {cierre_id}: {e}")
         return {
             'success': False,
             'error': str(e),
             'cierre_id': cierre_id,
             'timestamp': timezone.now().isoformat()
+        }
+
+
+@shared_task
+def obtener_resultado_procesamiento_dual(cierre_id, chord_filtrado_id=None, chord_completo_id=None):
+    """
+    🎯 TASK: Obtener resultado final del procesamiento dual
+    
+    Esta tarea se puede llamar para obtener el estado final del procesamiento
+    después de que los chords hayan terminado.
+    """
+    from celery.result import AsyncResult
+    
+    logger.info(f"🔍 Obteniendo resultados finales para cierre {cierre_id}")
+    
+    try:
+        resultados_finales = {}
+        
+        # Obtener resultado filtrado si existe
+        if chord_filtrado_id:
+            result_filtrado = AsyncResult(chord_filtrado_id)
+            if result_filtrado.ready():
+                resultados_finales['filtrado'] = result_filtrado.result
+            else:
+                resultados_finales['filtrado'] = {'pendiente': True}
+        else:
+            resultados_finales['filtrado'] = {
+                'success': True,
+                'total_incidencias': 0,
+                'mensaje': 'No se procesaron clasificaciones filtradas'
+            }
+        
+        # Obtener resultado completo
+        if chord_completo_id:
+            result_completo = AsyncResult(chord_completo_id)
+            if result_completo.ready():
+                resultados_finales['completo'] = result_completo.result
+            else:
+                resultados_finales['completo'] = {'pendiente': True}
+        
+        # Generar reporte final
+        resultado_filtrado = resultados_finales.get('filtrado', {})
+        resultado_completo = resultados_finales.get('completo', {})
+        
+        reporte_final = {
+            'success': True,
+            'cierre_id': cierre_id,
+            'timestamp': timezone.now().isoformat(),
+            'total_incidencias': (resultado_filtrado.get('total_incidencias', 0) + 
+                                resultado_completo.get('total_incidencias', 0)),
+            'total_incidencias_individuales': resultado_filtrado.get('total_incidencias', 0),
+            'total_incidencias_suma': resultado_completo.get('total_incidencias', 0),
+            'resultados_detallados': resultados_finales,
+            'ambos_listos': (not resultado_filtrado.get('pendiente', False) and 
+                           not resultado_completo.get('pendiente', False))
+        }
+        
+        logger.info(f"📊 Reporte dual generado para cierre {cierre_id}")
+        logger.info(f"✅ Total incidencias: {reporte_final['total_incidencias']}")
+        
+        return reporte_final
+        
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo resultados duales para cierre {cierre_id}: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'cierre_id': cierre_id
         }
 
 
@@ -2813,6 +3581,344 @@ def consolidar_discrepancias_finales(resultados_chunks, cierre_id):
             cierre.save(update_fields=['estado'])
         except:
             pass
+
+
+# ========================================
+# 🚀 TASKS OPTIMIZADAS CON CELERY CHORD
+# ========================================
+
+@shared_task
+def procesar_chunk_empleados_task(libro_id, chunk_data):
+    """
+    👥 Task para procesar un chunk específico de empleados en paralelo.
+    
+    Args:
+        libro_id: ID del LibroRemuneracionesUpload
+        chunk_data: Datos del chunk a procesar
+        
+    Returns:
+        Dict: Estadísticas del procesamiento del chunk
+    """
+    from .utils.LibroRemuneracionesOptimizado import procesar_chunk_empleados_util
+    
+    logger.info(f"🔄 Iniciando procesamiento de chunk empleados {chunk_data.get('chunk_id')}")
+    
+    try:
+        resultado = procesar_chunk_empleados_util(libro_id, chunk_data)
+        logger.info(f"✅ Chunk empleados {chunk_data.get('chunk_id')} completado exitosamente")
+        return resultado
+    except Exception as e:
+        error_msg = f"Error en chunk empleados {chunk_data.get('chunk_id')}: {str(e)}"
+        logger.error(error_msg)
+        return {
+            'chunk_id': chunk_data.get('chunk_id', 0),
+            'empleados_procesados': 0,
+            'errores': [error_msg],
+            'libro_id': libro_id
+        }
+
+
+@shared_task
+def procesar_chunk_registros_task(libro_id, chunk_data):
+    """
+    📝 Task para procesar registros de nómina de un chunk específico en paralelo.
+    
+    Args:
+        libro_id: ID del LibroRemuneracionesUpload
+        chunk_data: Datos del chunk a procesar
+        
+    Returns:
+        Dict: Estadísticas del procesamiento del chunk
+    """
+    from .utils.LibroRemuneracionesOptimizado import procesar_chunk_registros_util
+    
+    logger.info(f"🔄 Iniciando procesamiento de chunk registros {chunk_data.get('chunk_id')}")
+    
+    try:
+        resultado = procesar_chunk_registros_util(libro_id, chunk_data)
+        logger.info(f"✅ Chunk registros {chunk_data.get('chunk_id')} completado exitosamente")
+        return resultado
+    except Exception as e:
+        error_msg = f"Error en chunk registros {chunk_data.get('chunk_id')}: {str(e)}"
+        logger.error(error_msg)
+        return {
+            'chunk_id': chunk_data.get('chunk_id', 0),
+            'registros_procesados': 0,
+            'errores': [error_msg],
+            'libro_id': libro_id
+        }
+
+
+@shared_task
+def consolidar_empleados_task(resultados_chunks):
+    """
+    📊 Task callback para consolidar resultados de procesamiento de empleados.
+    
+    Args:
+        resultados_chunks: Lista de resultados de todos los chunks
+        
+    Returns:
+        Dict: Estadísticas consolidadas
+    """
+    from .utils.LibroRemuneracionesOptimizado import consolidar_stats_empleados
+    
+    logger.info(f"📊 Consolidando resultados de {len(resultados_chunks)} chunks de empleados")
+    
+    try:
+        consolidado = consolidar_stats_empleados(resultados_chunks)
+        
+        # Log resultado final
+        logger.info(
+            f"✅ Consolidación empleados: {consolidado['total_empleados_procesados']} empleados, "
+            f"{consolidado['chunks_exitosos']}/{consolidado['total_chunks']} chunks exitosos"
+        )
+        
+        return consolidado
+        
+    except Exception as e:
+        error_msg = f"Error consolidando empleados: {str(e)}"
+        logger.error(error_msg)
+        return {
+            'total_empleados_procesados': 0,
+            'chunks_exitosos': 0,
+            'total_chunks': len(resultados_chunks),
+            'errores': [error_msg],
+            'procesamiento_exitoso': False
+        }
+
+
+@shared_task
+def consolidar_registros_task(resultados_chunks):
+    """
+    📊 Task callback para consolidar resultados de procesamiento de registros.
+    
+    Args:
+        resultados_chunks: Lista de resultados de todos los chunks
+        
+    Returns:
+        Dict: Estadísticas consolidadas
+    """
+    from .utils.LibroRemuneracionesOptimizado import consolidar_stats_registros
+    
+    logger.info(f"📊 Consolidando resultados de {len(resultados_chunks)} chunks de registros")
+    
+    try:
+        consolidado = consolidar_stats_registros(resultados_chunks)
+        
+        # Actualizar estado del libro a "procesado" si todo salió bien
+        if consolidado.get('procesamiento_exitoso') and consolidado.get('libro_id'):
+            try:
+                libro = LibroRemuneracionesUpload.objects.get(id=consolidado['libro_id'])
+                libro.estado = "procesado"
+                libro.save(update_fields=['estado'])
+                logger.info(f"✅ Estado del libro {consolidado['libro_id']} actualizado a 'procesado'")
+            except Exception as e:
+                logger.error(f"Error actualizando estado del libro: {e}")
+        
+        # Log resultado final
+        logger.info(
+            f"✅ Consolidación registros: {consolidado['total_registros_procesados']} registros, "
+            f"{consolidado['chunks_exitosos']}/{consolidado['total_chunks']} chunks exitosos"
+        )
+        
+        return consolidado
+        
+    except Exception as e:
+        error_msg = f"Error consolidando registros: {str(e)}"
+        logger.error(error_msg)
+        return {
+            'total_registros_procesados': 0,
+            'chunks_exitosos': 0,
+            'total_chunks': len(resultados_chunks),
+            'errores': [error_msg],
+            'procesamiento_exitoso': False
+        }
+
+
+@shared_task
+def actualizar_empleados_desde_libro_optimizado(result, usar_chord=True):
+    """
+    🚀 Versión optimizada que usa Celery Chord para procesar empleados en paralelo.
+    
+    Args:
+        result: Resultado de la task anterior (contiene libro_id)
+        usar_chord: Si usar chord (True) o procesamiento secuencial (False)
+        
+    Returns:
+        Dict: Estadísticas del procesamiento o resultado del chord
+    """
+    libro_id = result.get("libro_id") if isinstance(result, dict) else result
+    
+    try:
+        libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
+        
+        if not usar_chord:
+            # Fallback al método original
+            logger.info(f"📝 Usando método secuencial para empleados del libro {libro_id}")
+            count = actualizar_empleados_desde_libro_util(libro)
+            return {"libro_id": libro_id, "empleados_actualizados": count}
+        
+        # 🚀 USAR CHORD PARA PARALELIZACIÓN
+        from .utils.LibroRemuneracionesOptimizado import dividir_dataframe_empleados
+        
+        logger.info(f"🚀 Iniciando procesamiento optimizado con Chord para libro {libro_id}")
+        
+        # Calcular chunk size dinámico
+        df = pd.read_excel(libro.archivo.path, engine="openpyxl")
+        total_filas = len(df)
+        chunk_size = calcular_chunk_size_dinamico(total_filas)
+        
+        logger.info(f"📊 Total filas: {total_filas}, Chunk size: {chunk_size}")
+        
+        # Dividir en chunks
+        chunks = dividir_dataframe_empleados(libro.archivo.path, chunk_size)
+        
+        if not chunks:
+            logger.warning(f"⚠️ No se encontraron chunks válidos para libro {libro_id}")
+            return {"libro_id": libro_id, "empleados_actualizados": 0}
+        
+        # Crear tasks paralelas usando chord
+        tasks_paralelas = [
+            procesar_chunk_empleados_task.s(libro_id, chunk_data) 
+            for chunk_data in chunks
+        ]
+        
+        # Ejecutar chord: tasks paralelas | callback
+        callback = consolidar_empleados_task.s()
+        resultado_chord = chord(tasks_paralelas)(callback)
+        
+        logger.info(
+            f"🚀 Chord iniciado para libro {libro_id}: {len(chunks)} chunks en paralelo"
+        )
+        
+        # Retornar referencia al chord para monitoreo
+        return {
+            "libro_id": libro_id,
+            "chord_id": resultado_chord.id if hasattr(resultado_chord, 'id') else None,
+            "chunks_totales": len(chunks),
+            "modo": "optimizado_chord"
+        }
+        
+    except Exception as e:
+        error_msg = f"Error en procesamiento optimizado de empleados para libro {libro_id}: {e}"
+        logger.error(error_msg)
+        
+        # Fallback al método original en caso de error
+        try:
+            logger.info(f"🔄 Fallback a método secuencial para libro {libro_id}")
+            libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
+            count = actualizar_empleados_desde_libro_util(libro)
+            return {"libro_id": libro_id, "empleados_actualizados": count, "fallback": True}
+        except Exception as fallback_error:
+            logger.error(f"Error en fallback: {fallback_error}")
+            raise
+
+
+@shared_task
+def guardar_registros_nomina_optimizado(result, usar_chord=True):
+    """
+    🚀 Versión optimizada que usa Celery Chord para procesar registros en paralelo.
+    
+    Args:
+        result: Resultado de la task anterior (contiene libro_id)
+        usar_chord: Si usar chord (True) o procesamiento secuencial (False)
+        
+    Returns:
+        Dict: Estadísticas del procesamiento o resultado del chord
+    """
+    libro_id = result.get("libro_id") if isinstance(result, dict) else result
+    
+    try:
+        libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
+        
+        if not usar_chord:
+            # Fallback al método original
+            logger.info(f"📝 Usando método secuencial para registros del libro {libro_id}")
+            count = guardar_registros_nomina_util(libro)
+            libro.estado = "procesado"
+            libro.save(update_fields=['estado'])
+            return {
+                "libro_id": libro_id, 
+                "registros_actualizados": count,
+                "estado": "procesado"
+            }
+        
+        # 🚀 USAR CHORD PARA PARALELIZACIÓN
+        from .utils.LibroRemuneracionesOptimizado import dividir_dataframe_empleados
+        
+        logger.info(f"🚀 Iniciando procesamiento optimizado de registros con Chord para libro {libro_id}")
+        
+        # Calcular chunk size dinámico
+        df = pd.read_excel(libro.archivo.path, engine="openpyxl")
+        total_filas = len(df)
+        chunk_size = calcular_chunk_size_dinamico(total_filas)
+        
+        logger.info(f"📊 Total filas: {total_filas}, Chunk size: {chunk_size}")
+        
+        # Dividir en chunks
+        chunks = dividir_dataframe_empleados(libro.archivo.path, chunk_size)
+        
+        if not chunks:
+            logger.warning(f"⚠️ No se encontraron chunks válidos para libro {libro_id}")
+            # Actualizar estado y retornar
+            libro.estado = "procesado"
+            libro.save(update_fields=['estado'])
+            return {
+                "libro_id": libro_id, 
+                "registros_actualizados": 0,
+                "estado": "procesado"
+            }
+        
+        # Crear tasks paralelas usando chord
+        tasks_paralelas = [
+            procesar_chunk_registros_task.s(libro_id, chunk_data) 
+            for chunk_data in chunks
+        ]
+        
+        # Ejecutar chord: tasks paralelas | callback
+        callback = consolidar_registros_task.s()
+        resultado_chord = chord(tasks_paralelas)(callback)
+        
+        logger.info(
+            f"🚀 Chord de registros iniciado para libro {libro_id}: {len(chunks)} chunks en paralelo"
+        )
+        
+        # Retornar referencia al chord para monitoreo
+        return {
+            "libro_id": libro_id,
+            "chord_id": resultado_chord.id if hasattr(resultado_chord, 'id') else None,
+            "chunks_totales": len(chunks),
+            "modo": "optimizado_chord",
+            "estado": "procesando"  # El estado se actualizará en el callback
+        }
+        
+    except Exception as e:
+        error_msg = f"Error en procesamiento optimizado de registros para libro {libro_id}: {e}"
+        logger.error(error_msg)
+        
+        # Fallback al método original en caso de error
+        try:
+            logger.info(f"🔄 Fallback a método secuencial para registros del libro {libro_id}")
+            libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
+            count = guardar_registros_nomina_util(libro)
+            libro.estado = "procesado"
+            libro.save(update_fields=['estado'])
+            return {
+                "libro_id": libro_id, 
+                "registros_actualizados": count,
+                "estado": "procesado",
+                "fallback": True
+            }
+        except Exception as fallback_error:
+            logger.error(f"Error en fallback: {fallback_error}")
+            # Marcar como error
+            try:
+                libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
+                libro.estado = "con_error"
+                libro.save(update_fields=['estado'])
+            except:
+                pass
+            raise
         
         return {
             'success': False,

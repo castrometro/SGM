@@ -157,7 +157,7 @@ const LibroRemuneracionesCardConLogging = ({
       
       // Logging: inicio de polling
       if (activityLogger.current) {
-        activityLogger.current.logPollingStart(40);
+        activityLogger.current.logPollingStart(5);
       }
       
       let contadorPolling = 0;
@@ -169,7 +169,7 @@ const LibroRemuneracionesCardConLogging = ({
         } catch (pollError) {
           console.error(`❌ Error en polling #${contadorPolling}:`, pollError);
         }
-      }, 40000); // consultar cada 40 segundos
+      }, 5000); // consultar cada 5 segundos
       
     } else if (estado !== "procesando" && pollingRef.current) {
       console.log(`✅ Estado cambió a "${estado}" - deteniendo polling`);
@@ -184,6 +184,17 @@ const LibroRemuneracionesCardConLogging = ({
       setProcesandoLocal(false);
     }
   }, [estado, onActualizarEstado]);
+
+  // 🧹 LIMPIEZA: Cleanup del polling al desmontar componente
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) {
+        console.log('🧹 [LibroRemuneracionesCardConLogging] Limpiando polling al desmontar');
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, []);
 
   // Handler de subida con logging
   const handleSeleccionArchivo = async (e) => {

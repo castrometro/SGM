@@ -12,7 +12,6 @@ const testLogicaBloqueoActualizada = () => {
     
     switch (estadoCierre) {
       case 'pendiente':
-      case 'cargando_archivos':
         return !['archivosTalana', 'archivosAnalista'].includes(seccion);
         
       case 'archivos_completos':  // 🎯 CAMBIO: Ahora incluye verificadorDatos
@@ -64,7 +63,6 @@ const testLogicaBloqueoActualizada = () => {
   
   const estados = [
     'pendiente',
-    'cargando_archivos', 
     'archivos_completos',
     'verificacion_datos',
     'datos_consolidados',

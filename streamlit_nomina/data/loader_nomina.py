@@ -235,16 +235,7 @@ def obtener_info_redis_completa(cliente_id: Optional[int] = None) -> Dict[str, A
         return {
             'ruta_redis': f'{redis_client.connection_pool.connection_kwargs["host"]}:{redis_client.connection_pool.connection_kwargs["port"]}/DB{redis_client.connection_pool.connection_kwargs["db"]}',
             'cliente_id': cliente_id,
-            'cierres_disponibles': [
-                {
-                    'periodo': informe['periodo'],
-                    'cliente_id': informe['cliente_id'],
-                    'cliente_nombre': informe['cliente_nombre'],
-                    'fecha_generacion': informe['fecha_generacion'],
-                    'ttl_segundos': informe['ttl_segundos']
-                }
-                for informe in info_informes.get('informes', [])
-            ],
+            'cierres_disponibles': info_informes.get('informes', []),  # Devolver informes completos
             'total_informes': info_informes.get('total', 0),
             'error': info_informes.get('error')
         }

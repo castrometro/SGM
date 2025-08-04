@@ -46,7 +46,6 @@ class CierreNomina(models.Model):
         max_length=40,
         choices=[
             ('pendiente', 'Pendiente'),
-            ('cargando_archivos', 'Cargando Archivos'),
             ('archivos_completos', 'Archivos Completos'),
             ('verificacion_datos', 'Verificación de Datos'),
             ('verificado_sin_discrepancias', 'Verificado Sin Discrepancias'),
@@ -56,6 +55,7 @@ class CierreNomina(models.Model):
             ('incidencias_resueltas', 'Incidencias Resueltas'),
             ('requiere_recarga_archivos', 'Requiere Recarga de Archivos'),
             ('validacion_final', 'Validación Final'),
+            ('generando_informe', 'Generando Informe'),  # NUEVO ESTADO PARA TASKS
             ('finalizado', 'Finalizado'),
         ],
         default='pendiente'
@@ -129,13 +129,9 @@ class CierreNomina(models.Model):
         archivos_listos = self._verificar_archivos_listos()
         
         if not archivos_listos['todos_listos']:
-            # Aún no están todos los archivos procesados
-            if self.estado == 'pendiente':
-                self.estado = 'cargando_archivos'
-                self.save(update_fields=['estado'])
-            elif self.estado != 'cargando_archivos':
-                # Mantener en cargando_archivos mientras se procesan
-                self.estado = 'cargando_archivos'
+            # Aún no están todos los archivos procesados - mantener en pendiente
+            if self.estado != 'pendiente':
+                self.estado = 'pendiente'
                 self.save(update_fields=['estado'])
             return self.estado
         
@@ -278,15 +274,20 @@ class CierreNomina(models.Model):
         
         return True, "El cierre puede ser finalizado"
     
-    def finalizar_cierre(self, usuario):
+    def finalizar_cierre(self, usuario, usar_tasks=None):
         """
         🎯 FINALIZA EL CIERRE Y GENERA EL INFORME COMPREHENSIVO
         
-        Esta función:
-        1. Verifica que se puede finalizar
-        2. Cambia el estado a 'finalizado'
-        3. Genera el informe completo de nómina
-        4. Registra metadatos de finalización
+        Modo híbrido que soporta:
+        - Sincrónico (original): Para cierres pequeños, respuesta inmediata
+        - Asíncrono (nuevo): Para cierres grandes, con progress tracking
+        
+        Args:
+            usuario: Usuario que finaliza el cierre
+            usar_tasks: None (auto), True (forzar async), False (forzar sync)
+        
+        Returns:
+            dict: Resultado con 'task_id' si es async o 'datos_cierre' si es sync
         """
         from django.utils import timezone
         from .models_informe import InformeNomina
@@ -295,6 +296,57 @@ class CierreNomina(models.Model):
         puede, razon = self.puede_finalizar()
         if not puede:
             raise ValueError(f"No se puede finalizar el cierre: {razon}")
+        
+        # Decidir modo de ejecución
+        if usar_tasks is None:
+            # Auto-detectar basado en tamaño del cierre
+            total_empleados = self.empleados.count()
+            usar_tasks = total_empleados > 200  # Threshold configurable
+        
+        if usar_tasks:
+            # =================== MODO ASÍNCRONO ===================
+            return self._finalizar_con_task(usuario)
+        else:
+            # =================== MODO SINCRÓNICO (ORIGINAL) ===================
+            return self._finalizar_sincronico(usuario)
+    
+    def _finalizar_con_task(self, usuario):
+        """🚀 Finalización asíncrona usando Celery tasks"""
+        from .tasks_informes import generar_informe_nomina_completo
+        
+        try:
+            # Cambiar estado a generando_informe
+            self.estado = 'generando_informe'
+            self.save(update_fields=['estado'])
+            
+            # Disparar task de Celery
+            task = generar_informe_nomina_completo.delay(
+                cierre_id=self.id,
+                usuario_id=usuario.id,
+                modo='completo'
+            )
+            
+            print(f"🚀 Task iniciado para {self.cliente.nombre} - {self.periodo}")
+            print(f"📋 Task ID: {task.id}")
+            
+            return {
+                'success': True,
+                'modo': 'asincrono',
+                'task_id': task.id,
+                'mensaje': 'Proceso de finalización iniciado. Use el task_id para consultar progreso.',
+                'cierre_id': self.id
+            }
+            
+        except Exception as e:
+            # Revertir estado si falla el task
+            self.estado = 'incidencias_resueltas'
+            self.save(update_fields=['estado'])
+            raise Exception(f"Error iniciando task de finalización: {str(e)}")
+    
+    def _finalizar_sincronico(self, usuario):
+        """⚡ Finalización sincrónica (método original)"""
+        from django.utils import timezone
+        from .models_informe import InformeNomina
         
         try:
             # Actualizar estado y metadatos
@@ -320,11 +372,12 @@ class CierreNomina(models.Model):
                 print(f"⚠️ Error al enviar a Redis: {e}")
             
             print(f"✅ Cierre finalizado exitosamente")
-            print(f"📊 Informe generado con {informe.get_kpi_principal('dotacion_total')} empleados")
+            print(f"📊 Informe generado con {informe.get_kpi_principal('dotacion_calculada')} empleados")
             print(f"💰 Costo empresa total: ${informe.get_kpi_principal('costo_empresa_total'):,.0f}")
             
             return {
                 'success': True,
+                'modo': 'sincrono',
                 'informe_id': informe.id,
                 'mensaje': 'Cierre finalizado e informe generado exitosamente',
                 'datos_cierre': informe.datos_cierre
@@ -339,10 +392,38 @@ class CierreNomina(models.Model):
             
             raise Exception(f"Error al finalizar cierre: {str(e)}")
     
+    def iniciar_finalizacion_asincrona(self, usuario):
+        """
+        🚀 Inicia finalización asíncrona (método público específico)
+        Similar a contabilidad pero para nómina
+        """
+        return self._finalizar_con_task(usuario)
+    
     @property
     def tiene_informe(self):
         """Verifica si el cierre tiene informe generado"""
-        return hasattr(self, 'informe') and self.informe is not None
+        try:
+            return hasattr(self, 'informe_nomina') and self.informe_nomina is not None
+        except:
+            return False
+    
+    def get_task_activo(self):
+        """
+        🔍 Busca si hay un task activo de finalización para este cierre
+        Útil para evitar múltiples finalizaciones simultáneas
+        """
+        if self.estado != 'generando_informe':
+            return None
+        
+        try:
+            # Aquí podrías implementar lógica para buscar tasks activos en Celery
+            # Por simplicidad, asumimos que si está en 'generando_informe' hay un task activo
+            return {
+                'estado': 'RUNNING',
+                'descripcion': 'Generando informe de nómina...'
+            }
+        except:
+            return None
 
 
 class EmpleadoCierre(models.Model):

@@ -141,7 +141,6 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     // Determinar bloqueo según estado del cierre
     switch (cierre?.estado) {
       case 'pendiente':
-      case 'cargando_archivos':
         // Solo archivos Talana y Analista están desbloqueados
         return !['archivosTalana', 'archivosAnalista'].includes(seccion);
         

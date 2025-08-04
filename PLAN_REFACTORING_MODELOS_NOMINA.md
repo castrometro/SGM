@@ -252,7 +252,6 @@ from django.db import models
 
 class EstadosCierre(models.TextChoices):
     PENDIENTE = 'pendiente', 'Pendiente'
-    CARGANDO_ARCHIVOS = 'cargando_archivos', 'Cargando Archivos'
     ARCHIVOS_COMPLETOS = 'archivos_completos', 'Archivos Completos'
     VERIFICACION_DATOS = 'verificacion_datos', 'Verificación de Datos'
     CON_DISCREPANCIAS = 'con_discrepancias', 'Con Discrepancias'
@@ -610,12 +609,12 @@ class CierreNomina(BaseTimeStampedModel):
         archivos_status = self._verificar_archivos_listos()
         
         if archivos_status['todos_listos']:
-            if self.estado in [EstadosCierre.PENDIENTE, EstadosCierre.CARGANDO_ARCHIVOS]:
+            if self.estado == EstadosCierre.PENDIENTE:
                 self.estado = EstadosCierre.ARCHIVOS_COMPLETOS
                 self.save(update_fields=['estado', 'updated_at'])
         else:
-            if self.estado != EstadosCierre.CARGANDO_ARCHIVOS:
-                self.estado = EstadosCierre.CARGANDO_ARCHIVOS
+            if self.estado != EstadosCierre.PENDIENTE:
+                self.estado = EstadosCierre.PENDIENTE
                 self.save(update_fields=['estado', 'updated_at'])
         
         return self.estado

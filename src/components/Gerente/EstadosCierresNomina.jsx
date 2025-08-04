@@ -76,7 +76,6 @@ const EstadosCierresNomina = () => {
         total: cierresEnriquecidos?.length || 0,
         completados: cierresEnriquecidos?.filter(c => ['finalizado'].includes(c.estado)).length || 0,
         en_proceso: cierresEnriquecidos?.filter(c => [
-          'cargando_archivos', 
           'archivos_completos',
           'verificacion_datos', 
           'datos_consolidados',
@@ -120,7 +119,6 @@ const EstadosCierresNomina = () => {
   const getEstadoColor = (estado) => {
     const colors = {
       'pendiente': 'bg-yellow-100 text-yellow-800 border-yellow-200',
-      'cargando_archivos': 'bg-blue-100 text-blue-800 border-blue-200',
       'archivos_completos': 'bg-blue-100 text-blue-800 border-blue-200',
       'verificacion_datos': 'bg-purple-100 text-purple-800 border-purple-200',
       'verificado_sin_discrepancias': 'bg-emerald-100 text-emerald-800 border-emerald-200',
@@ -143,7 +141,6 @@ const EstadosCierresNomina = () => {
       case 'con_incidencias':
       case 'requiere_recarga_archivos':
         return <AlertCircle className="w-4 h-4" />;
-      case 'cargando_archivos':
       case 'verificacion_datos':
       case 'validacion_final':
         return <RefreshCw className="w-4 h-4 animate-spin" />;

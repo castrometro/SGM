@@ -29,6 +29,7 @@ urlpatterns = [
     path('api/', include('api.urls')),
     path('api/contabilidad/', include('contabilidad.urls')),
     path('api/nomina/', include('nomina.urls')),
+    path('', include('task_manager.urls')),  # ← URLs del task manager global
 ]
 
 # Esto debe ir DESPUÉS de definir urlpatterns

@@ -1,7 +1,12 @@
 # 🔄 Guía de Modelos de Nómina por Flujo del Sistema
 
 ## Índice
-1. [Flujo Principal del Sistema](#flujo-principal-del-sistema)
+1. [Fluj2. **archivos_completos** → Todos los archivos necesarios están procesados
+3. **verificacion_datos** → Se comparan datos entre archivos
+4. **con_discrepancias** / **verificado_sin_discrepancias** → Resultado de verificación
+5. **datos_consolidados** → Información unificada en tablas finales
+6. **con_incidencias** → Se detectaron anomalías que requieren resolución
+7. **incidencias_resueltas** → Problemas resueltos por analista/supervisorcipal del Sistema](#flujo-principal-del-sistema)
 2. [Fase 1: Creación del Cierre](#fase-1-creación-del-cierre)
 3. [Fase 2: Carga de Archivos](#fase-2-carga-de-archivos)
 4. [Fase 3: Procesamiento y Clasificación](#fase-3-procesamiento-y-clasificación)
@@ -45,17 +50,8 @@ class CierreNomina(models.Model):
     
     # ESTADO PRINCIPAL - Controla todo el flujo
     estado = models.CharField(max_length=40, choices=[
-        ('pendiente', 'Pendiente'),                          # 📍 Estado inicial
-        ('cargando_archivos', 'Cargando Archivos'),          # 📤 Subiendo archivos
-        ('archivos_completos', 'Archivos Completos'),        # ✅ Todos los archivos listos
-        ('verificacion_datos', 'Verificación de Datos'),     # 🔍 Comparando información
-        ('con_discrepancias', 'Con Discrepancias'),          # ⚠️ Encontró diferencias
-        ('verificado_sin_discrepancias', 'Verificado Sin Discrepancias'), # ✅ Sin problemas
-        ('datos_consolidados', 'Datos Consolidados'),        # 📊 Información unificada
-        ('con_incidencias', 'Con Incidencias'),              # 🚨 Requiere atención
-        ('incidencias_resueltas', 'Incidencias Resueltas'),  # ✅ Problemas solucionados
-        ('validacion_final', 'Validación Final'),            # 🔎 Revisión final
-        ('finalizado', 'Finalizado'),                        # 🎯 Proceso completo
+        ('pendiente', 'Pendiente'),                      # � Inicial
+        ('archivos_completos', 'Archivos Completos'),    # 📋 Archivos subidos y procesados
     ])
     
     # ESTADOS ESPECÍFICOS - Para seguimiento detallado
@@ -71,8 +67,7 @@ class CierreNomina(models.Model):
 
 **🔄 Flujo de Estados**:
 1. **pendiente** → Se crea el cierre mensual
-2. **cargando_archivos** → Se están subiendo archivos
-3. **archivos_completos** → Todos los archivos necesarios están procesados
+2. **archivos_completos** → Todos los archivos necesarios están procesados
 4. **verificacion_datos** → Se comparan datos entre archivos
 5. **con_discrepancias** / **verificado_sin_discrepancias** → Resultado de verificación
 6. **datos_consolidados** → Información unificada en tablas finales

@@ -32,7 +32,7 @@ La base de datos está estructurada en **6 niveles principales**:
 - `configuracion_tolerancias`: JSON con tolerancias para análisis
 
 **Estados del Cierre**:
-- `pendiente` → `cargando_archivos` → `archivos_completos` → `clasificaciones_completas` → `consolidado` → `completado`
+- `pendiente` → `archivos_completos` → `clasificaciones_completas` → `consolidado` → `completado`
 
 **Métodos Importantes**:
 - `actualizar_estado_automatico()`: Actualiza estado según archivos procesados

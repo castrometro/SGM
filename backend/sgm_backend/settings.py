@@ -68,6 +68,7 @@ INSTALLED_APPS = [
     'api',
     'contabilidad',
     'nomina',
+    'task_manager',  # ← Nueva app para manejo global de tareas
     'corsheaders',
 ]
 

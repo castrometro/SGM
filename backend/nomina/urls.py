@@ -64,6 +64,19 @@ from .views_informes import (
     listar_informes_cliente,
 )
 
+# Importar views de tasks asíncronos
+from .views_tasks import (
+    finalizar_cierre_async,
+    progreso_task,
+    resultado_task,
+    cancelar_task,
+    regenerar_informe,
+    estado_informe,
+    finalizar_cierre_hibrido,
+    tasks_activos,
+    estadisticas_tasks,
+)
+
 # Importar views de Redis
 from .views_redis import (
     enviar_informe_redis,
@@ -229,6 +242,17 @@ urlpatterns = router.urls + [
     path('cierres/<int:cierre_id>/informe/', obtener_informe_cierre, name='obtener_informe_cierre'),
     path('cierres/<int:cierre_id>/informe/resumen/', obtener_resumen_informe, name='obtener_resumen_informe'),
     path('clientes/<int:cliente_id>/informes/', listar_informes_cliente, name='listar_informes_cliente'),
+    
+    # === URLs para Tasks Asíncronos ===
+    path('cierres/<int:cierre_id>/finalizar-async/', finalizar_cierre_async, name='finalizar_cierre_async'),
+    path('cierres/<int:cierre_id>/finalizar/', finalizar_cierre_hibrido, name='finalizar_cierre_hibrido'),
+    path('tasks/<str:task_id>/progreso/', progreso_task, name='progreso_task'),
+    path('tasks/<str:task_id>/resultado/', resultado_task, name='resultado_task'),
+    path('tasks/<str:task_id>/cancelar/', cancelar_task, name='cancelar_task'),
+    path('cierres/<int:cierre_id>/regenerar-informe/', regenerar_informe, name='regenerar_informe'),
+    path('cierres/<int:cierre_id>/estado-informe/', estado_informe, name='estado_informe'),
+    path('tasks/activos/', tasks_activos, name='tasks_activos'),
+    path('tasks/estadisticas/', estadisticas_tasks, name='estadisticas_tasks'),
     
     # === URLs para Redis Cache ===
     path('informes/<int:informe_id>/enviar-redis/', enviar_informe_redis, name='enviar_informe_redis'),

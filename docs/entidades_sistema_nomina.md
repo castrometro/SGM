@@ -53,7 +53,7 @@ class CierreNomina(models.Model):
 ```
 
 **Estados del Cierre:**
-- `pendiente` → `cargando_archivos` → `archivos_completos`
+- `pendiente` → `archivos_completos`
 - `verificacion_datos` → `con_discrepancias` / `verificado_sin_discrepancias`
 - `datos_consolidados` → `con_incidencias` → `incidencias_resueltas`
 - `validacion_final` → `finalizado`
@@ -908,8 +908,7 @@ graph TD
 ```mermaid
 stateDiagram-v2
     [*] --> pendiente
-    pendiente --> cargando_archivos
-    cargando_archivos --> archivos_completos
+    pendiente --> archivos_completos
     archivos_completos --> verificacion_datos
     verificacion_datos --> con_discrepancias
     verificacion_datos --> verificado_sin_discrepancias
@@ -923,7 +922,7 @@ stateDiagram-v2
     
     con_discrepancias --> requiere_recarga_archivos
     con_incidencias --> requiere_recarga_archivos
-    requiere_recarga_archivos --> cargando_archivos
+    requiere_recarga_archivos --> pendiente
 ```
 
 ### Estados de Procesamiento de Archivos

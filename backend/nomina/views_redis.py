@@ -8,7 +8,7 @@ from django.shortcuts import get_object_or_404
 import json
 import logging
 
-from .models_informe import InformeNomina
+from .models_informe import ReporteNomina
 from .cache_redis import get_cache_system_nomina
 from .models import CierreNomina
 

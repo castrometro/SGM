@@ -38,7 +38,7 @@ from .models import (
 )
 
 # Importar modelo de informes
-from .models_informe import InformeNomina
+from .models_informe import ReporteNomina
 
 from .serializers import (
     CierreNominaSerializer, 

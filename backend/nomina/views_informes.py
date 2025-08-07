@@ -15,7 +15,7 @@ import json
 import logging
 
 from .models import CierreNomina
-from .models_informe import InformeNomina
+from .models_informe import ReporteNomina
 
 logger = logging.getLogger(__name__)
 

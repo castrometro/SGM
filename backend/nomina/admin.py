@@ -14,17 +14,16 @@ from .models import (
     # Modelos de análisis y discrepancias
     AnalisisDatosCierre, IncidenciaVariacionSalarial, DiscrepanciaCierre,
     # Modelos consolidados (están en models.py)
-    NominaConsolidada, HeaderValorEmpleado, ConceptoConsolidado, MovimientoPersonal
+    NominaConsolidada, ConceptoConsolidado, MovimientoPersonal
 )
 
 # Importar modelo de informes
-from .models_informe import InformeNomina
+from .models_informe import ReporteNomina
 
 # Importar modelos de logging
 from .models_logging import UploadLogNomina, TarjetaActivityLogNomina
 
-# Importar modelo de informe
-from .models_informe import InformeNomina
+
 
 
 @admin.register(CierreNomina)
@@ -1198,26 +1197,15 @@ class DiscrepanciaCierreAdmin(admin.ModelAdmin):
 
 # ========== ADMINISTRACIÓN DE MODELOS CONSOLIDADOS ==========
 
-class HeaderValorEmpleadoInline(admin.TabularInline):
-    """Inline para mostrar headers-valores dentro de una nómina consolidada"""
-    model = HeaderValorEmpleado
-    extra = 0
-    readonly_fields = ('nombre_header', 'concepto_remuneracion', 'valor_original', 'valor_numerico', 'es_numerico')
-    fields = ('nombre_header', 'concepto_remuneracion', 'valor_original', 'valor_numerico', 'es_numerico')
-    
-    def has_add_permission(self, request, obj=None):
-        return False
-    
-    def has_delete_permission(self, request, obj=None):
-        return False
+
 
 
 class ConceptoConsolidadoInline(admin.TabularInline):
     """Inline para mostrar conceptos dentro de una nómina consolidada"""
     model = ConceptoConsolidado
     extra = 0
-    readonly_fields = ('codigo_concepto', 'nombre_concepto', 'tipo_concepto', 'monto_total', 'cantidad', 'fecha_consolidacion')
-    fields = ('codigo_concepto', 'nombre_concepto', 'tipo_concepto', 'monto_total', 'cantidad')
+    readonly_fields = ('codigo_concepto', 'nombre_concepto', 'tipo_concepto', 'monto_total')
+    fields = ('codigo_concepto', 'nombre_concepto', 'tipo_concepto', 'monto_total')
     
     def has_add_permission(self, request, obj=None):
         return False
@@ -1247,17 +1235,13 @@ class NominaConsolidadaAdmin(admin.ModelAdmin):
         'nombre_empleado',
         'rut_empleado', 
         'cierre_info',
-        'estado_empleado_display',
         'liquido_pagar_formatted',
         'total_haberes_formatted',
-        'dias_trabajados',
-        'fecha_consolidacion'
+        'dias_trabajados'
     )
     list_filter = (
-        'estado_empleado',
         'cierre__cliente',
-        'cierre__periodo',
-        'fecha_consolidacion'
+        'cierre__periodo'
     )
     search_fields = (
         'nombre_empleado',
@@ -1267,9 +1251,7 @@ class NominaConsolidadaAdmin(admin.ModelAdmin):
         'cierre__cliente__nombre'
     )
     readonly_fields = (
-        'fecha_consolidacion',
-        'fuente_datos_formatted',
-        'resumen_empleado'
+        'resumen_empleado_simple',
     )
     fieldsets = (
         ('Información del Empleado', {
@@ -1278,8 +1260,7 @@ class NominaConsolidadaAdmin(admin.ModelAdmin):
                 'rut_empleado',
                 'nombre_empleado',
                 'cargo',
-                'centro_costo',
-                'estado_empleado'
+                'centro_costo'
             )
         }),
         ('Totales Consolidados', {
@@ -1291,40 +1272,20 @@ class NominaConsolidadaAdmin(admin.ModelAdmin):
                 'dias_ausencia'
             )
         }),
-        ('Metadatos de Consolidación', {
+        ('Resumen Simplificado', {
             'fields': (
-                'fecha_consolidacion',
-                'fuente_datos_formatted',
-                'resumen_empleado'
+                'resumen_empleado_simple',
             ),
             'classes': ('collapse',)
         })
     )
-    inlines = [HeaderValorEmpleadoInline, ConceptoConsolidadoInline, MovimientoPersonalInline]
-    date_hierarchy = 'fecha_consolidacion'
+    inlines = [ConceptoConsolidadoInline, MovimientoPersonalInline]
     list_per_page = 50
     
     def cierre_info(self, obj):
         """Info básica del cierre"""
         return f"{obj.cierre.cliente.nombre} - {obj.cierre.periodo}"
     cierre_info.short_description = 'Cierre'
-    
-    def estado_empleado_display(self, obj):
-        """Display con colores para estado del empleado"""
-        colors = {
-            'activo': '#10b981',              # verde
-            'nueva_incorporacion': '#3b82f6', # azul
-            'finiquito': '#ef4444',           # rojo
-            'ausente_total': '#f59e0b',       # amarillo
-            'ausente_parcial': '#f97316'      # naranja
-        }
-        color = colors.get(obj.estado_empleado, '#6b7280')
-        return format_html(
-            '<span style="color: {}; font-weight: bold;">●</span> {}',
-            color,
-            obj.get_estado_empleado_display()
-        )
-    estado_empleado_display.short_description = 'Estado'
     
     def liquido_pagar_formatted(self, obj):
         """Formato de moneda para líquido"""
@@ -1336,23 +1297,8 @@ class NominaConsolidadaAdmin(admin.ModelAdmin):
         return f"${obj.total_haberes:,.0f}"
     total_haberes_formatted.short_description = 'Total Haberes'
     
-    def fuente_datos_formatted(self, obj):
-        """Mostrar fuentes de datos formateadas"""
-        if not obj.fuente_datos:
-            return "Sin información de fuentes"
-        
-        fuentes = []
-        for fuente, presente in obj.fuente_datos.items():
-            if presente:
-                fuentes.append(f"✅ {fuente}")
-            else:
-                fuentes.append(f"❌ {fuente}")
-        
-        return format_html("<br>".join(fuentes))
-    fuente_datos_formatted.short_description = 'Fuentes de Datos'
-    
-    def resumen_empleado(self, obj):
-        """Resumen ejecutivo del empleado"""
+    def resumen_empleado_simple(self, obj):
+        """Resumen simplificado del empleado"""
         conceptos_count = obj.conceptos.count()
         movimientos_count = obj.movimientos.count()
         
@@ -1362,10 +1308,9 @@ class NominaConsolidadaAdmin(admin.ModelAdmin):
         - Movimientos de Personal: {movimientos_count}
         - Días Trabajados: {obj.dias_trabajados or 'N/D'}
         - Días de Ausencia: {obj.dias_ausencia}
-        - Estado: {obj.get_estado_empleado_display()}
         - Líquido Final: ${obj.liquido_pagar:,.0f}
         """
-    resumen_empleado.short_description = 'Resumen del Empleado'
+    resumen_empleado_simple.short_description = 'Resumen del Empleado'
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
@@ -1374,132 +1319,6 @@ class NominaConsolidadaAdmin(admin.ModelAdmin):
         ).prefetch_related('conceptos', 'movimientos')
 
 
-@admin.register(HeaderValorEmpleado)
-class HeaderValorEmpleadoAdmin(admin.ModelAdmin):
-    """Administración de headers-valores por empleado"""
-    list_display = (
-        'nombre_header',
-        'empleado_info',
-        'concepto_display',
-        'valor_display',
-        'es_numerico',
-        'fuente_archivo',
-        'fecha_consolidacion'
-    )
-    list_filter = (
-        'es_numerico',
-        'fuente_archivo',
-        'concepto_remuneracion__clasificacion',
-        'nomina_consolidada__cierre__cliente',
-        'nomina_consolidada__cierre__periodo',
-        'fecha_consolidacion'
-    )
-    search_fields = (
-        'nombre_header',
-        'nomina_consolidada__nombre_empleado',
-        'nomina_consolidada__rut_empleado',
-        'valor_original',
-        'concepto_remuneracion__nombre_concepto'
-    )
-    readonly_fields = (
-        'fecha_consolidacion',
-        'coordenadas_excel',
-        'resumen_header_valor'
-    )
-    fieldsets = (
-        ('Información del Header', {
-            'fields': (
-                'nomina_consolidada',
-                'nombre_header',
-                'concepto_remuneracion'
-            )
-        }),
-        ('Valores', {
-            'fields': (
-                'valor_original',
-                'valor_numerico',
-                'es_numerico'
-            )
-        }),
-        ('Origen del Dato', {
-            'fields': (
-                'fuente_archivo',
-                'columna_excel',
-                'fila_excel',
-                'coordenadas_excel'
-            ),
-            'classes': ('collapse',)
-        }),
-        ('Metadatos', {
-            'fields': (
-                'fecha_consolidacion',
-                'resumen_header_valor'
-            ),
-            'classes': ('collapse',)
-        })
-    )
-    date_hierarchy = 'fecha_consolidacion'
-    list_per_page = 100
-    
-    def empleado_info(self, obj):
-        """Info del empleado"""
-        return f"{obj.nomina_consolidada.nombre_empleado} ({obj.nomina_consolidada.rut_empleado})"
-    empleado_info.short_description = 'Empleado'
-    
-    def concepto_display(self, obj):
-        """Display del concepto si existe"""
-        if obj.concepto_remuneracion:
-            return f"{obj.concepto_remuneracion.nombre_concepto} ({obj.concepto_remuneracion.get_clasificacion_display()})"
-        return "Sin clasificar"
-    concepto_display.short_description = 'Concepto'
-    
-    def valor_display(self, obj):
-        """Display inteligente del valor"""
-        if obj.es_numerico and obj.valor_numerico is not None:
-            return f"${obj.valor_numerico:,.2f}"
-        return obj.valor_original or "Sin valor"
-    valor_display.short_description = 'Valor'
-    
-    def coordenadas_excel(self, obj):
-        """Coordenadas Excel si están disponibles"""
-        if obj.columna_excel and obj.fila_excel:
-            return f"{obj.columna_excel}{obj.fila_excel}"
-        return "No disponible"
-    coordenadas_excel.short_description = 'Coordenadas Excel'
-    
-    def resumen_header_valor(self, obj):
-        """Resumen completo del header-valor"""
-        return f"""
-        RESUMEN HEADER-VALOR:
-        
-        👤 EMPLEADO:
-        - Nombre: {obj.nomina_consolidada.nombre_empleado}
-        - RUT: {obj.nomina_consolidada.rut_empleado}
-        - Cierre: {obj.nomina_consolidada.cierre.cliente.nombre} - {obj.nomina_consolidada.cierre.periodo}
-        
-        📊 HEADER:
-        - Nombre: {obj.nombre_header}
-        - Clasificación: {obj.concepto_remuneracion.get_clasificacion_display() if obj.concepto_remuneracion else 'Sin clasificar'}
-        - Fuente: {obj.fuente_archivo}
-        
-        💰 VALOR:
-        - Original: {obj.valor_original}
-        - Numérico: {f'${obj.valor_numerico:,.2f}' if obj.valor_numerico else 'N/A'}
-        - Es Numérico: {'Sí' if obj.es_numerico else 'No'}
-        
-        📍 ORIGEN:
-        - Coordenadas Excel: {f'{obj.columna_excel}{obj.fila_excel}' if obj.columna_excel and obj.fila_excel else 'No disponible'}
-        - Fecha Consolidación: {obj.fecha_consolidacion.strftime('%d/%m/%Y %H:%M')}
-        """
-    resumen_header_valor.short_description = 'Resumen Completo'
-    
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related(
-            'nomina_consolidada',
-            'nomina_consolidada__cierre',
-            'nomina_consolidada__cierre__cliente',
-            'concepto_remuneracion'
-        )
 
 
 @admin.register(ConceptoConsolidado)
@@ -1511,17 +1330,14 @@ class ConceptoConsolidadoAdmin(admin.ModelAdmin):
         'empleado_info',
         'tipo_concepto_display',
         'monto_total_formatted',
-        'cantidad',
-        'fuente_archivo_display',
-        'fecha_consolidacion'
+        'fuente_archivo_display'
     )
     list_filter = (
         'tipo_concepto',
         'nomina_consolidada__cierre__cliente',
         'nomina_consolidada__cierre__periodo',
         'es_numerico',
-        'fuente_archivo',
-        'fecha_consolidacion'
+        'fuente_archivo'
     )
     search_fields = (
         'nombre_concepto',
@@ -1531,8 +1347,7 @@ class ConceptoConsolidadoAdmin(admin.ModelAdmin):
         'nomina_consolidada__cierre__cliente__nombre'
     )
     readonly_fields = (
-        'fecha_consolidacion',
-        'estadisticas_detalladas'
+        'estadisticas_detalladas_simplificadas',
     )
     fieldsets = (
         ('Información del Concepto', {
@@ -1546,20 +1361,17 @@ class ConceptoConsolidadoAdmin(admin.ModelAdmin):
         ('Valores', {
             'fields': (
                 'monto_total',
-                'cantidad',
                 'es_numerico',
                 'fuente_archivo'
             )
         }),
-        ('Metadatos', {
+        ('Metadatos Simplificados', {
             'fields': (
-                'fecha_consolidacion',
-                'estadisticas_detalladas'
+                'estadisticas_detalladas_simplificadas',
             ),
             'classes': ('collapse',)
         })
     )
-    date_hierarchy = 'fecha_consolidacion'
     list_per_page = 100
     
     def empleado_info(self, obj):
@@ -1618,15 +1430,14 @@ class ConceptoConsolidadoAdmin(admin.ModelAdmin):
         )
     fuente_archivo_display.short_description = 'Fuente'
     
-    def estadisticas_detalladas(self, obj):
-        """Estadísticas detalladas del concepto"""
+    def estadisticas_detalladas_simplificadas(self, obj):
+        """Estadísticas simplificadas del concepto"""
         return f"""
         ESTADÍSTICAS DEL CONCEPTO:
         
         👤 EMPLEADO:
         - Nombre: {obj.nomina_consolidada.nombre_empleado}
         - RUT: {obj.nomina_consolidada.rut_empleado}
-        - Estado: {obj.nomina_consolidada.get_estado_empleado_display()}
         
         💰 CONCEPTO:
         - Código: {obj.codigo_concepto or 'Sin código'}
@@ -1636,14 +1447,12 @@ class ConceptoConsolidadoAdmin(admin.ModelAdmin):
         
         🔢 VALORES:
         - Monto: {'${:,.2f}'.format(obj.monto_total) if obj.es_numerico else 'N/A'}
-        - Cantidad: {obj.cantidad}
         - Fuente: {obj.fuente_archivo.title()}
         
         📊 CONTEXTO:
         - Cierre: {obj.nomina_consolidada.cierre.cliente.nombre} - {obj.nomina_consolidada.cierre.periodo}
-        - Fecha Consolidación: {obj.fecha_consolidacion.strftime('%d/%m/%Y %H:%M')}
         """
-    estadisticas_detalladas.short_description = 'Estadísticas Detalladas'
+    estadisticas_detalladas_simplificadas.short_description = 'Estadísticas Detalladas'
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
@@ -1807,7 +1616,6 @@ def exportar_consolidados_excel(modeladmin, request, queryset):
 
 # Agregar acciones personalizadas
 NominaConsolidadaAdmin.actions = [exportar_consolidados_excel]
-HeaderValorEmpleadoAdmin.actions = [exportar_consolidados_excel]
 ConceptoConsolidadoAdmin.actions = [recalcular_estadisticas_conceptos, exportar_consolidados_excel]
 MovimientoPersonalAdmin.actions = [exportar_consolidados_excel]
 
@@ -2112,7 +1920,7 @@ class TarjetaActivityLogNominaAdmin(admin.ModelAdmin):
 # ADMINISTRACIÓN DE INFORMES
 # ================================
 
-@admin.register(InformeNomina)
+@admin.register(ReporteNomina)
 class InformeNominaAdmin(admin.ModelAdmin):
     """Administración de informes de nómina generados automáticamente"""
     
@@ -2122,14 +1930,11 @@ class InformeNominaAdmin(admin.ModelAdmin):
         'cliente_display', 
         'fecha_generacion',
         'kpis_principales_display',
-        'tiempo_calculo',
-        'version_calculo',
         'estado_redis_display'
     )
     
     list_filter = (
         'fecha_generacion',
-        'version_calculo',
         'cierre__cliente',
         'cierre__estado'
     )
@@ -2142,7 +1947,6 @@ class InformeNominaAdmin(admin.ModelAdmin):
     readonly_fields = (
         'cierre',
         'fecha_generacion',
-        'tiempo_calculo',
         'datos_cierre_display',
         'estado_redis_display'
     )
@@ -2152,8 +1956,6 @@ class InformeNominaAdmin(admin.ModelAdmin):
             'fields': (
                 'cierre',
                 'fecha_generacion',
-                'version_calculo',
-                'tiempo_calculo',
                 'estado_redis_display'
             )
         }),

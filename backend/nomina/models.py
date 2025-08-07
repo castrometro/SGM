@@ -1437,16 +1437,6 @@ class NominaConsolidada(models.Model):
     cargo = models.CharField(max_length=200, null=True, blank=True)
     centro_costo = models.CharField(max_length=200, null=True, blank=True)
     
-    # Estado del empleado en este periodo
-    ESTADO_CHOICES = [
-        ('activo', 'Empleado Activo'),
-        ('nueva_incorporacion', 'Nueva Incorporación'),
-        ('finiquito', 'Finiquito'),
-        ('ausente_total', 'Ausente Periodo Completo'),
-        ('ausente_parcial', 'Ausente Parcial'),
-    ]
-    estado_empleado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='activo')
-    
     # Totales consolidados finales
     total_haberes = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     total_descuentos = models.DecimalField(max_digits=15, decimal_places=2, default=0)
@@ -1456,16 +1446,12 @@ class NominaConsolidada(models.Model):
     dias_trabajados = models.IntegerField(null=True, blank=True)
     dias_ausencia = models.IntegerField(default=0)
     
-    # Metadatos de consolidación
-    fecha_consolidacion = models.DateTimeField(auto_now_add=True)
-    fuente_datos = models.JSONField(default=dict, help_text="Fuentes de datos usadas para consolidar")
-    
     class Meta:
         verbose_name = "Nómina Consolidada"
         verbose_name_plural = "Nóminas Consolidadas"
         unique_together = ['cierre', 'rut_empleado']
         indexes = [
-            models.Index(fields=['cierre', 'estado_empleado']),
+            models.Index(fields=['cierre']),
             models.Index(fields=['rut_empleado']),
             models.Index(fields=['liquido_pagar']),
         ]
@@ -1475,64 +1461,15 @@ class NominaConsolidada(models.Model):
         return f"{self.nombre_empleado} - {self.cierre.periodo} - ${self.liquido_pagar:,.0f}"
 
 
-class HeaderValorEmpleado(models.Model):
-    """
-    📊 HEADER-VALOR POR EMPLEADO (CONSOLIDACIÓN BÁSICA)
-    
-    Mapeo directo 1:1 de cada celda del libro de remuneraciones.
-    Un registro por cada intersección Empleado x Header del Excel.
-    Base fundamental para reportes y análisis posteriores.
-    """
-    nomina_consolidada = models.ForeignKey(NominaConsolidada, on_delete=models.CASCADE, related_name='header_valores')
-    
-    # Header del libro
-    nombre_header = models.CharField(max_length=200, db_index=True)
-    
-    # Clasificación del header (si existe)
-    concepto_remuneracion = models.ForeignKey(
-        ConceptoRemuneracion, 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        blank=True,
-        help_text="Clasificación del header si está disponible"
-    )
-    
-    # Valor original del Excel
-    valor_original = models.CharField(max_length=500, help_text="Valor tal como viene del Excel")
-    valor_numerico = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True)
-    es_numerico = models.BooleanField(default=False)
-    
-    # Metadatos de origen
-    columna_excel = models.CharField(max_length=10, null=True, blank=True, help_text="Ej: 'D', 'AE'")
-    fila_excel = models.IntegerField(null=True, blank=True)
-    fuente_archivo = models.CharField(max_length=50, default='libro_remuneraciones')
-    
-    # Fechas
-    fecha_consolidacion = models.DateTimeField(auto_now_add=True)
-    
-    class Meta:
-        verbose_name = "Header-Valor por Empleado"
-        verbose_name_plural = "Headers-Valores por Empleado"
-        unique_together = ['nomina_consolidada', 'nombre_header']
-        indexes = [
-            models.Index(fields=['nomina_consolidada', 'nombre_header']),
-            models.Index(fields=['nombre_header']),
-            models.Index(fields=['valor_numerico']),
-            models.Index(fields=['es_numerico']),
-        ]
-        ordering = ['nombre_header']
-    
-    def __str__(self):
-        valor_display = f"${self.valor_numerico:,.2f}" if self.es_numerico and self.valor_numerico else self.valor_original
-        return f"{self.nomina_consolidada.nombre_empleado} - {self.nombre_header}: {valor_display}"
+
 
 
 class ConceptoConsolidado(models.Model):
     """
-    💰 CONCEPTOS CONSOLIDADOS POR CIERRE
+    💰 CONCEPTOS CONSOLIDADOS POR EMPLEADO
     
-    Resumen de cada concepto con estadísticas consolidadas.
-    Responde: "¿Cuántos empleados tienen este concepto y cuál es el total?"
+    Un registro por concepto por empleado.
+    Responde: "¿Qué conceptos tiene este empleado y cuánto es cada uno?"
     """
     nomina_consolidada = models.ForeignKey(NominaConsolidada, on_delete=models.CASCADE, related_name='conceptos')
     
@@ -1552,14 +1489,10 @@ class ConceptoConsolidado(models.Model):
     
     # Valor del concepto para este empleado
     monto_total = models.DecimalField(max_digits=15, decimal_places=2, default=0)
-    cantidad = models.DecimalField(max_digits=10, decimal_places=4, default=1, help_text="Cantidad/Horas si aplica")
     es_numerico = models.BooleanField(default=True, help_text="Si el concepto tiene valor numérico")
     
     # Fuente del dato
     fuente_archivo = models.CharField(max_length=50, default='consolidacion', help_text="libro/movimientos/novedades/analista")
-    
-    # Metadatos
-    fecha_consolidacion = models.DateTimeField(auto_now_add=True)
     
     class Meta:
         verbose_name = "Concepto Consolidado"

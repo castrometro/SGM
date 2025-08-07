@@ -23,7 +23,7 @@ import logging
 import json
 
 from .models import CierreNomina
-from .models_informe import InformeNomina
+from .models_informe import ReporteNomina
 from .tasks_informes import (
     generar_informe_nomina_completo,
     regenerar_informe_existente,

@@ -21,7 +21,7 @@ import json
 import time
 
 from .models import CierreNomina, NominaConsolidada, ConceptoConsolidado, MovimientoPersonal
-from .models_informe import InformeNomina
+from .models_informe import ReporteNomina
 from api.models import Usuario
 
 logger = logging.getLogger(__name__)
@@ -97,7 +97,7 @@ def generar_informe_nomina_completo(self, cierre_id, usuario_id=None, modo='comp
         actualizar_progreso(3, 8, 'Creando estructura del informe...', 25)
         
         # Obtener o crear el informe
-        informe, created = InformeNomina.objects.get_or_create(
+        informe, created = ReporteNomina.objects.get_or_create(
             cierre=cierre,
             defaults={
                 'datos_cierre': {},

@@ -67,8 +67,8 @@ INSTALLED_APPS = [
     'rest_framework',
     'api',
     'contabilidad',
-    'nomina',
-    'task_manager',  # ← Nueva app para manejo global de tareas
+    'task_manager',  # ← Mover antes que payroll
+    'payroll',  # ← Nueva app para nóminas (ahora al final)
     'corsheaders',
 ]
 

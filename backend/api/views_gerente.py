@@ -15,7 +15,7 @@ from .models import (
 from .serializers import ClienteSerializer, UsuarioSerializer
 from .permissions import IsGerente, IsAuthenticatedAndActive
 from contabilidad.models import CierreContabilidad
-from nomina.models import CierreNomina
+# from nomina.models import CierreNomina  # ← Comentado temporalmente hasta migrar a payroll
 
 
 # ========== GESTIÓN DE CLIENTES ==========
@@ -62,9 +62,10 @@ def obtener_clientes_gerente(request):
             cliente=cliente
         ).order_by('-periodo').first()
         
-        ultimo_cierre_nomina = CierreNomina.objects.filter(
-            cliente=cliente
-        ).order_by('-periodo').first()
+        # ultimo_cierre_nomina = CierreNomina.objects.filter(
+        #     cliente=cliente
+        # ).order_by('-periodo').first()
+        ultimo_cierre_nomina = None  # ← Temporalmente hasta migrar a payroll
         
         estado_cierres = 'al_dia'  # Por defecto
         ultimo_cierre = None
@@ -268,10 +269,11 @@ def metricas_avanzadas(request):
         fecha_creacion__gte=fecha_inicio
     ).count()
     
-    cierres_nomina = CierreNomina.objects.filter(
-        cliente__in=clientes_query,
-        fecha_creacion__gte=fecha_inicio
-    ).count()
+    # cierres_nomina = CierreNomina.objects.filter(
+    #     cliente__in=clientes_query,
+    #     fecha_creacion__gte=fecha_inicio
+    # ).count()
+    cierres_nomina = 0  # ← Temporalmente hasta migrar a payroll
     
     # KPIs calculados
     promedio_clientes_por_analista = round(total_clientes / total_analistas, 1) if total_analistas > 0 else 0

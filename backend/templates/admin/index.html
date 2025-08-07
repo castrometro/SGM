@@ -1,0 +1,441 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static admin_list %}
+
+{% block title %}{{ title }} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+/* ============================================================================
+                               DASHBOARD STYLES
+============================================================================ */
+
+/* Reset del dashboard por defecto */
+#content-main .dashboard {
+    display: none !important;
+}
+
+/* Container principal del dashboard */
+.sgm-dashboard {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 15px;
+    padding: 30px;
+    margin: 20px 0;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+}
+
+.dashboard-header {
+    text-align: center;
+    margin-bottom: 40px;
+    color: white;
+}
+
+.dashboard-title {
+    font-size: 2.5em;
+    font-weight: 300;
+    margin-bottom: 10px;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+
+.dashboard-subtitle {
+    font-size: 1.2em;
+    opacity: 0.9;
+    font-weight: 400;
+}
+
+/* Grid de botones de administración */
+.admin-modules-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 25px;
+    margin-bottom: 30px;
+}
+
+.admin-module-card {
+    background: white;
+    border-radius: 12px;
+    padding: 25px;
+    text-decoration: none;
+    color: #333;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    position: relative;
+    overflow: hidden;
+}
+
+.admin-module-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #667eea, #764ba2);
+    transform: scaleX(0);
+    transition: transform 0.3s ease;
+}
+
+.admin-module-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+    text-decoration: none;
+    color: #333;
+}
+
+.admin-module-card:hover::before {
+    transform: scaleX(1);
+}
+
+.module-icon {
+    font-size: 3em;
+    margin-bottom: 15px;
+    display: block;
+    text-align: center;
+}
+
+.module-title {
+    font-size: 1.4em;
+    font-weight: 600;
+    margin-bottom: 8px;
+    text-align: center;
+    color: #2c3e50;
+}
+
+.module-description {
+    color: #7f8c8d;
+    text-align: center;
+    margin-bottom: 15px;
+    line-height: 1.5;
+}
+
+.module-stats {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #ecf0f1;
+}
+
+.stat-item {
+    text-align: center;
+    flex: 1;
+}
+
+.stat-number {
+    font-size: 1.5em;
+    font-weight: 700;
+    color: #2980b9;
+    display: block;
+}
+
+.stat-label {
+    font-size: 0.85em;
+    color: #95a5a6;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Quick Actions Section */
+.quick-actions-section {
+    background: rgba(255,255,255,0.95);
+    border-radius: 12px;
+    padding: 25px;
+    margin-top: 20px;
+}
+
+.quick-actions-title {
+    font-size: 1.5em;
+    color: #2c3e50;
+    margin-bottom: 20px;
+    font-weight: 600;
+    text-align: center;
+}
+
+.quick-actions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+}
+
+.quick-action-btn {
+    background: linear-gradient(135deg, #3498db, #2980b9);
+    color: white;
+    padding: 15px 20px;
+    border-radius: 8px;
+    text-decoration: none;
+    text-align: center;
+    transition: all 0.3s ease;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+}
+
+.quick-action-btn:hover {
+    background: linear-gradient(135deg, #2980b9, #1f4e79);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    color: white;
+    text-decoration: none;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .admin-modules-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .dashboard-title {
+        font-size: 2em;
+    }
+    
+    .sgm-dashboard {
+        margin: 10px;
+        padding: 20px;
+    }
+}
+
+/* Colores específicos por módulo */
+.module-payroll .module-icon { color: #e74c3c; }
+.module-accounting .module-icon { color: #27ae60; }
+.module-tasks .module-icon { color: #f39c12; }
+.module-users .module-icon { color: #9b59b6; }
+.module-system .module-icon { color: #34495e; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sgm-dashboard">
+    <!-- Header del Dashboard -->
+    <div class="dashboard-header">
+        <h1 class="dashboard-title">{{ site_header|default:"SGM - Sistema de Gestión" }}</h1>
+        <p class="dashboard-subtitle">Panel de Administración Centralizado</p>
+    </div>
+
+    <!-- Grid de Módulos de Administración -->
+    <div class="admin-modules-grid">
+        
+        <!-- Módulo Nóminas -->
+        <a href="/admin/payroll/" class="admin-module-card module-payroll">
+            <div class="module-icon">💰</div>
+            <h3 class="module-title">Gestión de Nóminas</h3>
+            <p class="module-description">
+                Administra cierres, archivos, validaciones y discrepancias del sistema de nóminas
+            </p>
+            <div class="module-stats">
+                <div class="stat-item">
+                    <span class="stat-number">{{ payroll_stats.closures|default:"0" }}</span>
+                    <span class="stat-label">Cierres</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number">{{ payroll_stats.files|default:"0" }}</span>
+                    <span class="stat-label">Archivos</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number">{{ payroll_stats.discrepancies|default:"0" }}</span>
+                    <span class="stat-label">Discrepancias</span>
+                </div>
+            </div>
+        </a>
+
+        <!-- Módulo Contabilidad -->
+        <a href="/admin/contabilidad/" class="admin-module-card module-accounting">
+            <div class="module-icon">📊</div>
+            <h3 class="module-title">Gestión Contable</h3>
+            <p class="module-description">
+                Administra registros contables, balances y reportes financieros
+            </p>
+            <div class="module-stats">
+                <div class="stat-item">
+                    <span class="stat-number">{{ accounting_stats.records|default:"0" }}</span>
+                    <span class="stat-label">Registros</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number">{{ accounting_stats.pending|default:"0" }}</span>
+                    <span class="stat-label">Pendientes</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number">{{ accounting_stats.reports|default:"0" }}</span>
+                    <span class="stat-label">Reportes</span>
+                </div>
+            </div>
+        </a>
+
+        <!-- Módulo Task Manager -->
+        <a href="/admin/task_manager/" class="admin-module-card module-tasks">
+            <div class="module-icon">📋</div>
+            <h3 class="module-title">Gestión de Tareas</h3>
+            <p class="module-description">
+                Administra tareas, notificaciones y flujos de trabajo del sistema
+            </p>
+            <div class="module-stats">
+                <div class="stat-item">
+                    <span class="stat-number">{{ tasks_stats.total|default:"0" }}</span>
+                    <span class="stat-label">Tareas</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number">{{ tasks_stats.active|default:"0" }}</span>
+                    <span class="stat-label">Activas</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number">{{ tasks_stats.notifications|default:"0" }}</span>
+                    <span class="stat-label">Notificaciones</span>
+                </div>
+            </div>
+        </a>
+
+        <!-- Módulo Usuarios -->
+        <a href="/admin/api/" class="admin-module-card module-users">
+            <div class="module-icon">👥</div>
+            <h3 class="module-title">Gestión de Usuarios</h3>
+            <p class="module-description">
+                Administra usuarios, clientes, permisos y configuraciones de acceso
+            </p>
+            <div class="module-stats">
+                <div class="stat-item">
+                    <span class="stat-number">{{ users_stats.total|default:"0" }}</span>
+                    <span class="stat-label">Usuarios</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number">{{ users_stats.clients|default:"0" }}</span>
+                    <span class="stat-label">Clientes</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number">{{ users_stats.active|default:"0" }}</span>
+                    <span class="stat-label">Activos</span>
+                </div>
+            </div>
+        </a>
+
+        <!-- Módulo Sistema -->
+        <a href="/admin/auth/" class="admin-module-card module-system">
+            <div class="module-icon">⚙️</div>
+            <h3 class="module-title">Configuración del Sistema</h3>
+            <p class="module-description">
+                Administra grupos, permisos, configuraciones y herramientas del sistema
+            </p>
+            <div class="module-stats">
+                <div class="stat-item">
+                    <span class="stat-number">{{ system_stats.groups|default:"0" }}</span>
+                    <span class="stat-label">Grupos</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number">{{ system_stats.permissions|default:"0" }}</span>
+                    <span class="stat-label">Permisos</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number">{{ system_stats.sessions|default:"0" }}</span>
+                    <span class="stat-label">Sesiones</span>
+                </div>
+            </div>
+        </a>
+
+    </div>
+
+    <!-- Acciones Rápidas -->
+    <div class="quick-actions-section">
+        <h2 class="quick-actions-title">Acciones Rápidas</h2>
+        <div class="quick-actions-grid">
+            <a href="/admin/payroll/payrollclosure/add/" class="quick-action-btn">
+                ➕ Nuevo Cierre de Nómina
+            </a>
+            <a href="/admin/api/usuario/add/" class="quick-action-btn">
+                👤 Crear Usuario
+            </a>
+            <a href="/admin/api/cliente/add/" class="quick-action-btn">
+                🏢 Agregar Cliente
+            </a>
+            <a href="/admin/payroll/discrepancyresult/?is_resolved=False" class="quick-action-btn">
+                🔍 Ver Discrepancias Pendientes
+            </a>
+            <a href="/admin/task_manager/task/?status=PENDING" class="quick-action-btn">
+                📝 Tareas Pendientes
+            </a>
+            <a href="/admin-nominas/" class="quick-action-btn">
+                🎯 Admin Especializado Nóminas
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Ocultar el contenido original del admin y cargar estadísticas -->
+<script>
+// Función para cargar estadísticas en tiempo real
+async function loadDashboardStats() {
+    try {
+        const response = await fetch('/admin/dashboard/stats/');
+        const stats = await response.json();
+        
+        // Actualizar estadísticas de Payroll
+        const payrollCard = document.querySelector('.module-card:nth-child(1)');
+        if (payrollCard) {
+            payrollCard.querySelector('.main-stat').textContent = stats.payroll.total_closures;
+            payrollCard.querySelector('.sub-stat').textContent = `${stats.payroll.active_closures} activos, ${stats.payroll.closed_closures} cerrados`;
+            payrollCard.querySelector('.progress-bar').style.width = `${stats.payroll.completion_rate}%`;
+        }
+        
+        // Actualizar estadísticas de Contabilidad
+        const accountingCard = document.querySelector('.module-card:nth-child(2)');
+        if (accountingCard) {
+            accountingCard.querySelector('.main-stat').textContent = stats.files.total_files;
+            accountingCard.querySelector('.sub-stat').textContent = `${stats.files.pending_files} archivos pendientes`;
+            accountingCard.querySelector('.progress-bar').style.width = `${stats.files.processing_rate}%`;
+        }
+        
+        // Actualizar estadísticas de Tareas
+        const tasksCard = document.querySelector('.module-card:nth-child(3)');
+        if (tasksCard) {
+            tasksCard.querySelector('.main-stat').textContent = stats.validations.total_validations;
+            tasksCard.querySelector('.sub-stat').textContent = `${stats.validations.failed_validations} validaciones fallidas`;
+            tasksCard.querySelector('.progress-bar').style.width = `${stats.validations.success_rate}%`;
+        }
+        
+        // Actualizar estadísticas de Usuarios
+        const usersCard = document.querySelector('.module-card:nth-child(4)');
+        if (usersCard) {
+            usersCard.querySelector('.main-stat').textContent = stats.discrepancies.total_discrepancies;
+            usersCard.querySelector('.sub-stat').textContent = `${stats.discrepancies.pending_discrepancies} discrepancias pendientes`;
+            usersCard.querySelector('.progress-bar').style.width = `${stats.discrepancies.resolution_rate}%`;
+        }
+        
+        // Actualizar estadísticas del Sistema
+        const systemCard = document.querySelector('.module-card:nth-child(5)');
+        if (systemCard) {
+            systemCard.querySelector('.main-stat').textContent = stats.system.system_status.toUpperCase();
+            systemCard.querySelector('.sub-stat').textContent = `Última actualización: ${new Date(stats.system.last_updated).toLocaleString()}`;
+            systemCard.querySelector('.progress-bar').style.width = '100%';
+        }
+        
+        console.log('✅ Estadísticas actualizadas correctamente');
+        
+    } catch (error) {
+        console.error('❌ Error cargando estadísticas:', error);
+        // Mostrar valores por defecto en caso de error
+        document.querySelectorAll('.main-stat').forEach(el => {
+            if (el.textContent === '0') el.textContent = 'N/A';
+        });
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Ocultar la tabla de apps original
+    const dashboard = document.querySelector('#content-main .dashboard');
+    if (dashboard) {
+        dashboard.style.display = 'none';
+    }
+    
+    // Ocultar acciones recientes si existen
+    const recentActions = document.querySelector('.module.aligned');
+    if (recentActions) {
+        recentActions.style.display = 'none';
+    }
+    
+    // Cargar estadísticas al inicio
+    loadDashboardStats();
+    
+    // Actualizar estadísticas cada 30 segundos
+    setInterval(loadDashboardStats, 30000);
+    
+    console.log('🚀 Dashboard personalizado inicializado');
+});
+</script>
+{% endblock %}

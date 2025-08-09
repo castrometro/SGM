@@ -15,6 +15,7 @@ import AnalisisLibro from "./pages/AnalisisLibro";
 import MovimientosCuenta from "./pages/MovimientosCuenta";
 import InformesAnalistas from "./pages/InformesAnalistas";
 import Dashboard from "./pages/Dashboard";
+import CapturaMasivaGastos from "./pages/CapturaMasivaGastos";
 import GestionAnalistas from "./components/Gerente/GestionAnalistas";
 import DashboardGerente from "./pages/DashboardGerente";
 import VistaGerencial from "./pages/VistaGerencial";
@@ -103,6 +104,7 @@ function App() {
           
           {/* ----------- ÁREA: HERRAMIENTAS ------------- */}
           <Route path="tools" element={<Tools />} />
+          <Route path="tools/captura-masiva-gastos" element={<CapturaMasivaGastos />} />
 
           {/* ----------- 404 / OTRAS ------------- */}
           <Route path="*" element={<h1 className="text-white">404 - Página no encontrada</h1>} />

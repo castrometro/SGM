@@ -815,3 +815,253 @@ def dashboard_streamlit_redirect(request, cliente_id=None):
         return Response({
             'error': f'Error al acceder al dashboard: {str(e)}'
         }, status=500)
+
+
+# =============================================================================
+# 🧾 CAPTURA MASIVA RINDE GASTOS
+# =============================================================================
+
+import redis
+import json
+import os
+from django.http import JsonResponse
+from contabilidad.tasks import procesar_captura_masiva_gastos_task
+
+def get_redis_client_db1():
+    """
+    Obtiene cliente Redis para db1 usando la configuración de Django
+    Con soporte UTF-8 completo
+    """
+    redis_password = os.environ.get('REDIS_PASSWORD', '')
+    if redis_password:
+        return redis.Redis(
+            host='redis', 
+            port=6379, 
+            db=1, 
+            password=redis_password, 
+            decode_responses=True,
+            encoding='utf-8',
+            encoding_errors='strict'
+        )
+    else:
+        return redis.Redis(
+            host='redis', 
+            port=6379, 
+            db=1, 
+            decode_responses=True,
+            encoding='utf-8',
+            encoding_errors='strict'
+        )
+
+def get_redis_client_db1_binary():
+    """
+    Obtiene cliente Redis para db1 para datos binarios (sin decode_responses)
+    Con soporte UTF-8 para metadatos
+    """
+    redis_password = os.environ.get('REDIS_PASSWORD', '')
+    if redis_password:
+        return redis.Redis(
+            host='redis', 
+            port=6379, 
+            db=1, 
+            password=redis_password, 
+            decode_responses=False,
+            encoding='utf-8'
+        )
+    else:
+        return redis.Redis(
+            host='redis', 
+            port=6379, 
+            db=1, 
+            decode_responses=False,
+            encoding='utf-8'
+        )
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def captura_masiva_gastos(request):
+    """
+    Endpoint para procesar archivos Excel de captura masiva de gastos
+    """
+    try:
+        # Validar que se haya enviado un archivo
+        if 'archivo' not in request.FILES:
+            return Response({
+                'error': 'No se encontró archivo en la petición'
+            }, status=400)
+        
+        archivo = request.FILES['archivo']
+        
+        # Validar extensión del archivo
+        if not archivo.name.lower().endswith(('.xlsx', '.xls')):
+            return Response({
+                'error': 'El archivo debe ser un Excel (.xlsx o .xls)'
+            }, status=400)
+        
+        # Validar tamaño del archivo (máximo 10MB)
+        if archivo.size > 10 * 1024 * 1024:
+            return Response({
+                'error': 'El archivo no puede ser mayor a 10MB'
+            }, status=400)
+        
+        # Obtener mapeo de centros de costos si se proporciona
+        mapeo_cc = {}
+        if 'mapeo_cc' in request.POST:
+            try:
+                mapeo_cc = json.loads(request.POST['mapeo_cc'])
+            except json.JSONDecodeError:
+                return Response({
+                    'error': 'El mapeo de centros de costos no tiene formato JSON válido'
+                }, status=400)
+        
+        # Leer contenido del archivo
+        archivo_content = archivo.read()
+        
+        # Disparar tarea de Celery
+        task = procesar_captura_masiva_gastos_task.delay(
+            archivo_content,
+            archivo.name,
+            request.user.id,
+            mapeo_cc  # Pasar el mapeo de centros de costos
+        )
+        
+        return Response({
+            'task_id': task.id,
+            'mensaje': 'Archivo enviado para procesamiento',
+            'archivo_nombre': archivo.name,
+            'estado': 'procesando'
+        }, status=202)
+        
+    except Exception as e:
+        return Response({
+            'error': f'Error procesando archivo: {str(e)}'
+        }, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def estado_captura_gastos(request, task_id):
+    """
+    Consultar el estado de una tarea de captura masiva de gastos
+    """
+    try:
+        redis_client = get_redis_client_db1()
+        
+        # Obtener metadatos de la tarea - incluir usuario_id en la clave
+        metadata_raw = redis_client.get(f"captura_gastos_meta:{request.user.id}:{task_id}")
+        if not metadata_raw:
+            return Response({
+                'error': 'No se encontró información de la tarea'
+            }, status=404)
+        
+        metadata = json.loads(metadata_raw)
+        
+        return Response(metadata)
+        
+    except Exception as e:
+        return Response({
+            'error': f'Error consultando estado: {str(e)}'
+        }, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def descargar_resultado_gastos(request, task_id):
+    """
+    Descargar el archivo Excel procesado
+    """
+    try:
+        redis_client = get_redis_client_db1()
+        
+        # Verificar que la tarea esté completada - incluir usuario_id en la clave
+        metadata_raw = redis_client.get(f"captura_gastos_meta:{request.user.id}:{task_id}")
+        if not metadata_raw:
+            return Response({
+                'error': 'No se encontró información de la tarea'
+            }, status=404)
+        
+        metadata = json.loads(metadata_raw)
+        
+        if metadata.get('estado') != 'completado':
+            return Response({
+                'error': 'La tarea aún no ha sido completada'
+            }, status=400)
+        
+        # Obtener el archivo Excel desde Redis (usar cliente binario) - incluir usuario_id en la clave
+        redis_client_binary = get_redis_client_db1_binary()
+        excel_content = redis_client_binary.get(f"captura_gastos_excel:{request.user.id}:{task_id}")
+        if not excel_content:
+            return Response({
+                'error': 'El archivo procesado no está disponible'
+            }, status=404)
+        
+        # Crear respuesta HTTP con el archivo
+        from django.http import HttpResponse
+        
+        response = HttpResponse(
+            excel_content,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = f'attachment; filename="gastos_procesados_{task_id}.xlsx"'
+        
+        return response
+        
+    except Exception as e:
+        return Response({
+            'error': f'Error descargando archivo: {str(e)}'
+        }, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def leer_headers_excel_gastos(request):
+    """
+    Endpoint para leer solo los headers de un archivo Excel
+    """
+    try:
+        # Validar que se haya enviado un archivo
+        if 'archivo' not in request.FILES:
+            return Response({
+                'error': 'No se encontró archivo en la petición'
+            }, status=400)
+        
+        archivo = request.FILES['archivo']
+        
+        # Validar extensión del archivo
+        if not archivo.name.lower().endswith(('.xlsx', '.xls')):
+            return Response({
+                'error': 'El archivo debe ser un Excel (.xlsx o .xls)'
+            }, status=400)
+        
+        # Leer solo la primera fila para obtener headers
+        from openpyxl import load_workbook
+        from io import BytesIO
+        
+        archivo_content = archivo.read()
+        workbook = load_workbook(BytesIO(archivo_content), read_only=True)
+        sheet = workbook.active
+        
+        # Leer la primera fila (headers)
+        headers = []
+        primera_fila = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
+        
+        for cell_value in primera_fila:
+            if cell_value is not None:
+                # Convertir a string con encoding UTF-8
+                header_str = str(cell_value).encode('utf-8', errors='ignore').decode('utf-8')
+                headers.append(header_str)
+            else:
+                headers.append('')
+        
+        workbook.close()
+        
+        return Response({
+            'headers': headers,
+            'total_columnas': len(headers),
+            'mensaje': 'Headers leídos exitosamente'
+        })
+        
+    except Exception as e:
+        return Response({
+            'error': f'Error leyendo headers del Excel: {str(e)}'
+        }, status=500)

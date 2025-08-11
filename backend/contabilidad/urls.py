@@ -165,6 +165,7 @@ router.register(r"activity-logs", TarjetaActivityLogViewSet, basename="activity-
 # ViewSets del archivo original
 router.register(r"clasificaciones-set", ClasificacionSetViewSet)
 router.register(r"clasificaciones-opcion", ClasificacionOptionViewSet)
+# RESTAURADO: AccountClassificationViewSet con patrón original
 router.register(r"clasificaciones", AccountClassificationViewSet)
 router.register(r"clasificacion", ClasificacionViewSet, basename="clasificacion")
 router.register(r"incidencias", IncidenciaViewSet)
@@ -178,12 +179,13 @@ urlpatterns = [
     path("clasificaciones/registro-completo/", 
          crear_registro_clasificacion_completo, 
          name="crear_registro_clasificacion_completo"),
-    path("clasificaciones/registro-completo/<str:cuenta_codigo>/", 
-         actualizar_registro_clasificacion_completo, 
-         name="actualizar_registro_clasificacion_completo"),
+    # IMPORTANTE: La URL de DELETE debe ir ANTES que la de actualización para evitar conflictos
     path("clasificaciones/registro-completo/<str:cuenta_codigo>/delete/", 
          eliminar_registro_clasificacion_completo, 
          name="eliminar_registro_clasificacion_completo"),
+    path("clasificaciones/registro-completo/<str:cuenta_codigo>/", 
+         actualizar_registro_clasificacion_completo, 
+         name="actualizar_registro_clasificacion_completo"),
     
     # Router con ViewSets (incluye el resto de endpoints)
     path("", include(router.urls)),

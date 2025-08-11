@@ -761,8 +761,11 @@ class AccountClassificationViewSet(viewsets.ModelViewSet):
         return queryset.order_by("-fecha")
 
     def perform_create(self, serializer):
-        # Asignar el usuario actual
-        instance = serializer.save(asignado_por=self.request.user.usuario)
+        # Asignar el usuario actual y asegurar que se establezca el cliente
+        instance = serializer.save(
+            asignado_por=self.request.user.usuario,
+            cliente=serializer.validated_data.get('cuenta').cliente if serializer.validated_data.get('cuenta') else None
+        )
 
         # Registrar actividad
         registrar_actividad_tarjeta(
@@ -841,6 +844,7 @@ def obtener_clasificaciones_persistentes_detalladas(request, cliente_id):
     """
     Obtiene las clasificaciones persistentes con detalles completos para el modal de gestión.
     Incluye tanto clasificaciones con FK a cuenta como clasificaciones temporales.
+    MEJORADO: También incluye cuentas sin clasificaciones.
     """
     try:
         cliente = Cliente.objects.get(id=cliente_id)
@@ -848,24 +852,34 @@ def obtener_clasificaciones_persistentes_detalladas(request, cliente_id):
         return Response({"error": "Cliente no encontrado"}, status=404)
 
     # Obtener TODAS las clasificaciones del cliente (con FK y temporales)
-    # Filtrar por cliente directamente para incluir clasificaciones temporales
     clasificaciones = AccountClassification.objects.filter(
         cliente=cliente
     ).select_related(
         'cuenta', 'set_clas', 'opcion'
     ).order_by('cuenta_codigo')  # Ordenar por código de cuenta
     
-    data = []
+    # Crear diccionario para agrupar clasificaciones por cuenta
+    clasificaciones_por_cuenta = {}
+    
+    # Procesar clasificaciones existentes
     for clasificacion in clasificaciones:
         # Manejar tanto clasificaciones con FK como temporales
         if clasificacion.cuenta:
             # Clasificación con FK a cuenta existente
-            data.append({
+            codigo_cuenta = clasificacion.cuenta.codigo
+            
+            if codigo_cuenta not in clasificaciones_por_cuenta:
+                clasificaciones_por_cuenta[codigo_cuenta] = {
+                    'cuenta_id': clasificacion.cuenta.id,
+                    'cuenta_codigo': clasificacion.cuenta.codigo,
+                    'cuenta_nombre': clasificacion.cuenta.nombre,
+                    'cuenta_nombre_en': clasificacion.cuenta.nombre_en,
+                    'es_temporal': False,
+                    'clasificaciones': []
+                }
+            
+            clasificaciones_por_cuenta[codigo_cuenta]['clasificaciones'].append({
                 'id': clasificacion.id,
-                'cuenta_id': clasificacion.cuenta.id,
-                'cuenta_codigo': clasificacion.cuenta.codigo,
-                'cuenta_nombre': clasificacion.cuenta.nombre,
-                'cuenta_nombre_en': clasificacion.cuenta.nombre_en,
                 'set_clas_id': clasificacion.set_clas.id,
                 'set_nombre': clasificacion.set_clas.nombre,
                 'opcion_id': clasificacion.opcion.id,
@@ -873,17 +887,24 @@ def obtener_clasificaciones_persistentes_detalladas(request, cliente_id):
                 'opcion_valor_en': clasificacion.opcion.valor_en,
                 'fecha_creacion': clasificacion.fecha_creacion,
                 'fecha_actualizacion': clasificacion.fecha_actualizacion,
-                'es_temporal': False,
                 'origen': clasificacion.origen,
             })
         else:
             # Clasificación temporal (sin FK a cuenta)
-            data.append({
+            codigo_cuenta = clasificacion.cuenta_codigo
+            
+            if codigo_cuenta not in clasificaciones_por_cuenta:
+                clasificaciones_por_cuenta[codigo_cuenta] = {
+                    'cuenta_id': None,
+                    'cuenta_codigo': clasificacion.cuenta_codigo,
+                    'cuenta_nombre': f"[TEMPORAL] Cuenta {clasificacion.cuenta_codigo}",
+                    'cuenta_nombre_en': None,
+                    'es_temporal': True,
+                    'clasificaciones': []
+                }
+            
+            clasificaciones_por_cuenta[codigo_cuenta]['clasificaciones'].append({
                 'id': clasificacion.id,
-                'cuenta_id': None,
-                'cuenta_codigo': clasificacion.cuenta_codigo,
-                'cuenta_nombre': f"[TEMPORAL] Cuenta {clasificacion.cuenta_codigo}",
-                'cuenta_nombre_en': None,
                 'set_clas_id': clasificacion.set_clas.id,
                 'set_nombre': clasificacion.set_clas.nombre,
                 'opcion_id': clasificacion.opcion.id,
@@ -891,8 +912,66 @@ def obtener_clasificaciones_persistentes_detalladas(request, cliente_id):
                 'opcion_valor_en': clasificacion.opcion.valor_en,
                 'fecha_creacion': clasificacion.fecha_creacion,
                 'fecha_actualizacion': clasificacion.fecha_actualizacion,
-                'es_temporal': True,
                 'origen': clasificacion.origen,
+            })
+
+    # NUEVO: Agregar cuentas sin clasificaciones
+    from contabilidad.models import CuentaContable
+    cuentas_sin_clasificacion = CuentaContable.objects.filter(
+        cliente=cliente
+    ).exclude(
+        codigo__in=clasificaciones_por_cuenta.keys()
+    )
+    
+    for cuenta in cuentas_sin_clasificacion:
+        clasificaciones_por_cuenta[cuenta.codigo] = {
+            'cuenta_id': cuenta.id,
+            'cuenta_codigo': cuenta.codigo,
+            'cuenta_nombre': cuenta.nombre,
+            'cuenta_nombre_en': cuenta.nombre_en,
+            'es_temporal': False,
+            'clasificaciones': []  # Sin clasificaciones
+        }
+
+    # Convertir a formato que espera el frontend
+    data = []
+    for codigo_cuenta, info_cuenta in clasificaciones_por_cuenta.items():
+        if info_cuenta['clasificaciones']:
+            # Cuenta con clasificaciones - crear una entrada por clasificación
+            for clasificacion in info_cuenta['clasificaciones']:
+                data.append({
+                    'id': clasificacion['id'],
+                    'cuenta_id': info_cuenta['cuenta_id'],
+                    'cuenta_codigo': info_cuenta['cuenta_codigo'],
+                    'cuenta_nombre': info_cuenta['cuenta_nombre'],
+                    'cuenta_nombre_en': info_cuenta['cuenta_nombre_en'],
+                    'set_clas_id': clasificacion['set_clas_id'],
+                    'set_nombre': clasificacion['set_nombre'],
+                    'opcion_id': clasificacion['opcion_id'],
+                    'opcion_valor': clasificacion['opcion_valor'],
+                    'opcion_valor_en': clasificacion['opcion_valor_en'],
+                    'fecha_creacion': clasificacion['fecha_creacion'],
+                    'fecha_actualizacion': clasificacion['fecha_actualizacion'],
+                    'es_temporal': info_cuenta['es_temporal'],
+                    'origen': clasificacion['origen'],
+                })
+        else:
+            # Cuenta sin clasificaciones - crear entrada placeholder
+            data.append({
+                'id': f"placeholder_{info_cuenta['cuenta_id']}",
+                'cuenta_id': info_cuenta['cuenta_id'],
+                'cuenta_codigo': info_cuenta['cuenta_codigo'],
+                'cuenta_nombre': info_cuenta['cuenta_nombre'],
+                'cuenta_nombre_en': info_cuenta['cuenta_nombre_en'],
+                'set_clas_id': None,
+                'set_nombre': None,
+                'opcion_id': None,
+                'opcion_valor': None,
+                'opcion_valor_en': None,
+                'fecha_creacion': None,
+                'fecha_actualizacion': None,
+                'es_temporal': info_cuenta['es_temporal'],
+                'origen': 'sin_clasificacion',
             })
     
     return Response(data)

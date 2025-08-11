@@ -67,6 +67,7 @@ const ClasificacionBulkCard = ({
   // NUEVO: Estados para sincronización de cuentas nuevas
   const [sincronizandoCuentas, setSincronizandoCuentas] = useState(false);
   const [cuentasNuevasDisponibles, setCuentasNuevasDisponibles] = useState(0);
+  const [evitarVerificacionCuentasNuevas, setEvitarVerificacionCuentasNuevas] = useState(false);
 
   const mostrarNotificacion = (tipo, mensaje) => {
     setNotificacion({ visible: true, tipo, mensaje });
@@ -116,7 +117,7 @@ const ClasificacionBulkCard = ({
         
         // NUEVO: Verificar cuentas nuevas del libro mayor
         console.log('🔍 Verificando cuentas nuevas del libro mayor...');
-        await verificarCuentasNuevas();
+        await verificarCuentasNuevas('fetchEstadoInicial');
       } catch (err) {
         console.error('❌ Error en fetchEstadoInicial:', err);
         // Si hay error, verificar solo clasificaciones persistentes como fallback
@@ -147,6 +148,16 @@ const ClasificacionBulkCard = ({
     if (clienteId && !disabled) fetchEstadoInicial();
   }, [clienteId, disabled, onCompletado]);
 
+  // NUEVO: Monitorear cambios en cuentasNuevasDisponibles para debugging
+  useEffect(() => {
+    console.log(`📊 CAMBIO EN ESTADO: cuentasNuevasDisponibles = ${cuentasNuevasDisponibles}`);
+    if (cuentasNuevasDisponibles > 0) {
+      console.log(`🔘 Botón "Añadir ${cuentasNuevasDisponibles} cuentas nuevas" aparecerá`);
+    } else {
+      console.log(`🔘 Botón de cuentas nuevas está oculto`);
+    }
+  }, [cuentasNuevasDisponibles]);
+
   // Monitorear estado del UploadLog
   useEffect(() => {
     if (!uploadLogId || !subiendo) return;
@@ -158,6 +169,9 @@ const ClasificacionBulkCard = ({
         if (logData.estado === "procesando") {
           setUploadProgreso("Procesando archivo...");
         } else if (logData.estado === "completado") {
+          console.log('🎉 ===== UPLOAD COMPLETADO - POSIBLE TRIGGER DE CUENTAS NUEVAS =====');
+          console.log('📋 UploadLog completado, esto puede disparar detección de cuentas nuevas');
+          
           setUploadProgreso("¡Procesamiento completado!");
           setSubiendo(false);
           
@@ -172,7 +186,9 @@ const ClasificacionBulkCard = ({
             if (onCompletado) onCompletado(false);
           }
           
+          console.log('🔄 Llamando a cargar() después de upload completado...');
           cargar();
+          console.log('🎯 ===== FIN TRIGGER UPLOAD COMPLETADO =====');
         } else if (logData.estado === "error") {
           setUploadProgreso("Error en el procesamiento");
           setSubiendo(false);
@@ -214,7 +230,7 @@ const ClasificacionBulkCard = ({
       }
       
       // NUEVO: Verificar cuentas nuevas después de cargar datos
-      await verificarCuentasNuevas();
+      await verificarCuentasNuevas('cargar_datos');
     } catch (e) {
       console.error("💥 Error al cargar uploads:", e);
       setRegistrosRaw([]);
@@ -327,11 +343,23 @@ const ClasificacionBulkCard = ({
   };
 
   // NUEVO: Función para verificar cuentas nuevas del libro mayor
-  const verificarCuentasNuevas = async () => {
+  const verificarCuentasNuevas = async (origen = 'DESCONOCIDO') => {
+    console.log(`🔍 ===== VERIFICACIÓN DE CUENTAS NUEVAS INICIADA =====`);
+    console.log(`📍 ORIGEN: ${origen}`);
+    console.log(`🕒 TIMESTAMP: ${new Date().toISOString()}`);
+    
     // Solo verificar si hay un cierre activo
     if (!cierreId) {
       console.log('ℹ️ No hay cierre activo, no se verificarán cuentas nuevas');
       setCuentasNuevasDisponibles(0);
+      console.log(`🔍 ===== VERIFICACIÓN TERMINADA (SIN CIERRE) =====`);
+      return;
+    }
+
+    // Evitar verificación si acabamos de sincronizar cuentas
+    if (evitarVerificacionCuentasNuevas) {
+      console.log('⏸️ Verificación de cuentas nuevas evitada temporalmente después de sincronización');
+      console.log(`🔍 ===== VERIFICACIÓN EVITADA =====`);
       return;
     }
     
@@ -383,10 +411,13 @@ const ClasificacionBulkCard = ({
       
       setCuentasNuevasDisponibles(cuentasSinClasificar.length);
       console.log(`🔍 RESULTADO FINAL: ${cuentasSinClasificar.length} cuentas nuevas detectadas`);
+      console.log(`📊 ESTADO ACTUALIZADO: cuentasNuevasDisponibles = ${cuentasSinClasificar.length}`);
+      console.log(`🔍 ===== VERIFICACIÓN TERMINADA (${origen}) =====`);
       console.log('─'.repeat(80));
     } catch (error) {
-      console.error('❌ Error verificando cuentas nuevas:', error);
+      console.error(`❌ Error verificando cuentas nuevas desde ${origen}:`, error);
       setCuentasNuevasDisponibles(0);
+      console.log(`🔍 ===== VERIFICACIÓN TERMINADA CON ERROR (${origen}) =====`);
     }
   };
 
@@ -420,6 +451,13 @@ const ClasificacionBulkCard = ({
       );
       
       console.log('🆕 CUENTAS A SINCRONIZAR:');
+      console.log(`📊 Estado actual: cuentasNuevasDisponibles = ${cuentasNuevasDisponibles}`);
+      console.log(`📊 Cuentas sin clasificar detectadas: ${cuentasSinClasificar.length}`);
+      
+      if (cuentasNuevasDisponibles !== cuentasSinClasificar.length) {
+        console.warn(`⚠️ INCONSISTENCIA: botón muestra ${cuentasNuevasDisponibles} pero detectamos ${cuentasSinClasificar.length}`);
+      }
+      
       cuentasSinClasificar.forEach((cuenta, index) => {
         console.log(`  ${index + 1}. ${cuenta.codigo} - ${cuenta.nombre}`);
       });
@@ -477,8 +515,15 @@ const ClasificacionBulkCard = ({
           `✅ ${cuentasAñadidas} cuentas nuevas añadidas al sistema de clasificaciones`
         );
         
-        // Actualizar estado
+        // Evitar verificación automática de cuentas nuevas temporalmente
+        setEvitarVerificacionCuentasNuevas(true);
+        
+        // Actualizar estado inmediatamente
         setCuentasNuevasDisponibles(0);
+        
+        // Esperar un poco para que las transacciones de base de datos se completen
+        console.log('⏳ Esperando 1 segundo para que se procesen las transacciones...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
         
         // Recargar datos
         await cargar();
@@ -489,8 +534,21 @@ const ClasificacionBulkCard = ({
         // NUEVO: Abrir el modal automáticamente para mostrar las cuentas añadidas
         // Guardar las cuentas recién añadidas en el estado para pasarlas al modal
         setCuentasRecienAñadidas(cuentasAñadidasExitosamente);
+        console.log('💾 Cuentas recién añadidas guardadas para el modal:', cuentasAñadidasExitosamente);
+        
+        // Después de 3 segundos, permitir verificaciones de nuevo y hacer una verificación final
+        setTimeout(async () => {
+          setEvitarVerificacionCuentasNuevas(false);
+          console.log('🔄 Realizando verificación final de cuentas nuevas después de sincronización...');
+          await verificarCuentasNuevas('post_sincronizacion_final');
+          console.log('✅ Sincronización completada - el botón debería haberse ocultado');
+        }, 3000);
         
         setTimeout(() => {
+          console.log('🚀 ABRIENDO MODAL para mostrar cuentas recién añadidas');
+          console.log('📊 Estado antes de abrir modal:');
+          console.log('  - cuentasRecienAñadidas:', cuentasAñadidasExitosamente);
+          console.log('  - modalRegistrosRaw será:', true);
           setModalRegistrosRaw(true);
           mostrarNotificacion(
             'info',
@@ -624,8 +682,10 @@ const ClasificacionBulkCard = ({
             }
           </button>
         )}
-      </div>            {/* Información del estado y resumen */}
-            <div className="text-xs text-gray-400 italic mt-2">
+  </div>
+
+  {/* Información del estado y resumen */}
+  <div className="text-xs text-gray-400 italic mt-2">
               {/* NUEVO: Mostrar información de cuentas nuevas - Solo si hay cierre activo */}
               {cuentasNuevasDisponibles > 0 && cierreId && (
                 <div className="bg-yellow-900/20 border border-yellow-500/30 rounded p-2 mb-2">
@@ -729,8 +789,26 @@ const ClasificacionBulkCard = ({
       <ModalClasificacionRegistrosRaw
         isOpen={modalRegistrosRaw}
         onClose={() => {
+          console.log('🔒 CERRANDO MODAL');
+          console.log('📊 Cuentas recién añadidas antes de cerrar:', cuentasRecienAñadidas);
+          
           setModalRegistrosRaw(false);
-          setCuentasRecienAñadidas([]); // Limpiar cuentas recién añadidas al cerrar
+          
+          // Si había cuentas recién añadidas, verificar estado después del cierre
+          const habianCuentasRecientes = cuentasRecienAñadidas.length > 0;
+          
+          // Limpiar cuentas recién añadidas al cerrar
+          setCuentasRecienAñadidas([]);
+          
+          if (habianCuentasRecientes) {
+            console.log('⏳ Había cuentas recién añadidas, programando verificación...');
+            
+            // Dar tiempo para que se procesen los cambios del modal
+            setTimeout(async () => {
+              console.log('🔄 Verificando cuentas nuevas después del cierre del modal...');
+              await verificarCuentasNuevas('post_modal_close');
+            }, 1000);
+          }
         }}
         uploadId={null} // Ya no usar uploadId, cargar directo desde AccountClassification
         clienteId={clienteId}
@@ -739,11 +817,31 @@ const ClasificacionBulkCard = ({
         onDataChanged={async () => {
           console.log('🔄 Modal reportó cambios, recargando datos...');
           await cargar(); // Recargar datos después de cambios CRUD
-          await verificarCuentasNuevas(); // NUEVO: También verificar cuentas nuevas
+          
+          // Solo verificar cuentas nuevas si no estamos evitando la verificación
+          if (!evitarVerificacionCuentasNuevas) {
+            await verificarCuentasNuevas('modal_onDataChanged'); // Verificar cuentas nuevas
+          } else {
+            console.log('⏸️ Verificación de cuentas nuevas evitada desde onDataChanged');
+          }
         }}
         // NUEVO: Pasar información sobre cuentas recién añadidas
         cuentasRecienAñadidas={cuentasRecienAñadidas}
       />
+
+      {/* DEBUG: Estado actual de cuentas recién añadidas */}
+      {process.env.NODE_ENV === 'development' && cuentasRecienAñadidas.length > 0 && (
+        <div className="text-xs bg-green-900/20 border border-green-600 rounded p-2 mt-2">
+          <div className="text-green-300 font-medium mb-1">🆕 DEBUG - Cuentas Recién Añadidas:</div>
+          <div className="text-green-200 space-y-1">
+            {cuentasRecienAñadidas.map((cuenta, index) => (
+              <div key={`debug-${cuenta.codigo}-${index}`}>
+                {cuenta.codigo} - {cuenta.nombre}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* DEBUG: Mostrar información del upload actual */}
       {process.env.NODE_ENV === 'development' && ultimoUpload && (

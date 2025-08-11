@@ -630,6 +630,20 @@ class AccountClassification(models.Model):
             return self.cuenta.codigo
         return self.cuenta_codigo
 
+    def save(self, *args, **kwargs):
+        """
+        Override del método save para extraer automáticamente el cliente de la cuenta
+        """
+        # Si tiene cuenta pero no cliente, extraer cliente de la cuenta
+        if self.cuenta and not self.cliente:
+            self.cliente = self.cuenta.cliente
+            
+        # Si tiene cuenta, sincronizar cuenta_codigo con el código de la cuenta
+        if self.cuenta and not self.cuenta_codigo:
+            self.cuenta_codigo = self.cuenta.codigo
+            
+        super().save(*args, **kwargs)
+
     def migrar_a_cuenta_definitiva(self, cuenta_nueva):
         """
         Migra una clasificación temporal a una cuenta definitiva.

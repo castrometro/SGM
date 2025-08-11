@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 @shared_task
 def tarea_de_prueba(nombre):
     logger.info("👋 ¡Hola %s desde Celery!", nombre)
-    time.sleep(999)
+    time.sleep(2)
     logger.info("✅ Tarea completada.")
     return f"Completado por {nombre}"  # esto sale en succeeded
 
@@ -663,19 +663,19 @@ def procesar_libro_mayor(upload_log_id):
 
 
 #=======CLEANING TASKS=======
-from celery import shared_task
-@shared_task
-def limpiar_archivos_temporales_antiguos_task():
-    """
-    Tarea Celery para limpiar archivos temporales antiguos (>24h)
-    """
-    from contabilidad.views import limpiar_archivos_temporales_antiguos
+#from celery import shared_task
+#@shared_task
+#def limpiar_archivos_temporales_antiguos_task():
+ #   """
+  #  Tarea Celery para limpiar archivos temporales antiguos (>24h)
+   # """
+    #from contabilidad.views import limpiar_archivos_temporales_antiguos
 
-    archivos_eliminados = limpiar_archivos_temporales_antiguos()
-    logger.info(
-        f"🧹 Limpieza automática: {archivos_eliminados} archivos temporales eliminados"
-    )
-    return f"Eliminados {archivos_eliminados} archivos temporales"
+    #archivos_eliminados = limpiar_archivos_temporales_antiguos()
+    #logger.info(
+    #    f"🧹 Limpieza automática: {archivos_eliminados} archivos temporales eliminados"
+    #)
+    #return f"Eliminados {archivos_eliminados} archivos temporales"
 
 # ===== TAREAS DE REPORTES FINANCIEROS =====
 

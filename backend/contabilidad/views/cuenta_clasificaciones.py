@@ -50,7 +50,9 @@ def crear_cuenta_con_clasificaciones(request):
                     AccountClassification.objects.create(
                         cuenta=cuenta,
                         set_clas=set_cls,
-                        opcion=opcion
+                        opcion=opcion,
+                        cliente=cuenta.cliente,  # CORREGIDO: Asegurar que se establece el cliente
+                        origen='manual'
                     )
                 except (ClasificacionSet.DoesNotExist, ClasificacionOption.DoesNotExist) as e:
                     print(f"Error creando clasificación {set_nombre}={opcion_valor}: {e}")
@@ -106,7 +108,9 @@ def actualizar_cuenta_con_clasificaciones(request, cuenta_id):
                         AccountClassification.objects.create(
                             cuenta=cuenta,
                             set_clas=set_cls,
-                            opcion=opcion
+                            opcion=opcion,
+                            cliente=cuenta.cliente,  # CORREGIDO: Asegurar que se establece el cliente
+                            origen='manual'
                         )
                     except (ClasificacionSet.DoesNotExist, ClasificacionOption.DoesNotExist) as e:
                         print(f"Error actualizando clasificación {set_nombre}={opcion_valor}: {e}")

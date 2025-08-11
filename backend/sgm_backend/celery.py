@@ -10,15 +10,16 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 app.conf.update(
     task_routes={
         # Tareas de nómina
-        'nomina.tasks.*': {'queue': 'nomina_queue'},
-        'nomina.utils.*': {'queue': 'nomina_queue'},
+        'nomina.tasks*': {'queue': 'nomina_queue'},
+        'nomina.utils*': {'queue': 'nomina_queue'},
         
-        # Tareas de contabilidad  
-        'contabilidad.tasks.*': {'queue': 'contabilidad_queue'},
-        'contabilidad.utils.*': {'queue': 'contabilidad_queue'},
+        # Tareas de contabilidad - todas las variantes  
+        'contabilidad.tasks*': {'queue': 'contabilidad_queue'},
+        'contabilidad.utils*': {'queue': 'contabilidad_queue'},
+        'contabilidad.*': {'queue': 'contabilidad_queue'},  # Para tareas directas en contabilidad
         
         # Tareas generales
-        'api.tasks.*': {'queue': 'default'},
+        'api.tasks*': {'queue': 'default'},
     },
     
     task_serializer='json',

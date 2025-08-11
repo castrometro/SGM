@@ -31,7 +31,8 @@ const ModalClasificacionRegistrosRaw = ({
   clienteId, 
   cierreId, 
   cliente, 
-  onDataChanged
+  onDataChanged,
+  cuentasRecienAñadidas = [] // NUEVO: Para mostrar cuentas recién añadidas
 }) => {
   console.log('🏗️ Modal props recibidos:', { 
     isOpen, 
@@ -40,7 +41,8 @@ const ModalClasificacionRegistrosRaw = ({
     cierreId,
     clienteExiste: !!cliente,
     clienteBilingue: cliente?.bilingue,
-    onDataChanged: !!onDataChanged
+    onDataChanged: !!onDataChanged,
+    cuentasRecienAñadidas: cuentasRecienAñadidas?.length || 0
   });
 
   // Función auxiliar para registrar actividades CRUD
@@ -195,6 +197,7 @@ const ModalClasificacionRegistrosRaw = ({
           nombre_cuenta: nombreCuenta,
           clasificaciones: {},
           cuenta_existe: !!clasificacion.cuenta_id,
+          cuenta_id: clasificacion.cuenta_id, // NUEVO: Agregar cuenta_id para cuentas sin clasificaciones
           es_temporal: clasificacion.es_temporal || !clasificacion.cuenta_id,
           upload_log: clasificacion.upload_log,
           fecha_creacion: clasificacion.fecha_creacion,
@@ -203,7 +206,11 @@ const ModalClasificacionRegistrosRaw = ({
       }
       
       // ACTUALIZADO: Agregar la clasificación usando los campos planos del serializer
-      if (clasificacion.set_nombre && clasificacion.opcion_valor) {
+      // MEJORADO: Manejar cuentas sin clasificaciones (origen === 'sin_clasificacion')
+      if (clasificacion.origen === 'sin_clasificacion') {
+        console.log(`   → Cuenta sin clasificaciones: ${codigoCuenta}`);
+        // No agregar clasificación, ya que no existe
+      } else if (clasificacion.set_nombre && clasificacion.opcion_valor) {
         console.log(`   → Agregando clasificación: ${clasificacion.set_nombre} = ${clasificacion.opcion_valor}`);
         clasificacionesPorCuenta[codigoCuenta].clasificaciones[clasificacion.set_nombre] = 
           clasificacion.opcion_valor;
@@ -213,7 +220,8 @@ const ModalClasificacionRegistrosRaw = ({
           cuenta: codigoCuenta,
           set_nombre: clasificacion.set_nombre,
           opcion_valor: clasificacion.opcion_valor,
-          clasificacion_id: clasificacion.id
+          clasificacion_id: clasificacion.id,
+          origen: clasificacion.origen
         });
       }
     });
@@ -227,8 +235,17 @@ const ModalClasificacionRegistrosRaw = ({
     const registrosAdaptados = Object.entries(clasificacionesPorCuenta).map(([codigoCuenta, datos], index) => {
       const cuenta = cuentasMap[codigoCuenta];
       
+      // MEJORADO: Generar ID único dependiendo si tiene clasificaciones o no
+      let registroId;
+      if (Object.keys(datos.clasificaciones).length > 0) {
+        registroId = `account_${codigoCuenta}_${index}`;
+      } else {
+        // Para cuentas sin clasificaciones, usar un ID que sea compatible con el placeholder del backend
+        registroId = `placeholder_${datos.cuenta_id || codigoCuenta}`;
+      }
+      
       const registro = {
-        id: `account_${codigoCuenta}_${index}`, // ID único para el frontend
+        id: registroId,
         numero_cuenta: codigoCuenta,
         cuenta_nombre: cuenta?.nombre || datos.nombre_cuenta || '',
         cuenta_nombre_en: cuenta?.nombre_en || '',
@@ -242,7 +259,8 @@ const ModalClasificacionRegistrosRaw = ({
         source_type: 'account_classification'
       };
       
-      console.log(`📋 Registro adaptado ${index + 1}: ${codigoCuenta} con ${Object.keys(datos.clasificaciones).length} clasificaciones`);
+      const numClasificaciones = Object.keys(datos.clasificaciones).length;
+      console.log(`📋 Registro adaptado ${index + 1}: ${codigoCuenta} con ${numClasificaciones} clasificaciones (ID: ${registroId})`);
       
       return registro;
     });
@@ -330,6 +348,20 @@ const ModalClasificacionRegistrosRaw = ({
   // Estados para pegado masivo en clasificación masiva
   const [textoBusquedaMasiva, setTextoBusquedaMasiva] = useState('');
 
+  // Efecto para recargar datos cuando se reciben cuentas recién añadidas
+  useEffect(() => {
+    if (isOpen && cuentasRecienAñadidas && cuentasRecienAñadidas.length > 0) {
+      console.log('🆕 DETECTADAS CUENTAS RECIÉN AÑADIDAS - FORZANDO RECARGA');
+      console.log('📊 Cuentas esperadas:', cuentasRecienAñadidas);
+      
+      // Dar un poco de tiempo para que las transacciones se confirmen
+      setTimeout(() => {
+        console.log('🔄 RECARGANDO DATOS DEL MODAL PARA MOSTRAR CUENTAS RECIÉN AÑADIDAS...');
+        cargarRegistros();
+      }, 500);
+    }
+  }, [isOpen, cuentasRecienAñadidas]);
+
   useEffect(() => {
     console.log('🎯 useEffect ejecutado:', { 
       isOpen, 
@@ -386,6 +418,7 @@ const ModalClasificacionRegistrosRaw = ({
     try {
       console.log('🔄 INICIANDO CARGA DE REGISTROS EN MODAL');
       console.log('🔍 Parámetros de carga:', { uploadId, clienteId });
+      console.log('👆 Cuentas recién añadidas esperadas:', cuentasRecienAñadidas);
       
       // REDISEÑADO: Siempre cargar todas las clasificaciones persistentes del cliente
       console.log('📊 Cargando TODAS las clasificaciones persistentes del cliente (incluyendo temporales)...');
@@ -398,6 +431,28 @@ const ModalClasificacionRegistrosRaw = ({
       console.log('🔍 DATOS CRUDOS RECIBIDOS DE LA API:');
       console.log('  - Clasificaciones count:', clasificacionesPersistentes.length);
       console.log('  - Cuentas count:', cuentasCliente.length);
+      
+      // VERIFICAR CUENTAS RECIÉN AÑADIDAS
+      if (cuentasRecienAñadidas.length > 0) {
+        console.log('🆕 VERIFICANDO CUENTAS RECIÉN AÑADIDAS:');
+        cuentasRecienAñadidas.forEach((cuentaAñadida, index) => {
+          const clasificacionEncontrada = clasificacionesPersistentes.find(
+            c => c.numero_cuenta === cuentaAñadida.codigo
+          );
+          const cuentaEncontrada = cuentasCliente.find(
+            c => c.codigo === cuentaAñadida.codigo
+          );
+          
+          console.log(`  ${index + 1}. ${cuentaAñadida.codigo} - ${cuentaAñadida.nombre}`);
+          console.log(`     ✅ Clasificación en BD: ${clasificacionEncontrada ? 'SÍ' : 'NO'}`);
+          console.log(`     ✅ Cuenta en BD: ${cuentaEncontrada ? 'SÍ' : 'NO'}`);
+          
+          if (clasificacionEncontrada) {
+            console.log(`     📋 Clasificación ID: ${clasificacionEncontrada.id}`);
+            console.log(`     📋 Clasificaciones: ${JSON.stringify(clasificacionEncontrada.clasificaciones)}`);
+          }
+        });
+      }
       
       if (clasificacionesPersistentes.length > 0) {
         console.log('  - Primera clasificación completa:', clasificacionesPersistentes[0]);
@@ -421,6 +476,21 @@ const ModalClasificacionRegistrosRaw = ({
       if (data.length > 0) {
         console.log('🔍 PRIMER REGISTRO ADAPTADO:', data[0]);
         console.log('🔍 ESTRUCTURA DE CLASIFICACIONES DEL PRIMER REGISTRO:', data[0].clasificaciones);
+        
+        // VERIFICAR SI LAS CUENTAS RECIÉN AÑADIDAS ESTÁN EN LOS DATOS ADAPTADOS
+        if (cuentasRecienAñadidas.length > 0) {
+          console.log('🔍 VERIFICANDO CUENTAS RECIÉN AÑADIDAS EN DATOS ADAPTADOS:');
+          cuentasRecienAñadidas.forEach((cuentaAñadida, index) => {
+            const registroEncontrado = data.find(
+              r => r.numero_cuenta === cuentaAñadida.codigo
+            );
+            console.log(`  ${index + 1}. ${cuentaAñadida.codigo}: ${registroEncontrado ? '✅ ENCONTRADO' : '❌ NO ENCONTRADO'}`);
+            if (registroEncontrado) {
+              console.log(`     📋 Índice en array: ${data.indexOf(registroEncontrado)}`);
+              console.log(`     📋 Cuenta nombre: ${registroEncontrado.cuenta_nombre}`);
+            }
+          });
+        }
       } else {
         console.log('❌ NO HAY REGISTROS ADAPTADOS - INVESTIGAR PROBLEMA EN adaptarDatosAccountClassification');
       }
@@ -1606,12 +1676,29 @@ const ModalClasificacionRegistrosRaw = ({
         throw new Error('No se encontró el registro a editar');
       }
       
-      await actualizarClasificacionPersistente(registroActual.numero_cuenta, {
-        cliente: clienteId,
-        nuevo_numero_cuenta: registroEditando.numero_cuenta.trim(),
-        cuenta_nombre: registroEditando.numero_cuenta.trim(),
-        clasificaciones: registroEditando.clasificaciones
-      });
+      // MEJORADO: Detectar si la cuenta tiene clasificaciones existentes
+      const tieneClasificacionesExistentes = registroActual.clasificaciones && 
+        Object.keys(registroActual.clasificaciones).length > 0;
+      
+      if (tieneClasificacionesExistentes) {
+        // Actualizar registro existente usando PATCH
+        console.log(`🔄 Actualizando cuenta con clasificaciones existentes: ${registroActual.numero_cuenta}`);
+        await actualizarClasificacionPersistente(registroActual.numero_cuenta, {
+          cliente: clienteId,
+          nuevo_numero_cuenta: registroEditando.numero_cuenta.trim(),
+          cuenta_nombre: registroEditando.numero_cuenta.trim(),
+          clasificaciones: registroEditando.clasificaciones
+        });
+      } else {
+        // Crear nuevo registro usando POST
+        console.log(`🆕 Creando clasificaciones para cuenta sin clasificaciones previas: ${registroActual.numero_cuenta}`);
+        await crearClasificacionPersistente({
+          cliente: clienteId,
+          numero_cuenta: registroEditando.numero_cuenta.trim(),
+          cuenta_nombre: registroEditando.numero_cuenta.trim(),
+          clasificaciones: registroEditando.clasificaciones
+        });
+      }
       
       // Registrar actividad detallada de edición de registro
       try {
@@ -1769,13 +1856,29 @@ const ModalClasificacionRegistrosRaw = ({
             [setEncontrado.nombre]: opcionMasiva
           };
           
-          // Actualizar el registro individual usando el código de cuenta
-          await actualizarClasificacionPersistente(registroActual.numero_cuenta, {
-            cliente: clienteId,
-            numero_cuenta: registroActual.numero_cuenta,
-            cuenta_nombre: registroActual.cuenta_nombre,
-            clasificaciones: nuevasClasificaciones
-          });
+          // MEJORADO: Detectar si la cuenta tiene clasificaciones existentes
+          const tieneClasificacionesExistentes = registroActual.clasificaciones && 
+            Object.keys(registroActual.clasificaciones).length > 0;
+          
+          if (tieneClasificacionesExistentes) {
+            // Actualizar registro existente usando PATCH
+            console.log(`🔄 Actualizando cuenta con clasificaciones existentes: ${registroActual.numero_cuenta}`);
+            await actualizarClasificacionPersistente(registroActual.numero_cuenta, {
+              cliente: clienteId,
+              numero_cuenta: registroActual.numero_cuenta,
+              cuenta_nombre: registroActual.cuenta_nombre,
+              clasificaciones: nuevasClasificaciones
+            });
+          } else {
+            // Crear nuevo registro usando POST
+            console.log(`🆕 Creando clasificaciones para cuenta sin clasificaciones previas: ${registroActual.numero_cuenta}`);
+            await crearClasificacionPersistente({
+              cliente: clienteId,
+              numero_cuenta: registroActual.numero_cuenta,
+              cuenta_nombre: registroActual.cuenta_nombre,
+              clasificaciones: nuevasClasificaciones
+            });
+          }
           
           registrosActualizados++;
           console.log(`✅ Registro ${registroActual.numero_cuenta} actualizado`);
@@ -2004,7 +2107,14 @@ const ModalClasificacionRegistrosRaw = ({
   }
 
   console.log("✅ Modal se está abriendo");
-  console.log("📋 Props recibidas:", { isOpen, uploadId, clienteId });
+  console.log("📋 Props recibidas:", { isOpen, uploadId, clienteId, cuentasRecienAñadidas: cuentasRecienAñadidas?.length || 0 });
+  
+  if (cuentasRecienAñadidas && cuentasRecienAñadidas.length > 0) {
+    console.log("🆕 MODAL ABIERTO CON CUENTAS RECIÉN AÑADIDAS:");
+    cuentasRecienAñadidas.forEach((cuenta, index) => {
+      console.log(`  ${index + 1}. ${cuenta.codigo} - ${cuenta.nombre}`);
+    });
+  }
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
@@ -2079,6 +2189,63 @@ const ModalClasificacionRegistrosRaw = ({
           </button>
         </div>
 
+        {/* Banner de cuentas recién añadidas */}
+        {cuentasRecienAñadidas && cuentasRecienAñadidas.length > 0 && (
+          <div className="bg-green-900/20 border-b border-green-500/30 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="bg-green-600 rounded-full p-1">
+                  <CheckSquare size={16} className="text-white" />
+                </div>
+                <div>
+                  <h4 className="text-green-300 font-medium">
+                    ✅ {cuentasRecienAñadidas.length} cuenta{cuentasRecienAñadidas.length !== 1 ? 's' : ''} añadida{cuentasRecienAñadidas.length !== 1 ? 's' : ''} recientemente
+                  </h4>
+                  <p className="text-green-200 text-sm">
+                    Las siguientes cuentas se acaban de añadir al sistema y están listas para clasificar:
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {cuentasRecienAñadidas.map((cuenta, index) => (
+                      <span
+                        key={`cuenta-${cuenta.codigo}-${index}`}
+                        className="bg-green-600/20 border border-green-500/40 rounded px-2 py-1 text-xs text-green-200"
+                      >
+                        {cuenta.codigo} - {cuenta.nombre}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => {
+                    console.log('🔄 RECARGANDO ESPECÍFICAMENTE PARA CUENTAS RECIÉN AÑADIDAS');
+                    cargarRegistros();
+                  }}
+                  className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-sm font-medium transition flex items-center gap-1"
+                >
+                  <Database size={14} />
+                  Recargar para mostrar
+                </button>
+                {cuentasRecienAñadidas.length === 1 && (
+                  <button
+                    onClick={() => {
+                      // Buscar directamente la cuenta recién añadida
+                      setFiltros(prev => ({
+                        ...prev,
+                        busquedaCuenta: cuentasRecienAñadidas[0].codigo
+                      }));
+                    }}
+                    className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm font-medium transition flex items-center gap-1"
+                  >
+                    🔍 Buscar cuenta
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Pestañas de navegación */}
         <div className="bg-gray-800 border-b border-gray-700">
           <div className="flex space-x-4 p-4">
@@ -2124,6 +2291,19 @@ const ModalClasificacionRegistrosRaw = ({
                     )}
                   </div>
                   <div className="flex gap-2">
+                    {/* Botón de recarga manual */}
+                    <button
+                      onClick={() => {
+                        console.log('🔄 RECARGA MANUAL SOLICITADA');
+                        cargarRegistros();
+                      }}
+                      disabled={loading}
+                      className="bg-gray-600 hover:bg-gray-500 disabled:bg-gray-700 text-white px-3 py-2 rounded font-medium transition flex items-center gap-2"
+                      title="Recargar datos del servidor"
+                    >
+                      <Database size={16} />
+                      {loading ? 'Cargando...' : 'Recargar'}
+                    </button>
                     <button
                       onClick={alternarModoClasificacionMasiva}
                       className={`px-4 py-2 rounded font-medium transition flex items-center gap-2 ${

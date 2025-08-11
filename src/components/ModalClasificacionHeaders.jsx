@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 import CreatableSelect from "react-select/creatable";
 import { X, Hash, Check } from "lucide-react";
-import {
-  obtenerClasificacionesCliente,
-} from "../api/nomina";
+// import {
+//   obtenerClasificacionesCliente,
+// } from "../api/nomina"; // REMOVIDO - API de nómina eliminada
 
 const categorias = [
   "haberes_imponibles",

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { obtenerCierresCliente as obtenerCierresContabilidad } from "../api/contabilidad";
-import { obtenerCierresCliente as obtenerCierresNomina } from "../api/nomina";
+// import { obtenerCierresCliente as obtenerCierresNomina } from "../api/nomina"; // REMOVIDO - Limpieza de nómina
 import EstadoBadge from "./EstadoBadge";
 
 const HistorialCierres = ({ clienteId, areaActiva }) => {
@@ -49,8 +49,9 @@ const HistorialCierres = ({ clienteId, areaActiva }) => {
       let res = [];
       if (areaActiva === "Contabilidad") {
         res = await obtenerCierresContabilidad(clienteId);
-      } else if (areaActiva === "Nomina") {
-        res = await obtenerCierresNomina(clienteId);
+      } else {
+        // Por ahora usar contabilidad como base para otras áreas
+        res = await obtenerCierresContabilidad(clienteId);
       }
       setCierres(res);
     };
@@ -69,8 +70,9 @@ const HistorialCierres = ({ clienteId, areaActiva }) => {
         let res = [];
         if (areaActiva === "Contabilidad") {
           res = await obtenerCierresContabilidad(clienteId);
-        } else if (areaActiva === "Nomina") {
-          res = await obtenerCierresNomina(clienteId);
+        } else {
+          // Por ahora usar contabilidad como base para otras áreas
+          res = await obtenerCierresContabilidad(clienteId);
         }
         setCierres(res);
       }, 30000); // 30 segundos
@@ -123,7 +125,8 @@ const HistorialCierres = ({ clienteId, areaActiva }) => {
                       if (areaActiva === "Contabilidad") {
                         navigate(`/menu/cierres/${cierre.id}`);
                       } else {
-                        navigate(`/menu/nomina/cierres/${cierre.id}`);
+                        // Por ahora redirigir a contabilidad para otras áreas
+                        navigate(`/menu/cierres/${cierre.id}`);
                       }
                     }}
                   >

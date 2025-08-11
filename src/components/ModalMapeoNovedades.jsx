@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { obtenerConceptosRemuneracionPorCierre } from "../api/nomina";
+// import { obtenerConceptosRemuneracionPorCierre } from "../api/nomina"; // DESHABILITADO - Funcionalidad de nómina removida
 
 const ModalMapeoNovedades = ({
   isOpen,

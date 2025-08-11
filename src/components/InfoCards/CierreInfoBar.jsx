@@ -2,7 +2,7 @@ import EstadoBadge from "../EstadoBadge";
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { finalizarCierre, actualizarEstadoCierre, obtenerProgresoTarea } from '../../api/contabilidad';
-import { actualizarEstadoCierreNomina } from '../../api/nomina';
+// import { actualizarEstadoCierreNomina } from '../../api/nomina'; // REMOVIDO - API de nómina eliminada
 
 const CierreInfoBar = ({ cierre, cliente, onCierreActualizado, tipoModulo = "contabilidad" }) => {
   const navigate = useNavigate();
@@ -15,12 +15,8 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado, tipoModulo = "con
   const manejarActualizarEstado = async () => {
     setActualizandoEstado(true);
     try {
-      let data;
-      if (tipoModulo === "nomina") {
-        data = await actualizarEstadoCierreNomina(cierre.id);
-      } else {
-        data = await actualizarEstadoCierre(cierre.id);
-      }
+      // Solo contabilidad por ahora
+      const data = await actualizarEstadoCierre(cierre.id);
       
       if (onCierreActualizado) {
         onCierreActualizado(data.cierre);
@@ -190,10 +186,9 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado, tipoModulo = "con
           </>
         )}
 
-        {/* Botones para visualización de datos - Solo para nómina */}
-        {tipoModulo === "nomina" && ['datos_consolidados', 'con_incidencias', 'sin_incidencias', 'incidencias_resueltas', 'finalizado'].includes(cierre?.estado) && (
+        {/* Botones para visualización de datos - REMOVIDO: Era para nómina */}
+        {/* {tipoModulo === "nomina" && ['datos_consolidados', 'con_incidencias', 'sin_incidencias', 'incidencias_resueltas', 'finalizado'].includes(cierre?.estado) && (
           <>
-            {/* Botón Ver Libro de Remuneraciones */}
             <button
               onClick={() => navigate(`/menu/cierres-nomina/${cierre.id}/libro-remuneraciones`)}
               className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2"
@@ -204,7 +199,6 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado, tipoModulo = "con
               Ver Libro de Remuneraciones
             </button>
 
-            {/* Botón Ver Movimientos del Mes */}
             <button
               onClick={() => navigate(`/menu/cierres-nomina/${cierre.id}/movimientos`)}
               className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2"
@@ -215,7 +209,7 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado, tipoModulo = "con
               Ver Movimientos del Mes
             </button>
           </>
-        )}
+        )} */}
 
         {/* Botón Finalizar Cierre solo para sin_incidencias en contabilidad */}
         {tipoModulo === "contabilidad" && cierre?.estado === 'sin_incidencias' && (

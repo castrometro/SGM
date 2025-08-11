@@ -4,14 +4,14 @@ import {
   obtenerCierreMensual as obtenerCierreContabilidad,
   crearCierreMensual as crearCierreContabilidad,
 } from "../../api/contabilidad";
-import {
-  obtenerCierreMensual as obtenerCierreNomina,
-  crearCierreMensual as crearCierreNomina,
-} from "../../api/nomina";
+// import {
+//   obtenerCierreMensual as obtenerCierreNomina,
+//   crearCierreMensual as crearCierreNomina,
+// } from "../../api/nomina"; // REMOVIDO - API de nómina eliminada
 
 const areaLabels = {
   Contabilidad: "Crear Cierre Mensual de Contabilidad",
-  Nomina: "Crear Cierre Mensual de Nómina",
+  // Nomina: "Crear Cierre Mensual de Nómina", // REMOVIDO - Área de nómina
 };
 
 
@@ -40,14 +40,14 @@ const CrearCierreCard = ({ clienteId, areaActiva }) => {
       return;
     }
     
-    // Checklist: validar solo para nómina
-    if (
-      areaActiva === "Nomina" &&
-      (tareas.length === 0 || tareas.some((t) => !t.descripcion.trim()))
-    ) {
-      setError("Debes agregar al menos una tarea y que todas tengan descripción.");
-      return;
-    }
+    // REMOVIDO: Checklist para nómina
+    // if (
+    //   areaActiva === "Nomina" &&
+    //   (tareas.length === 0 || tareas.some((t) => !t.descripcion.trim()))
+    // ) {
+    //   setError("Debes agregar al menos una tarea y que todas tengan descripción.");
+    //   return;
+    // }
 
     if (
       !window.confirm(
@@ -62,9 +62,11 @@ const CrearCierreCard = ({ clienteId, areaActiva }) => {
       let cierreExistente, cierre;
       if (areaActiva === "Contabilidad") {
         cierreExistente = await obtenerCierreContabilidad(clienteId, periodo);
-      } else if (areaActiva === "Nomina") {
-        cierreExistente = await obtenerCierreNomina(clienteId, periodo);
-      }
+      } 
+      // REMOVIDO: Lógica para nómina
+      // else if (areaActiva === "Nomina") {
+      //   cierreExistente = await obtenerCierreNomina(clienteId, periodo);
+      // }
 
       if (cierreExistente) {
         setError("Ya existe un cierre para este periodo.");
@@ -72,21 +74,19 @@ const CrearCierreCard = ({ clienteId, areaActiva }) => {
         return;
       }
       
-
-
       if (areaActiva === "Contabilidad") {
         cierre = await crearCierreContabilidad(clienteId, periodo);
         navigate(`/menu/cierres/${cierre.id}`);
-      } else if (areaActiva === "Nomina") {
-        // Enviamos tareas como array de strings al backend
-        cierre = await crearCierreNomina(
-          clienteId,
-          periodo,
-          tareas // <- manda el array tal cual, [{ descripcion: ... }]
-        );
-
-        navigate(`/menu/nomina/cierres/${cierre.id}`);
-      }
+      } 
+      // REMOVIDO: Creación de cierre para nómina
+      // else if (areaActiva === "Nomina") {
+      //   cierre = await crearCierreNomina(
+      //     clienteId,
+      //     periodo,
+      //     tareas
+      //   );
+      //   navigate(`/menu/nomina/cierres/${cierre.id}`);
+      // }
     } catch (err) {
         setError("Error creando el cierre.");
       }
@@ -112,6 +112,7 @@ const CrearCierreCard = ({ clienteId, areaActiva }) => {
             required
           />
         </div>
+        {/* REMOVIDO: Sección de tareas para nómina 
         {areaActiva === "Nomina" && (
           <div>
             <label className="block text-gray-300 font-semibold mb-1">
@@ -148,7 +149,7 @@ const CrearCierreCard = ({ clienteId, areaActiva }) => {
               </button>
             </div>
           </div>
-        )}
+        )} */}
         {error && <div className="text-red-400">{error}</div>}
         <button
           type="submit"

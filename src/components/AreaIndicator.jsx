@@ -15,7 +15,8 @@ const AreaIndicator = ({ areas, size = "sm", className = "", showLabel = false }
   }
   
   const tieneContabilidad = areaNames.includes("Contabilidad");
-  const tieneNomina = areaNames.includes("Nomina");
+  // Solo trabajamos con contabilidad por ahora
+  // const tieneNomina = areaNames.includes("Nomina");
   
   const sizeClasses = {
     xs: "text-xs px-2 py-0.5",
@@ -32,14 +33,10 @@ const AreaIndicator = ({ areas, size = "sm", className = "", showLabel = false }
   };
   
   const getAreaDescription = () => {
-    if (tieneContabilidad && tieneNomina) {
-      return "Gestión integral de contabilidad y nómina";
-    } else if (tieneContabilidad) {
+    if (tieneContabilidad) {
       return "Gestión de contabilidad y cierres contables";
-    } else if (tieneNomina) {
-      return "Gestión de nómina y remuneraciones";
     }
-    return "";
+    return "Área no especificada";
   };
   
   return (
@@ -49,7 +46,7 @@ const AreaIndicator = ({ areas, size = "sm", className = "", showLabel = false }
     >
       {showLabel && (
         <span className="text-xs text-gray-400 whitespace-nowrap">
-          {tieneContabilidad && tieneNomina ? "Áreas:" : "Área:"}
+          Área:
         </span>
       )}
       <div className="flex items-center gap-1.5">
@@ -60,15 +57,6 @@ const AreaIndicator = ({ areas, size = "sm", className = "", showLabel = false }
           >
             <Calculator className={iconSizes[size]} />
             <span className="whitespace-nowrap">Contabilidad</span>
-          </div>
-        )}
-        {tieneNomina && (
-          <div 
-            className={`flex items-center gap-1 bg-purple-600/20 text-purple-300 rounded-full border border-purple-500/30 transition-all duration-200 hover:bg-purple-600/30 hover:border-purple-400/50 cursor-help ${sizeClasses[size]}`}
-            title="Área de Nómina - Gestión de remuneraciones y procesamiento de nóminas"
-          >
-            <UserCheck className={iconSizes[size]} />
-            <span className="whitespace-nowrap">Nómina</span>
           </div>
         )}
       </div>

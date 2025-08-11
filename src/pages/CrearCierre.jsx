@@ -4,7 +4,7 @@ import ClienteInfoCard from "../components/InfoCards/ClienteInfoCard";
 import CrearCierreCard from "../components/CrearCierre/CrearCierreCard";
 import { obtenerCliente } from "../api/clientes";
 import { obtenerResumenContable } from "../api/contabilidad";
-import { obtenerResumenNomina } from "../api/nomina"; // <-- debes tener este endpoint
+// import { obtenerResumenNomina } from "../api/nomina"; // REMOVIDO - Limpieza de nómina
 
 const CrearCierre = ({ areaActiva: propAreaActiva }) => {
   const { clienteId } = useParams();
@@ -19,8 +19,9 @@ const CrearCierre = ({ areaActiva: propAreaActiva }) => {
         let r;
         if (areaActiva === "Contabilidad") {
           r = await obtenerResumenContable(clienteId);
-        } else if (areaActiva === "Nomina") {
-          r = await obtenerResumenNomina(clienteId);
+        } else {
+          // Para otras áreas, usar contabilidad como base
+          r = await obtenerResumenContable(clienteId);
         }
         setCliente(c);
         setResumen(r);

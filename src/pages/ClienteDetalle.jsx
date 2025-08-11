@@ -5,7 +5,7 @@ import {
   obtenerServiciosCliente,
 } from "../api/clientes";
 import { obtenerResumenContable } from "../api/contabilidad";
-import { obtenerResumenNomina } from "../api/nomina";
+// import { obtenerResumenNomina } from "../api/nomina"; // REMOVIDO - Limpieza de nómina
 import { obtenerUsuario } from "../api/auth";
 import ClienteInfoCard from "../components/InfoCards/ClienteInfoCard";
 import ServiciosContratados from "../components/ServiciosContratados";

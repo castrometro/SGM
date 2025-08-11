@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
-import ResumenProcesosNomina from "../components/VistaGerencial/ResumenProcesosNomina";
+// import ResumenProcesosNomina from "../components/VistaGerencial/ResumenProcesosNomina"; // REMOVIDO - Limpieza de nómina
 import IndicadoresClave from "../components/VistaGerencial/IndicadoresClave";
 import GestionAsignaciones from "../components/VistaGerencial/GestionAsignaciones";
 import ReportesAuditoria from "../components/VistaGerencial/ReportesAuditoria";
 import AlertasProcesos from "../components/VistaGerencial/AlertasProcesos";
-import { obtenerCierresNomina } from "../api/nomina";
+// import { obtenerCierresNomina } from "../api/nomina"; // REMOVIDO - Limpieza de nómina
 
 const VistaGerencial = () => {
   const [cierres, setCierres] = useState([]);

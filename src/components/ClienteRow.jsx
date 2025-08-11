@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { obtenerResumenContable } from "../api/contabilidad";
-import { obtenerResumenNomina } from "../api/nomina";
+// import { obtenerResumenNomina } from "../api/nomina"; // REMOVIDO - Limpieza de nómina
 import EstadoBadge from "./EstadoBadge";
 
 const ClienteRow = ({ cliente, areaActiva }) => {

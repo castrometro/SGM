@@ -7,7 +7,7 @@ const Navbar = () => {
             <div className="container mx-auto flex justify-between items-center">
                 {/* Logo o Título */}
                 <Link to="/" className="text-xl font-bold">
-                    Remuneraciones
+                    SGM Contabilidad
                 </Link>
 
                 {/* Menú de Navegación */}

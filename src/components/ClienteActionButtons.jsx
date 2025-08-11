@@ -49,48 +49,6 @@ const ClienteActionButtons = ({ clienteId, areaActiva }) => {
         action: () => navigate(`/menu/clientes/${clienteId}/archivos`),
       },
     ],
-    "Nomina": [
-      {
-        label: "Dashboard Nómina",
-        icon: BarChart3,
-        color: "#10B981",
-        action: () => {
-          const streamlitUrl = `http://172.17.11.18:8503/?cliente_id=${clienteId}`;
-          window.open(streamlitUrl, '_blank');
-        },
-      },
-      {
-        label: "Historial de Cierres",
-        icon: History,
-        color: "#60A5FA",
-        action: () => navigate(`/menu/clientes/${clienteId}/cierres`),
-      },
-      {
-        label: "Crear Cierre",
-        icon: FilePlus,
-        color: "#34D399",
-        action: () => navigate(`/menu/clientes/${clienteId}/crear-cierre`),
-      },
-      {
-        label: "Libro de Remuneraciones",
-        icon: FileText,
-        color: "#FBBF24",
-        action: () => navigate(`/menu/nomina/clientes/${clienteId}/libro-remuneraciones`),
-      },
-      {
-        label: "Movimientos del Mes",
-        icon: Users,
-        color: "#C084FC",
-        action: () => navigate(`/menu/nomina/clientes/${clienteId}/movimientos-mes`),
-      },
-      {
-        label: "Checklists",
-        icon: ListChecks,
-        color: "#F472B6",
-        action: () => navigate(`/menu/nomina/clientes/${clienteId}/checklists`),
-      }
-      // Puedes agregar más según lo que se use en Nómina
-    ],
   };
 
   // Si hay más de un área en el futuro, lo tienes cubierto

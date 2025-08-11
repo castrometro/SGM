@@ -10,7 +10,6 @@ import ClasificacionCierre from "./pages/ClasificacionCierre";
 import HistorialCierresPage from "./pages/HistorialCierresPage";
 import CrearCierre from "./pages/CrearCierre";
 import CierreDetalle from "./pages/CierreDetalle"; // Asegúrate de importar la página de detalle del cierre
-import CierreDetalleNomina from "./pages/CierreDetalleNomina";
 import AnalisisLibro from "./pages/AnalisisLibro";
 import MovimientosCuenta from "./pages/MovimientosCuenta";
 import InformesAnalistas from "./pages/InformesAnalistas";
@@ -27,15 +26,6 @@ import LogsActividad from "./components/Gerente/LogsActividad";
 import EstadosCierres from "./components/Gerente/EstadosCierres";
 import CacheRedis from "./components/Gerente/CacheRedis";
 import AdminSistema from "./components/Gerente/AdminSistema";
-
-// Importar componentes de Gerente Nómina
-import EstadosCierresNomina from "./components/Gerente/EstadosCierresNomina";
-import LogsActividadNomina from "./components/Gerente/LogsActividadNomina";
-import CacheRedisNomina from "./components/Gerente/CacheRedisNomina";
-
-// Importar nuevos componentes de Nómina
-import LibroRemuneraciones from "./components/LibroRemuneraciones/LibroRemuneraciones";
-import MovimientosMes from "./components/MovimientosMes/MovimientosMes";
 
 function App() {
   return (
@@ -73,10 +63,7 @@ function App() {
             element={<MovimientosCuenta />}
           />
 
-          {/* ----------- ÁREA: NÓMINA ------------- */}
-          <Route path="nomina/cierres/:cierreId" element={<CierreDetalleNomina />} />
-          <Route path="cierres-nomina/:id/libro-remuneraciones" element={<LibroRemuneraciones />} />
-          <Route path="cierres-nomina/:id/movimientos" element={<MovimientosMes />} />          {/* ----------- ÁREA: GESTIÓN DE ANALISTAS ------------- */}
+          {/* ----------- ÁREA: GESTIÓN DE ANALISTAS ------------- */}
           <Route path="analistas" element={<GestionAnalistas />} />
           
           {/* ----------- ÁREA: MIS ANALISTAS (SUPERVISOR) ------------- */}
@@ -93,11 +80,6 @@ function App() {
           <Route path="gerente/estados-cierres" element={<EstadosCierres />} />
           <Route path="gerente/cache-redis" element={<CacheRedis />} />
           <Route path="gerente/admin-sistema" element={<AdminSistema />} />
-
-          {/* ----------- ÁREA: GERENTE NÓMINA - FUNCIONES AVANZADAS ------------- */}
-          <Route path="gerente/logs-actividad-nomina" element={<LogsActividadNomina />} />
-          <Route path="gerente/estados-cierres-nomina" element={<EstadosCierresNomina />} />
-          <Route path="gerente/cache-redis-nomina" element={<CacheRedisNomina />} />
 
           {/* ----------- ÁREA: ANALYTICS DE PERFORMANCE ------------- */}
           <Route path="analytics" element={<Dashboard />} />

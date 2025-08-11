@@ -37,7 +37,7 @@ const MenuUsuario = () => {
     // Obtener las áreas del gerente para mostrar opciones relevantes
     const areas = usuario.areas || [];
     const tieneContabilidad = areas.some(area => area.nombre === "Contabilidad");
-    const tieneNomina = areas.some(area => area.nombre === "Nomina");
+    // const tieneNomina = areas.some(area => area.nombre === "Nomina"); // REMOVIDO
     
     opciones.push(
       { label: "Clientes", descripcion: "Visión general de todos los clientes", icon: FolderKanban, color: "#4F46E5", path: "/menu/clientes" }
@@ -52,20 +52,11 @@ const MenuUsuario = () => {
       path: "/menu/dashboard-gerente"
     });
     
-    // Analytics específicos por área
-    if (tieneContabilidad || tieneNomina) {
-      let descripcionAnalytics = "KPIs y métricas de ";
-      if (tieneContabilidad && tieneNomina) {
-        descripcionAnalytics += "contabilidad y nómina";
-      } else if (tieneContabilidad) {
-        descripcionAnalytics += "contabilidad y cierres";
-      } else if (tieneNomina) {
-        descripcionAnalytics += "nómina y remuneraciones";
-      }
-      
+    // Analytics específicos para contabilidad
+    if (tieneContabilidad) {
       opciones.push({
         label: "Analytics de Performance", 
-        descripcion: descripcionAnalytics, 
+        descripcion: "KPIs y métricas de contabilidad y cierres", 
         icon: BarChart3, 
         color: "#8B5CF6", 
         path: "/menu/analytics"
@@ -81,7 +72,8 @@ const MenuUsuario = () => {
       );
     }
 
-    // Funcionalidades específicas de Nómina para Gerentes
+    // REMOVIDO: Funcionalidades específicas de Nómina para Gerentes
+    /*
     if (tieneNomina) {
       opciones.push(
         { label: "Logs y Actividad Nómina", descripcion: "Auditoría y logs de actividades de nómina", icon: FileText, color: "#F97316", path: "/menu/gerente/logs-actividad-nomina" },
@@ -89,6 +81,7 @@ const MenuUsuario = () => {
         { label: "Cache Redis Nómina", descripcion: "Estado y gestión del cache Redis de nómina", icon: Database, color: "#10B981", path: "/menu/gerente/cache-redis-nomina" }
       );
     }
+    */
     
     opciones.push(
       { label: "Gestión de Analistas", descripcion: "Gestión de analistas y asignaciones", icon: UserCog, color: "#EC4899", path: "/menu/analistas" },

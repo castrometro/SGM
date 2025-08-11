@@ -88,7 +88,8 @@ const Dashboard = () => {
     alerta_cierres_retrasados
   } = dashboardData;
 
-  const { tiene_contabilidad, tiene_nomina } = areas_gerente || {};
+  const { tiene_contabilidad } = areas_gerente || {};
+  // const { tiene_contabilidad, tiene_nomina } = areas_gerente || {}; // REMOVIDO: tiene_nomina
   
   // Obtener usuario para mostrar sus áreas
   const usuario = JSON.parse(localStorage.getItem("usuario"));
@@ -101,10 +102,7 @@ const Dashboard = () => {
           <h1 className="text-3xl font-bold mb-2">Analytics de Performance</h1>
           <p className="text-gray-400">
             KPIs y métricas de {
-              tiene_contabilidad && tiene_nomina ? 'contabilidad y nómina' :
-              tiene_contabilidad ? 'contabilidad y cierres' :
-              tiene_nomina ? 'nómina y remuneraciones' :
-              'operaciones'
+              tiene_contabilidad ? 'contabilidad y cierres' : 'operaciones'
             }
           </p>
         </div>
@@ -165,6 +163,7 @@ const Dashboard = () => {
           />
         )}
         
+        {/* REMOVIDO: Sección de nómina 
         {tiene_nomina && (
           <KpiCard
             title="Cierres Nómina"
@@ -174,8 +173,9 @@ const Dashboard = () => {
             color="bg-indigo-600"
           />
         )}
+        */}
         
-        {/* Si tiene ambas áreas, mostrar total */}
+        {/* REMOVIDO: Comparación áreas múltiples
         {tiene_contabilidad && tiene_nomina && (
           <KpiCard
             title="Total Cierres"
@@ -185,8 +185,20 @@ const Dashboard = () => {
             color="bg-orange-600"
           />
         )}
+        */}
         
-        {/* Si solo tiene una área, mostrar eficiencia en lugar de total */}
+        {/* Eficiencia solo para contabilidad */}
+        {tiene_contabilidad && (
+          <KpiCard
+            title="Eficiencia Promedio"
+            value={`${kpis.eficiencia_promedio}%`}
+            subtitle="Área de Contabilidad"
+            icon={Target}
+            color="bg-orange-600"
+          />
+        )}
+        
+        {/* REMOVIDO: Lógica para áreas múltiples
         {(tiene_contabilidad || tiene_nomina) && !(tiene_contabilidad && tiene_nomina) && (
           <KpiCard
             title="Eficiencia Promedio"
@@ -197,7 +209,7 @@ const Dashboard = () => {
           />
         )}
         
-        {/* Si tiene ambas áreas, mostrar eficiencia en una quinta tarjeta */}
+        {/* REMOVIDO: Ya no necesitamos validar múltiples áreas
         {tiene_contabilidad && tiene_nomina && (
           <KpiCard
             title="Eficiencia Promedio"
@@ -207,6 +219,7 @@ const Dashboard = () => {
             color="bg-orange-600"
           />
         )}
+        */}
       </div>
 
       {/* Charts Grid */}

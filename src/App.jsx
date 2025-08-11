@@ -1,6 +1,6 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import Login from "./pages/Login";
-import MenuUsuario from "./pages/MenuUsuario";
+import MenuUsuario from "./pages/MenuUsuario/index";
 import PrivateRoute from "./components/PrivateRoute";
 import Layout from "./components/Layout";
 import Clientes from "./pages/Clientes";
@@ -14,11 +14,11 @@ import AnalisisLibro from "./pages/AnalisisLibro";
 import MovimientosCuenta from "./pages/MovimientosCuenta";
 import InformesAnalistas from "./pages/InformesAnalistas";
 import Dashboard from "./pages/Dashboard";
-import CapturaMasivaGastos from "./pages/CapturaMasivaGastos";
+import CapturaMasivaGastos from "./pages/CapturaMasivaGastos/index";
 import GestionAnalistas from "./components/Gerente/GestionAnalistas";
 import DashboardGerente from "./pages/DashboardGerente";
 import VistaGerencial from "./pages/VistaGerencial";
-import Tools from "./pages/Tools";
+import Tools from "./pages/Tools/index";
 import MisAnalistas from "./pages/MisAnalistas";
 
 // Importar componentes de Gerente

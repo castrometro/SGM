@@ -3,11 +3,11 @@ import Login from "./pages/Login";
 import MenuUsuario from "./pages/MenuUsuario/index";
 import PrivateRoute from "./components/PrivateRoute";
 import Layout from "./components/Layout";
-import Clientes from "./pages/Clientes";
-import ClienteDetalle from "./pages/ClienteDetalle";
+import Clientes from "./pages/Clientes/index";
+import ClienteDetalle from "./pages/ClienteDetalle/index";
 import PaginaClasificacion from "./pages/PaginaClasificacion";
 import ClasificacionCierre from "./pages/ClasificacionCierre";
-import HistorialCierresPage from "./pages/HistorialCierresPage";
+import HistorialCierresPage from "./pages/HistorialCierresPage/index";
 import CrearCierre from "./pages/CrearCierre";
 import CierreDetalle from "./pages/CierreDetalle"; // Asegúrate de importar la página de detalle del cierre
 import AnalisisLibro from "./pages/AnalisisLibro";

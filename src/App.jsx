@@ -8,8 +8,8 @@ import ClienteDetalle from "./pages/ClienteDetalle/index";
 import PaginaClasificacion from "./pages/PaginaClasificacion";
 import ClasificacionCierre from "./pages/ClasificacionCierre";
 import HistorialCierresPage from "./pages/HistorialCierresPage/index";
-import CrearCierre from "./pages/CrearCierre";
-import CierreDetalle from "./pages/CierreDetalle"; // Asegúrate de importar la página de detalle del cierre
+import CrearCierre from "./pages/CrearCierre/index";
+import CierreDetalle from "./pages/CierreDetalle/index"; // Feature folder pattern - área específica
 import AnalisisLibro from "./pages/AnalisisLibro";
 import MovimientosCuenta from "./pages/MovimientosCuenta";
 import InformesAnalistas from "./pages/InformesAnalistas";

@@ -92,13 +92,7 @@ const HistorialCierres = ({ clienteId, areaActiva }) => {
             <tr className="bg-gray-700">
               <th className="px-4 py-2 text-left">Periodo</th>
               <th className="px-4 py-2 text-left">Estado</th>
-              {areaActiva === "Contabilidad" && (
-                <th className="px-4 py-2 text-left">Cuentas nuevas</th>
-              )}
               <th className="px-4 py-2 text-left">Fecha creación</th>
-              {areaActiva === "Contabilidad" && (
-                <th className="px-4 py-2 text-left">Estado Proceso</th>
-              )}
               <th className="px-4 py-2 text-left" colSpan={2}>Acciones</th>
             </tr>
           </thead>
@@ -109,15 +103,7 @@ const HistorialCierres = ({ clienteId, areaActiva }) => {
                 <td className="px-4 py-2">
                   <EstadoBadge estado={cierre.estado} size="sm" />
                 </td>
-                {areaActiva === "Contabilidad" && (
-                  <td className="px-4 py-2">{cierre.cuentas_nuevas}</td>
-                )}
                 <td className="px-4 py-2">{new Date(cierre.fecha_creacion).toLocaleDateString()}</td>
-                {areaActiva === "Contabilidad" && (
-                  <td className="px-4 py-2">
-                    {getAccionesAdicionales(cierre)}
-                  </td>
-                )}
                 <td className="px-4 py-2">
                   <button
                     className="text-blue-500 underline font-medium"
@@ -140,7 +126,7 @@ const HistorialCierres = ({ clienteId, areaActiva }) => {
                    areaActiva === "Contabilidad" && (
                     <button
                       className="text-green-500 underline font-medium"
-                    onClick={() => navigate(`/menu/cierres/${cierre.id}/libro`)}
+                      onClick={() => navigate(`/menu/cierres/${cierre.id}/libro`)}
                     >
                       Visualizar libro
                     </button>

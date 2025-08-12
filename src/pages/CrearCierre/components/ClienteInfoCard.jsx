@@ -1,4 +1,4 @@
-import EstadoBadge from "../EstadoBadge";
+import EstadoBadge from "../../../components/EstadoBadge";
 
 const ClienteInfoCard = ({ cliente, resumen, areaActiva }) => {
   // Determinar el estado del cierre según el área activa

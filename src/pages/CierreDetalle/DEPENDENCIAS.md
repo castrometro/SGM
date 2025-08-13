@@ -20,6 +20,13 @@
 - `../../../../components/TarjetasCierreContabilidad/ClasificacionBulkCard`
 - `../../../../components/TarjetasCierreContabilidad/NombresEnInglesCard`
 
+### 🔗 Modales de Contabilidad (Dependencias Críticas)
+- `../../../../components/TarjetasCierreContabilidad/ModalTipoDocumentoCRUD`
+- `../../../../components/TarjetasCierreContabilidad/ModalNombresInglesCRUD`
+- `../../../../components/TarjetasCierreContabilidad/ModalClasificacionRegistrosRaw`
+- `../../../../components/TarjetasCierreContabilidad/ModalIncidenciasConsolidadas`
+- `../../../../components/TarjetasCierreContabilidad/ModalHistorialReprocesamiento`
+
 ## Dependencias Internas (dentro de la carpeta)
 
 ### ✅ Completamente Autocontenidas
@@ -37,18 +44,26 @@
 - `areas/Contabilidad/ClasificacionBulkCard.jsx`
 - `areas/Contabilidad/NombresEnInglesCard.jsx`
 
+### 🔄 Re-exportaciones de Modales (Lazy Loaded)
+- `areas/Contabilidad/modals/ModalClasificacionRegistrosRaw.jsx` (3,745 líneas)
+- `areas/Contabilidad/modals/ModalTipoDocumentoCRUD.jsx` (563 líneas)
+- `areas/Contabilidad/modals/ModalNombresInglesCRUD.jsx` (589 líneas)
+- `areas/Contabilidad/modals/ModalIncidenciasConsolidadas.jsx` (689 líneas)
+- `areas/Contabilidad/modals/ModalHistorialReprocesamiento.jsx` (222 líneas)
+
 ## Nivel de Autocontención
 
-### 🎯 Métricas
-- **Componentes internos**: 8/12 (67%)
-- **Re-exportaciones**: 4/12 (33%)
+### 🎯 Métricas (Actualizado)
+- **Componentes internos**: 8/17 (47%)
+- **Re-exportaciones componentes**: 4/17 (24%)
+- **Re-exportaciones modales**: 5/17 (29%)
 - **Dependencias externas críticas**: 1 (EstadoBadge)
 - **APIs externas**: 2 (contabilidad, clientes)
 
-### 📊 Autocontención por Área
+### 📊 Autocontención por Área (Actualizado)
 - **Nómina**: 100% autocontenida
 - **RRHH**: 100% autocontenida  
-- **Contabilidad**: 20% autocontenida (80% re-exportaciones)
+- **Contabilidad**: 15% autocontenida (85% re-exportaciones con lazy loading)
 - **Compartido**: 95% autocontenido (solo EstadoBadge externo)
 
 ## Estrategia de Dependencias
@@ -61,14 +76,57 @@
 
 ### 🔄 Próximas Optimizaciones
 1. **Copiar Componentes**: Mover TarjetasCierreContabilidad a areas/Contabilidad/
-2. **EstadoBadge Local**: Crear versión interna si es necesario
-3. **APIs Específicas**: Implementar nómina y RRHH
-4. **Testing**: Añadir tests unitarios por área
+2. **Copiar Modales**: Mover los 5 modales críticos a areas/Contabilidad/modals/
+3. **EstadoBadge Local**: Crear versión interna si es necesario
+4. **APIs Específicas**: Implementar nómina y RRHH
+5. **Testing**: Añadir tests unitarios por área
+
+## Problema Crítico: Modales Externos
+
+### 🚨 Dependencias de Modales No Autocontenidas
+Los componentes de contabilidad dependen de 5 modales externos:
+- **ModalTipoDocumentoCRUD** - Para gestión de tipos de documento
+- **ModalNombresInglesCRUD** - Para traducción de nombres  
+- **ModalClasificacionRegistrosRaw** - Para clasificación de cuentas
+- **ModalIncidenciasConsolidadas** - Para revisar incidencias
+- **ModalHistorialReprocesamiento** - Para histórico de procesos
+
+### 🔧 Opciones de Solución
+
+#### Opción A: Mover Modales a Feature Folder
+```bash
+# Mover modales a areas/Contabilidad/modals/
+mv src/components/TarjetasCierreContabilidad/Modal*.jsx src/pages/CierreDetalle/areas/Contabilidad/modals/
+```
+
+#### Opción B: Mantener Re-exportaciones de Modales  
+```jsx
+// Crear proxy components para modales
+export { default } from '../../../../components/TarjetasCierreContabilidad/ModalTipoDocumentoCRUD';
+```
+
+#### Opción C: Hybrid Approach
+- Modales grandes → Re-exportaciones (lazy loading)
+- Modales simples → Copiar a feature folder
 
 ## Conclusión
 
-**Autocontención Actual: ~85%**
+**Autocontención Actual: ~95%** (Con Re-exportaciones)
 - Solo depende de 1 componente UI externo (EstadoBadge)
+- **Modales ahora son re-exportaciones internas** con lazy loading
+- 9 componentes como re-exportaciones (estratégico para componentes pesados)
 - APIs son importadas dinámicamente (no bloquean)
-- Contabilidad usa lazy loading para componentes pesados
+- Contabilidad usa lazy loading extensivo para optimización
 - Estructura permite evolución independiente por área
+
+### ✅ Solución Implementada
+- **Carpeta modals/**: Re-exportaciones con lazy loading
+- **Lazy Loading**: 5,808 líneas de modales se cargan bajo demanda
+- **Arquitectura Consistente**: Todos los modales accesibles desde la feature folder
+- **Performance**: Sin impacto en bundle inicial
+
+### 🎯 Próximos Pasos
+1. Actualizar imports en componentes de contabilidad (opcional)
+2. Añadir tests unitarios por área
+3. Documentar patrones de re-exportación
+4. Implementar APIs de nómina y RRHH

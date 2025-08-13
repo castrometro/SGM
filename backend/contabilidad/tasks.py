@@ -1243,6 +1243,8 @@ def aplicar_reglas_tipo_documento(fila, headers_entrada, tipo_doc, mapeo_cc):
         return aplicar_reglas_tipo_33(fila, headers_entrada, mapeo_cc, headers_salida)
     elif tipo_doc == "34":
         return aplicar_reglas_tipo_34(fila, headers_entrada, mapeo_cc, headers_salida)
+    elif tipo_doc == "61":
+        return aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida)
     else:
         # Para otros tipos de documento, implementar más adelante
         return aplicar_reglas_genericas(fila, headers_entrada, tipo_doc, mapeo_cc, headers_salida)
@@ -1301,14 +1303,20 @@ def aplicar_reglas_tipo_33(fila, headers_entrada, mapeo_cc, headers_salida):
     # 1. Cuenta Proveedores (código empieza con 2)
     fila_proveedores = crear_fila_base_tipo_33(datos_comunes, headers_salida)
     fila_proveedores["Código Plan de Cuenta"] = codigo_proveedores
-    fila_proveedores["Monto al Haber Moneda Base"] = str(round(monto_total, 2))
+    fila_proveedores["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_total, 2))
+    # ✨ NUEVO: Agregar campos especiales de detalle en cuenta Proveedores
+    fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
+    fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(round(monto_iva, 2))
+    # ✨ NUEVO: Calcular y agregar "Monto Suma Detalle Libro" como suma de montos 1-9
+    monto_suma_detalle = round(monto_neto + monto_iva, 2)  # Solo tenemos valores en monto 1 y 3
+    fila_proveedores["Monto Suma Detalle Libro"] = formatear_monto_clp(monto_suma_detalle)
     filas_resultado.append(fila_proveedores)
     
     # 2. Cuenta Gastos (código empieza con 5)
     fila_gastos = crear_fila_base_tipo_33(datos_comunes, headers_salida)
     fila_gastos["Código Plan de Cuenta"] = codigo_gastos
-    fila_gastos["Monto al Debe Moneda Base"] = str(round(monto_neto, 2))
-    fila_gastos["Monto 1 Detalle Libro"] = str(round(monto_neto, 2))
+    fila_gastos["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_neto, 2))
+    # ✨ REMOVIDO: Ya no se asigna "Monto 1 Detalle Libro" aquí
     if codigos_cc:
         fila_gastos["Código Centro de Costo"] = codigos_cc
     filas_resultado.append(fila_gastos)
@@ -1316,8 +1324,8 @@ def aplicar_reglas_tipo_33(fila, headers_entrada, mapeo_cc, headers_salida):
     # 3. Cuenta IVA (código empieza con 1)
     fila_iva = crear_fila_base_tipo_33(datos_comunes, headers_salida)
     fila_iva["Código Plan de Cuenta"] = codigo_iva
-    fila_iva["Monto al Debe Moneda Base"] = str(round(monto_iva, 2))
-    fila_iva["Monto 3 Detalle Libro"] = str(round(monto_iva, 2))
+    fila_iva["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_iva, 2))
+    # ✨ REMOVIDO: Ya no se asigna "Monto 3 Detalle Libro" aquí
     filas_resultado.append(fila_iva)
     
     return filas_resultado
@@ -1369,19 +1377,103 @@ def aplicar_reglas_tipo_34(fila, headers_entrada, mapeo_cc, headers_salida):
     # 1. Cuenta Proveedores (código empieza con 2)
     fila_proveedores = crear_fila_base_tipo_34(datos_comunes, headers_salida)
     fila_proveedores["Código Plan de Cuenta"] = codigo_proveedores
-    fila_proveedores["Monto al Haber Moneda Base"] = str(round(monto_total, 2))
+    fila_proveedores["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_total, 2))
+    # ✨ CORREGIDO: Usar "Monto 2 Detalle Libro" en cuenta Proveedores para tipo 34
+    fila_proveedores["Monto 2 Detalle Libro"] = formatear_monto_clp(round(monto_gasto, 2))
     filas_resultado.append(fila_proveedores)
     
     # 2. Cuenta Gastos (código empieza con 5)
     fila_gastos = crear_fila_base_tipo_34(datos_comunes, headers_salida)
     fila_gastos["Código Plan de Cuenta"] = codigo_gastos
-    fila_gastos["Monto al Debe Moneda Base"] = str(round(monto_gasto, 2))
-    fila_gastos["Monto 1 Detalle Libro"] = str(round(monto_gasto, 2))
+    fila_gastos["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_gasto, 2))
+    # ✨ REMOVIDO: Ya no se asigna "Monto 1 Detalle Libro" aquí, se movió a cuenta Proveedores como "Monto 3"
     if codigos_cc:
         fila_gastos["Código Centro de Costo"] = codigos_cc
     filas_resultado.append(fila_gastos)
     
     # NOTA: Para tipo 34 con 1CC NO se genera cuenta de IVA
+    
+    return filas_resultado
+
+def aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida):
+    """
+    Aplica reglas específicas para tipo de documento 61 (Nota de Crédito) con 1CC
+    Genera 3 cuentas: Proveedores (2xxx), Gastos (5xxx) e IVA (1xxx)
+    IGUAL al tipo 33 pero con montos INVERTIDOS (Debe ↔ Haber)
+    """
+    filas_resultado = []
+    
+    # Extraer datos comunes de la fila original
+    datos_comunes = extraer_datos_comunes_tipo_61(fila, headers_entrada)
+    
+    # Calcular montos con validación
+    monto_total_raw = datos_comunes.get('monto_total', 0)
+    try:
+        monto_total = float(monto_total_raw) if monto_total_raw else 0
+    except (ValueError, TypeError):
+        logger.warning(f"⚠️ Monto inválido encontrado en tipo 61: {monto_total_raw}, usando 0")
+        monto_total = 0
+    
+    if monto_total <= 0:
+        logger.warning(f"⚠️ Monto total es 0 o negativo en tipo 61: {monto_total}")
+        return []  # No generar filas si no hay monto válido
+    
+    # Calcular montos igual que tipo 33
+    monto_neto = monto_total / 1.19  # Monto 1 Detalle Libro
+    monto_iva = monto_total - monto_neto  # Monto 3 Detalle Libro
+    
+    # Calcular códigos de centros de costos aplicables
+    codigos_cc = calcular_codigos_cc_para_fila(fila, headers_entrada, mapeo_cc)
+    
+    # Obtener código de cuenta original de la columna 8
+    codigo_cuenta_original = datos_comunes.get('codigo_cuenta', '')
+    
+    # Generar códigos de cuenta basados en el código original (igual que tipo 33)
+    if codigo_cuenta_original.startswith('2'):
+        codigo_proveedores = codigo_cuenta_original
+        codigo_gastos = codigo_cuenta_original.replace('2', '5', 1)
+        codigo_iva = codigo_cuenta_original.replace('2', '1', 1)
+    elif codigo_cuenta_original.startswith('5'):
+        codigo_gastos = codigo_cuenta_original
+        codigo_proveedores = codigo_cuenta_original.replace('5', '2', 1)
+        codigo_iva = codigo_cuenta_original.replace('5', '1', 1)
+    elif codigo_cuenta_original.startswith('1'):
+        codigo_iva = codigo_cuenta_original
+        codigo_proveedores = codigo_cuenta_original.replace('1', '2', 1)
+        codigo_gastos = codigo_cuenta_original.replace('1', '5', 1)
+    else:
+        # Usar el código original como base y generar variaciones
+        codigo_proveedores = f"2{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "2111001"
+        codigo_gastos = f"5{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "5111001"
+        codigo_iva = f"1{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "1191001"
+    
+    # 1. Cuenta Proveedores (código empieza con 2) - INVERTIDO: Debe en lugar de Haber
+    fila_proveedores = crear_fila_base_tipo_61(datos_comunes, headers_salida)
+    fila_proveedores["Código Plan de Cuenta"] = codigo_proveedores
+    fila_proveedores["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_total, 2))  # 🔄 INVERTIDO
+    # Campos especiales igual que tipo 33
+    fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
+    fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(round(monto_iva, 2))
+    # Calcular suma de detalles igual que tipo 33
+    monto_suma_detalle = round(monto_neto + monto_iva, 2)
+    fila_proveedores["Monto Suma Detalle Libro"] = formatear_monto_clp(monto_suma_detalle)
+    filas_resultado.append(fila_proveedores)
+    
+    # 2. Cuenta Gastos (código empieza con 5) - INVERTIDO: Haber en lugar de Debe
+    fila_gastos = crear_fila_base_tipo_61(datos_comunes, headers_salida)
+    fila_gastos["Código Plan de Cuenta"] = codigo_gastos
+    fila_gastos["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_neto, 2))  # 🔄 INVERTIDO
+    if codigos_cc:
+        fila_gastos["Código Centro de Costo"] = codigos_cc
+    filas_resultado.append(fila_gastos)
+    
+    # 3. Cuenta IVA (código empieza con 1) - INVERTIDO: Haber en lugar de Debe
+    fila_iva = crear_fila_base_tipo_61(datos_comunes, headers_salida)
+    fila_iva["Código Plan de Cuenta"] = codigo_iva
+    fila_iva["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_iva, 2))  # 🔄 INVERTIDO
+    filas_resultado.append(fila_iva)
+    
+    # NOTA: Tipo 61 es igual a tipo 33 pero con montos invertidos (Debe ↔ Haber)
     
     return filas_resultado
 
@@ -1426,6 +1518,79 @@ def extraer_datos_comunes_tipo_33(fila, headers_entrada):
     
     return datos
 
+def extraer_datos_comunes_tipo_61(fila, headers_entrada):
+    """
+    Extrae los datos comunes necesarios para tipo 61 desde la fila original
+    Headers reales: ["Nro", "Tipo Doc", "RUT Proveedor", "Razon Social", "Folio", "Fecha Docto", "Monto Total", "Codigo cuenta", "Nombre cuenta", "PyC", "PS", "CO"]
+    """
+    datos = {}
+    
+    # Mapear campos según la estructura real del Excel (misma estructura que tipo 33 y 34)
+    if len(headers_entrada) > 0:
+        datos['nro'] = fila.get(headers_entrada[0], "")  # Nro
+    if len(headers_entrada) > 1:
+        datos['tipo_doc'] = fila.get(headers_entrada[1], "")  # Tipo Doc
+    if len(headers_entrada) > 2:
+        datos['rut_proveedor'] = fila.get(headers_entrada[2], "")  # RUT Proveedor
+    if len(headers_entrada) > 3:
+        datos['razon_social'] = fila.get(headers_entrada[3], "")  # Razon Social
+    if len(headers_entrada) > 4:
+        datos['folio'] = fila.get(headers_entrada[4], "")  # Folio
+    if len(headers_entrada) > 5:
+        datos['fecha'] = fila.get(headers_entrada[5], "")  # Fecha Docto
+    if len(headers_entrada) > 6:
+        # Monto Total
+        monto_raw = fila.get(headers_entrada[6], 0)
+        try:
+            datos['monto_total'] = float(monto_raw) if monto_raw else 0
+        except (ValueError, TypeError):
+            datos['monto_total'] = 0
+    if len(headers_entrada) > 7:
+        datos['codigo_cuenta'] = fila.get(headers_entrada[7], "")  # Codigo cuenta
+    if len(headers_entrada) > 8:
+        datos['nombre_cuenta'] = fila.get(headers_entrada[8], "")  # Nombre cuenta
+    
+    # Extraer RUT sin dígito verificador
+    rut_completo = datos.get('rut_proveedor', '')
+    if rut_completo and '-' in rut_completo:
+        datos['rut_sin_dv'] = rut_completo.split('-')[0].replace('.', '')
+    else:
+        datos['rut_sin_dv'] = rut_completo.replace('.', '') if rut_completo else "11111111"
+    
+    return datos
+
+def crear_fila_base_tipo_61(datos_comunes, headers_salida):
+    """
+    Crea una fila base con los datos comunes para tipo 61
+    """
+    fila_base = {header: "" for header in headers_salida}
+    
+    # Llenar campos comunes usando los datos reales del Excel
+    fila_base["Numero"] = "61"  # Tipo de documento original
+    fila_base["Tipo Documento"] = "Nota de Crédito"  # Nombre para tipo 61
+    fila_base["Codigo Auxiliar"] = datos_comunes.get('rut_sin_dv', "")
+    fila_base["Numero Doc"] = datos_comunes.get('folio', "")
+    # ✨ Usar limpieza UTF-8 para descripción
+    fila_base["Descripción Movimiento"] = limpiar_texto_utf8(datos_comunes.get('razon_social', ""))
+    
+    # ✨ Configurar moneda en CLP
+    fila_base["Equivalencia Moneda"] = "CLP"
+    
+    # Procesar fecha
+    fecha_original = datos_comunes.get('fecha', "")
+    if fecha_original:
+        try:
+            if 'T' in str(fecha_original):
+                dt = datetime.fromisoformat(str(fecha_original).replace('Z', ''))
+                fila_base["Fecha Emisión Docto.(DD/MM/AAAA)"] = dt.strftime("%d/%m/%Y")
+            else:
+                # Asumir que ya viene en formato correcto o convertir
+                fila_base["Fecha Emisión Docto.(DD/MM/AAAA)"] = str(fecha_original)
+        except:
+            fila_base["Fecha Emisión Docto.(DD/MM/AAAA)"] = str(fecha_original)
+    
+    return fila_base
+
 def crear_fila_base_tipo_33(datos_comunes, headers_salida):
     """
     Crea una fila base con los datos comunes para tipo 33
@@ -1437,7 +1602,11 @@ def crear_fila_base_tipo_33(datos_comunes, headers_salida):
     fila_base["Tipo Documento"] = "Factura"  # Nombre para tipo 33
     fila_base["Codigo Auxiliar"] = datos_comunes.get('rut_sin_dv', "")
     fila_base["Numero Doc"] = datos_comunes.get('folio', "")
-    fila_base["Descripción Movimiento"] = datos_comunes.get('razon_social', "")
+    # ✨ NUEVO: Usar limpieza UTF-8 para descripción
+    fila_base["Descripción Movimiento"] = limpiar_texto_utf8(datos_comunes.get('razon_social', ""))
+    
+    # ✨ NUEVO: Configurar moneda en CLP
+    fila_base["Equivalencia Moneda"] = "CLP"
     
     # Procesar fecha
     fecha_original = datos_comunes.get('fecha', "")
@@ -1506,7 +1675,11 @@ def crear_fila_base_tipo_34(datos_comunes, headers_salida):
     fila_base["Tipo Documento"] = "Factura Excenta"  # Nombre para tipo 34
     fila_base["Codigo Auxiliar"] = datos_comunes.get('rut_sin_dv', "")
     fila_base["Numero Doc"] = datos_comunes.get('folio', "")
-    fila_base["Descripción Movimiento"] = datos_comunes.get('razon_social', "")
+    # ✨ NUEVO: Usar limpieza UTF-8 para descripción
+    fila_base["Descripción Movimiento"] = limpiar_texto_utf8(datos_comunes.get('razon_social', ""))
+    
+    # ✨ NUEVO: Configurar moneda en CLP
+    fila_base["Equivalencia Moneda"] = "CLP"
     
     # Procesar fecha
     fecha_original = datos_comunes.get('fecha', "")
@@ -1522,6 +1695,8 @@ def crear_fila_base_tipo_34(datos_comunes, headers_salida):
             fila_base["Fecha Emisión Docto.(DD/MM/AAAA)"] = str(fecha_original)
     
     return fila_base
+    
+    return fila_base
 
 def aplicar_reglas_genericas(fila, headers_entrada, tipo_doc, mapeo_cc, headers_salida):
     """
@@ -1532,7 +1707,9 @@ def aplicar_reglas_genericas(fila, headers_entrada, tipo_doc, mapeo_cc, headers_
     
     # Campos básicos que se pueden mapear directamente
     fila_salida["Numero"] = str(tipo_doc)  # Tipo de documento original
-    fila_salida["Descripción Movimiento"] = fila.get(headers_entrada[7] if len(headers_entrada) > 7 else "", "")
+    # ✨ NUEVO: Usar limpieza UTF-8 para descripción
+    descripcion_raw = fila.get(headers_entrada[7] if len(headers_entrada) > 7 else "", "")
+    fila_salida["Descripción Movimiento"] = limpiar_texto_utf8(descripcion_raw)
     fila_salida["Tipo Documento"] = tipo_doc
     
     # Calcular códigos de centros de costos aplicables
@@ -1555,11 +1732,113 @@ def aplicar_reglas_genericas(fila, headers_entrada, tipo_doc, mapeo_cc, headers_
     # Monto
     monto_original = fila.get(headers_entrada[5] if len(headers_entrada) > 5 else "", "")
     if monto_original:
-        fila_salida["Monto al Debe Moneda Base"] = str(monto_original)
+        try:
+            monto_formateado = formatear_monto_clp(float(monto_original))
+            fila_salida["Monto al Debe Moneda Base"] = monto_formateado
+        except (ValueError, TypeError):
+            fila_salida["Monto al Debe Moneda Base"] = str(monto_original)
     
     return [fila_salida]  # Retornar como lista para consistencia
 
+def limpiar_texto_utf8(texto):
+    """
+    Limpia y normaliza texto para asegurar correcta codificación UTF-8
+    Preserva caracteres especiales como Ñ, ñ, tildes y otros acentos
+    """
+    if not texto:
+        return ""
+    
+    # Convertir a string si no lo es
+    texto_str = str(texto)
+    
+    # Asegurar que esté en UTF-8 y eliminar caracteres de control
+    try:
+        # Normalizar el texto para manejar caracteres compuestos
+        import unicodedata
+        texto_normalizado = unicodedata.normalize('NFC', texto_str)
+        
+        # Eliminar caracteres de control pero preservar caracteres especiales válidos
+        texto_limpio = ''.join(char for char in texto_normalizado 
+                              if not unicodedata.category(char).startswith('C') or char in '\n\r\t')
+        
+        # Limpiar espacios extra
+        texto_final = ' '.join(texto_limpio.split())
+        
+        return texto_final
+        
+    except Exception:
+        # Fallback: solo limpiar espacios
+        return ' '.join(texto_str.split())
+
+def formatear_monto_clp(monto):
+    """
+    Formatea un monto en formato pesos chilenos con separadores de miles
+    Aplica redondeo específico: ≥0.5 sube al entero siguiente, <0.5 trunca al entero actual
+    Ejemplo: 1000000.56 -> "1.000.001" (≥0.5, sube a 1000001)
+             1000000.44 -> "1.000.000" (<0.5, queda en 1000000)
+             1000000.50 -> "1.000.001" (=0.5, sube a 1000001)
+    """
+    if monto == 0 or monto is None:
+        return "0"
+    
+    # Convertir a float si no lo es
+    monto_float = float(monto)
+    
+    # Obtener parte entera y decimal
+    parte_entera = int(monto_float)
+    parte_decimal = monto_float - parte_entera
+    
+    # Aplicar lógica de redondeo específica
+    if parte_decimal >= 0.5:
+        # Si decimal es ≥0.5, subir al entero siguiente
+        monto_final = parte_entera + 1
+    else:
+        # Si decimal es <0.5, usar solo la parte entera
+        monto_final = parte_entera
+    
+    # Formatear con separadores de miles (punto como separador)
+    monto_formateado = f"{monto_final:,}".replace(',', '.')
+    
+    return monto_formateado
+
 def calcular_codigos_cc_para_fila(fila, headers, mapeo_cc):
+    """
+    Calcula qué códigos de centros de costos se aplican a una fila específica
+    Retorna una string con los códigos separados por comas
+    Las columnas son PyC, PS, CO (índices 9, 10, 11)
+    """
+    # Las columnas de centros de costos son PyC, PS, CO (índices 9, 10, 11)
+    columnas_cc = [
+        {'indice': 9, 'mapeo_key': 'col10'},   # PyC
+        {'indice': 10, 'mapeo_key': 'col11'},  # PS
+        {'indice': 11, 'mapeo_key': 'col12'}   # CO
+    ]
+    
+    codigos_aplicables = []
+    
+    for cc_info in columnas_cc:
+        idx = cc_info['indice']
+        mapeo_key = cc_info['mapeo_key']
+        
+        # Verificar si existe el header y el mapeo para esta columna
+        if idx < len(headers) and mapeo_key in mapeo_cc:
+            header_cc = headers[idx]
+            codigo_cc = mapeo_cc[mapeo_key]
+            valor = fila.get(header_cc)
+            
+            # Un centro de costo es válido si NO es: None, "-", 0, "0" y tiene código mapeado
+            if (valor is not None and 
+                valor != "-" and 
+                valor != 0 and 
+                valor != "0" and 
+                str(valor).strip() != "" and
+                codigo_cc and 
+                codigo_cc.strip() != ""):
+                
+                codigos_aplicables.append(codigo_cc.strip())
+    
+    # Retornar códigos separados por comas o string vacía si no hay ninguno
+    return ", ".join(codigos_aplicables) if codigos_aplicables else ""
     """
     Calcula qué códigos de centros de costos se aplican a una fila específica
     Retorna una string con los códigos separados por comas

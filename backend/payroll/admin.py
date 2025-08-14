@@ -7,15 +7,9 @@ from django.utils import timezone
 import json
 
 from .models import (
-    CierrePayroll,
-    Empleados_Cierre,
-    Item_Cierre,
-    Item_Empleado,
-    Finiquitos_Cierre,
-    Ingresos_Cierre,
-    Ausentismos_Cierre,
-    Incidencias_Cierre,
-    Logs_Comparacion
+    CierrePayroll, Empleados_Cierre, Item_Cierre, Item_Empleado,
+    Finiquitos_Cierre, Ingresos_Cierre, Ausentismos_Cierre,
+    Incidencias_Cierre, Logs_Actividad
 )
 
 # ============================================================================
@@ -511,8 +505,8 @@ class AusentismosCierreAdmin(admin.ModelAdmin):
     estado_badge.short_description = 'Estado'
 
 
-@admin.register(Logs_Comparacion)
-class LogsComparacionAdmin(admin.ModelAdmin):
+@admin.register(Logs_Actividad)
+class LogsActividadAdmin(admin.ModelAdmin):
     list_display = [
         'timestamp', 'cierre_info', 'usuario', 'accion_badge',
         'resultado_badge', 'duracion_formateada'

@@ -6,7 +6,7 @@ from .finiquitos import Finiquitos_Cierre
 from .ingresos import Ingresos_Cierre
 from .ausentismos import Ausentismos_Cierre
 from .incidencias import Incidencias_Cierre
-from .logs import Logs_Comparacion
+from .logs import Logs_Actividad
 
 __all__ = [
     'CierrePayroll',
@@ -17,5 +17,5 @@ __all__ = [
     'Ingresos_Cierre',
     'Ausentismos_Cierre',
     'Incidencias_Cierre',
-    'Logs_Comparacion',
+    'Logs_Actividad',
 ]

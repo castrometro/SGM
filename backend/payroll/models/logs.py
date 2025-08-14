@@ -3,10 +3,15 @@ from django.conf import settings
 from .cierre import CierrePayroll
 
 
-class Logs_Comparacion(models.Model):
+from django.db import models
+from django.conf import settings
+from django.utils import timezone
+
+
+class Logs_Actividad(models.Model):
     """
-    Registro de logs de todas las operaciones de comparación y procesamiento.
-    Mantiene trazabilidad completa de las acciones realizadas en el cierre.
+    Registro de logs de todas las operaciones y actividades del cierre.
+    Mantiene trazabilidad completa de las acciones realizadas en el proceso payroll.
     """
     
     # Relación principal
@@ -114,8 +119,8 @@ class Logs_Comparacion(models.Model):
     
     class Meta:
         db_table = 'payroll_logs_comparacion'
-        verbose_name = 'Log de Comparación'
-        verbose_name_plural = 'Logs de Comparación'
+        verbose_name = 'Log de Actividad'
+        verbose_name_plural = 'Logs de Actividades'
         ordering = ['-timestamp']
         indexes = [
             models.Index(fields=['cierre_payroll', 'timestamp']),

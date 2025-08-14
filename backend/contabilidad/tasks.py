@@ -1161,7 +1161,6 @@ def get_headers_salida_contabilidad():
         "Código Plan de Cuenta",
         "Monto al Debe Moneda Base",
         "Monto al Haber Moneda Base",
-        "Nombre Tipo Documento",
         "Descripción Movimiento",
         "Equivalencia Moneda",
         "Monto al Debe Moneda Adicional",
@@ -1281,6 +1280,11 @@ def aplicar_reglas_tipo_documento(fila, headers_entrada, tipo_doc, cc_count, map
 def aplicar_reglas_tipo_33_1cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map):
     """
     Aplica reglas específicas para tipo de documento 33 CON 1 CENTRO DE COSTO
+    
+    CONTROLADOR EXENTO:
+    - Si hay monto en "Monto Exento": Calcula IVA desde "Monto Neto" 
+    - Si NO hay exento: Calcula IVA desde "Monto Total" (lógica original)
+    
     Genera 3 cuentas: Proveedores (2xxx), Gastos (5xxx), IVA (1xxx)
     
     REGLAS ESPECÍFICAS PARA 1CC:
@@ -1290,8 +1294,18 @@ def aplicar_reglas_tipo_33_1cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     """
     filas_resultado = []
     
+    logger.info(f"🔍 PROCESANDO TIPO 33 CON 1CC")
+    logger.info(f"   Fila original: {fila}")
+    logger.info(f"   Headers entrada: {headers_entrada}")
+    logger.info(f"   Mapeo CC: {mapeo_cc}")
+    
+    # 🔍 CONTROLADOR: Verificar si hay monto exento
+    tiene_exento = verificar_tiene_exento_tipo_33(fila, headers_entrada)
+    
     # Extraer datos comunes de la fila original
     datos_comunes = extraer_datos_comunes_tipo_33(fila, headers_entrada)
+    
+    logger.info(f"🔍 Tipo 33 con 1CC - Datos extraídos: {datos_comunes}")
     
     # Calcular montos con validación
     monto_total_raw = datos_comunes.get('monto_total', 0)
@@ -1305,8 +1319,45 @@ def aplicar_reglas_tipo_33_1cc(fila, headers_entrada, mapeo_cc, headers_salida, 
         logger.warning(f"⚠️ Monto total es 0 o negativo: {monto_total}")
         return []  # No generar filas si no hay monto válido
     
-    monto_neto = monto_total / 1.19  # Monto 1 Detalle Libro
-    monto_iva = monto_total - monto_neto  # Monto 3 Detalle Libro
+    # Calcular montos según si hay exento o no
+    if tiene_exento:
+        # CON EXENTO: Calcular IVA desde "Monto Neto"
+        # Obtener monto neto de la columna correspondiente
+        mapeo = mapear_columnas_automaticamente(headers_entrada)
+        if mapeo.get('monto_neto') is not None:
+            monto_neto_raw = fila.get(headers_entrada[mapeo['monto_neto']], 0)
+            try:
+                monto_neto = float(monto_neto_raw) if monto_neto_raw else 0
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ Monto Neto inválido: {monto_neto_raw}, usando cálculo tradicional")
+                monto_neto = monto_total / 1.19
+        else:
+            logger.warning("⚠️ No se encontró columna 'Monto Neto', usando cálculo tradicional")
+            monto_neto = monto_total / 1.19
+        
+        # Obtener monto exento de la columna correspondiente
+        if mapeo.get('monto_exento') is not None:
+            monto_exento_raw = fila.get(headers_entrada[mapeo['monto_exento']], 0)
+            try:
+                monto_exento = float(monto_exento_raw) if monto_exento_raw else 0
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ Monto Exento inválido: {monto_exento_raw}, usando 0")
+                monto_exento = 0
+        else:
+            monto_exento = 0
+        
+        # Con exento, el IVA se calcula sobre el monto neto: IVA = Monto Neto * 0.19
+        monto_iva = monto_neto * 0.19
+        # El monto total de gastos incluye neto + exento
+        monto_gastos_total = monto_neto + monto_exento
+        logger.info(f"📊 CON EXENTO: Monto Neto = {monto_neto:.2f}, Monto Exento = {monto_exento:.2f}, Monto Gastos Total = {monto_gastos_total:.2f}, Monto IVA (19% del neto) = {monto_iva:.2f}")
+    else:
+        # SIN EXENTO: Lógica original (IVA desde Monto Total)
+        monto_neto = monto_total / 1.19  # Monto 1 Detalle Libro
+        monto_iva = monto_total - monto_neto  # Monto 3 Detalle Libro
+        monto_exento = 0  # No hay exento
+        monto_gastos_total = monto_neto  # Solo el monto neto
+        logger.info(f"📊 SIN EXENTO: Monto Neto = {monto_neto:.2f}, Monto IVA = {monto_iva:.2f}")
     
     # Calcular códigos de centros de costos aplicables
     codigos_cc = calcular_codigos_cc_para_fila(fila, headers_entrada, mapeo_cc)
@@ -1353,7 +1404,7 @@ def aplicar_reglas_tipo_33_1cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     # 2. Cuenta Gastos (código empieza con 5)
     fila_gastos = crear_fila_base_tipo_33(datos_comunes, headers_salida, nombre_tipo_documento)
     fila_gastos["Código Plan de Cuenta"] = codigo_gastos
-    fila_gastos["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_neto, 2))
+    fila_gastos["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_gastos_total, 2))  # Incluye neto + exento
     # ✨ REMOVIDO: Ya no se asigna "Monto 1 Detalle Libro" aquí
     if codigos_cc:
         fila_gastos["Código Centro de Costo"] = codigos_cc
@@ -1372,6 +1423,10 @@ def aplicar_reglas_tipo_33_2cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     """
     Aplica reglas específicas para tipo de documento 33 CON 2 CENTROS DE COSTO
     
+    CONTROLADOR EXENTO:
+    - Si hay monto en "Monto Exento": Calcula IVA desde "Monto Neto"
+    - Si NO hay exento: Calcula IVA desde "Monto Total" (lógica original)
+    
     REGLAS ESPECÍFICAS PARA 2CC:
     - 1 cuenta de Proveedores con Monto 1 y 3 Detalle (igual que 1CC)
     - 2 cuentas de Gastos separadas, cada una con su monto ponderado
@@ -1381,6 +1436,9 @@ def aplicar_reglas_tipo_33_2cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     Los ponderadores están en las columnas PyC, EB/PS, CO
     """
     filas_resultado = []
+    
+    # 🔍 CONTROLADOR: Verificar si hay monto exento
+    tiene_exento = verificar_tiene_exento_tipo_33(fila, headers_entrada)
     
     # Extraer datos comunes de la fila original
     datos_comunes = extraer_datos_comunes_tipo_33(fila, headers_entrada)
@@ -1397,8 +1455,45 @@ def aplicar_reglas_tipo_33_2cc(fila, headers_entrada, mapeo_cc, headers_salida, 
         logger.warning(f"⚠️ Monto total es 0 o negativo: {monto_total}")
         return []  # No generar filas si no hay monto válido
     
-    monto_neto = monto_total / 1.19  # Monto 1 Detalle Libro
-    monto_iva = monto_total - monto_neto  # Monto 3 Detalle Libro
+    # Calcular montos según si hay exento o no
+    if tiene_exento:
+        # CON EXENTO: Calcular IVA desde "Monto Neto"
+        # Obtener monto neto de la columna correspondiente
+        mapeo = mapear_columnas_automaticamente(headers_entrada)
+        if mapeo.get('monto_neto') is not None:
+            monto_neto_raw = fila.get(headers_entrada[mapeo['monto_neto']], 0)
+            try:
+                monto_neto = float(monto_neto_raw) if monto_neto_raw else 0
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ Monto Neto inválido: {monto_neto_raw}, usando cálculo tradicional")
+                monto_neto = monto_total / 1.19
+        else:
+            logger.warning("⚠️ No se encontró columna 'Monto Neto', usando cálculo tradicional")
+            monto_neto = monto_total / 1.19
+        
+        # Obtener monto exento de la columna correspondiente
+        if mapeo.get('monto_exento') is not None:
+            monto_exento_raw = fila.get(headers_entrada[mapeo['monto_exento']], 0)
+            try:
+                monto_exento = float(monto_exento_raw) if monto_exento_raw else 0
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ Monto Exento inválido: {monto_exento_raw}, usando 0")
+                monto_exento = 0
+        else:
+            monto_exento = 0
+        
+        # Con exento, el IVA se calcula sobre el monto neto: IVA = Monto Neto * 0.19
+        monto_iva = monto_neto * 0.19
+        # El monto total de gastos incluye neto + exento (para distribución por ponderadores)
+        monto_gastos_total = monto_neto + monto_exento
+        logger.info(f"📊 CON EXENTO (2CC): Monto Neto = {monto_neto:.2f}, Monto Exento = {monto_exento:.2f}, Monto Gastos Total = {monto_gastos_total:.2f}, Monto IVA (19% del neto) = {monto_iva:.2f}")
+    else:
+        # SIN EXENTO: Lógica original (IVA desde Monto Total)
+        monto_neto = monto_total / 1.19  # Monto 1 Detalle Libro
+        monto_iva = monto_total - monto_neto  # Monto 3 Detalle Libro
+        monto_exento = 0  # No hay exento
+        monto_gastos_total = monto_neto  # Solo el monto neto
+        logger.info(f"📊 SIN EXENTO (2CC): Monto Neto = {monto_neto:.2f}, Monto IVA = {monto_iva:.2f}")
     
     # Obtener código de cuenta original
     codigo_cuenta_original = datos_comunes.get('codigo_cuenta', '')
@@ -1479,8 +1574,8 @@ def aplicar_reglas_tipo_33_2cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     
     for nombre_cc, ponderador in ponderadores_cc.items():
         if ponderador > 0:  # Solo crear línea si hay ponderador
-            # Calcular monto ponderado para este CC
-            monto_gasto_cc = round(monto_neto * ponderador, 2)
+            # Calcular monto ponderado para este CC (incluye neto + exento)
+            monto_gasto_cc = round(monto_gastos_total * ponderador, 2)
             
             # Obtener el código de centro de costo que el usuario asignó en el frontend
             # Usar el mismo mapeo que usa calcular_codigos_cc_para_fila
@@ -1524,6 +1619,10 @@ def aplicar_reglas_tipo_33_3cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     """
     Aplica reglas específicas para tipo de documento 33 CON 3 CENTROS DE COSTO
     
+    CONTROLADOR EXENTO:
+    - Si hay monto en "Monto Exento": Calcula IVA desde "Monto Neto"
+    - Si NO hay exento: Calcula IVA desde "Monto Total" (lógica original)
+    
     REGLAS ESPECÍFICAS PARA 3CC:
     - 1 cuenta de Proveedores con Monto 1 y 3 Detalle (igual que 1CC y 2CC)
     - 3 cuentas de Gastos separadas, cada una con su monto ponderado
@@ -1533,6 +1632,9 @@ def aplicar_reglas_tipo_33_3cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     Los ponderadores están en las columnas PyC, EB/PS, CO
     """
     filas_resultado = []
+    
+    # 🔍 CONTROLADOR: Verificar si hay monto exento
+    tiene_exento = verificar_tiene_exento_tipo_33(fila, headers_entrada)
     
     # Extraer datos comunes de la fila original
     datos_comunes = extraer_datos_comunes_tipo_33(fila, headers_entrada)
@@ -1549,8 +1651,45 @@ def aplicar_reglas_tipo_33_3cc(fila, headers_entrada, mapeo_cc, headers_salida, 
         logger.warning(f"⚠️ Monto total es 0 o negativo: {monto_total}")
         return []  # No generar filas si no hay monto válido
     
-    monto_neto = monto_total / 1.19  # Monto 1 Detalle Libro
-    monto_iva = monto_total - monto_neto  # Monto 3 Detalle Libro
+    # Calcular montos según si hay exento o no
+    if tiene_exento:
+        # CON EXENTO: Calcular IVA desde "Monto Neto"
+        # Obtener monto neto de la columna correspondiente
+        mapeo = mapear_columnas_automaticamente(headers_entrada)
+        if mapeo.get('monto_neto') is not None:
+            monto_neto_raw = fila.get(headers_entrada[mapeo['monto_neto']], 0)
+            try:
+                monto_neto = float(monto_neto_raw) if monto_neto_raw else 0
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ Monto Neto inválido: {monto_neto_raw}, usando cálculo tradicional")
+                monto_neto = monto_total / 1.19
+        else:
+            logger.warning("⚠️ No se encontró columna 'Monto Neto', usando cálculo tradicional")
+            monto_neto = monto_total / 1.19
+        
+        # Obtener monto exento de la columna correspondiente
+        if mapeo.get('monto_exento') is not None:
+            monto_exento_raw = fila.get(headers_entrada[mapeo['monto_exento']], 0)
+            try:
+                monto_exento = float(monto_exento_raw) if monto_exento_raw else 0
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ Monto Exento inválido: {monto_exento_raw}, usando 0")
+                monto_exento = 0
+        else:
+            monto_exento = 0
+        
+        # Con exento, el IVA se calcula sobre el monto neto: IVA = Monto Neto * 0.19
+        monto_iva = monto_neto * 0.19
+        # El monto total de gastos incluye neto + exento (para distribución por ponderadores)
+        monto_gastos_total = monto_neto + monto_exento
+        logger.info(f"📊 CON EXENTO (3CC): Monto Neto = {monto_neto:.2f}, Monto Exento = {monto_exento:.2f}, Monto Gastos Total = {monto_gastos_total:.2f}, Monto IVA (19% del neto) = {monto_iva:.2f}")
+    else:
+        # SIN EXENTO: Lógica original (IVA desde Monto Total)
+        monto_neto = monto_total / 1.19  # Monto 1 Detalle Libro
+        monto_iva = monto_total - monto_neto  # Monto 3 Detalle Libro
+        monto_exento = 0  # No hay exento
+        monto_gastos_total = monto_neto  # Solo el monto neto
+        logger.info(f"📊 SIN EXENTO (3CC): Monto Neto = {monto_neto:.2f}, Monto IVA = {monto_iva:.2f}")
     
     # Obtener código de cuenta original
     codigo_cuenta_original = datos_comunes.get('codigo_cuenta', '')
@@ -1631,8 +1770,8 @@ def aplicar_reglas_tipo_33_3cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     
     for nombre_cc, ponderador in ponderadores_cc.items():
         if ponderador > 0:  # Solo crear línea si hay ponderador
-            # Calcular monto ponderado para este CC
-            monto_gasto_cc = round(monto_neto * ponderador, 2)
+            # Calcular monto ponderado para este CC (incluye neto + exento)
+            monto_gasto_cc = round(monto_gastos_total * ponderador, 2)
             
             # Obtener el código de centro de costo que el usuario asignó en el frontend
             # Usar el mismo mapeo que usa calcular_codigos_cc_para_fila
@@ -2023,10 +2162,17 @@ def aplicar_reglas_tipo_34_3cc(fila, headers_entrada, mapeo_cc, headers_salida, 
 def aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map):
     """
     Aplica reglas específicas para tipo de documento 61 (Nota de Crédito) con 1CC
-    Genera 3 cuentas: Proveedores (2xxx), Gastos (5xxx) e IVA (1xxx)
+    
+    CONTROLADOR IVA:
+    - Si hay monto en "Monto IVA": Genera 3 cuentas (Proveedores, Gastos, IVA)
+    - Si NO hay IVA: Genera 2 cuentas (Proveedores, Gastos) - monto_neto = monto_total
+    
     IGUAL al tipo 33 pero con montos INVERTIDOS (Debe ↔ Haber)
     """
     filas_resultado = []
+    
+    # 🔍 CONTROLADOR: Verificar si hay IVA
+    tiene_iva = verificar_tiene_iva_tipo_61(fila, headers_entrada)
     
     # Extraer datos comunes de la fila original
     datos_comunes = extraer_datos_comunes_tipo_61(fila, headers_entrada)
@@ -2049,9 +2195,17 @@ def aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida, tipo
     monto_total_absoluto = abs(monto_total)
     logger.info(f"💰 Tipo 61: Monto original = {monto_total}, trabajando con valor absoluto = {monto_total_absoluto}")
     
-    # Calcular montos igual que tipo 33 pero con valor absoluto
-    monto_neto = monto_total_absoluto / 1.19  # Monto 1 Detalle Libro
-    monto_iva = monto_total_absoluto - monto_neto  # Monto 3 Detalle Libro
+    # Calcular montos según si hay IVA o no
+    if tiene_iva:
+        # CON IVA: Calcular igual que tipo 33
+        monto_neto = monto_total_absoluto / 1.19  # Monto 1 Detalle Libro
+        monto_iva = monto_total_absoluto - monto_neto  # Monto 3 Detalle Libro
+        logger.info(f"📊 CON IVA: Monto Neto = {monto_neto:.2f}, Monto IVA = {monto_iva:.2f}")
+    else:
+        # SIN IVA: Monto neto = monto total, no hay IVA
+        monto_neto = monto_total_absoluto
+        monto_iva = 0
+        logger.info(f"📊 SIN IVA: Monto Neto = Monto Total = {monto_neto:.2f}")
     
     # Calcular códigos de centros de costos aplicables
     codigos_cc = calcular_codigos_cc_para_fila(fila, headers_entrada, mapeo_cc)
@@ -2086,11 +2240,18 @@ def aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida, tipo
     fila_proveedores = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
     fila_proveedores["Código Plan de Cuenta"] = codigo_proveedores
     fila_proveedores["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_total_absoluto, 2))  # 🔄 INVERTIDO
-    # Campos especiales igual que tipo 33
-    fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
-    fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(round(monto_iva, 2))
-    # Calcular suma de detalles igual que tipo 33
-    monto_suma_detalle = round(monto_neto + monto_iva, 2)
+    
+    # Campos especiales: ajustar según si hay IVA o no
+    if tiene_iva:
+        fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
+        fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(round(monto_iva, 2))
+        monto_suma_detalle = round(monto_neto + monto_iva, 2)
+    else:
+        # SIN IVA: Solo monto neto, sin IVA
+        fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
+        fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(0)  # Sin IVA
+        monto_suma_detalle = round(monto_neto, 2)
+    
     fila_proveedores["Monto Suma Detalle Libro"] = formatear_monto_clp(monto_suma_detalle)
     filas_resultado.append(fila_proveedores)
     
@@ -2102,13 +2263,15 @@ def aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida, tipo
         fila_gastos["Código Centro de Costo"] = codigos_cc
     filas_resultado.append(fila_gastos)
     
-    # 3. Cuenta IVA (código empieza con 1) - INVERTIDO: Haber en lugar de Debe
-    fila_iva = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
-    fila_iva["Código Plan de Cuenta"] = codigo_iva
-    fila_iva["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_iva, 2))  # 🔄 INVERTIDO
-    filas_resultado.append(fila_iva)
-    
-    # NOTA: Tipo 61 es igual a tipo 33 pero con montos invertidos (Debe ↔ Haber)
+    # 3. Cuenta IVA (código empieza con 1) - SOLO SI HAY IVA - INVERTIDO: Haber en lugar de Debe
+    if tiene_iva:
+        fila_iva = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
+        fila_iva["Código Plan de Cuenta"] = codigo_iva
+        fila_iva["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_iva, 2))  # 🔄 INVERTIDO
+        filas_resultado.append(fila_iva)
+        logger.info(f"📋 Tipo 61 CON IVA generó {len(filas_resultado)} filas: 1 Proveedores + 1 Gastos + 1 IVA (INVERTIDOS)")
+    else:
+        logger.info(f"📋 Tipo 61 SIN IVA generó {len(filas_resultado)} filas: 1 Proveedores + 1 Gastos (INVERTIDOS)")
     
     return filas_resultado
 
@@ -2116,16 +2279,23 @@ def aplicar_reglas_tipo_61_2cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     """
     Aplica reglas específicas para tipo de documento 61 CON 2 CENTROS DE COSTO
     
+    CONTROLADOR IVA:
+    - Si hay monto en "Monto IVA": Genera 1 Proveedores + 2 Gastos + 1 IVA
+    - Si NO hay IVA: Genera 1 Proveedores + 2 Gastos (sin cuenta IVA) - monto_neto = monto_total
+    
     REGLAS ESPECÍFICAS PARA 2CC:
     - 1 cuenta de Proveedores con Monto 1 y 3 Detalle (igual que tipo 33 pero INVERTIDO)
     - 2 cuentas de Gastos separadas, cada una con su monto ponderado (INVERTIDO)
-    - 1 cuenta de IVA (INVERTIDO)
+    - 1 cuenta de IVA (INVERTIDO) - SOLO SI HAY IVA
     
     NOTA: Tipo 61 es igual a tipo 33 pero con montos INVERTIDOS (Debe ↔ Haber)
     El monto de cada cuenta de gastos = monto_neto * ponderador_del_CC
     Los ponderadores están en las columnas PyC, EB/PS, CO
     """
     filas_resultado = []
+    
+    # 🔍 CONTROLADOR: Verificar si hay IVA
+    tiene_iva = verificar_tiene_iva_tipo_61(fila, headers_entrada)
     
     # Extraer datos comunes de la fila original
     datos_comunes = extraer_datos_comunes_tipo_61(fila, headers_entrada)
@@ -2148,8 +2318,17 @@ def aplicar_reglas_tipo_61_2cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     monto_total_absoluto = abs(monto_total)
     logger.info(f"💰 Tipo 61 con 2CC: Monto original = {monto_total}, trabajando con valor absoluto = {monto_total_absoluto}")
     
-    monto_neto = monto_total_absoluto / 1.19  # Monto 1 Detalle Libro
-    monto_iva = monto_total_absoluto - monto_neto  # Monto 3 Detalle Libro
+    # Calcular montos según si hay IVA o no
+    if tiene_iva:
+        # CON IVA: Calcular igual que tipo 33
+        monto_neto = monto_total_absoluto / 1.19  # Monto 1 Detalle Libro
+        monto_iva = monto_total_absoluto - monto_neto  # Monto 3 Detalle Libro
+        logger.info(f"📊 CON IVA: Monto Neto = {monto_neto:.2f}, Monto IVA = {monto_iva:.2f}")
+    else:
+        # SIN IVA: Monto neto = monto total, no hay IVA
+        monto_neto = monto_total_absoluto
+        monto_iva = 0
+        logger.info(f"📊 SIN IVA: Monto Neto = Monto Total = {monto_neto:.2f}")
     
     # Obtener código de cuenta original
     codigo_cuenta_original = datos_comunes.get('codigo_cuenta', '')
@@ -2212,9 +2391,18 @@ def aplicar_reglas_tipo_61_2cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     fila_proveedores = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
     fila_proveedores["Código Plan de Cuenta"] = codigo_proveedores
     fila_proveedores["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_total_absoluto, 2))  # 🔄 INVERTIDO
-    fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
-    fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(round(monto_iva, 2))
-    monto_suma_detalle = round(monto_neto + monto_iva, 2)
+    
+    # Campos especiales: ajustar según si hay IVA o no
+    if tiene_iva:
+        fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
+        fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(round(monto_iva, 2))
+        monto_suma_detalle = round(monto_neto + monto_iva, 2)
+    else:
+        # SIN IVA: Solo monto neto, sin IVA
+        fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
+        fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(0)  # Sin IVA
+        monto_suma_detalle = round(monto_neto, 2)
+    
     fila_proveedores["Monto Suma Detalle Libro"] = formatear_monto_clp(monto_suma_detalle)
     filas_resultado.append(fila_proveedores)
     
@@ -2260,13 +2448,15 @@ def aplicar_reglas_tipo_61_2cc(fila, headers_entrada, mapeo_cc, headers_salida, 
             filas_resultado.append(fila_gastos_cc)
             contador_gasto += 1
     
-    # 3. Cuenta IVA (INVERTIDO: Haber en lugar de Debe)
-    fila_iva = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
-    fila_iva["Código Plan de Cuenta"] = codigo_iva
-    fila_iva["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_iva, 2))  # 🔄 INVERTIDO
-    filas_resultado.append(fila_iva)
-    
-    logger.info(f"📋 Tipo 61 con 2CC generó {len(filas_resultado)} filas: 1 Proveedores + {contador_gasto-1} Gastos + 1 IVA (INVERTIDOS)")
+    # 3. Cuenta IVA (INVERTIDO: Haber en lugar de Debe) - SOLO SI HAY IVA
+    if tiene_iva:
+        fila_iva = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
+        fila_iva["Código Plan de Cuenta"] = codigo_iva
+        fila_iva["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_iva, 2))  # 🔄 INVERTIDO
+        filas_resultado.append(fila_iva)
+        logger.info(f"📋 Tipo 61 con 2CC CON IVA generó {len(filas_resultado)} filas: 1 Proveedores + {contador_gasto-1} Gastos + 1 IVA (INVERTIDOS)")
+    else:
+        logger.info(f"📋 Tipo 61 con 2CC SIN IVA generó {len(filas_resultado)} filas: 1 Proveedores + {contador_gasto-1} Gastos (INVERTIDOS)")
     
     return filas_resultado
 
@@ -2274,16 +2464,23 @@ def aplicar_reglas_tipo_61_3cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     """
     Aplica reglas específicas para tipo de documento 61 CON 3 CENTROS DE COSTO
     
+    CONTROLADOR IVA:
+    - Si hay monto en "Monto IVA": Genera 1 Proveedores + 3 Gastos + 1 IVA
+    - Si NO hay IVA: Genera 1 Proveedores + 3 Gastos (sin cuenta IVA) - monto_neto = monto_total
+    
     REGLAS ESPECÍFICAS PARA 3CC:
     - 1 cuenta de Proveedores con Monto 1 y 3 Detalle (igual que tipo 33 pero INVERTIDO)
     - 3 cuentas de Gastos separadas, cada una con su monto ponderado (INVERTIDO)
-    - 1 cuenta de IVA (INVERTIDO)
+    - 1 cuenta de IVA (INVERTIDO) - SOLO SI HAY IVA
     
     NOTA: Tipo 61 es igual a tipo 33 pero con montos INVERTIDOS (Debe ↔ Haber)
     El monto de cada cuenta de gastos = monto_neto * ponderador_del_CC
     Los ponderadores están en las columnas PyC, EB/PS, CO
     """
     filas_resultado = []
+    
+    # 🔍 CONTROLADOR: Verificar si hay IVA
+    tiene_iva = verificar_tiene_iva_tipo_61(fila, headers_entrada)
     
     # Extraer datos comunes de la fila original
     datos_comunes = extraer_datos_comunes_tipo_61(fila, headers_entrada)
@@ -2306,8 +2503,17 @@ def aplicar_reglas_tipo_61_3cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     monto_total_absoluto = abs(monto_total)
     logger.info(f"💰 Tipo 61 con 3CC: Monto original = {monto_total}, trabajando con valor absoluto = {monto_total_absoluto}")
     
-    monto_neto = monto_total_absoluto / 1.19  # Monto 1 Detalle Libro
-    monto_iva = monto_total_absoluto - monto_neto  # Monto 3 Detalle Libro
+    # Calcular montos según si hay IVA o no
+    if tiene_iva:
+        # CON IVA: Calcular igual que tipo 33
+        monto_neto = monto_total_absoluto / 1.19  # Monto 1 Detalle Libro
+        monto_iva = monto_total_absoluto - monto_neto  # Monto 3 Detalle Libro
+        logger.info(f"📊 CON IVA: Monto Neto = {monto_neto:.2f}, Monto IVA = {monto_iva:.2f}")
+    else:
+        # SIN IVA: Monto neto = monto total, no hay IVA
+        monto_neto = monto_total_absoluto
+        monto_iva = 0
+        logger.info(f"📊 SIN IVA: Monto Neto = Monto Total = {monto_neto:.2f}")
     
     # Obtener código de cuenta original
     codigo_cuenta_original = datos_comunes.get('codigo_cuenta', '')
@@ -2370,9 +2576,18 @@ def aplicar_reglas_tipo_61_3cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     fila_proveedores = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
     fila_proveedores["Código Plan de Cuenta"] = codigo_proveedores
     fila_proveedores["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_total_absoluto, 2))  # 🔄 INVERTIDO
-    fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
-    fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(round(monto_iva, 2))
-    monto_suma_detalle = round(monto_neto + monto_iva, 2)
+    
+    # Campos especiales: ajustar según si hay IVA o no
+    if tiene_iva:
+        fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
+        fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(round(monto_iva, 2))
+        monto_suma_detalle = round(monto_neto + monto_iva, 2)
+    else:
+        # SIN IVA: Solo monto neto, sin IVA
+        fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
+        fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(0)  # Sin IVA
+        monto_suma_detalle = round(monto_neto, 2)
+    
     fila_proveedores["Monto Suma Detalle Libro"] = formatear_monto_clp(monto_suma_detalle)
     filas_resultado.append(fila_proveedores)
     
@@ -2418,13 +2633,15 @@ def aplicar_reglas_tipo_61_3cc(fila, headers_entrada, mapeo_cc, headers_salida, 
             filas_resultado.append(fila_gastos_cc)
             contador_gasto += 1
     
-    # 3. Cuenta IVA (INVERTIDO: Haber en lugar de Debe)
-    fila_iva = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
-    fila_iva["Código Plan de Cuenta"] = codigo_iva
-    fila_iva["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_iva, 2))  # 🔄 INVERTIDO
-    filas_resultado.append(fila_iva)
-    
-    logger.info(f"📋 Tipo 61 con 3CC generó {len(filas_resultado)} filas: 1 Proveedores + {contador_gasto-1} Gastos + 1 IVA (INVERTIDOS)")
+    # 3. Cuenta IVA (INVERTIDO: Haber en lugar de Debe) - SOLO SI HAY IVA
+    if tiene_iva:
+        fila_iva = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
+        fila_iva["Código Plan de Cuenta"] = codigo_iva
+        fila_iva["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_iva, 2))  # 🔄 INVERTIDO
+        filas_resultado.append(fila_iva)
+        logger.info(f"📋 Tipo 61 con 3CC CON IVA generó {len(filas_resultado)} filas: 1 Proveedores + {contador_gasto-1} Gastos + 1 IVA (INVERTIDOS)")
+    else:
+        logger.info(f"📋 Tipo 61 con 3CC SIN IVA generó {len(filas_resultado)} filas: 1 Proveedores + {contador_gasto-1} Gastos (INVERTIDOS)")
     
     return filas_resultado
 
@@ -2519,7 +2736,6 @@ def crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento
     # Llenar campos comunes usando los datos reales del Excel
     fila_base["Numero"] = "61"  # Tipo de documento original
     fila_base["Tipo Documento"] = "Nota de Crédito"  # Nombre para tipo 61
-    fila_base["Nombre Tipo Documento"] = nombre_tipo_documento  # Nombre desde base de datos
     fila_base["Codigo Auxiliar"] = datos_comunes.get('rut_sin_dv', "")
     fila_base["Numero Doc"] = datos_comunes.get('folio', "")
     # ✨ Usar limpieza UTF-8 para descripción
@@ -2555,7 +2771,6 @@ def crear_fila_base_tipo_33(datos_comunes, headers_salida, nombre_tipo_documento
     # Llenar campos comunes usando los datos reales del Excel
     fila_base["Numero"] = "33"  # Tipo de documento original
     fila_base["Tipo Documento"] = "Factura"  # Nombre para tipo 33
-    fila_base["Nombre Tipo Documento"] = nombre_tipo_documento  # Nombre desde base de datos
     fila_base["Codigo Auxiliar"] = datos_comunes.get('rut_sin_dv', "")
     fila_base["Numero Doc"] = datos_comunes.get('folio', "")
     # ✨ NUEVO: Usar limpieza UTF-8 para descripción
@@ -2629,7 +2844,6 @@ def crear_fila_base_tipo_34(datos_comunes, headers_salida, nombre_tipo_documento
     # Llenar campos comunes usando los datos reales del Excel
     fila_base["Numero"] = "34"  # Tipo de documento original
     fila_base["Tipo Documento"] = "Factura Excenta"  # Nombre para tipo 34
-    fila_base["Nombre Tipo Documento"] = nombre_tipo_documento  # Nombre desde base de datos
     fila_base["Codigo Auxiliar"] = datos_comunes.get('rut_sin_dv', "")
     fila_base["Numero Doc"] = datos_comunes.get('folio', "")
     # ✨ NUEVO: Usar limpieza UTF-8 para descripción
@@ -2670,7 +2884,6 @@ def aplicar_reglas_genericas(fila, headers_entrada, tipo_doc, mapeo_cc, headers_
     descripcion_raw = fila.get(headers_entrada[7] if len(headers_entrada) > 7 else "", "")
     fila_salida["Descripción Movimiento"] = limpiar_texto_utf8(descripcion_raw)
     fila_salida["Tipo Documento"] = tipo_doc
-    fila_salida["Nombre Tipo Documento"] = nombre_tipo_documento  # Nombre desde base de datos
     
     # Calcular códigos de centros de costos aplicables
     codigos_cc = calcular_codigos_cc_para_fila(fila, headers_entrada, mapeo_cc)
@@ -2837,12 +3050,75 @@ def mapear_columnas_automaticamente(headers):
             mapeo['fecha'] = i
         elif header_clean == 'Monto Total':
             mapeo['monto_total'] = i
+        elif header_clean == 'Monto IVA Recuperable':
+            mapeo['monto_iva'] = i
+        elif header_clean == 'Monto Exento':
+            mapeo['monto_exento'] = i
+        elif header_clean == 'Monto Neto':
+            mapeo['monto_neto'] = i
         elif 'Codigo cuenta' in header_clean and 'codigo_cuenta' not in mapeo:
             mapeo['codigo_cuenta'] = i  # Tomar el primero
         elif 'Nombre cuenta' in header_clean and 'nombre_cuenta' not in mapeo:
             mapeo['nombre_cuenta'] = i  # Tomar el primero
     
     return mapeo
+
+def verificar_tiene_iva_tipo_61(fila, headers_entrada):
+    """
+    Verifica si la fila tiene IVA revisando la columna "Monto IVA Recuperable"
+    Retorna True si hay IVA, False si no lo hay
+    """
+    # Mapear columnas automáticamente
+    mapeo = mapear_columnas_automaticamente(headers_entrada)
+    
+    # Verificar si existe la columna "Monto IVA Recuperable"
+    if mapeo.get('monto_iva') is None:
+        logger.info("🔍 No se encontró columna 'Monto IVA Recuperable', asumiendo que SÍ hay IVA (lógica por defecto)")
+        return True
+    
+    # Obtener el valor de la columna "Monto IVA Recuperable"
+    monto_iva_raw = fila.get(headers_entrada[mapeo['monto_iva']], 0)
+    
+    try:
+        monto_iva = float(monto_iva_raw) if monto_iva_raw else 0
+    except (ValueError, TypeError):
+        logger.warning(f"⚠️ Valor inválido en columna 'Monto IVA Recuperable': {monto_iva_raw}, asumiendo 0")
+        monto_iva = 0
+    
+    tiene_iva = abs(monto_iva) > 0.01  # Considerar que hay IVA si es mayor a 1 centavo
+    
+    logger.info(f"🔍 Verificación IVA: Monto IVA Recuperable = {monto_iva} -> {'SÍ' if tiene_iva else 'NO'} hay IVA")
+    
+    return tiene_iva
+
+def verificar_tiene_exento_tipo_33(fila, headers_entrada):
+    """
+    Verifica si la fila tiene monto exento revisando la columna "Monto Exento"
+    Retorna True si hay monto exento, False si no lo hay
+    Si hay exento, se debe calcular el IVA desde "Monto Neto" en lugar del "Monto Total"
+    """
+    # Mapear columnas automáticamente
+    mapeo = mapear_columnas_automaticamente(headers_entrada)
+    
+    # Verificar si existe la columna "Monto Exento"
+    if mapeo.get('monto_exento') is None:
+        logger.info("🔍 No se encontró columna 'Monto Exento', usando lógica estándar (desde Monto Total)")
+        return False
+    
+    # Obtener el valor de la columna "Monto Exento"
+    monto_exento_raw = fila.get(headers_entrada[mapeo['monto_exento']], 0)
+    
+    try:
+        monto_exento = float(monto_exento_raw) if monto_exento_raw else 0
+    except (ValueError, TypeError):
+        logger.warning(f"⚠️ Valor inválido en columna 'Monto Exento': {monto_exento_raw}, asumiendo 0")
+        monto_exento = 0
+    
+    tiene_exento = abs(monto_exento) > 0.01  # Considerar que hay exento si es mayor a 1 centavo
+    
+    logger.info(f"🔍 Verificación Exento: Monto Exento = {monto_exento} -> {'SÍ' if tiene_exento else 'NO'} hay exento (IVA desde {'Monto Neto' if tiene_exento else 'Monto Total'})")
+    
+    return tiene_exento
 
 def calcular_codigos_cc_para_fila(fila, headers, mapeo_cc):
     """
@@ -2901,6 +3177,8 @@ def contar_centros_costos(fila, headers, mapeo_cc=None):
     posiciones_cc = detectar_posiciones_centros_costo(headers)
     count = 0
     
+    logger.info(f"🔍 Contando CC para fila con posiciones detectadas: {posiciones_cc}")
+    
     # Contar centros de costo válidos
     for tipo_cc, posicion in posiciones_cc.items():
         if posicion < len(headers):
@@ -2908,13 +3186,19 @@ def contar_centros_costos(fila, headers, mapeo_cc=None):
             valor = fila.get(header_name)
             
             # Un centro de costo es válido si NO es: None, "-", 0, "0" o string vacío
-            if (valor is not None and 
-                valor != "-" and 
-                valor != 0 and 
-                valor != "0" and 
-                str(valor).strip() != ""):
+            es_valido = (valor is not None and 
+                        valor != "-" and 
+                        valor != 0 and 
+                        valor != "0" and 
+                        str(valor).strip() != "")
+            
+            if es_valido:
                 count += 1
+                logger.info(f"  ✅ {tipo_cc} (pos {posicion}): '{valor}' = VÁLIDO")
+            else:
+                logger.info(f"  ❌ {tipo_cc} (pos {posicion}): '{valor}' = INVÁLIDO")
     
+    logger.info(f"📊 Total centros de costo válidos: {count}")
     return count
 
 def serialize_excel_data(data):

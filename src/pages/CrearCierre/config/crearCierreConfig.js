@@ -1,4 +1,5 @@
 import { obtenerResumenContable } from '../../../api/contabilidad';
+import { obtenerResumenPayrollCliente } from '../../../api/payroll';
 // import { obtenerResumenNomina } from '../../../api/nomina'; // REMOVIDO - Limpieza de nómina
 
 /**
@@ -11,10 +12,16 @@ export const AREAS_CONFIG = {
     apiFunction: obtenerResumenContable,
     defaultArea: true
   },
+  Payroll: {
+    title: "Crear Cierre de Payroll",
+    description: "Crear un nuevo cierre de payroll para el cliente",
+    apiFunction: obtenerResumenPayrollCliente,
+    defaultArea: false
+  },
   Nomina: {
     title: "Crear Cierre de Nómina",
     description: "Crear un nuevo cierre de nómina para el cliente", 
-    apiFunction: obtenerResumenContable, // Por ahora usar contabilidad como base
+    apiFunction: obtenerResumenPayrollCliente, // Usar la misma API de Payroll
     defaultArea: false
   }
 };

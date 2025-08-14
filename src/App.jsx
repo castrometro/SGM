@@ -54,6 +54,11 @@ function App() {
           <Route path="clientes/:clienteId/clasificacion" element={<PaginaClasificacion />} />
           <Route path="clientes/:clienteId/cierres" element={<HistorialCierresPage />} />
           <Route path="clientes/:clienteId/crear-cierre" element={<CrearCierre />} />
+          
+          {/* ----------- ÁREA: PAYROLL CLIENTES ------------- */}
+          <Route path="clientes/:clienteId/cierres-payroll" element={<HistorialCierresPage />} />
+          <Route path="clientes/:clienteId/crear-cierre-payroll" element={<CrearCierre />} />
+          <Route path="clientes/:clienteId/cierres-payroll/:cierreId" element={<div className="text-white p-8">Detalle Cierre Payroll - En desarrollo</div>} />
 
           {/* ----------- ÁREA: CONTABILIDAD ------------- */}
           <Route path="cierres/:cierreId" element={<CierreDetalle />} />

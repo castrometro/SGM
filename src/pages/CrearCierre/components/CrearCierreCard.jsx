@@ -4,14 +4,15 @@ import {
   obtenerCierreMensual as obtenerCierreContabilidad,
   crearCierreMensual as crearCierreContabilidad,
 } from "../../../api/contabilidad";
-// import {
-//   obtenerCierreMensual as obtenerCierreNomina,
-//   crearCierreMensual as crearCierreNomina,
-// } from "../../../api/nomina"; // REMOVIDO - API de nómina eliminada
+import {
+  obtenerCierreMensualPayroll,
+  crearCierreMensualPayroll,
+} from "../../../api/payroll";
 
 const areaLabels = {
   Contabilidad: "Crear Cierre Mensual de Contabilidad",
-  // Nomina: "Crear Cierre Mensual de Nómina", // REMOVIDO - Área de nómina
+  Payroll: "Crear Cierre Mensual de Payroll",
+  Nomina: "Crear Cierre Mensual de Nómina",
 };
 
 const CrearCierreCard = ({ clienteId, areaActiva }) => {
@@ -58,13 +59,13 @@ const CrearCierreCard = ({ clienteId, areaActiva }) => {
     setLoading(true);
     try {
       let cierreExistente, cierre;
+      
+      // Verificar si ya existe un cierre para este período
       if (areaActiva === "Contabilidad") {
         cierreExistente = await obtenerCierreContabilidad(clienteId, periodo);
-      } 
-      // REMOVIDO: Lógica para nómina
-      // else if (areaActiva === "Nomina") {
-      //   cierreExistente = await obtenerCierreNomina(clienteId, periodo);
-      // }
+      } else if (areaActiva === "Payroll" || areaActiva === "Nomina") {
+        cierreExistente = await obtenerCierreMensualPayroll(clienteId, periodo);
+      }
 
       if (cierreExistente) {
         setError("Ya existe un cierre para este periodo.");
@@ -72,22 +73,18 @@ const CrearCierreCard = ({ clienteId, areaActiva }) => {
         return;
       }
       
+      // Crear el cierre según el área
       if (areaActiva === "Contabilidad") {
         cierre = await crearCierreContabilidad(clienteId, periodo);
         navigate(`/menu/cierres/${cierre.id}`);
-      } 
-      // REMOVIDO: Creación de cierre para nómina
-      // else if (areaActiva === "Nomina") {
-      //   cierre = await crearCierreNomina(
-      //     clienteId,
-      //     periodo,
-      //     tareas
-      //   );
-      //   navigate(`/menu/nomina/cierres/${cierre.id}`);
-      // }
-    } catch (err) {
-        setError("Error creando el cierre.");
+      } else if (areaActiva === "Payroll" || areaActiva === "Nomina") {
+        cierre = await crearCierreMensualPayroll(clienteId, periodo);
+        navigate(`/menu/clientes/${clienteId}/cierres-payroll/${cierre.id}`);
       }
+    } catch (err) {
+      console.error("Error creando el cierre:", err);
+      setError("Error creando el cierre.");
+    }
 
     setLoading(false);
   };

@@ -8,6 +8,11 @@ export const AREAS_CONFIG = {
     description: "Historial de cierres contables del cliente",
     defaultArea: true
   },
+  Payroll: {
+    title: "Cierres de Payroll",
+    description: "Historial de cierres de payroll del cliente", 
+    defaultArea: false
+  },
   Nomina: {
     title: "Cierres de Nómina", 
     description: "Historial de cierres de nómina del cliente",

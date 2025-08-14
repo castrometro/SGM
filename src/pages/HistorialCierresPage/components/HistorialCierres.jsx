@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { obtenerCierresCliente as obtenerCierresContabilidad } from "../../../api/contabilidad";
+import { obtenerCierresPayrollCliente } from "../../../api/payroll";
 // import { obtenerCierresCliente as obtenerCierresNomina } from "../../../api/nomina"; // REMOVIDO - Limpieza de nómina
 import EstadoBadge from "../../../components/EstadoBadge";
 
@@ -49,8 +50,14 @@ const HistorialCierres = ({ clienteId, areaActiva }) => {
       let res = [];
       if (areaActiva === "Contabilidad") {
         res = await obtenerCierresContabilidad(clienteId);
+      } else if (areaActiva === "Payroll" || areaActiva === "Nomina") {
+        res = await obtenerCierresPayrollCliente(clienteId);
+        // Ajustar la estructura si es necesario para que coincida con la tabla
+        if (res.results) {
+          res = res.results; // La API de payroll devuelve {count, results}
+        }
       } else {
-        // Por ahora usar contabilidad como base para otras áreas
+        // Fallback para otras áreas
         res = await obtenerCierresContabilidad(clienteId);
       }
       setCierres(res);
@@ -70,8 +77,13 @@ const HistorialCierres = ({ clienteId, areaActiva }) => {
         let res = [];
         if (areaActiva === "Contabilidad") {
           res = await obtenerCierresContabilidad(clienteId);
+        } else if (areaActiva === "Payroll" || areaActiva === "Nomina") {
+          res = await obtenerCierresPayrollCliente(clienteId);
+          if (res.results) {
+            res = res.results; // La API de payroll devuelve {count, results}
+          }
         } else {
-          // Por ahora usar contabilidad como base para otras áreas
+          // Fallback para otras áreas
           res = await obtenerCierresContabilidad(clienteId);
         }
         setCierres(res);
@@ -110,8 +122,10 @@ const HistorialCierres = ({ clienteId, areaActiva }) => {
                     onClick={() => {
                       if (areaActiva === "Contabilidad") {
                         navigate(`/menu/cierres/${cierre.id}`);
+                      } else if (areaActiva === "Payroll" || areaActiva === "Nomina") {
+                        navigate(`/menu/clientes/${clienteId}/cierres-payroll/${cierre.id}`);
                       } else {
-                        // Por ahora redirigir a contabilidad para otras áreas
+                        // Fallback para otras áreas
                         navigate(`/menu/cierres/${cierre.id}`);
                       }
                     }}

@@ -1223,16 +1223,18 @@ def get_headers_salida_contabilidad():
         "Numero Cuota de Pago"
     ]
 
-def aplicar_reglas_tipo_documento(fila, headers_entrada, tipo_doc, mapeo_cc):
+def aplicar_reglas_tipo_documento(fila, headers_entrada, tipo_doc, cc_count, mapeo_cc, tipos_doc_map):
     """
-    Aplica las reglas específicas según el tipo de documento
+    Aplica las reglas específicas según el tipo de documento y cantidad de centros de costo
     Transforma una fila del formato de entrada al formato de salida contable
     
     Args:
         fila: diccionario con los datos de la fila de entrada
         headers_entrada: headers del archivo Excel de entrada
         tipo_doc: tipo de documento (33, 34, 61, etc.)
+        cc_count: cantidad de centros de costo (1, 2, etc.)
         mapeo_cc: mapeo de códigos de centros de costos
+        tipos_doc_map: mapeo de códigos de tipo de documento a nombres
     
     Returns:
         lista de diccionarios con las filas transformadas (puede ser más de una fila por registro)
@@ -1240,19 +1242,51 @@ def aplicar_reglas_tipo_documento(fila, headers_entrada, tipo_doc, mapeo_cc):
     headers_salida = get_headers_salida_contabilidad()
     
     if tipo_doc == "33":
-        return aplicar_reglas_tipo_33(fila, headers_entrada, mapeo_cc, headers_salida)
+        if cc_count == 1:
+            return aplicar_reglas_tipo_33_1cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
+        elif cc_count == 2:
+            return aplicar_reglas_tipo_33_2cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
+        elif cc_count == 3:
+            return aplicar_reglas_tipo_33_3cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
+        else:
+            # Para más de 3 CC, usar lógica genérica por ahora
+            logger.warning(f"⚠️ Tipo 33 con {cc_count} CC no implementado, usando lógica de 1CC")
+            return aplicar_reglas_tipo_33_1cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
     elif tipo_doc == "34":
-        return aplicar_reglas_tipo_34(fila, headers_entrada, mapeo_cc, headers_salida)
+        if cc_count == 1:
+            return aplicar_reglas_tipo_34(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
+        elif cc_count == 2:
+            return aplicar_reglas_tipo_34_2cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
+        elif cc_count == 3:
+            return aplicar_reglas_tipo_34_3cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
+        else:
+            # Para más de 3 CC en tipo 34, usar lógica de 1CC por ahora
+            logger.warning(f"⚠️ Tipo 34 con {cc_count} CC no implementado, usando lógica de 1CC")
+            return aplicar_reglas_tipo_34(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
     elif tipo_doc == "61":
-        return aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida)
+        if cc_count == 1:
+            return aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
+        elif cc_count == 2:
+            return aplicar_reglas_tipo_61_2cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
+        elif cc_count == 3:
+            return aplicar_reglas_tipo_61_3cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
+        else:
+            # Para más de 3 CC en tipo 61, usar lógica de 1CC por ahora
+            logger.warning(f"⚠️ Tipo 61 con {cc_count} CC no implementado, usando lógica de 1CC")
+            return aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
     else:
         # Para otros tipos de documento, implementar más adelante
-        return aplicar_reglas_genericas(fila, headers_entrada, tipo_doc, mapeo_cc, headers_salida)
+        return aplicar_reglas_genericas(fila, headers_entrada, tipo_doc, mapeo_cc, headers_salida, tipos_doc_map)
 
-def aplicar_reglas_tipo_33(fila, headers_entrada, mapeo_cc, headers_salida):
+def aplicar_reglas_tipo_33_1cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map):
     """
-    Aplica reglas específicas para tipo de documento 33 (Factura)
+    Aplica reglas específicas para tipo de documento 33 CON 1 CENTRO DE COSTO
     Genera 3 cuentas: Proveedores (2xxx), Gastos (5xxx), IVA (1xxx)
+    
+    REGLAS ESPECÍFICAS PARA 1CC:
+    - 1 cuenta de Proveedores con Monto 1 y 3 Detalle
+    - 1 cuenta de Gastos con el monto neto
+    - 1 cuenta de IVA con el monto de IVA
     """
     filas_resultado = []
     
@@ -1280,6 +1314,10 @@ def aplicar_reglas_tipo_33(fila, headers_entrada, mapeo_cc, headers_salida):
     # Obtener código de cuenta original de la columna 8
     codigo_cuenta_original = datos_comunes.get('codigo_cuenta', '')
     
+    # Obtener nombre del tipo de documento
+    nombre_tipo_documento = tipos_doc_map.get("33", "Factura Electrónica")
+    logger.info(f"🏷️ Tipo 33 con 1CC -> Nombre: '{nombre_tipo_documento}'")
+    
     # Generar códigos de cuenta basados en el código original
     # Si el código empieza con 2, 5 o 1, usar como base, sino generar códigos genéricos
     if codigo_cuenta_original.startswith('2'):
@@ -1301,7 +1339,7 @@ def aplicar_reglas_tipo_33(fila, headers_entrada, mapeo_cc, headers_salida):
         codigo_iva = f"1{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "1191001"
     
     # 1. Cuenta Proveedores (código empieza con 2)
-    fila_proveedores = crear_fila_base_tipo_33(datos_comunes, headers_salida)
+    fila_proveedores = crear_fila_base_tipo_33(datos_comunes, headers_salida, nombre_tipo_documento)
     fila_proveedores["Código Plan de Cuenta"] = codigo_proveedores
     fila_proveedores["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_total, 2))
     # ✨ NUEVO: Agregar campos especiales de detalle en cuenta Proveedores
@@ -1313,7 +1351,7 @@ def aplicar_reglas_tipo_33(fila, headers_entrada, mapeo_cc, headers_salida):
     filas_resultado.append(fila_proveedores)
     
     # 2. Cuenta Gastos (código empieza con 5)
-    fila_gastos = crear_fila_base_tipo_33(datos_comunes, headers_salida)
+    fila_gastos = crear_fila_base_tipo_33(datos_comunes, headers_salida, nombre_tipo_documento)
     fila_gastos["Código Plan de Cuenta"] = codigo_gastos
     fila_gastos["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_neto, 2))
     # ✨ REMOVIDO: Ya no se asigna "Monto 1 Detalle Libro" aquí
@@ -1322,7 +1360,7 @@ def aplicar_reglas_tipo_33(fila, headers_entrada, mapeo_cc, headers_salida):
     filas_resultado.append(fila_gastos)
     
     # 3. Cuenta IVA (código empieza con 1)
-    fila_iva = crear_fila_base_tipo_33(datos_comunes, headers_salida)
+    fila_iva = crear_fila_base_tipo_33(datos_comunes, headers_salida, nombre_tipo_documento)
     fila_iva["Código Plan de Cuenta"] = codigo_iva
     fila_iva["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_iva, 2))
     # ✨ REMOVIDO: Ya no se asigna "Monto 3 Detalle Libro" aquí
@@ -1330,7 +1368,312 @@ def aplicar_reglas_tipo_33(fila, headers_entrada, mapeo_cc, headers_salida):
     
     return filas_resultado
 
-def aplicar_reglas_tipo_34(fila, headers_entrada, mapeo_cc, headers_salida):
+def aplicar_reglas_tipo_33_2cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map):
+    """
+    Aplica reglas específicas para tipo de documento 33 CON 2 CENTROS DE COSTO
+    
+    REGLAS ESPECÍFICAS PARA 2CC:
+    - 1 cuenta de Proveedores con Monto 1 y 3 Detalle (igual que 1CC)
+    - 2 cuentas de Gastos separadas, cada una con su monto ponderado
+    - 1 cuenta de IVA (igual que 1CC)
+    
+    El monto de cada cuenta de gastos = monto_neto * ponderador_del_CC
+    Los ponderadores están en las columnas PyC, EB/PS, CO
+    """
+    filas_resultado = []
+    
+    # Extraer datos comunes de la fila original
+    datos_comunes = extraer_datos_comunes_tipo_33(fila, headers_entrada)
+    
+    # Calcular montos con validación
+    monto_total_raw = datos_comunes.get('monto_total', 0)
+    try:
+        monto_total = float(monto_total_raw) if monto_total_raw else 0
+    except (ValueError, TypeError):
+        logger.warning(f"⚠️ Monto inválido encontrado: {monto_total_raw}, usando 0")
+        monto_total = 0
+    
+    if monto_total <= 0:
+        logger.warning(f"⚠️ Monto total es 0 o negativo: {monto_total}")
+        return []  # No generar filas si no hay monto válido
+    
+    monto_neto = monto_total / 1.19  # Monto 1 Detalle Libro
+    monto_iva = monto_total - monto_neto  # Monto 3 Detalle Libro
+    
+    # Obtener código de cuenta original
+    codigo_cuenta_original = datos_comunes.get('codigo_cuenta', '')
+    
+    # Obtener nombre del tipo de documento
+    nombre_tipo_documento = tipos_doc_map.get("33", "Factura Electrónica")
+    logger.info(f"🏷️ Tipo 33 con 2CC -> Nombre: '{nombre_tipo_documento}'")
+    
+    # Detectar posiciones de centros de costo dinámicamente
+    posiciones_cc = detectar_posiciones_centros_costo(headers_entrada)
+    logger.info(f"🔍 Posiciones CC detectadas para 2CC: {posiciones_cc}")
+    
+    # Extraer ponderadores de cada centro de costo
+    ponderadores_cc = {}
+    total_ponderadores = 0
+    
+    for nombre_cc, pos in posiciones_cc.items():
+        if pos is not None and pos < len(headers_entrada):
+            valor_raw = fila.get(headers_entrada[pos], 0)
+            try:
+                ponderador = float(valor_raw) if valor_raw else 0
+                ponderadores_cc[nombre_cc] = ponderador
+                total_ponderadores += ponderador
+                logger.info(f"  📊 {nombre_cc}: {ponderador}")
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ Ponderador inválido en {nombre_cc}: {valor_raw}")
+                ponderadores_cc[nombre_cc] = 0
+    
+    # Validar que los ponderadores sumen 1.0 (o 100% si están en porcentaje)
+    if total_ponderadores == 0:
+        logger.warning(f"⚠️ Total de ponderadores es 0, usando distribución equitativa")
+        # Distribuir equitativamente entre los CC encontrados
+        num_cc = len(posiciones_cc)
+        for nombre_cc in ponderadores_cc:
+            ponderadores_cc[nombre_cc] = 1.0 / num_cc if num_cc > 0 else 0
+    elif abs(total_ponderadores - 1.0) > 0.01:  # Si no suman 1.0, normalizar
+        logger.info(f"🔧 Normalizando ponderadores (total: {total_ponderadores})")
+        for nombre_cc in ponderadores_cc:
+            ponderadores_cc[nombre_cc] = ponderadores_cc[nombre_cc] / total_ponderadores
+    
+    # Generar códigos de cuenta
+    if codigo_cuenta_original.startswith('2'):
+        codigo_proveedores = codigo_cuenta_original
+        codigo_gastos_base = codigo_cuenta_original.replace('2', '5', 1)
+        codigo_iva = codigo_cuenta_original.replace('2', '1', 1)
+    elif codigo_cuenta_original.startswith('5'):
+        codigo_gastos_base = codigo_cuenta_original
+        codigo_proveedores = codigo_cuenta_original.replace('5', '2', 1)
+        codigo_iva = codigo_cuenta_original.replace('5', '1', 1)
+    elif codigo_cuenta_original.startswith('1'):
+        codigo_iva = codigo_cuenta_original
+        codigo_proveedores = codigo_cuenta_original.replace('1', '2', 1)
+        codigo_gastos_base = codigo_cuenta_original.replace('1', '5', 1)
+    else:
+        codigo_proveedores = f"2{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "2111001"
+        codigo_gastos_base = f"5{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "5111001"
+        codigo_iva = f"1{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "1191001"
+    
+    # 1. Cuenta Proveedores (igual que 1CC)
+    fila_proveedores = crear_fila_base_tipo_33(datos_comunes, headers_salida, nombre_tipo_documento)
+    fila_proveedores["Código Plan de Cuenta"] = codigo_proveedores
+    fila_proveedores["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_total, 2))
+    fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
+    fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(round(monto_iva, 2))
+    monto_suma_detalle = round(monto_neto + monto_iva, 2)
+    fila_proveedores["Monto Suma Detalle Libro"] = formatear_monto_clp(monto_suma_detalle)
+    filas_resultado.append(fila_proveedores)
+    
+    # 2. Cuentas de Gastos (una por cada centro de costo)
+    contador_gasto = 1
+    
+    # Mapeo de columnas a keys de mapeo (igual que en calcular_codigos_cc_para_fila)
+    columnas_cc_mapeo = {
+        'PyC': 'col10',   # PyC
+        'PS': 'col11',    # PS/EB (EB es equivalente a PS)
+        'CO': 'col12'     # CO
+    }
+    
+    for nombre_cc, ponderador in ponderadores_cc.items():
+        if ponderador > 0:  # Solo crear línea si hay ponderador
+            # Calcular monto ponderado para este CC
+            monto_gasto_cc = round(monto_neto * ponderador, 2)
+            
+            # Obtener el código de centro de costo que el usuario asignó en el frontend
+            # Usar el mismo mapeo que usa calcular_codigos_cc_para_fila
+            mapeo_key = columnas_cc_mapeo.get(nombre_cc, '')
+            codigo_cc_usuario = ""
+            
+            if mapeo_key and mapeo_key in mapeo_cc:
+                codigo_cc_usuario = mapeo_cc[mapeo_key]
+                if codigo_cc_usuario:
+                    codigo_cc_usuario = codigo_cc_usuario.strip()
+            
+            if not codigo_cc_usuario:
+                logger.warning(f"⚠️ No se encontró código de CC para '{nombre_cc}' (mapeo_key: {mapeo_key}) en mapeo_cc: {mapeo_cc}")
+                codigo_cc_usuario = ""  # Dejar vacío si no hay mapeo
+            
+            # Crear fila de gastos para este CC
+            fila_gastos_cc = crear_fila_base_tipo_33(datos_comunes, headers_salida, nombre_tipo_documento)
+            fila_gastos_cc["Código Plan de Cuenta"] = codigo_gastos_base  # Sin sufijo _01, _02
+            fila_gastos_cc["Monto al Debe Moneda Base"] = formatear_monto_clp(monto_gasto_cc)
+            
+            # Solo asignar código de centro de costo si existe
+            if codigo_cc_usuario:
+                fila_gastos_cc["Código Centro de Costo"] = codigo_cc_usuario
+            
+            logger.info(f"💰 Cuenta Gastos {contador_gasto}: {nombre_cc} -> CC: '{codigo_cc_usuario}' = {formatear_monto_clp(monto_gasto_cc)} (ponderador: {ponderador:.3f})")
+            
+            filas_resultado.append(fila_gastos_cc)
+            contador_gasto += 1
+    
+    # 3. Cuenta IVA (igual que 1CC)
+    fila_iva = crear_fila_base_tipo_33(datos_comunes, headers_salida, nombre_tipo_documento)
+    fila_iva["Código Plan de Cuenta"] = codigo_iva
+    fila_iva["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_iva, 2))
+    filas_resultado.append(fila_iva)
+    
+    logger.info(f"📋 Tipo 33 con 2CC generó {len(filas_resultado)} filas: 1 Proveedores + {contador_gasto-1} Gastos + 1 IVA")
+    
+    return filas_resultado
+
+def aplicar_reglas_tipo_33_3cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map):
+    """
+    Aplica reglas específicas para tipo de documento 33 CON 3 CENTROS DE COSTO
+    
+    REGLAS ESPECÍFICAS PARA 3CC:
+    - 1 cuenta de Proveedores con Monto 1 y 3 Detalle (igual que 1CC y 2CC)
+    - 3 cuentas de Gastos separadas, cada una con su monto ponderado
+    - 1 cuenta de IVA (igual que 1CC y 2CC)
+    
+    El monto de cada cuenta de gastos = monto_neto * ponderador_del_CC
+    Los ponderadores están en las columnas PyC, EB/PS, CO
+    """
+    filas_resultado = []
+    
+    # Extraer datos comunes de la fila original
+    datos_comunes = extraer_datos_comunes_tipo_33(fila, headers_entrada)
+    
+    # Calcular montos con validación
+    monto_total_raw = datos_comunes.get('monto_total', 0)
+    try:
+        monto_total = float(monto_total_raw) if monto_total_raw else 0
+    except (ValueError, TypeError):
+        logger.warning(f"⚠️ Monto inválido encontrado: {monto_total_raw}, usando 0")
+        monto_total = 0
+    
+    if monto_total <= 0:
+        logger.warning(f"⚠️ Monto total es 0 o negativo: {monto_total}")
+        return []  # No generar filas si no hay monto válido
+    
+    monto_neto = monto_total / 1.19  # Monto 1 Detalle Libro
+    monto_iva = monto_total - monto_neto  # Monto 3 Detalle Libro
+    
+    # Obtener código de cuenta original
+    codigo_cuenta_original = datos_comunes.get('codigo_cuenta', '')
+    
+    # Obtener nombre del tipo de documento
+    nombre_tipo_documento = tipos_doc_map.get("33", "Factura Electrónica")
+    logger.info(f"🏷️ Tipo 33 con 3CC -> Nombre: '{nombre_tipo_documento}'")
+    
+    # Detectar posiciones de centros de costo dinámicamente
+    posiciones_cc = detectar_posiciones_centros_costo(headers_entrada)
+    logger.info(f"🔍 Posiciones CC detectadas para 3CC: {posiciones_cc}")
+    
+    # Extraer ponderadores de cada centro de costo
+    ponderadores_cc = {}
+    total_ponderadores = 0
+    
+    for nombre_cc, pos in posiciones_cc.items():
+        if pos is not None and pos < len(headers_entrada):
+            valor_raw = fila.get(headers_entrada[pos], 0)
+            try:
+                ponderador = float(valor_raw) if valor_raw else 0
+                ponderadores_cc[nombre_cc] = ponderador
+                total_ponderadores += ponderador
+                logger.info(f"  📊 {nombre_cc}: {ponderador}")
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ Ponderador inválido en {nombre_cc}: {valor_raw}")
+                ponderadores_cc[nombre_cc] = 0
+    
+    # Validar que los ponderadores sumen 1.0 (o 100% si están en porcentaje)
+    if total_ponderadores == 0:
+        logger.warning(f"⚠️ Total de ponderadores es 0, usando distribución equitativa")
+        # Distribuir equitativamente entre los CC encontrados
+        num_cc = len(posiciones_cc)
+        for nombre_cc in ponderadores_cc:
+            ponderadores_cc[nombre_cc] = 1.0 / num_cc if num_cc > 0 else 0
+    elif abs(total_ponderadores - 1.0) > 0.01:  # Si no suman 1.0, normalizar
+        logger.info(f"🔧 Normalizando ponderadores (total: {total_ponderadores})")
+        for nombre_cc in ponderadores_cc:
+            ponderadores_cc[nombre_cc] = ponderadores_cc[nombre_cc] / total_ponderadores
+    
+    # Generar códigos de cuenta
+    if codigo_cuenta_original.startswith('2'):
+        codigo_proveedores = codigo_cuenta_original
+        codigo_gastos_base = codigo_cuenta_original.replace('2', '5', 1)
+        codigo_iva = codigo_cuenta_original.replace('2', '1', 1)
+    elif codigo_cuenta_original.startswith('5'):
+        codigo_gastos_base = codigo_cuenta_original
+        codigo_proveedores = codigo_cuenta_original.replace('5', '2', 1)
+        codigo_iva = codigo_cuenta_original.replace('5', '1', 1)
+    elif codigo_cuenta_original.startswith('1'):
+        codigo_iva = codigo_cuenta_original
+        codigo_proveedores = codigo_cuenta_original.replace('1', '2', 1)
+        codigo_gastos_base = codigo_cuenta_original.replace('1', '5', 1)
+    else:
+        codigo_proveedores = f"2{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "2111001"
+        codigo_gastos_base = f"5{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "5111001"
+        codigo_iva = f"1{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "1191001"
+    
+    # 1. Cuenta Proveedores (igual que 1CC y 2CC)
+    fila_proveedores = crear_fila_base_tipo_33(datos_comunes, headers_salida, nombre_tipo_documento)
+    fila_proveedores["Código Plan de Cuenta"] = codigo_proveedores
+    fila_proveedores["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_total, 2))
+    fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
+    fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(round(monto_iva, 2))
+    monto_suma_detalle = round(monto_neto + monto_iva, 2)
+    fila_proveedores["Monto Suma Detalle Libro"] = formatear_monto_clp(monto_suma_detalle)
+    filas_resultado.append(fila_proveedores)
+    
+    # 2. Cuentas de Gastos (una por cada centro de costo - hasta 3)
+    contador_gasto = 1
+    
+    # Mapeo de columnas a keys de mapeo (igual que en 2CC)
+    columnas_cc_mapeo = {
+        'PyC': 'col10',   # PyC
+        'PS': 'col11',    # PS/EB (EB es equivalente a PS)
+        'CO': 'col12'     # CO
+    }
+    
+    for nombre_cc, ponderador in ponderadores_cc.items():
+        if ponderador > 0:  # Solo crear línea si hay ponderador
+            # Calcular monto ponderado para este CC
+            monto_gasto_cc = round(monto_neto * ponderador, 2)
+            
+            # Obtener el código de centro de costo que el usuario asignó en el frontend
+            # Usar el mismo mapeo que usa calcular_codigos_cc_para_fila
+            mapeo_key = columnas_cc_mapeo.get(nombre_cc, '')
+            codigo_cc_usuario = ""
+            
+            if mapeo_key and mapeo_key in mapeo_cc:
+                codigo_cc_usuario = mapeo_cc[mapeo_key]
+                if codigo_cc_usuario:
+                    codigo_cc_usuario = codigo_cc_usuario.strip()
+            
+            if not codigo_cc_usuario:
+                logger.warning(f"⚠️ No se encontró código de CC para '{nombre_cc}' (mapeo_key: {mapeo_key}) en mapeo_cc: {mapeo_cc}")
+                codigo_cc_usuario = ""  # Dejar vacío si no hay mapeo
+            
+            # Crear fila de gastos para este CC
+            fila_gastos_cc = crear_fila_base_tipo_33(datos_comunes, headers_salida, nombre_tipo_documento)
+            fila_gastos_cc["Código Plan de Cuenta"] = codigo_gastos_base  # Sin sufijo
+            fila_gastos_cc["Monto al Debe Moneda Base"] = formatear_monto_clp(monto_gasto_cc)
+            
+            # Solo asignar código de centro de costo si existe
+            if codigo_cc_usuario:
+                fila_gastos_cc["Código Centro de Costo"] = codigo_cc_usuario
+            
+            logger.info(f"💰 Cuenta Gastos {contador_gasto}: {nombre_cc} -> CC: '{codigo_cc_usuario}' = {formatear_monto_clp(monto_gasto_cc)} (ponderador: {ponderador:.3f})")
+            
+            filas_resultado.append(fila_gastos_cc)
+            contador_gasto += 1
+    
+    # 3. Cuenta IVA (igual que 1CC y 2CC)
+    fila_iva = crear_fila_base_tipo_33(datos_comunes, headers_salida, nombre_tipo_documento)
+    fila_iva["Código Plan de Cuenta"] = codigo_iva
+    fila_iva["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_iva, 2))
+    filas_resultado.append(fila_iva)
+    
+    logger.info(f"📋 Tipo 33 con 3CC generó {len(filas_resultado)} filas: 1 Proveedores + {contador_gasto-1} Gastos + 1 IVA")
+    
+    return filas_resultado
+
+
+def aplicar_reglas_tipo_34(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map):
     """
     Aplica reglas específicas para tipo de documento 34 con 1CC
     Genera solo 2 cuentas: Proveedores (2xxx) y Gastos (5xxx) - NO incluye IVA
@@ -1361,6 +1704,10 @@ def aplicar_reglas_tipo_34(fila, headers_entrada, mapeo_cc, headers_salida):
     # Obtener código de cuenta original de la columna 8
     codigo_cuenta_original = datos_comunes.get('codigo_cuenta', '')
     
+    # Obtener nombre del tipo de documento
+    nombre_tipo_documento = tipos_doc_map.get("34", "Factura Exenta Electrónica")
+    logger.info(f"🏷️ Tipo 34 -> Nombre: '{nombre_tipo_documento}'")
+    
     # Generar códigos de cuenta basados en el código original
     # Si el código empieza con 2 o 5, usar como base, sino generar códigos genéricos
     if codigo_cuenta_original.startswith('2'):
@@ -1375,15 +1722,17 @@ def aplicar_reglas_tipo_34(fila, headers_entrada, mapeo_cc, headers_salida):
         codigo_gastos = f"5{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "5111001"
     
     # 1. Cuenta Proveedores (código empieza con 2)
-    fila_proveedores = crear_fila_base_tipo_34(datos_comunes, headers_salida)
+    fila_proveedores = crear_fila_base_tipo_34(datos_comunes, headers_salida, nombre_tipo_documento)
     fila_proveedores["Código Plan de Cuenta"] = codigo_proveedores
     fila_proveedores["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_total, 2))
     # ✨ CORREGIDO: Usar "Monto 2 Detalle Libro" en cuenta Proveedores para tipo 34
     fila_proveedores["Monto 2 Detalle Libro"] = formatear_monto_clp(round(monto_gasto, 2))
+    # ✨ NUEVO: Calcular y agregar "Monto Suma Detalle Libro" (solo monto 2 para tipo 34)
+    fila_proveedores["Monto Suma Detalle Libro"] = formatear_monto_clp(round(monto_gasto, 2))
     filas_resultado.append(fila_proveedores)
     
     # 2. Cuenta Gastos (código empieza con 5)
-    fila_gastos = crear_fila_base_tipo_34(datos_comunes, headers_salida)
+    fila_gastos = crear_fila_base_tipo_34(datos_comunes, headers_salida, nombre_tipo_documento)
     fila_gastos["Código Plan de Cuenta"] = codigo_gastos
     fila_gastos["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_gasto, 2))
     # ✨ REMOVIDO: Ya no se asigna "Monto 1 Detalle Libro" aquí, se movió a cuenta Proveedores como "Monto 3"
@@ -1395,7 +1744,283 @@ def aplicar_reglas_tipo_34(fila, headers_entrada, mapeo_cc, headers_salida):
     
     return filas_resultado
 
-def aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida):
+def aplicar_reglas_tipo_34_2cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map):
+    """
+    Aplica reglas específicas para tipo de documento 34 CON 2 CENTROS DE COSTO
+    
+    REGLAS ESPECÍFICAS PARA 2CC:
+    - 1 cuenta de Proveedores con Monto 2 Detalle (igual que 1CC)
+    - 2 cuentas de Gastos separadas, cada una con su monto ponderado
+    - NO incluye cuenta de IVA (factura exenta)
+    
+    El monto de cada cuenta de gastos = monto_total * ponderador_del_CC
+    Los ponderadores están en las columnas PyC, EB/PS, CO
+    """
+    filas_resultado = []
+    
+    # Extraer datos comunes de la fila original
+    datos_comunes = extraer_datos_comunes_tipo_34(fila, headers_entrada)
+    
+    # Calcular montos con validación
+    monto_total_raw = datos_comunes.get('monto_total', 0)
+    try:
+        monto_total = float(monto_total_raw) if monto_total_raw else 0
+    except (ValueError, TypeError):
+        logger.warning(f"⚠️ Monto inválido encontrado en tipo 34: {monto_total_raw}, usando 0")
+        monto_total = 0
+    
+    if monto_total <= 0:
+        logger.warning(f"⚠️ Monto total es 0 o negativo en tipo 34: {monto_total}")
+        return []  # No generar filas si no hay monto válido
+    
+    # Para tipo 34, el monto total es el monto del gasto (sin IVA involucrado)
+    monto_gasto = monto_total
+    
+    # Obtener código de cuenta original
+    codigo_cuenta_original = datos_comunes.get('codigo_cuenta', '')
+    
+    # Obtener nombre del tipo de documento
+    nombre_tipo_documento = tipos_doc_map.get("34", "Factura Exenta Electrónica")
+    logger.info(f"🏷️ Tipo 34 con 2CC -> Nombre: '{nombre_tipo_documento}'")
+    
+    # Detectar posiciones de centros de costo dinámicamente
+    posiciones_cc = detectar_posiciones_centros_costo(headers_entrada)
+    logger.info(f"🔍 Posiciones CC detectadas para 34 con 2CC: {posiciones_cc}")
+    
+    # Extraer ponderadores de cada centro de costo
+    ponderadores_cc = {}
+    total_ponderadores = 0
+    
+    for nombre_cc, pos in posiciones_cc.items():
+        if pos is not None and pos < len(headers_entrada):
+            valor_raw = fila.get(headers_entrada[pos], 0)
+            try:
+                ponderador = float(valor_raw) if valor_raw else 0
+                ponderadores_cc[nombre_cc] = ponderador
+                total_ponderadores += ponderador
+                logger.info(f"  📊 {nombre_cc}: {ponderador}")
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ Ponderador inválido en {nombre_cc}: {valor_raw}")
+                ponderadores_cc[nombre_cc] = 0
+    
+    # Validar que los ponderadores sumen 1.0 (o 100% si están en porcentaje)
+    if total_ponderadores == 0:
+        logger.warning(f"⚠️ Total de ponderadores es 0, usando distribución equitativa")
+        # Distribuir equitativamente entre los CC encontrados
+        num_cc = len(posiciones_cc)
+        for nombre_cc in ponderadores_cc:
+            ponderadores_cc[nombre_cc] = 1.0 / num_cc if num_cc > 0 else 0
+    elif abs(total_ponderadores - 1.0) > 0.01:  # Si no suman 1.0, normalizar
+        logger.info(f"🔧 Normalizando ponderadores (total: {total_ponderadores})")
+        for nombre_cc in ponderadores_cc:
+            ponderadores_cc[nombre_cc] = ponderadores_cc[nombre_cc] / total_ponderadores
+    
+    # Generar códigos de cuenta
+    if codigo_cuenta_original.startswith('2'):
+        codigo_proveedores = codigo_cuenta_original
+        codigo_gastos_base = codigo_cuenta_original.replace('2', '5', 1)
+    elif codigo_cuenta_original.startswith('5'):
+        codigo_gastos_base = codigo_cuenta_original
+        codigo_proveedores = codigo_cuenta_original.replace('5', '2', 1)
+    else:
+        codigo_proveedores = f"2{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "2111001"
+        codigo_gastos_base = f"5{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "5111001"
+    
+    # 1. Cuenta Proveedores (igual que 1CC)
+    fila_proveedores = crear_fila_base_tipo_34(datos_comunes, headers_salida, nombre_tipo_documento)
+    fila_proveedores["Código Plan de Cuenta"] = codigo_proveedores
+    fila_proveedores["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_total, 2))
+    fila_proveedores["Monto 2 Detalle Libro"] = formatear_monto_clp(round(monto_gasto, 2))
+    fila_proveedores["Monto Suma Detalle Libro"] = formatear_monto_clp(round(monto_gasto, 2))
+    filas_resultado.append(fila_proveedores)
+    
+    # 2. Cuentas de Gastos (una por cada centro de costo)
+    contador_gasto = 1
+    
+    # Mapeo de columnas a keys de mapeo (igual que en tipo 33)
+    columnas_cc_mapeo = {
+        'PyC': 'col10',   # PyC
+        'PS': 'col11',    # PS/EB (EB es equivalente a PS)
+        'CO': 'col12'     # CO
+    }
+    
+    for nombre_cc, ponderador in ponderadores_cc.items():
+        if ponderador > 0:  # Solo crear línea si hay ponderador
+            # Calcular monto ponderado para este CC
+            monto_gasto_cc = round(monto_gasto * ponderador, 2)
+            
+            # Obtener el código de centro de costo que el usuario asignó en el frontend
+            mapeo_key = columnas_cc_mapeo.get(nombre_cc, '')
+            codigo_cc_usuario = ""
+            
+            if mapeo_key and mapeo_key in mapeo_cc:
+                codigo_cc_usuario = mapeo_cc[mapeo_key]
+                if codigo_cc_usuario:
+                    codigo_cc_usuario = codigo_cc_usuario.strip()
+            
+            if not codigo_cc_usuario:
+                logger.warning(f"⚠️ No se encontró código de CC para '{nombre_cc}' (mapeo_key: {mapeo_key}) en mapeo_cc: {mapeo_cc}")
+                codigo_cc_usuario = ""  # Dejar vacío si no hay mapeo
+            
+            # Crear fila de gastos para este CC
+            fila_gastos_cc = crear_fila_base_tipo_34(datos_comunes, headers_salida, nombre_tipo_documento)
+            fila_gastos_cc["Código Plan de Cuenta"] = codigo_gastos_base  # Sin sufijo
+            fila_gastos_cc["Monto al Debe Moneda Base"] = formatear_monto_clp(monto_gasto_cc)
+            
+            # Solo asignar código de centro de costo si existe
+            if codigo_cc_usuario:
+                fila_gastos_cc["Código Centro de Costo"] = codigo_cc_usuario
+            
+            logger.info(f"💰 Cuenta Gastos {contador_gasto}: {nombre_cc} -> CC: '{codigo_cc_usuario}' = {formatear_monto_clp(monto_gasto_cc)} (ponderador: {ponderador:.3f})")
+            
+            filas_resultado.append(fila_gastos_cc)
+            contador_gasto += 1
+    
+    # NOTA: Para tipo 34 con 2CC NO se genera cuenta de IVA (factura exenta)
+    
+    logger.info(f"📋 Tipo 34 con 2CC generó {len(filas_resultado)} filas: 1 Proveedores + {contador_gasto-1} Gastos (sin IVA)")
+    
+    return filas_resultado
+
+def aplicar_reglas_tipo_34_3cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map):
+    """
+    Aplica reglas específicas para tipo de documento 34 CON 3 CENTROS DE COSTO
+    
+    REGLAS ESPECÍFICAS PARA 3CC:
+    - 1 cuenta de Proveedores con Monto 2 Detalle (igual que 1CC y 2CC)
+    - 3 cuentas de Gastos separadas, cada una con su monto ponderado
+    - NO incluye cuenta de IVA (factura exenta)
+    
+    El monto de cada cuenta de gastos = monto_total * ponderador_del_CC
+    Los ponderadores están en las columnas PyC, EB/PS, CO
+    """
+    filas_resultado = []
+    
+    # Extraer datos comunes de la fila original
+    datos_comunes = extraer_datos_comunes_tipo_34(fila, headers_entrada)
+    
+    # Calcular montos con validación
+    monto_total_raw = datos_comunes.get('monto_total', 0)
+    try:
+        monto_total = float(monto_total_raw) if monto_total_raw else 0
+    except (ValueError, TypeError):
+        logger.warning(f"⚠️ Monto inválido encontrado en tipo 34: {monto_total_raw}, usando 0")
+        monto_total = 0
+    
+    if monto_total <= 0:
+        logger.warning(f"⚠️ Monto total es 0 o negativo en tipo 34: {monto_total}")
+        return []  # No generar filas si no hay monto válido
+    
+    # Para tipo 34, el monto total es el monto del gasto (sin IVA involucrado)
+    monto_gasto = monto_total
+    
+    # Obtener código de cuenta original
+    codigo_cuenta_original = datos_comunes.get('codigo_cuenta', '')
+    
+    # Obtener nombre del tipo de documento
+    nombre_tipo_documento = tipos_doc_map.get("34", "Factura Exenta Electrónica")
+    logger.info(f"🏷️ Tipo 34 con 3CC -> Nombre: '{nombre_tipo_documento}'")
+    
+    # Detectar posiciones de centros de costo dinámicamente
+    posiciones_cc = detectar_posiciones_centros_costo(headers_entrada)
+    logger.info(f"🔍 Posiciones CC detectadas para 34 con 3CC: {posiciones_cc}")
+    
+    # Extraer ponderadores de cada centro de costo
+    ponderadores_cc = {}
+    total_ponderadores = 0
+    
+    for nombre_cc, pos in posiciones_cc.items():
+        if pos is not None and pos < len(headers_entrada):
+            valor_raw = fila.get(headers_entrada[pos], 0)
+            try:
+                ponderador = float(valor_raw) if valor_raw else 0
+                ponderadores_cc[nombre_cc] = ponderador
+                total_ponderadores += ponderador
+                logger.info(f"  📊 {nombre_cc}: {ponderador}")
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ Ponderador inválido en {nombre_cc}: {valor_raw}")
+                ponderadores_cc[nombre_cc] = 0
+    
+    # Validar que los ponderadores sumen 1.0 (o 100% si están en porcentaje)
+    if total_ponderadores == 0:
+        logger.warning(f"⚠️ Total de ponderadores es 0, usando distribución equitativa")
+        # Distribuir equitativamente entre los CC encontrados
+        num_cc = len(posiciones_cc)
+        for nombre_cc in ponderadores_cc:
+            ponderadores_cc[nombre_cc] = 1.0 / num_cc if num_cc > 0 else 0
+    elif abs(total_ponderadores - 1.0) > 0.01:  # Si no suman 1.0, normalizar
+        logger.info(f"🔧 Normalizando ponderadores (total: {total_ponderadores})")
+        for nombre_cc in ponderadores_cc:
+            ponderadores_cc[nombre_cc] = ponderadores_cc[nombre_cc] / total_ponderadores
+    
+    # Generar códigos de cuenta
+    if codigo_cuenta_original.startswith('2'):
+        codigo_proveedores = codigo_cuenta_original
+        codigo_gastos_base = codigo_cuenta_original.replace('2', '5', 1)
+    elif codigo_cuenta_original.startswith('5'):
+        codigo_gastos_base = codigo_cuenta_original
+        codigo_proveedores = codigo_cuenta_original.replace('5', '2', 1)
+    else:
+        codigo_proveedores = f"2{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "2111001"
+        codigo_gastos_base = f"5{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "5111001"
+    
+    # 1. Cuenta Proveedores (igual que 1CC y 2CC)
+    fila_proveedores = crear_fila_base_tipo_34(datos_comunes, headers_salida, nombre_tipo_documento)
+    fila_proveedores["Código Plan de Cuenta"] = codigo_proveedores
+    fila_proveedores["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_total, 2))
+    fila_proveedores["Monto 2 Detalle Libro"] = formatear_monto_clp(round(monto_gasto, 2))
+    fila_proveedores["Monto Suma Detalle Libro"] = formatear_monto_clp(round(monto_gasto, 2))
+    filas_resultado.append(fila_proveedores)
+    
+    # 2. Cuentas de Gastos (una por cada centro de costo - hasta 3)
+    contador_gasto = 1
+    
+    # Mapeo de columnas a keys de mapeo (igual que en tipo 33)
+    columnas_cc_mapeo = {
+        'PyC': 'col10',   # PyC
+        'PS': 'col11',    # PS/EB (EB es equivalente a PS)
+        'CO': 'col12'     # CO
+    }
+    
+    for nombre_cc, ponderador in ponderadores_cc.items():
+        if ponderador > 0:  # Solo crear línea si hay ponderador
+            # Calcular monto ponderado para este CC
+            monto_gasto_cc = round(monto_gasto * ponderador, 2)
+            
+            # Obtener el código de centro de costo que el usuario asignó en el frontend
+            mapeo_key = columnas_cc_mapeo.get(nombre_cc, '')
+            codigo_cc_usuario = ""
+            
+            if mapeo_key and mapeo_key in mapeo_cc:
+                codigo_cc_usuario = mapeo_cc[mapeo_key]
+                if codigo_cc_usuario:
+                    codigo_cc_usuario = codigo_cc_usuario.strip()
+            
+            if not codigo_cc_usuario:
+                logger.warning(f"⚠️ No se encontró código de CC para '{nombre_cc}' (mapeo_key: {mapeo_key}) en mapeo_cc: {mapeo_cc}")
+                codigo_cc_usuario = ""  # Dejar vacío si no hay mapeo
+            
+            # Crear fila de gastos para este CC
+            fila_gastos_cc = crear_fila_base_tipo_34(datos_comunes, headers_salida, nombre_tipo_documento)
+            fila_gastos_cc["Código Plan de Cuenta"] = codigo_gastos_base  # Sin sufijo
+            fila_gastos_cc["Monto al Debe Moneda Base"] = formatear_monto_clp(monto_gasto_cc)
+            
+            # Solo asignar código de centro de costo si existe
+            if codigo_cc_usuario:
+                fila_gastos_cc["Código Centro de Costo"] = codigo_cc_usuario
+            
+            logger.info(f"💰 Cuenta Gastos {contador_gasto}: {nombre_cc} -> CC: '{codigo_cc_usuario}' = {formatear_monto_clp(monto_gasto_cc)} (ponderador: {ponderador:.3f})")
+            
+            filas_resultado.append(fila_gastos_cc)
+            contador_gasto += 1
+    
+    # NOTA: Para tipo 34 con 3CC NO se genera cuenta de IVA (factura exenta)
+    
+    logger.info(f"📋 Tipo 34 con 3CC generó {len(filas_resultado)} filas: 1 Proveedores + {contador_gasto-1} Gastos (sin IVA)")
+    
+    return filas_resultado
+
+def aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map):
     """
     Aplica reglas específicas para tipo de documento 61 (Nota de Crédito) con 1CC
     Genera 3 cuentas: Proveedores (2xxx), Gastos (5xxx) e IVA (1xxx)
@@ -1414,19 +2039,29 @@ def aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida):
         logger.warning(f"⚠️ Monto inválido encontrado en tipo 61: {monto_total_raw}, usando 0")
         monto_total = 0
     
-    if monto_total <= 0:
-        logger.warning(f"⚠️ Monto total es 0 o negativo en tipo 61: {monto_total}")
+    # Para tipo 61 (Nota de Crédito), los montos pueden ser negativos
+    # Trabajamos con el valor absoluto para los cálculos
+    if monto_total == 0:
+        logger.warning(f"⚠️ Monto total es 0 en tipo 61: {monto_total}")
         return []  # No generar filas si no hay monto válido
     
-    # Calcular montos igual que tipo 33
-    monto_neto = monto_total / 1.19  # Monto 1 Detalle Libro
-    monto_iva = monto_total - monto_neto  # Monto 3 Detalle Libro
+    # Usar valor absoluto para cálculos, pero mantener el signo original en logs
+    monto_total_absoluto = abs(monto_total)
+    logger.info(f"💰 Tipo 61: Monto original = {monto_total}, trabajando con valor absoluto = {monto_total_absoluto}")
+    
+    # Calcular montos igual que tipo 33 pero con valor absoluto
+    monto_neto = monto_total_absoluto / 1.19  # Monto 1 Detalle Libro
+    monto_iva = monto_total_absoluto - monto_neto  # Monto 3 Detalle Libro
     
     # Calcular códigos de centros de costos aplicables
     codigos_cc = calcular_codigos_cc_para_fila(fila, headers_entrada, mapeo_cc)
     
     # Obtener código de cuenta original de la columna 8
     codigo_cuenta_original = datos_comunes.get('codigo_cuenta', '')
+    
+    # Obtener nombre del tipo de documento
+    nombre_tipo_documento = tipos_doc_map.get("61", "Nota de Crédito Electrónica")
+    logger.info(f"🏷️ Tipo 61 -> Nombre: '{nombre_tipo_documento}'")
     
     # Generar códigos de cuenta basados en el código original (igual que tipo 33)
     if codigo_cuenta_original.startswith('2'):
@@ -1448,9 +2083,9 @@ def aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida):
         codigo_iva = f"1{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "1191001"
     
     # 1. Cuenta Proveedores (código empieza con 2) - INVERTIDO: Debe en lugar de Haber
-    fila_proveedores = crear_fila_base_tipo_61(datos_comunes, headers_salida)
+    fila_proveedores = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
     fila_proveedores["Código Plan de Cuenta"] = codigo_proveedores
-    fila_proveedores["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_total, 2))  # 🔄 INVERTIDO
+    fila_proveedores["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_total_absoluto, 2))  # 🔄 INVERTIDO
     # Campos especiales igual que tipo 33
     fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
     fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(round(monto_iva, 2))
@@ -1460,7 +2095,7 @@ def aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida):
     filas_resultado.append(fila_proveedores)
     
     # 2. Cuenta Gastos (código empieza con 5) - INVERTIDO: Haber en lugar de Debe
-    fila_gastos = crear_fila_base_tipo_61(datos_comunes, headers_salida)
+    fila_gastos = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
     fila_gastos["Código Plan de Cuenta"] = codigo_gastos
     fila_gastos["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_neto, 2))  # 🔄 INVERTIDO
     if codigos_cc:
@@ -1468,12 +2103,328 @@ def aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida):
     filas_resultado.append(fila_gastos)
     
     # 3. Cuenta IVA (código empieza con 1) - INVERTIDO: Haber en lugar de Debe
-    fila_iva = crear_fila_base_tipo_61(datos_comunes, headers_salida)
+    fila_iva = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
     fila_iva["Código Plan de Cuenta"] = codigo_iva
     fila_iva["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_iva, 2))  # 🔄 INVERTIDO
     filas_resultado.append(fila_iva)
     
     # NOTA: Tipo 61 es igual a tipo 33 pero con montos invertidos (Debe ↔ Haber)
+    
+    return filas_resultado
+
+def aplicar_reglas_tipo_61_2cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map):
+    """
+    Aplica reglas específicas para tipo de documento 61 CON 2 CENTROS DE COSTO
+    
+    REGLAS ESPECÍFICAS PARA 2CC:
+    - 1 cuenta de Proveedores con Monto 1 y 3 Detalle (igual que tipo 33 pero INVERTIDO)
+    - 2 cuentas de Gastos separadas, cada una con su monto ponderado (INVERTIDO)
+    - 1 cuenta de IVA (INVERTIDO)
+    
+    NOTA: Tipo 61 es igual a tipo 33 pero con montos INVERTIDOS (Debe ↔ Haber)
+    El monto de cada cuenta de gastos = monto_neto * ponderador_del_CC
+    Los ponderadores están en las columnas PyC, EB/PS, CO
+    """
+    filas_resultado = []
+    
+    # Extraer datos comunes de la fila original
+    datos_comunes = extraer_datos_comunes_tipo_61(fila, headers_entrada)
+    
+    # Calcular montos con validación
+    monto_total_raw = datos_comunes.get('monto_total', 0)
+    try:
+        monto_total = float(monto_total_raw) if monto_total_raw else 0
+    except (ValueError, TypeError):
+        logger.warning(f"⚠️ Monto inválido encontrado en tipo 61: {monto_total_raw}, usando 0")
+        monto_total = 0
+    
+    # Para tipo 61 (Nota de Crédito), los montos pueden ser negativos
+    # Trabajamos con el valor absoluto para los cálculos
+    if monto_total == 0:
+        logger.warning(f"⚠️ Monto total es 0 en tipo 61 con 2CC: {monto_total}")
+        return []  # No generar filas si no hay monto válido
+    
+    # Usar valor absoluto para cálculos, pero mantener el signo original en logs
+    monto_total_absoluto = abs(monto_total)
+    logger.info(f"💰 Tipo 61 con 2CC: Monto original = {monto_total}, trabajando con valor absoluto = {monto_total_absoluto}")
+    
+    monto_neto = monto_total_absoluto / 1.19  # Monto 1 Detalle Libro
+    monto_iva = monto_total_absoluto - monto_neto  # Monto 3 Detalle Libro
+    
+    # Obtener código de cuenta original
+    codigo_cuenta_original = datos_comunes.get('codigo_cuenta', '')
+    
+    # Obtener nombre del tipo de documento
+    nombre_tipo_documento = tipos_doc_map.get("61", "Nota de Crédito Electrónica")
+    logger.info(f"🏷️ Tipo 61 con 2CC -> Nombre: '{nombre_tipo_documento}'")
+    
+    # Detectar posiciones de centros de costo dinámicamente
+    posiciones_cc = detectar_posiciones_centros_costo(headers_entrada)
+    logger.info(f"🔍 Posiciones CC detectadas para 61 con 2CC: {posiciones_cc}")
+    
+    # Extraer ponderadores de cada centro de costo
+    ponderadores_cc = {}
+    total_ponderadores = 0
+    
+    for nombre_cc, pos in posiciones_cc.items():
+        if pos is not None and pos < len(headers_entrada):
+            valor_raw = fila.get(headers_entrada[pos], 0)
+            try:
+                ponderador = float(valor_raw) if valor_raw else 0
+                ponderadores_cc[nombre_cc] = ponderador
+                total_ponderadores += ponderador
+                logger.info(f"  📊 {nombre_cc}: {ponderador}")
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ Ponderador inválido en {nombre_cc}: {valor_raw}")
+                ponderadores_cc[nombre_cc] = 0
+    
+    # Validar que los ponderadores sumen 1.0 (o 100% si están en porcentaje)
+    if total_ponderadores == 0:
+        logger.warning(f"⚠️ Total de ponderadores es 0, usando distribución equitativa")
+        # Distribuir equitativamente entre los CC encontrados
+        num_cc = len(posiciones_cc)
+        for nombre_cc in ponderadores_cc:
+            ponderadores_cc[nombre_cc] = 1.0 / num_cc if num_cc > 0 else 0
+    elif abs(total_ponderadores - 1.0) > 0.01:  # Si no suman 1.0, normalizar
+        logger.info(f"🔧 Normalizando ponderadores (total: {total_ponderadores})")
+        for nombre_cc in ponderadores_cc:
+            ponderadores_cc[nombre_cc] = ponderadores_cc[nombre_cc] / total_ponderadores
+    
+    # Generar códigos de cuenta
+    if codigo_cuenta_original.startswith('2'):
+        codigo_proveedores = codigo_cuenta_original
+        codigo_gastos_base = codigo_cuenta_original.replace('2', '5', 1)
+        codigo_iva = codigo_cuenta_original.replace('2', '1', 1)
+    elif codigo_cuenta_original.startswith('5'):
+        codigo_gastos_base = codigo_cuenta_original
+        codigo_proveedores = codigo_cuenta_original.replace('5', '2', 1)
+        codigo_iva = codigo_cuenta_original.replace('5', '1', 1)
+    elif codigo_cuenta_original.startswith('1'):
+        codigo_iva = codigo_cuenta_original
+        codigo_proveedores = codigo_cuenta_original.replace('1', '2', 1)
+        codigo_gastos_base = codigo_cuenta_original.replace('1', '5', 1)
+    else:
+        codigo_proveedores = f"2{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "2111001"
+        codigo_gastos_base = f"5{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "5111001"
+        codigo_iva = f"1{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "1191001"
+    
+    # 1. Cuenta Proveedores (INVERTIDO: Debe en lugar de Haber)
+    fila_proveedores = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
+    fila_proveedores["Código Plan de Cuenta"] = codigo_proveedores
+    fila_proveedores["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_total_absoluto, 2))  # 🔄 INVERTIDO
+    fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
+    fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(round(monto_iva, 2))
+    monto_suma_detalle = round(monto_neto + monto_iva, 2)
+    fila_proveedores["Monto Suma Detalle Libro"] = formatear_monto_clp(monto_suma_detalle)
+    filas_resultado.append(fila_proveedores)
+    
+    # 2. Cuentas de Gastos (una por cada centro de costo - INVERTIDO: Haber en lugar de Debe)
+    contador_gasto = 1
+    
+    # Mapeo de columnas a keys de mapeo (igual que en tipo 33)
+    columnas_cc_mapeo = {
+        'PyC': 'col10',   # PyC
+        'PS': 'col11',    # PS/EB (EB es equivalente a PS)
+        'CO': 'col12'     # CO
+    }
+    
+    for nombre_cc, ponderador in ponderadores_cc.items():
+        if ponderador > 0:  # Solo crear línea si hay ponderador
+            # Calcular monto ponderado para este CC
+            monto_gasto_cc = round(monto_neto * ponderador, 2)
+            
+            # Obtener el código de centro de costo que el usuario asignó en el frontend
+            mapeo_key = columnas_cc_mapeo.get(nombre_cc, '')
+            codigo_cc_usuario = ""
+            
+            if mapeo_key and mapeo_key in mapeo_cc:
+                codigo_cc_usuario = mapeo_cc[mapeo_key]
+                if codigo_cc_usuario:
+                    codigo_cc_usuario = codigo_cc_usuario.strip()
+            
+            if not codigo_cc_usuario:
+                logger.warning(f"⚠️ No se encontró código de CC para '{nombre_cc}' (mapeo_key: {mapeo_key}) en mapeo_cc: {mapeo_cc}")
+                codigo_cc_usuario = ""  # Dejar vacío si no hay mapeo
+            
+            # Crear fila de gastos para este CC
+            fila_gastos_cc = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
+            fila_gastos_cc["Código Plan de Cuenta"] = codigo_gastos_base  # Sin sufijo
+            fila_gastos_cc["Monto al Haber Moneda Base"] = formatear_monto_clp(monto_gasto_cc)  # 🔄 INVERTIDO
+            
+            # Solo asignar código de centro de costo si existe
+            if codigo_cc_usuario:
+                fila_gastos_cc["Código Centro de Costo"] = codigo_cc_usuario
+            
+            logger.info(f"💰 Cuenta Gastos {contador_gasto}: {nombre_cc} -> CC: '{codigo_cc_usuario}' = {formatear_monto_clp(monto_gasto_cc)} (ponderador: {ponderador:.3f})")
+            
+            filas_resultado.append(fila_gastos_cc)
+            contador_gasto += 1
+    
+    # 3. Cuenta IVA (INVERTIDO: Haber en lugar de Debe)
+    fila_iva = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
+    fila_iva["Código Plan de Cuenta"] = codigo_iva
+    fila_iva["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_iva, 2))  # 🔄 INVERTIDO
+    filas_resultado.append(fila_iva)
+    
+    logger.info(f"📋 Tipo 61 con 2CC generó {len(filas_resultado)} filas: 1 Proveedores + {contador_gasto-1} Gastos + 1 IVA (INVERTIDOS)")
+    
+    return filas_resultado
+
+def aplicar_reglas_tipo_61_3cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map):
+    """
+    Aplica reglas específicas para tipo de documento 61 CON 3 CENTROS DE COSTO
+    
+    REGLAS ESPECÍFICAS PARA 3CC:
+    - 1 cuenta de Proveedores con Monto 1 y 3 Detalle (igual que tipo 33 pero INVERTIDO)
+    - 3 cuentas de Gastos separadas, cada una con su monto ponderado (INVERTIDO)
+    - 1 cuenta de IVA (INVERTIDO)
+    
+    NOTA: Tipo 61 es igual a tipo 33 pero con montos INVERTIDOS (Debe ↔ Haber)
+    El monto de cada cuenta de gastos = monto_neto * ponderador_del_CC
+    Los ponderadores están en las columnas PyC, EB/PS, CO
+    """
+    filas_resultado = []
+    
+    # Extraer datos comunes de la fila original
+    datos_comunes = extraer_datos_comunes_tipo_61(fila, headers_entrada)
+    
+    # Calcular montos con validación
+    monto_total_raw = datos_comunes.get('monto_total', 0)
+    try:
+        monto_total = float(monto_total_raw) if monto_total_raw else 0
+    except (ValueError, TypeError):
+        logger.warning(f"⚠️ Monto inválido encontrado en tipo 61: {monto_total_raw}, usando 0")
+        monto_total = 0
+    
+    # Para tipo 61 (Nota de Crédito), los montos pueden ser negativos
+    # Trabajamos con el valor absoluto para los cálculos
+    if monto_total == 0:
+        logger.warning(f"⚠️ Monto total es 0 en tipo 61 con 3CC: {monto_total}")
+        return []  # No generar filas si no hay monto válido
+    
+    # Usar valor absoluto para cálculos, pero mantener el signo original en logs
+    monto_total_absoluto = abs(monto_total)
+    logger.info(f"💰 Tipo 61 con 3CC: Monto original = {monto_total}, trabajando con valor absoluto = {monto_total_absoluto}")
+    
+    monto_neto = monto_total_absoluto / 1.19  # Monto 1 Detalle Libro
+    monto_iva = monto_total_absoluto - monto_neto  # Monto 3 Detalle Libro
+    
+    # Obtener código de cuenta original
+    codigo_cuenta_original = datos_comunes.get('codigo_cuenta', '')
+    
+    # Obtener nombre del tipo de documento
+    nombre_tipo_documento = tipos_doc_map.get("61", "Nota de Crédito Electrónica")
+    logger.info(f"🏷️ Tipo 61 con 3CC -> Nombre: '{nombre_tipo_documento}'")
+    
+    # Detectar posiciones de centros de costo dinámicamente
+    posiciones_cc = detectar_posiciones_centros_costo(headers_entrada)
+    logger.info(f"🔍 Posiciones CC detectadas para 61 con 3CC: {posiciones_cc}")
+    
+    # Extraer ponderadores de cada centro de costo
+    ponderadores_cc = {}
+    total_ponderadores = 0
+    
+    for nombre_cc, pos in posiciones_cc.items():
+        if pos is not None and pos < len(headers_entrada):
+            valor_raw = fila.get(headers_entrada[pos], 0)
+            try:
+                ponderador = float(valor_raw) if valor_raw else 0
+                ponderadores_cc[nombre_cc] = ponderador
+                total_ponderadores += ponderador
+                logger.info(f"  📊 {nombre_cc}: {ponderador}")
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ Ponderador inválido en {nombre_cc}: {valor_raw}")
+                ponderadores_cc[nombre_cc] = 0
+    
+    # Validar que los ponderadores sumen 1.0 (o 100% si están en porcentaje)
+    if total_ponderadores == 0:
+        logger.warning(f"⚠️ Total de ponderadores es 0, usando distribución equitativa")
+        # Distribuir equitativamente entre los CC encontrados
+        num_cc = len(posiciones_cc)
+        for nombre_cc in ponderadores_cc:
+            ponderadores_cc[nombre_cc] = 1.0 / num_cc if num_cc > 0 else 0
+    elif abs(total_ponderadores - 1.0) > 0.01:  # Si no suman 1.0, normalizar
+        logger.info(f"🔧 Normalizando ponderadores (total: {total_ponderadores})")
+        for nombre_cc in ponderadores_cc:
+            ponderadores_cc[nombre_cc] = ponderadores_cc[nombre_cc] / total_ponderadores
+    
+    # Generar códigos de cuenta
+    if codigo_cuenta_original.startswith('2'):
+        codigo_proveedores = codigo_cuenta_original
+        codigo_gastos_base = codigo_cuenta_original.replace('2', '5', 1)
+        codigo_iva = codigo_cuenta_original.replace('2', '1', 1)
+    elif codigo_cuenta_original.startswith('5'):
+        codigo_gastos_base = codigo_cuenta_original
+        codigo_proveedores = codigo_cuenta_original.replace('5', '2', 1)
+        codigo_iva = codigo_cuenta_original.replace('5', '1', 1)
+    elif codigo_cuenta_original.startswith('1'):
+        codigo_iva = codigo_cuenta_original
+        codigo_proveedores = codigo_cuenta_original.replace('1', '2', 1)
+        codigo_gastos_base = codigo_cuenta_original.replace('1', '5', 1)
+    else:
+        codigo_proveedores = f"2{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "2111001"
+        codigo_gastos_base = f"5{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "5111001"
+        codigo_iva = f"1{codigo_cuenta_original[1:]}" if len(codigo_cuenta_original) > 1 else "1191001"
+    
+    # 1. Cuenta Proveedores (INVERTIDO: Debe en lugar de Haber)
+    fila_proveedores = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
+    fila_proveedores["Código Plan de Cuenta"] = codigo_proveedores
+    fila_proveedores["Monto al Debe Moneda Base"] = formatear_monto_clp(round(monto_total_absoluto, 2))  # 🔄 INVERTIDO
+    fila_proveedores["Monto 1 Detalle Libro"] = formatear_monto_clp(round(monto_neto, 2))
+    fila_proveedores["Monto 3 Detalle Libro"] = formatear_monto_clp(round(monto_iva, 2))
+    monto_suma_detalle = round(monto_neto + monto_iva, 2)
+    fila_proveedores["Monto Suma Detalle Libro"] = formatear_monto_clp(monto_suma_detalle)
+    filas_resultado.append(fila_proveedores)
+    
+    # 2. Cuentas de Gastos (una por cada centro de costo - hasta 3 - INVERTIDO: Haber en lugar de Debe)
+    contador_gasto = 1
+    
+    # Mapeo de columnas a keys de mapeo (igual que en tipo 33)
+    columnas_cc_mapeo = {
+        'PyC': 'col10',   # PyC
+        'PS': 'col11',    # PS/EB (EB es equivalente a PS)
+        'CO': 'col12'     # CO
+    }
+    
+    for nombre_cc, ponderador in ponderadores_cc.items():
+        if ponderador > 0:  # Solo crear línea si hay ponderador
+            # Calcular monto ponderado para este CC
+            monto_gasto_cc = round(monto_neto * ponderador, 2)
+            
+            # Obtener el código de centro de costo que el usuario asignó en el frontend
+            mapeo_key = columnas_cc_mapeo.get(nombre_cc, '')
+            codigo_cc_usuario = ""
+            
+            if mapeo_key and mapeo_key in mapeo_cc:
+                codigo_cc_usuario = mapeo_cc[mapeo_key]
+                if codigo_cc_usuario:
+                    codigo_cc_usuario = codigo_cc_usuario.strip()
+            
+            if not codigo_cc_usuario:
+                logger.warning(f"⚠️ No se encontró código de CC para '{nombre_cc}' (mapeo_key: {mapeo_key}) en mapeo_cc: {mapeo_cc}")
+                codigo_cc_usuario = ""  # Dejar vacío si no hay mapeo
+            
+            # Crear fila de gastos para este CC
+            fila_gastos_cc = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
+            fila_gastos_cc["Código Plan de Cuenta"] = codigo_gastos_base  # Sin sufijo
+            fila_gastos_cc["Monto al Haber Moneda Base"] = formatear_monto_clp(monto_gasto_cc)  # 🔄 INVERTIDO
+            
+            # Solo asignar código de centro de costo si existe
+            if codigo_cc_usuario:
+                fila_gastos_cc["Código Centro de Costo"] = codigo_cc_usuario
+            
+            logger.info(f"💰 Cuenta Gastos {contador_gasto}: {nombre_cc} -> CC: '{codigo_cc_usuario}' = {formatear_monto_clp(monto_gasto_cc)} (ponderador: {ponderador:.3f})")
+            
+            filas_resultado.append(fila_gastos_cc)
+            contador_gasto += 1
+    
+    # 3. Cuenta IVA (INVERTIDO: Haber en lugar de Debe)
+    fila_iva = crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento)
+    fila_iva["Código Plan de Cuenta"] = codigo_iva
+    fila_iva["Monto al Haber Moneda Base"] = formatear_monto_clp(round(monto_iva, 2))  # 🔄 INVERTIDO
+    filas_resultado.append(fila_iva)
+    
+    logger.info(f"📋 Tipo 61 con 3CC generó {len(filas_resultado)} filas: 1 Proveedores + {contador_gasto-1} Gastos + 1 IVA (INVERTIDOS)")
     
     return filas_resultado
 
@@ -1559,7 +2510,7 @@ def extraer_datos_comunes_tipo_61(fila, headers_entrada):
     
     return datos
 
-def crear_fila_base_tipo_61(datos_comunes, headers_salida):
+def crear_fila_base_tipo_61(datos_comunes, headers_salida, nombre_tipo_documento="Nota de Crédito"):
     """
     Crea una fila base con los datos comunes para tipo 61
     """
@@ -1568,6 +2519,7 @@ def crear_fila_base_tipo_61(datos_comunes, headers_salida):
     # Llenar campos comunes usando los datos reales del Excel
     fila_base["Numero"] = "61"  # Tipo de documento original
     fila_base["Tipo Documento"] = "Nota de Crédito"  # Nombre para tipo 61
+    fila_base["Nombre Tipo Documento"] = nombre_tipo_documento  # Nombre desde base de datos
     fila_base["Codigo Auxiliar"] = datos_comunes.get('rut_sin_dv', "")
     fila_base["Numero Doc"] = datos_comunes.get('folio', "")
     # ✨ Usar limpieza UTF-8 para descripción
@@ -1591,15 +2543,19 @@ def crear_fila_base_tipo_61(datos_comunes, headers_salida):
     
     return fila_base
 
-def crear_fila_base_tipo_33(datos_comunes, headers_salida):
+def crear_fila_base_tipo_33(datos_comunes, headers_salida, nombre_tipo_documento="Factura"):
     """
     Crea una fila base con los datos comunes para tipo 33
     """
     fila_base = {header: "" for header in headers_salida}
     
+    # Log de debug del nombre del tipo de documento
+    logger.info(f"🏷️ Creando fila base tipo 33 con nombre: '{nombre_tipo_documento}'")
+    
     # Llenar campos comunes usando los datos reales del Excel
     fila_base["Numero"] = "33"  # Tipo de documento original
     fila_base["Tipo Documento"] = "Factura"  # Nombre para tipo 33
+    fila_base["Nombre Tipo Documento"] = nombre_tipo_documento  # Nombre desde base de datos
     fila_base["Codigo Auxiliar"] = datos_comunes.get('rut_sin_dv', "")
     fila_base["Numero Doc"] = datos_comunes.get('folio', "")
     # ✨ NUEVO: Usar limpieza UTF-8 para descripción
@@ -1664,7 +2620,7 @@ def extraer_datos_comunes_tipo_34(fila, headers_entrada):
     
     return datos
 
-def crear_fila_base_tipo_34(datos_comunes, headers_salida):
+def crear_fila_base_tipo_34(datos_comunes, headers_salida, nombre_tipo_documento="Factura Excenta"):
     """
     Crea una fila base con los datos comunes para tipo 34
     """
@@ -1673,6 +2629,7 @@ def crear_fila_base_tipo_34(datos_comunes, headers_salida):
     # Llenar campos comunes usando los datos reales del Excel
     fila_base["Numero"] = "34"  # Tipo de documento original
     fila_base["Tipo Documento"] = "Factura Excenta"  # Nombre para tipo 34
+    fila_base["Nombre Tipo Documento"] = nombre_tipo_documento  # Nombre desde base de datos
     fila_base["Codigo Auxiliar"] = datos_comunes.get('rut_sin_dv', "")
     fila_base["Numero Doc"] = datos_comunes.get('folio', "")
     # ✨ NUEVO: Usar limpieza UTF-8 para descripción
@@ -1695,15 +2652,17 @@ def crear_fila_base_tipo_34(datos_comunes, headers_salida):
             fila_base["Fecha Emisión Docto.(DD/MM/AAAA)"] = str(fecha_original)
     
     return fila_base
-    
-    return fila_base
 
-def aplicar_reglas_genericas(fila, headers_entrada, tipo_doc, mapeo_cc, headers_salida):
+def aplicar_reglas_genericas(fila, headers_entrada, tipo_doc, mapeo_cc, headers_salida, tipos_doc_map):
     """
     Aplica reglas genéricas para tipos de documento no implementados específicamente
     """
     # Inicializar fila de salida con valores vacíos
     fila_salida = {header: "" for header in headers_salida}
+    
+    # Obtener nombre del tipo de documento
+    nombre_tipo_documento = tipos_doc_map.get(tipo_doc, f"Tipo {tipo_doc}")
+    logger.info(f"🏷️ Tipo {tipo_doc} -> Nombre: '{nombre_tipo_documento}'")
     
     # Campos básicos que se pueden mapear directamente
     fila_salida["Numero"] = str(tipo_doc)  # Tipo de documento original
@@ -1711,6 +2670,7 @@ def aplicar_reglas_genericas(fila, headers_entrada, tipo_doc, mapeo_cc, headers_
     descripcion_raw = fila.get(headers_entrada[7] if len(headers_entrada) > 7 else "", "")
     fila_salida["Descripción Movimiento"] = limpiar_texto_utf8(descripcion_raw)
     fila_salida["Tipo Documento"] = tipo_doc
+    fila_salida["Nombre Tipo Documento"] = nombre_tipo_documento  # Nombre desde base de datos
     
     # Calcular códigos de centros de costos aplicables
     codigos_cc = calcular_codigos_cc_para_fila(fila, headers_entrada, mapeo_cc)
@@ -2160,6 +3120,23 @@ def consolidar_resultados_captura_gastos_task(self, resultados_grupos, task_id, 
         metadata = json.loads(metadata_raw)
         headers = metadata['headers']
         
+        # Mapeo estático de tipos de documento chilenos comunes
+        tipos_doc_map = {
+            "33": "Factura Electrónica",
+            "34": "Factura Exenta Electrónica", 
+            "39": "Boleta Electrónica",
+            "41": "Boleta Exenta Electrónica",
+            "43": "Liquidación Factura Electrónica",
+            "46": "Factura de Compra Electrónica",
+            "52": "Guía de Despacho Electrónica",
+            "56": "Nota de Débito Electrónica",
+            "61": "Nota de Crédito Electrónica",
+            "110": "Factura de Exportación Electrónica",
+            "111": "Nota de Débito de Exportación Electrónica",
+            "112": "Nota de Crédito de Exportación Electrónica"
+        }
+        logger.info(f"📋 Usando mapeo estático de {len(tipos_doc_map)} tipos de documento chilenos")
+        
         # Crear un nuevo workbook con pestañas por tipo de documento
         wb = Workbook()
         wb.remove(wb.active)  # Remover hoja por defecto
@@ -2198,12 +3175,14 @@ def consolidar_resultados_captura_gastos_task(self, resultados_grupos, task_id, 
                 row_idx = 2  # Comenzar después del header
                 
                 for fila in filas_data:
-                    # Extraer tipo de documento del nombre del grupo (ej: "33 con 2CC" -> "33")
-                    tipo_doc = clave_grupo.split(' ')[0]
+                    # Extraer tipo de documento y cantidad de CC del nombre del grupo (ej: "33 con 2CC" -> "33", 2)
+                    partes_grupo = clave_grupo.split(' ')
+                    tipo_doc = partes_grupo[0]
+                    cc_count = int(partes_grupo[2].replace('CC', '')) if len(partes_grupo) >= 3 else 1
                     
-                    # Aplicar reglas de transformación según tipo de documento
+                    # Aplicar reglas de transformación según tipo de documento y cantidad de CC
                     # Esto puede retornar múltiples filas (ej: para tipo 33 retorna 3 filas: Proveedores, Gastos, IVA)
-                    filas_transformadas = aplicar_reglas_tipo_documento(fila, headers, tipo_doc, mapeo_cc)
+                    filas_transformadas = aplicar_reglas_tipo_documento(fila, headers, tipo_doc, cc_count, mapeo_cc, tipos_doc_map)
                     
                     # Escribir cada fila transformada
                     for fila_transformada in filas_transformadas:
@@ -2215,8 +3194,10 @@ def consolidar_resultados_captura_gastos_task(self, resultados_grupos, task_id, 
                 # Calcular total de filas de salida para este grupo
                 filas_salida_grupo = 0
                 for fila in filas_data:
-                    tipo_doc = clave_grupo.split(' ')[0]
-                    filas_transformadas = aplicar_reglas_tipo_documento(fila, headers, tipo_doc, mapeo_cc)
+                    partes_grupo = clave_grupo.split(' ')
+                    tipo_doc = partes_grupo[0]
+                    cc_count = int(partes_grupo[2].replace('CC', '')) if len(partes_grupo) >= 3 else 1
+                    filas_transformadas = aplicar_reglas_tipo_documento(fila, headers, tipo_doc, cc_count, mapeo_cc, tipos_doc_map)
                     filas_salida_grupo += len(filas_transformadas)
                 
                 total_filas_procesadas += filas_salida_grupo

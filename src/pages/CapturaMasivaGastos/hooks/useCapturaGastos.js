@@ -12,6 +12,7 @@ export const useCapturaGastos = () => {
   const [taskId, setTaskId] = useState(null);
   const [error, setError] = useState(null);
   const [headersExcel, setHeadersExcel] = useState(null);
+  const [centrosCostoDetectados, setCentrosCostoDetectados] = useState({});
   const [mapeoCC, setMapeoCC] = useState({
     col10: '',
     col11: '',
@@ -53,22 +54,29 @@ export const useCapturaGastos = () => {
     }
   }, [taskId, procesando]);
 
-  // Validar formato de centros de costos
-  const validarFormatoCentrosCostos = (mapeo) => {
-    const patron = CAPTURA_CONFIG.mapeoCC.formatPattern;
+  // Validar formato de códigos CC
+  const validarFormatoCC = (mapeo) => {
     const errores = [];
+    const patron = CAPTURA_CONFIG.mapeoCC.formatPattern;
     
     Object.entries(mapeo).forEach(([key, valor]) => {
       if (valor.trim() !== '' && !patron.test(valor.trim())) {
-        const numCol = key === 'col10' ? '10' : key === 'col11' ? '11' : '12';
-        errores.push(`Columna ${numCol}: formato inválido (debe ser XX-XXX, ej: ${CAPTURA_CONFIG.mapeoCC.formatExample})`);
+        // Obtener el nombre real de la columna en lugar de posición fija
+        let nombreColumna = 'Desconocida';
+        if (key === 'col10' && centrosCostoDetectados.PyC) {
+          nombreColumna = `${centrosCostoDetectados.PyC.nombre} (columna ${centrosCostoDetectados.PyC.posicion + 1})`;
+        } else if (key === 'col11' && centrosCostoDetectados.PS) {
+          nombreColumna = `${centrosCostoDetectados.PS.nombre} (columna ${centrosCostoDetectados.PS.posicion + 1})`;
+        } else if (key === 'col12' && centrosCostoDetectados.CO) {
+          nombreColumna = `${centrosCostoDetectados.CO.nombre} (columna ${centrosCostoDetectados.CO.posicion + 1})`;
+        }
+        
+        errores.push(`${nombreColumna}: formato inválido (debe ser XX-XXX, ej: ${CAPTURA_CONFIG.mapeoCC.formatExample})`);
       }
     });
     
     return errores;
-  };
-
-  // Manejar selección de archivo
+  };  // Manejar selección de archivo
   const handleArchivoSeleccionado = async (event) => {
     const archivoSeleccionado = event.target.files[0];
     setArchivo(archivoSeleccionado);
@@ -97,8 +105,11 @@ export const useCapturaGastos = () => {
       }
       
       const data = await response.json();
+      console.log('📡 Respuesta del API leer-headers:', data);
       setHeadersExcel(data.headers);
+      setCentrosCostoDetectados(data.centros_costo || {});
       setMostrarMapeoCC(true);
+      console.log('✅ Headers y centros de costo establecidos');
     } catch (error) {
       console.error('Error leyendo headers:', error);
       setError(`Error leyendo headers: ${error.message}`);
@@ -107,34 +118,53 @@ export const useCapturaGastos = () => {
 
   // Procesar archivo
   const procesarArchivo = async () => {
+    console.log('🚀 procesarArchivo llamado');
+    console.log('📁 archivo:', archivo);
+    console.log('🗺️ mapeoCC:', mapeoCC);
+    console.log('👀 mostrarMapeoCC:', mostrarMapeoCC);
+    
     if (!archivo) {
+      console.log('❌ Sin archivo');
       setError(UI_MESSAGES.errors.noFile);
       return;
     }
     
     // Validar que se hayan configurado los códigos de centro de costos
     const ccConfigured = Object.values(mapeoCC).some(cc => cc.trim() !== '');
-    if (!ccConfigured && mostrarMapeoCC) {
+    console.log('🔧 ccConfigured:', ccConfigured);
+    console.log('🔧 mapeoCC values:', Object.values(mapeoCC));
+    console.log('🔧 centrosCostoDetectados tiene datos:', Object.keys(centrosCostoDetectados).length > 0);
+    
+    // Solo validar si realmente hay centros de costo detectados en el archivo
+    const hayCC = Object.keys(centrosCostoDetectados).length > 0;
+    console.log('🔧 hayCC:', hayCC);
+    
+    if (!ccConfigured && mostrarMapeoCC && hayCC) {
+      console.log('❌ Sin configuración de CC');
       setError(UI_MESSAGES.errors.noCCConfig);
       return;
     }
     
     // Validar formato de códigos de centros de costos
-    const erroresFormato = validarFormatoCentrosCostos(mapeoCC);
+    const erroresFormato = validarFormatoCC(mapeoCC);
+    console.log('✅ erroresFormato:', erroresFormato);
+    
     if (erroresFormato.length > 0) {
+      console.log('❌ Errores de formato:', erroresFormato);
       setError(`${UI_MESSAGES.errors.invalidFormat}\n${erroresFormato.join('\n')}`);
       return;
     }
     
+    console.log('📤 Iniciando procesamiento...');
     setProcesando(true);
     setError(null);
     
     try {
       const respuesta = await subirArchivoGastos(archivo, mapeoCC);
       setTaskId(respuesta.task_id);
-      console.log('Archivo enviado, task_id:', respuesta.task_id);
+      console.log('✅ Archivo enviado, task_id:', respuesta.task_id);
     } catch (error) {
-      console.error("Error procesando archivo:", error);
+      console.error("❌ Error procesando archivo:", error);
       setError(`${UI_MESSAGES.errors.processing} ${error.message}`);
       setProcesando(false);
     }
@@ -179,6 +209,7 @@ export const useCapturaGastos = () => {
     taskId,
     error,
     headersExcel,
+    centrosCostoDetectados,
     mapeoCC,
     mostrarMapeoCC,
     

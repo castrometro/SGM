@@ -7,6 +7,7 @@ import { CAPTURA_CONFIG, STYLES_CONFIG, UI_MESSAGES } from "../config/capturaCon
 const MapeoCC = ({ 
   mostrarMapeoCC, 
   headersExcel, 
+  centrosCostoDetectados = {}, // Valor por defecto
   mapeoCC, 
   setMapeoCC 
 }) => {
@@ -14,11 +15,63 @@ const MapeoCC = ({
   const { alerts } = STYLES_CONFIG;
   const { ccInfo } = UI_MESSAGES;
 
+  console.log('🗺️ MapeoCC renderizado:', { mostrarMapeoCC, headersExcel, centrosCostoDetectados, mapeoCC });
+
   if (!mostrarMapeoCC || !headersExcel) return null;
 
   const handleInputChange = (key, value) => {
     setMapeoCC(prev => ({ ...prev, [key]: value }));
   };
+
+  // Generar configuración de columnas dinámicamente basada en centros de costo detectados
+  const generarColumnasDetectadas = () => {
+    console.log('🔍 Generando columnas detectadas:', centrosCostoDetectados);
+    const columnas = [];
+    
+    // PyC
+    if (centrosCostoDetectados.PyC) {
+      columnas.push({
+        key: 'col10',
+        label: `${centrosCostoDetectados.PyC.nombre}`,
+        subtitle: `Columna ${centrosCostoDetectados.PyC.posicion + 1}`,
+        placeholder: 'Código CC (ej: 01-003)'
+      });
+    }
+    
+    // PS/EB
+    if (centrosCostoDetectados.PS) {
+      columnas.push({
+        key: 'col11',
+        label: `${centrosCostoDetectados.PS.nombre}`,
+        subtitle: `Columna ${centrosCostoDetectados.PS.posicion + 1}`,
+        placeholder: 'Código CC (ej: 02-004)'
+      });
+    }
+    
+    // CO
+    if (centrosCostoDetectados.CO) {
+      columnas.push({
+        key: 'col12',
+        label: `${centrosCostoDetectados.CO.nombre}`,
+        subtitle: `Columna ${centrosCostoDetectados.CO.posicion + 1}`,
+        placeholder: 'Código CC (ej: 03-005)'
+      });
+    }
+    
+    // Si no se detectaron centros de costo, usar configuración por defecto
+    if (columnas.length === 0) {
+      console.log('⚠️ No se detectaron centros de costo, usando configuración por defecto');
+      return config.columns.map(col => ({
+        ...col,
+        subtitle: headersExcel[col.key === 'col10' ? 9 : col.key === 'col11' ? 10 : 11] || 'Sin nombre'
+      }));
+    }
+    
+    console.log('✅ Columnas generadas:', columnas);
+    return columnas;
+  };
+
+  const columnasAMostrar = generarColumnasDetectadas();
 
   return (
     <div className={`mt-6 ${alerts.warning}`}>
@@ -31,14 +84,14 @@ const MapeoCC = ({
       </p>
       
       <div className="space-y-4">
-        {config.columns.map((column) => (
+        {columnasAMostrar.map((column) => (
           <div key={column.key} className="flex items-center gap-4">
-            <div className="w-32">
+            <div className="w-40">
               <label className="block text-sm font-medium text-gray-300 mb-1">
                 {column.label}:
               </label>
               <p className="text-xs text-gray-400 truncate">
-                {headersExcel[column.key === 'col10' ? 9 : column.key === 'col11' ? 10 : 11] || 'Sin nombre'}
+                {column.subtitle}
               </p>
             </div>
             <div className="flex-1">

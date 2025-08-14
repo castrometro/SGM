@@ -1,6 +1,18 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { obtenerResumenContable } from "../api/contabilidad";
+im          {/* Botón para gestionar empleados del cliente */}
+          {(areaActiva === "Nomina" || areaActiva === "Payroll") && (
+            <Link
+              to={`/menu/clientes/${cliente.id}/empleados`}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded font-medium text-sm transition-colors flex items-center gap-1"
+              title="Gestionar Empleados"
+            >
+              <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              Empleados
+            </Link>
+          )}rResumenContable } from "../api/contabilidad";
 import { obtenerResumenPayrollCliente } from "../api/payroll";
 import EstadoBadge from "./EstadoBadge";
 
@@ -48,6 +60,24 @@ const ClienteRow = ({ cliente, areaActiva }) => {
 
     fetchResumen();
   }, [cliente.id, areaActiva]);
+      try {
+        let data = {};
+        if (areaActiva === "Contabilidad") {
+          data = await obtenerResumenContable(cliente.id);
+        } else if (areaActiva === "Nomina") {
+          data = await obtenerResumenNomina(cliente.id);
+        } else {
+          data = {}; // O puedes mostrar “No aplica”
+        }
+        setResumen(data);
+      } catch (error) {
+        setResumen({ ultimo_cierre: null, estado_cierre_actual: null });
+        console.error("Error al cargar resumen:", error);
+      }
+    };
+
+    fetchResumen();
+  }, [cliente.id, areaActiva]);
 
   return (
     <tr key={cliente.id} className="border-b border-gray-700">
@@ -69,7 +99,7 @@ const ClienteRow = ({ cliente, areaActiva }) => {
           </Link>
           
           {/* Botón para gestionar empleados del cliente */}
-          {(areaActiva === "Nomina" || areaActiva === "Payroll") && (
+          {areaActiva === "Nomina" && (
             <Link
               to={`/menu/clientes/${cliente.id}/empleados`}
               className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded font-medium text-sm transition-colors flex items-center gap-1"
@@ -99,17 +129,17 @@ const ClienteRow = ({ cliente, areaActiva }) => {
             </button>
           )}
           
-          {(areaActiva === "Nomina" || areaActiva === "Payroll") && (
+          {areaActiva === "Nomina" && (
             <button
               onClick={() => {
                 const streamlitUrl = `http://172.17.11.18:8503/?cliente_id=${cliente.id}`;
                 window.open(streamlitUrl, '_blank');
               }}
               className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded font-medium text-sm transition-colors flex items-center gap-1"
-              title="Ver Dashboard Payroll"
+              title="Ver Dashboard Nómina"
             >
               <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 715.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 919.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
               </svg>
               Dashboard
             </button>

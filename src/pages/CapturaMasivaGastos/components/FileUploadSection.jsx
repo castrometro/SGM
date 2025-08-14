@@ -70,7 +70,16 @@ const FileUploadSection = ({
 
       {archivo && (
         <button
-          onClick={onProcesar}
+          onClick={() => {
+            console.log('🖱️ Botón procesar clickeado');
+            console.log('📝 onProcesar:', onProcesar);
+            console.log('⏳ procesando:', procesando);
+            if (onProcesar) {
+              onProcesar();
+            } else {
+              console.error('❌ onProcesar no está definido');
+            }
+          }}
           disabled={procesando}
           className={`mt-4 w-full ${buttons.secondary} ${buttons.disabled}`}
         >

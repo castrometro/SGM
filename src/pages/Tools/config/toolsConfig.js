@@ -45,25 +45,53 @@ export const TOOLS_CONFIG = {
   byUserType: {
     analista: {
       base: [
-        {
-          title: "Captura Masiva RindeGastos",
-          description: "Cargar múltiples gastos desde archivo Excel",
-          icon: Receipt,
-          color: "bg-emerald-600",
-          action: "captura-gastos",
-          section: "contabilidad",
-          disabled: false
-        },
-        {
-          title: "Validar Comprobantes",
-          description: "Verificar integridad de documentos contables",
-          icon: FileSpreadsheet,
-          color: "bg-blue-600",
-          action: "validar-comprobantes",
-          section: "contabilidad",
-          disabled: true
-        }
-      ]
+        // Herramientas generales para analistas (sin área específica)
+      ],
+      
+      // Herramientas específicas por área para analistas
+      byArea: {
+        "Contabilidad": [
+          {
+            title: "Captura Masiva RindeGastos",
+            description: "Cargar múltiples gastos desde archivo Excel",
+            icon: Receipt,
+            color: "bg-emerald-600",
+            action: "captura-gastos",
+            section: "contabilidad",
+            disabled: false
+          },
+          {
+            title: "Validar Comprobantes",
+            description: "Verificar integridad de documentos contables",
+            icon: FileSpreadsheet,
+            color: "bg-blue-600",
+            action: "validar-comprobantes",
+            section: "contabilidad",
+            disabled: true
+          }
+        ],
+        
+        "Payroll": [
+          {
+            title: "Procesar Nómina Asignada",
+            description: "Procesar nóminas de clientes asignados",
+            icon: UserCheck,
+            color: "bg-green-600",
+            action: "procesar-nomina-asignada",
+            section: "nomina",
+            disabled: true
+          },
+          {
+            title: "Validar Datos Empleados",
+            description: "Verificar información de empleados",
+            icon: ClipboardList,
+            color: "bg-blue-600",
+            action: "validar-empleados",
+            section: "nomina",
+            disabled: true
+          }
+        ]
+      }
     },
 
     gerente: {

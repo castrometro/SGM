@@ -15,6 +15,8 @@ export const useToolsOptions = (usuario) => {
     "captura-gastos": () => navigate('/menu/tools/captura-masiva-gastos'),
     "exportar-basicos": () => console.log("Exportar datos básicos"),
     "validar-comprobantes": () => console.log("Validar comprobantes"),
+    "procesar-nomina-asignada": () => console.log("Procesar nómina asignada"),
+    "validar-empleados": () => console.log("Validar datos empleados"),
     "dashboard-ejecutivo": () => console.log("Dashboard ejecutivo"),
     "gestion-usuarios-avanzada": () => console.log("Gestión usuarios avanzada"),
     "consolidacion-contable": () => console.log("Consolidación contable"),
@@ -55,8 +57,8 @@ export const useToolsOptions = (usuario) => {
       herramientas = [...herramientas, ...userConfig.base];
     }
 
-    // Agregar herramientas específicas por área (solo para gerentes por ahora)
-    if (usuario.tipo_usuario === 'gerente' && userConfig.byArea && usuario.areas?.length > 0) {
+    // Agregar herramientas específicas por área
+    if (userConfig.byArea && usuario.areas?.length > 0) {
       const areas = usuario.areas || [];
       
       areas.forEach(area => {
@@ -64,6 +66,36 @@ export const useToolsOptions = (usuario) => {
         herramientas = [...herramientas, ...areaHerramientas];
       });
     }
+
+    // Filtrar herramientas según las áreas del usuario (para todos los tipos de usuario)
+    const userAreas = usuario.areas?.map(area => area.nombre) || [];
+    
+    // Mapeo de secciones a áreas
+    const sectionToArea = {
+      'contabilidad': 'Contabilidad',
+      'nomina': 'Payroll', // Puede ser Payroll, Nómina o RRHH
+      'rrhh': 'RRHH'
+    };
+
+    herramientas = herramientas.filter(herramienta => {
+      const section = herramienta.section;
+      
+      // Siempre permitir herramientas generales, analytics y system
+      if (['general', 'analytics', 'system'].includes(section)) {
+        return true;
+      }
+      
+      // Verificar si el usuario tiene acceso al área de la herramienta
+      const requiredArea = sectionToArea[section];
+      if (requiredArea) {
+        return userAreas.includes(requiredArea) || 
+               userAreas.some(area => area.toLowerCase().includes('payroll')) ||
+               userAreas.some(area => area.toLowerCase().includes('nomina')) ||
+               userAreas.some(area => area.toLowerCase().includes('rrhh'));
+      }
+      
+      return true; // Por defecto permitir si no hay restricción específica
+    });
 
     // Agregar handlers de acción a cada herramienta
     return herramientas.map(herramienta => ({

@@ -1017,6 +1017,7 @@ def descargar_resultado_gastos(request, task_id):
 def leer_headers_excel_gastos(request):
     """
     Endpoint para leer solo los headers de un archivo Excel
+    También detecta automáticamente las posiciones de centros de costo
     """
     try:
         # Validar que se haya enviado un archivo
@@ -1053,11 +1054,38 @@ def leer_headers_excel_gastos(request):
             else:
                 headers.append('')
         
+        # Detectar posiciones de centros de costo automáticamente
+        centros_costo_detectados = {}
+        for i, header in enumerate(headers):
+            if header == 'PyC':
+                centros_costo_detectados['PyC'] = {'posicion': i, 'nombre': header}
+            elif header in ['PS', 'EB']:  # PS y EB son equivalentes
+                centros_costo_detectados['PS'] = {'posicion': i, 'nombre': header}
+            elif header == 'CO':
+                centros_costo_detectados['CO'] = {'posicion': i, 'nombre': header}
+        
+        # Detectar posiciones de código y nombre de cuenta
+        columnas_cuenta_detectadas = {}
+        
+        # Buscar primera columna que contenga "Codigo cuenta"
+        for i, header in enumerate(headers):
+            if header and 'Codigo cuenta' in str(header):
+                columnas_cuenta_detectadas['codigo_cuenta'] = {'posicion': i, 'nombre': header}
+                break
+        
+        # Buscar primera columna que contenga "Nombre cuenta"
+        for i, header in enumerate(headers):
+            if header and 'Nombre cuenta' in str(header):
+                columnas_cuenta_detectadas['nombre_cuenta'] = {'posicion': i, 'nombre': header}
+                break
+        
         workbook.close()
         
         return Response({
             'headers': headers,
             'total_columnas': len(headers),
+            'centros_costo': centros_costo_detectados,
+            'columnas_cuenta': columnas_cuenta_detectadas,
             'mensaje': 'Headers leídos exitosamente'
         })
         

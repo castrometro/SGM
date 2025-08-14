@@ -1,4 +1,5 @@
 import { obtenerResumenContable } from '../../../api/contabilidad';
+import { obtenerResumenPayrollCliente } from '../../../api/payroll';
 // import { obtenerResumenNomina } from '../../../api/nomina'; // REMOVIDO - Limpieza de nómina
 
 /**
@@ -15,10 +16,20 @@ export const AREAS_CONFIG = {
       types: ["contabilidad", "facturacion", "tesoreria"]
     }
   },
+  Payroll: {
+    title: "Payroll", 
+    color: "bg-green-600",
+    apiFunction: obtenerResumenPayrollCliente,
+    showKpiResumen: true,
+    services: {
+      title: "Servicios de Payroll",
+      types: ["payroll", "nomina", "rrhh", "liquidaciones"]
+    }
+  },
   Nomina: {
     title: "Nómina", 
     color: "bg-green-600",
-    apiFunction: null, // obtenerResumenNomina cuando esté disponible
+    apiFunction: obtenerResumenPayrollCliente, // Usar la misma API de Payroll
     showKpiResumen: false,
     services: {
       title: "Servicios de Nómina",

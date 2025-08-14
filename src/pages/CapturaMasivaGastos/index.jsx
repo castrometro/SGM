@@ -20,6 +20,7 @@ const CapturaMasivaGastos = () => {
     resultados,
     error,
     headersExcel,
+    centrosCostoDetectados,
     mapeoCC,
     mostrarMapeoCC,
     
@@ -59,6 +60,7 @@ const CapturaMasivaGastos = () => {
         <MapeoCC 
           mostrarMapeoCC={mostrarMapeoCC}
           headersExcel={headersExcel}
+          centrosCostoDetectados={centrosCostoDetectados}
           mapeoCC={mapeoCC}
           setMapeoCC={setMapeoCC}
         />

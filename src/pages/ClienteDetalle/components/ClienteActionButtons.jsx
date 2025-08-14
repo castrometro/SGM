@@ -2,11 +2,6 @@ import { useNavigate } from "react-router-dom";
 import {
   History,
   FilePlus,
-  BookOpenCheck,
-  FolderOpen,
-  FileText,
-  Users,
-  ListChecks,
   BarChart3
 } from "lucide-react";
 
@@ -36,17 +31,51 @@ const ClienteActionButtons = ({ clienteId, areaActiva }) => {
         color: "#34D399",
         action: () => navigate(`/menu/clientes/${clienteId}/crear-cierre`),
       },
+    ],
+    "Payroll": [
       {
-        label: "Ver Cuentas",
-        icon: BookOpenCheck,
-        color: "#FBBF24",
-        action: () => navigate(`/menu/clientes/${clienteId}/cuentas`),
+        label: "Dashboard Payroll",
+        icon: BarChart3,
+        color: "#10B981",
+        action: () => {
+          // TODO: Implementar dashboard Streamlit para payroll
+          console.log("Dashboard Payroll - En desarrollo");
+        },
       },
       {
-        label: "Archivos Subidos",
-        icon: FolderOpen,
-        color: "#F472B6",
-        action: () => navigate(`/menu/clientes/${clienteId}/archivos`),
+        label: "Historial de Cierres",
+        icon: History,
+        color: "#60A5FA",
+        action: () => navigate(`/menu/clientes/${clienteId}/cierres-payroll`),
+      },
+      {
+        label: "Crear Cierre",
+        icon: FilePlus,
+        color: "#34D399",
+        action: () => navigate(`/menu/clientes/${clienteId}/crear-cierre-payroll`),
+      },
+    ],
+    "Nomina": [
+      {
+        label: "Dashboard Payroll",
+        icon: BarChart3,
+        color: "#10B981",
+        action: () => {
+          // TODO: Implementar dashboard Streamlit para payroll
+          console.log("Dashboard Payroll - En desarrollo");
+        },
+      },
+      {
+        label: "Historial de Cierres",
+        icon: History,
+        color: "#60A5FA",
+        action: () => navigate(`/menu/clientes/${clienteId}/cierres-payroll`),
+      },
+      {
+        label: "Crear Cierre",
+        icon: FilePlus,
+        color: "#34D399",
+        action: () => navigate(`/menu/clientes/${clienteId}/crear-cierre-payroll`),
       },
     ],
   };
@@ -54,8 +83,12 @@ const ClienteActionButtons = ({ clienteId, areaActiva }) => {
   // Si hay más de un área en el futuro, lo tienes cubierto
   const botones = botonesPorArea[areaActiva] || [];
 
+  // Debug temporal para verificar qué área está activa
+  console.log("ClienteActionButtons - Área activa:", areaActiva);
+  console.log("ClienteActionButtons - Botones disponibles:", botones.length);
+
   return (
-    <div className={`grid ${botones.length <= 2 ? "grid-cols-2" : botones.length <= 4 ? "grid-cols-2 md:grid-cols-4" : "grid-cols-2 md:grid-cols-3"} gap-4`}>
+    <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${botones.length}, 1fr)` }}>
       {botones.map(({ label, icon: Icon, color, action }) => (
         <button
           key={label}

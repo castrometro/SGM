@@ -1480,34 +1480,34 @@ def aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida):
 def extraer_datos_comunes_tipo_33(fila, headers_entrada):
     """
     Extrae los datos comunes necesarios para tipo 33 desde la fila original
-    Headers reales: ["Nro", "Tipo Doc", "RUT Proveedor", "Razon Social", "Folio", "Fecha Docto", "Monto Total", "Codigo cuenta", "Nombre cuenta", "PyC", "PS", "CO"]
+    Busca columnas dinámicamente para mayor flexibilidad con diferentes layouts de Excel
     """
     datos = {}
     
-    # Mapear campos según la estructura real del Excel
-    if len(headers_entrada) > 0:
-        datos['nro'] = fila.get(headers_entrada[0], "")  # Nro
-    if len(headers_entrada) > 1:
-        datos['tipo_doc'] = fila.get(headers_entrada[1], "")  # Tipo Doc
-    if len(headers_entrada) > 2:
-        datos['rut_proveedor'] = fila.get(headers_entrada[2], "")  # RUT Proveedor
-    if len(headers_entrada) > 3:
-        datos['razon_social'] = fila.get(headers_entrada[3], "")  # Razon Social
-    if len(headers_entrada) > 4:
-        datos['folio'] = fila.get(headers_entrada[4], "")  # Folio
-    if len(headers_entrada) > 5:
-        datos['fecha'] = fila.get(headers_entrada[5], "")  # Fecha Docto
-    if len(headers_entrada) > 6:
-        # Monto Total
-        monto_raw = fila.get(headers_entrada[6], 0)
+    # Mapear columnas automáticamente
+    mapeo = mapear_columnas_automaticamente(headers_entrada)
+    
+    # Extraer datos usando el mapeo dinámico
+    datos['nro'] = fila.get(headers_entrada[mapeo.get('nro', 0)], "") if mapeo.get('nro') is not None else ""
+    datos['tipo_doc'] = fila.get(headers_entrada[mapeo.get('tipo_doc', 1)], "") if mapeo.get('tipo_doc') is not None else ""
+    datos['rut_proveedor'] = fila.get(headers_entrada[mapeo.get('rut_proveedor', 2)], "") if mapeo.get('rut_proveedor') is not None else ""
+    datos['razon_social'] = fila.get(headers_entrada[mapeo.get('razon_social', 3)], "") if mapeo.get('razon_social') is not None else ""
+    datos['folio'] = fila.get(headers_entrada[mapeo.get('folio', 4)], "") if mapeo.get('folio') is not None else ""
+    datos['fecha'] = fila.get(headers_entrada[mapeo.get('fecha', 5)], "") if mapeo.get('fecha') is not None else ""
+    
+    # Monto Total - crítico para el procesamiento
+    if mapeo.get('monto_total') is not None:
+        monto_raw = fila.get(headers_entrada[mapeo['monto_total']], 0)
         try:
             datos['monto_total'] = float(monto_raw) if monto_raw else 0
         except (ValueError, TypeError):
             datos['monto_total'] = 0
-    if len(headers_entrada) > 7:
-        datos['codigo_cuenta'] = fila.get(headers_entrada[7], "")  # Codigo cuenta
-    if len(headers_entrada) > 8:
-        datos['nombre_cuenta'] = fila.get(headers_entrada[8], "")  # Nombre cuenta
+    else:
+        datos['monto_total'] = 0
+    
+    # Código y nombre de cuenta
+    datos['codigo_cuenta'] = fila.get(headers_entrada[mapeo.get('codigo_cuenta', 7)], "") if mapeo.get('codigo_cuenta') is not None else ""
+    datos['nombre_cuenta'] = fila.get(headers_entrada[mapeo.get('nombre_cuenta', 8)], "") if mapeo.get('nombre_cuenta') is not None else ""
     
     # Extraer RUT sin dígito verificador
     rut_completo = datos.get('rut_proveedor', '')
@@ -1521,34 +1521,34 @@ def extraer_datos_comunes_tipo_33(fila, headers_entrada):
 def extraer_datos_comunes_tipo_61(fila, headers_entrada):
     """
     Extrae los datos comunes necesarios para tipo 61 desde la fila original
-    Headers reales: ["Nro", "Tipo Doc", "RUT Proveedor", "Razon Social", "Folio", "Fecha Docto", "Monto Total", "Codigo cuenta", "Nombre cuenta", "PyC", "PS", "CO"]
+    Busca columnas dinámicamente para mayor flexibilidad con diferentes layouts de Excel
     """
     datos = {}
     
-    # Mapear campos según la estructura real del Excel (misma estructura que tipo 33 y 34)
-    if len(headers_entrada) > 0:
-        datos['nro'] = fila.get(headers_entrada[0], "")  # Nro
-    if len(headers_entrada) > 1:
-        datos['tipo_doc'] = fila.get(headers_entrada[1], "")  # Tipo Doc
-    if len(headers_entrada) > 2:
-        datos['rut_proveedor'] = fila.get(headers_entrada[2], "")  # RUT Proveedor
-    if len(headers_entrada) > 3:
-        datos['razon_social'] = fila.get(headers_entrada[3], "")  # Razon Social
-    if len(headers_entrada) > 4:
-        datos['folio'] = fila.get(headers_entrada[4], "")  # Folio
-    if len(headers_entrada) > 5:
-        datos['fecha'] = fila.get(headers_entrada[5], "")  # Fecha Docto
-    if len(headers_entrada) > 6:
-        # Monto Total
-        monto_raw = fila.get(headers_entrada[6], 0)
+    # Mapear columnas automáticamente
+    mapeo = mapear_columnas_automaticamente(headers_entrada)
+    
+    # Extraer datos usando el mapeo dinámico (misma lógica que tipo 33)
+    datos['nro'] = fila.get(headers_entrada[mapeo.get('nro', 0)], "") if mapeo.get('nro') is not None else ""
+    datos['tipo_doc'] = fila.get(headers_entrada[mapeo.get('tipo_doc', 1)], "") if mapeo.get('tipo_doc') is not None else ""
+    datos['rut_proveedor'] = fila.get(headers_entrada[mapeo.get('rut_proveedor', 2)], "") if mapeo.get('rut_proveedor') is not None else ""
+    datos['razon_social'] = fila.get(headers_entrada[mapeo.get('razon_social', 3)], "") if mapeo.get('razon_social') is not None else ""
+    datos['folio'] = fila.get(headers_entrada[mapeo.get('folio', 4)], "") if mapeo.get('folio') is not None else ""
+    datos['fecha'] = fila.get(headers_entrada[mapeo.get('fecha', 5)], "") if mapeo.get('fecha') is not None else ""
+    
+    # Monto Total - crítico para el procesamiento
+    if mapeo.get('monto_total') is not None:
+        monto_raw = fila.get(headers_entrada[mapeo['monto_total']], 0)
         try:
             datos['monto_total'] = float(monto_raw) if monto_raw else 0
         except (ValueError, TypeError):
             datos['monto_total'] = 0
-    if len(headers_entrada) > 7:
-        datos['codigo_cuenta'] = fila.get(headers_entrada[7], "")  # Codigo cuenta
-    if len(headers_entrada) > 8:
-        datos['nombre_cuenta'] = fila.get(headers_entrada[8], "")  # Nombre cuenta
+    else:
+        datos['monto_total'] = 0
+    
+    # Código y nombre de cuenta
+    datos['codigo_cuenta'] = fila.get(headers_entrada[mapeo.get('codigo_cuenta', 7)], "") if mapeo.get('codigo_cuenta') is not None else ""
+    datos['nombre_cuenta'] = fila.get(headers_entrada[mapeo.get('nombre_cuenta', 8)], "") if mapeo.get('nombre_cuenta') is not None else ""
     
     # Extraer RUT sin dígito verificador
     rut_completo = datos.get('rut_proveedor', '')
@@ -1626,34 +1626,34 @@ def crear_fila_base_tipo_33(datos_comunes, headers_salida):
 def extraer_datos_comunes_tipo_34(fila, headers_entrada):
     """
     Extrae los datos comunes necesarios para tipo 34 desde la fila original
-    Headers reales: ["Nro", "Tipo Doc", "RUT Proveedor", "Razon Social", "Folio", "Fecha Docto", "Monto Total", "Codigo cuenta", "Nombre cuenta", "PyC", "PS", "CO"]
+    Busca columnas dinámicamente para mayor flexibilidad con diferentes layouts de Excel
     """
     datos = {}
     
-    # Mapear campos según la estructura real del Excel (misma estructura que tipo 33)
-    if len(headers_entrada) > 0:
-        datos['nro'] = fila.get(headers_entrada[0], "")  # Nro
-    if len(headers_entrada) > 1:
-        datos['tipo_doc'] = fila.get(headers_entrada[1], "")  # Tipo Doc
-    if len(headers_entrada) > 2:
-        datos['rut_proveedor'] = fila.get(headers_entrada[2], "")  # RUT Proveedor
-    if len(headers_entrada) > 3:
-        datos['razon_social'] = fila.get(headers_entrada[3], "")  # Razon Social
-    if len(headers_entrada) > 4:
-        datos['folio'] = fila.get(headers_entrada[4], "")  # Folio
-    if len(headers_entrada) > 5:
-        datos['fecha'] = fila.get(headers_entrada[5], "")  # Fecha Docto
-    if len(headers_entrada) > 6:
-        # Monto Total
-        monto_raw = fila.get(headers_entrada[6], 0)
+    # Mapear columnas automáticamente
+    mapeo = mapear_columnas_automaticamente(headers_entrada)
+    
+    # Extraer datos usando el mapeo dinámico (misma lógica que tipo 33)
+    datos['nro'] = fila.get(headers_entrada[mapeo.get('nro', 0)], "") if mapeo.get('nro') is not None else ""
+    datos['tipo_doc'] = fila.get(headers_entrada[mapeo.get('tipo_doc', 1)], "") if mapeo.get('tipo_doc') is not None else ""
+    datos['rut_proveedor'] = fila.get(headers_entrada[mapeo.get('rut_proveedor', 2)], "") if mapeo.get('rut_proveedor') is not None else ""
+    datos['razon_social'] = fila.get(headers_entrada[mapeo.get('razon_social', 3)], "") if mapeo.get('razon_social') is not None else ""
+    datos['folio'] = fila.get(headers_entrada[mapeo.get('folio', 4)], "") if mapeo.get('folio') is not None else ""
+    datos['fecha'] = fila.get(headers_entrada[mapeo.get('fecha', 5)], "") if mapeo.get('fecha') is not None else ""
+    
+    # Monto Total - crítico para el procesamiento
+    if mapeo.get('monto_total') is not None:
+        monto_raw = fila.get(headers_entrada[mapeo['monto_total']], 0)
         try:
             datos['monto_total'] = float(monto_raw) if monto_raw else 0
         except (ValueError, TypeError):
             datos['monto_total'] = 0
-    if len(headers_entrada) > 7:
-        datos['codigo_cuenta'] = fila.get(headers_entrada[7], "")  # Codigo cuenta
-    if len(headers_entrada) > 8:
-        datos['nombre_cuenta'] = fila.get(headers_entrada[8], "")  # Nombre cuenta
+    else:
+        datos['monto_total'] = 0
+    
+    # Código y nombre de cuenta
+    datos['codigo_cuenta'] = fila.get(headers_entrada[mapeo.get('codigo_cuenta', 7)], "") if mapeo.get('codigo_cuenta') is not None else ""
+    datos['nombre_cuenta'] = fila.get(headers_entrada[mapeo.get('nombre_cuenta', 8)], "") if mapeo.get('nombre_cuenta') is not None else ""
     
     # Extraer RUT sin dígito verificador
     rut_completo = datos.get('rut_proveedor', '')
@@ -1801,95 +1801,151 @@ def formatear_monto_clp(monto):
     
     return monto_formateado
 
+def detectar_posiciones_centros_costo(headers):
+    """
+    Detecta automáticamente las posiciones de las columnas de centros de costo
+    Busca PyC, PS/EB, CO por nombre en lugar de posición fija
+    Retorna un diccionario con el mapeo dinámico
+    """
+    mapeo_dinamico = {}
+    
+    for i, header in enumerate(headers):
+        if header == 'PyC':
+            mapeo_dinamico['PyC'] = i
+        elif header in ['PS', 'EB']:  # PS y EB son equivalentes
+            mapeo_dinamico['PS'] = i
+        elif header == 'CO':
+            mapeo_dinamico['CO'] = i
+    
+    return mapeo_dinamico
+
+def buscar_columna_codigo_cuenta(headers):
+    """
+    Busca la primera columna que contenga "Codigo cuenta" (con variaciones como 1, 2, etc.)
+    Retorna el índice de la columna o None si no se encuentra
+    """
+    for i, header in enumerate(headers):
+        if header and 'Codigo cuenta' in str(header):
+            return i
+    return None
+
+def buscar_columna_nombre_cuenta(headers):
+    """
+    Busca la primera columna que contenga "Nombre cuenta" (con variaciones como 1, 2, etc.)
+    Retorna el índice de la columna o None si no se encuentra
+    """
+    for i, header in enumerate(headers):
+        if header and 'Nombre cuenta' in str(header):
+            return i
+    return None
+
+def buscar_columna_monto_total(headers):
+    """
+    Busca la columna "Monto Total" 
+    Retorna el índice de la columna o None si no se encuentra
+    """
+    for i, header in enumerate(headers):
+        if header and str(header).strip() == 'Monto Total':
+            return i
+    return None
+
+def mapear_columnas_automaticamente(headers):
+    """
+    Mapea automáticamente las columnas importantes basándose en sus nombres
+    Retorna un diccionario con las posiciones encontradas
+    """
+    mapeo = {}
+    
+    for i, header in enumerate(headers):
+        if not header:
+            continue
+            
+        header_clean = str(header).strip()
+        
+        # Mapeo de columnas conocidas
+        if header_clean == 'Nro':
+            mapeo['nro'] = i
+        elif header_clean == 'Tipo Doc':
+            mapeo['tipo_doc'] = i  
+        elif header_clean == 'RUT Proveedor':
+            mapeo['rut_proveedor'] = i
+        elif header_clean == 'Razon Social':
+            mapeo['razon_social'] = i
+        elif header_clean == 'Folio':
+            mapeo['folio'] = i
+        elif header_clean == 'Fecha Docto':
+            mapeo['fecha'] = i
+        elif header_clean == 'Monto Total':
+            mapeo['monto_total'] = i
+        elif 'Codigo cuenta' in header_clean and 'codigo_cuenta' not in mapeo:
+            mapeo['codigo_cuenta'] = i  # Tomar el primero
+        elif 'Nombre cuenta' in header_clean and 'nombre_cuenta' not in mapeo:
+            mapeo['nombre_cuenta'] = i  # Tomar el primero
+    
+    return mapeo
+
 def calcular_codigos_cc_para_fila(fila, headers, mapeo_cc):
     """
     Calcula qué códigos de centros de costos se aplican a una fila específica
     Retorna una string con los códigos separados por comas
-    Las columnas son PyC, PS, CO (índices 9, 10, 11)
+    Busca las columnas PyC, PS/EB, CO por nombre (EB es equivalente a PS)
     """
-    # Las columnas de centros de costos son PyC, PS, CO (índices 9, 10, 11)
-    columnas_cc = [
-        {'indice': 9, 'mapeo_key': 'col10'},   # PyC
-        {'indice': 10, 'mapeo_key': 'col11'},  # PS
-        {'indice': 11, 'mapeo_key': 'col12'}   # CO
-    ]
+    # Detectar posiciones dinámicamente
+    posiciones_cc = detectar_posiciones_centros_costo(headers)
+    
+    # Mapeo de columnas a keys de mapeo (mantenemos compatibilidad con frontend)
+    columnas_cc_mapeo = {
+        'PyC': 'col10',   # PyC
+        'PS': 'col11',    # PS/EB
+        'CO': 'col12'     # CO
+    }
     
     codigos_aplicables = []
     
-    for cc_info in columnas_cc:
-        idx = cc_info['indice']
-        mapeo_key = cc_info['mapeo_key']
-        
-        # Verificar si existe el header y el mapeo para esta columna
-        if idx < len(headers) and mapeo_key in mapeo_cc:
-            header_cc = headers[idx]
-            codigo_cc = mapeo_cc[mapeo_key]
-            valor = fila.get(header_cc)
+    # Buscar cada tipo de centro de costo
+    for tipo_cc, posicion in posiciones_cc.items():
+        if tipo_cc in columnas_cc_mapeo:
+            mapeo_key = columnas_cc_mapeo[tipo_cc]
             
-            # Un centro de costo es válido si NO es: None, "-", 0, "0" y tiene código mapeado
-            if (valor is not None and 
-                valor != "-" and 
-                valor != 0 and 
-                valor != "0" and 
-                str(valor).strip() != "" and
-                codigo_cc and 
-                codigo_cc.strip() != ""):
+            # Verificar si existe el mapeo para esta columna
+            if mapeo_key in mapeo_cc:
+                codigo_cc = mapeo_cc[mapeo_key]
+                header_name = headers[posicion]
+                valor = fila.get(header_name)
                 
-                codigos_aplicables.append(codigo_cc.strip())
-    
-    # Retornar códigos separados por comas o string vacía si no hay ninguno
-    return ", ".join(codigos_aplicables) if codigos_aplicables else ""
-    """
-    Calcula qué códigos de centros de costos se aplican a una fila específica
-    Retorna una string con los códigos separados por comas
-    Las columnas son PyC, PS, CO (índices 9, 10, 11)
-    """
-    # Las columnas de centros de costos son PyC, PS, CO (índices 9, 10, 11)
-    columnas_cc = [
-        {'indice': 9, 'mapeo_key': 'col10'},   # PyC
-        {'indice': 10, 'mapeo_key': 'col11'},  # PS
-        {'indice': 11, 'mapeo_key': 'col12'}   # CO
-    ]
-    
-    codigos_aplicables = []
-    
-    for cc_info in columnas_cc:
-        idx = cc_info['indice']
-        mapeo_key = cc_info['mapeo_key']
-        
-        # Verificar si existe el header y el mapeo para esta columna
-        if idx < len(headers) and mapeo_key in mapeo_cc:
-            header_cc = headers[idx]
-            codigo_cc = mapeo_cc[mapeo_key]
-            valor = fila.get(header_cc)
-            
-            # Un centro de costo es válido si NO es: None, "-", 0, "0" y tiene código mapeado
-            if (valor is not None and 
-                valor != "-" and 
-                valor != 0 and 
-                valor != "0" and 
-                str(valor).strip() != "" and
-                codigo_cc and 
-                codigo_cc.strip() != ""):
-                
-                codigos_aplicables.append(codigo_cc.strip())
+                # Un centro de costo es válido si NO es: None, "-", 0, "0" y tiene código mapeado
+                if (valor is not None and 
+                    valor != "-" and 
+                    valor != 0 and 
+                    valor != "0" and 
+                    str(valor).strip() != "" and
+                    codigo_cc and 
+                    codigo_cc.strip() != ""):
+                    
+                    codigo_limpio = codigo_cc.strip()
+                    if codigo_limpio not in codigos_aplicables:
+                        codigos_aplicables.append(codigo_limpio)
     
     # Retornar códigos separados por comas o string vacía si no hay ninguno
     return ", ".join(codigos_aplicables) if codigos_aplicables else ""
 
+
 def contar_centros_costos(fila, headers, mapeo_cc=None):
     """
-    Cuenta la cantidad de centros de costos válidos en las columnas PyC, PS, CO (índices 9, 10, 11)
+    Cuenta la cantidad de centros de costos válidos en las columnas PyC, PS/EB, CO
     Un centro de costo es válido si NO es: None, "-", 0
+    
+    Nota: PS y EB son equivalentes (mismo campo, diferentes nombres en archivos)
     """
-    # Las columnas de centros de costos son PyC, PS, CO (índices 9, 10, 11)
-    columnas_cc = [9, 10, 11]  # Índices en headers
+    # Detectar posiciones dinámicamente
+    posiciones_cc = detectar_posiciones_centros_costo(headers)
     count = 0
     
-    for idx in columnas_cc:
-        if idx < len(headers):
-            header_cc = headers[idx]
-            valor = fila.get(header_cc)
+    # Contar centros de costo válidos
+    for tipo_cc, posicion in posiciones_cc.items():
+        if posicion < len(headers):
+            header_name = headers[posicion]
+            valor = fila.get(header_name)
             
             # Un centro de costo es válido si NO es: None, "-", 0, "0" o string vacío
             if (valor is not None and 
@@ -1959,7 +2015,7 @@ def procesar_captura_masiva_gastos_task(self, archivo_content, archivo_nombre, u
         
         logger.info(f"📊 Total filas a procesar: {len(filas_data)}")
         
-        # Agrupar por "Tipo Doc" (columna 2) + cantidad de Centros de Costos (columnas 10, 11, 12)
+        # Agrupar por "Tipo Doc" (columna 2) + cantidad de Centros de Costos (PyC, PS/EB, CO)
         tipo_doc_column = headers[1] if len(headers) > 1 else None
         if not tipo_doc_column:
             raise ValueError("No se encontró la columna de Tipo Doc (columna 2)")

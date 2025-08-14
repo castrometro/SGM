@@ -20,6 +20,7 @@ import DashboardGerente from "./pages/DashboardGerente";
 import VistaGerencial from "./pages/VistaGerencial";
 import Tools from "./pages/Tools/index";
 import MisAnalistas from "./pages/MisAnalistas";
+import PayrollDashboard from "./pages/PayrollDashboard/index";
 
 // Importar componentes de Gerente
 import LogsActividad from "./components/Gerente/LogsActividad";
@@ -87,6 +88,16 @@ function App() {
           {/* ----------- ÁREA: HERRAMIENTAS ------------- */}
           <Route path="tools" element={<Tools />} />
           <Route path="tools/captura-masiva-gastos" element={<CapturaMasivaGastos />} />
+
+          {/* ----------- ÁREA: PAYROLL ------------- */}
+          <Route path="payroll/dashboard" element={<PayrollDashboard />} />
+          <Route path="payroll/supervision" element={<div className="text-white p-8">Supervisión Nóminas - En desarrollo</div>} />
+          <Route path="payroll/reportes" element={<div className="text-white p-8">Reportes de Nómina - En desarrollo</div>} />
+          <Route path="payroll/empleados/gestion" element={<div className="text-white p-8">Gestión Avanzada de Empleados - En desarrollo</div>} />
+          <Route path="payroll/cierres" element={<div className="text-white p-8">Cierres de Nómina - En desarrollo</div>} />
+          <Route path="payroll/configuracion" element={<div className="text-white p-8">Configuración Payroll - En desarrollo</div>} />
+          <Route path="payroll/analytics" element={<div className="text-white p-8">Analytics Payroll - En desarrollo</div>} />
+          <Route path="payroll/logs" element={<div className="text-white p-8">Logs Payroll - En desarrollo</div>} />
 
           {/* ----------- 404 / OTRAS ------------- */}
           <Route path="*" element={<h1 className="text-white">404 - Página no encontrada</h1>} />

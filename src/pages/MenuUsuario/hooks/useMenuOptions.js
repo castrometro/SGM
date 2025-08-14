@@ -20,12 +20,12 @@ export const useMenuOptions = (usuario) => {
     // Empezar con las opciones base del tipo de usuario
     let opciones = [...config.base];
 
-    // Agregar opciones específicas por área (solo para gerentes por ahora)
-    if (usuario.tipo_usuario === 'gerente' && usuario.areas?.length > 0) {
+    // Agregar opciones específicas por área
+    if (usuario.areas?.length > 0) {
       const areas = usuario.areas || [];
       
       areas.forEach(area => {
-        const areaOpciones = config.areas[area.nombre] || [];
+        const areaOpciones = config.areas?.[area.nombre] || [];
         opciones = [...opciones, ...areaOpciones];
       });
     }

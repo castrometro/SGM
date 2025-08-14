@@ -1,5 +1,6 @@
 import { useMenuOptions } from './hooks/useMenuOptions';
 import MenuGrid from './components/MenuGrid';
+import AreaIndicators from './components/AreaIndicators';
 
 /**
  * Página principal del menú de usuario
@@ -17,6 +18,9 @@ const MenuUsuario = () => {
       <h1 className="text-3xl font-bold mb-6 animate-fade-in">
         Menú Principal
       </h1>
+      
+      {/* Indicadores de áreas activas */}
+      <AreaIndicators usuario={usuario} />
       
       <MenuGrid opciones={opciones} />
     </div>

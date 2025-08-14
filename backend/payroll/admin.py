@@ -2,658 +2,547 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils.safestring import mark_safe
-from django.db.models import Count, Q
+from django.db.models import Count, Sum, Q
 from django.utils import timezone
 import json
 
 from .models import (
-    PayrollClosure, 
-    PayrollFileUpload, 
-    ParsedDataStorage,
-    ValidationRun, 
-    DiscrepancyResult, 
-    ComparisonResult,
-    ValidationRule
-)
-from .models.shared import (
-    PayrollActivityLog, 
-    AuditTrail, 
-    PerformanceLog,
-    RedisCache
+    CierrePayroll,
+    Empleados_Cierre,
+    Item_Cierre,
+    Item_Empleado,
+    Finiquitos_Cierre,
+    Ingresos_Cierre,
+    Ausentismos_Cierre,
+    Incidencias_Cierre,
+    Logs_Comparacion
 )
 
 # ============================================================================
 #                         PERSONALIZACIÓN ADMIN SITE
 # ============================================================================
 
-# Personalizar títulos del admin principal
-admin.site.site_header = "SGM - Sistema de Gestión de Nóminas"
-admin.site.site_title = "SGM Admin"
-admin.site.index_title = "Administración SGM"
+admin.site.site_header = "SGM Payroll - Sistema de Gestión de Nóminas"
+admin.site.site_title = "SGM Payroll Admin"
+admin.site.index_title = "Administración de Cierres Payroll"
 
 # ============================================================================
-#                           PAYROLL CLOSURE ADMIN
+#                           CIERRE PAYROLL ADMIN
 # ============================================================================
 
-@admin.register(PayrollClosure)
-class PayrollClosureAdmin(admin.ModelAdmin):
+@admin.register(CierrePayroll)
+class CierrePayrollAdmin(admin.ModelAdmin):
     list_display = [
-        'id', 'cliente', 'periodo', 'status_badge', 'fase_actual_badge', 
-        'analista_responsable', 'progress_bar', 'fecha_inicio', 'files_count'
+        'id', 'cliente', 'periodo', 'estado_badge', 'usuario', 
+        'empleados_count', 'progress_bar', 'fecha_creacion', 'acciones'
     ]
-    list_filter = [
-        'status', 'fase_actual', 'cliente', 'analista_responsable',
-        'fecha_inicio', 'created_at'
-    ]
-    search_fields = [
-        'periodo', 'cliente__nombre', 'analista_responsable', 'observaciones'
-    ]
+    list_filter = ['estado', 'cliente', 'fecha_creacion']
+    search_fields = ['periodo', 'cliente__nombre', 'usuario__username']
     readonly_fields = [
-        'id', 'created_at', 'updated_at', 'progress_display', 
-        'redis_keys_display', 'files_summary'
+        'fecha_creacion', 'progress_display', 'resumen_datos',
+        'incidencias_pendientes', 'logs_recientes'
     ]
+    
     fieldsets = (
         ('Información Básica', {
-            'fields': ('id', 'cliente', 'periodo', 'analista_responsable')
+            'fields': ('cliente', 'periodo', 'usuario', 'fecha_creacion')
         }),
         ('Estado y Progreso', {
-            'fields': ('status', 'fase_actual', 'progress_display')
-        }),
-        ('Fechas', {
-            'fields': ('fecha_inicio', 'fecha_cierre_prevista', 'created_at', 'updated_at')
+            'fields': ('estado', 'progress_display', 'fecha_completado')
         }),
         ('Configuración', {
-            'fields': ('configuracion_validaciones',)
+            'fields': ('porcentaje_tolerancia',)
         }),
-        ('Detalles', {
-            'fields': ('observaciones', 'metadata')
+        ('Resumen de Datos', {
+            'fields': ('total_empleados', 'monto_total', 'resumen_datos'),
+            'classes': ('collapse',)
         }),
-        ('Sistema', {
-            'fields': ('redis_keys_display', 'files_summary'),
+        ('Incidencias y Logs', {
+            'fields': ('incidencias_pendientes', 'logs_recientes'),
             'classes': ('collapse',)
         })
     )
     
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related('cliente').annotate(
-            files_count=Count('payrollfileupload')
+        return super().get_queryset(request).select_related('cliente', 'usuario').annotate(
+            empleados_count=Count('empleados'),
+            incidencias_count=Count('incidencias')
         )
     
-    def status_badge(self, obj):
-        colors = {
-            'DRAFT': '#6c757d',
-            'IN_PROGRESS': '#007bff', 
-            'COMPLETED': '#28a745',
-            'FINALIZED': '#17a2b8',
-            'CANCELLED': '#dc3545'
-        }
-        color = colors.get(obj.status, '#6c757d')
+    def estado_badge(self, obj):
+        color = obj.get_estado_display_color()
         return format_html(
             '<span style="background-color: {}; color: white; padding: 3px 8px; '
-            'border-radius: 3px; font-size: 12px;">{}</span>',
-            color, obj.get_status_display()
+            'border-radius: 3px; font-size: 12px; font-weight: bold;">{}</span>',
+            color, obj.get_estado_display()
         )
-    status_badge.short_description = 'Estado'
+    estado_badge.short_description = 'Estado'
     
-    def fase_actual_badge(self, obj):
-        colors = {
-            'PHASE_1': '#ffc107',
-            'PHASE_2': '#fd7e14', 
-            'PHASE_3': '#6f42c1',
-            'PHASE_4': '#20c997'
-        }
-        color = colors.get(obj.fase_actual, '#6c757d')
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 8px; '
-            'border-radius: 3px; font-size: 12px;">{}</span>',
-            color, obj.get_fase_actual_display()
-        )
-    fase_actual_badge.short_description = 'Fase'
+    def empleados_count(self, obj):
+        return obj.empleados_count
+    empleados_count.short_description = 'Empleados'
+    empleados_count.admin_order_field = 'empleados_count'
     
     def progress_bar(self, obj):
-        try:
-            progress = obj.get_progress_percentage()
-            color = '#28a745' if progress >= 75 else '#ffc107' if progress >= 50 else '#dc3545'
-            return format_html(
-                '<div style="width: 100px; background-color: #e9ecef; border-radius: 3px;">'
-                '<div style="width: {}%; height: 20px; background-color: {}; '
-                'border-radius: 3px; text-align: center; color: white; font-size: 12px; '
-                'line-height: 20px;">{:.1f}%</div></div>',
-                progress, color, progress
-            )
-        except:
-            return format_html('<span style="color: #6c757d;">N/A</span>')
+        progress = obj.get_progress_percentage()
+        color = '#28a745' if progress >= 75 else '#ffc107' if progress >= 50 else '#dc3545'
+        return format_html(
+            '<div style="width: 100px; background-color: #e9ecef; border-radius: 3px;">'
+            '<div style="width: {}%; height: 20px; background-color: {}; '
+            'border-radius: 3px; text-align: center; color: white; font-size: 12px; '
+            'line-height: 20px;">{:.0f}%</div></div>',
+            progress, color, progress
+        )
     progress_bar.short_description = 'Progreso'
     
-    def files_count(self, obj):
-        return obj.files_count
-    files_count.short_description = 'Archivos'
-    files_count.admin_order_field = 'files_count'
+    def acciones(self, obj):
+        empleados_url = reverse('admin:payroll_empleados_cierre_changelist') + f'?cierre_payroll__id__exact={obj.id}'
+        incidencias_url = reverse('admin:payroll_incidencias_cierre_changelist') + f'?cierre_payroll__id__exact={obj.id}'
+        logs_url = reverse('admin:payroll_logs_comparacion_changelist') + f'?cierre_payroll__id__exact={obj.id}'
+        
+        return format_html(
+            '<a href="{}" style="margin-right: 5px;">👥 Empleados</a>'
+            '<a href="{}" style="margin-right: 5px;">⚠️ Incidencias</a>'
+            '<a href="{}">📋 Logs</a>',
+            empleados_url, incidencias_url, logs_url
+        )
+    acciones.short_description = 'Acciones'
     
     def progress_display(self, obj):
-        try:
-            progress = obj.get_progress_percentage()
-            return f"{progress:.1f}%"
-        except:
-            return "No calculado"
+        progress = obj.get_progress_percentage()
+        return f"{progress}%"
     progress_display.short_description = 'Progreso Actual'
     
-    def redis_keys_display(self, obj):
-        try:
-            keys = obj.get_redis_keys()
-            if keys:
-                return format_html('<br>'.join([f"• {key}" for key in keys]))
-            return "Sin keys de Redis"
-        except:
-            return "Error al obtener keys"
-    redis_keys_display.short_description = 'Keys de Redis'
+    def resumen_datos(self, obj):
+        empleados = obj.empleados.count()
+        items = Item_Empleado.objects.filter(empleado_cierre__cierre_payroll=obj).count()
+        finiquitos = obj.finiquitos.count()
+        ingresos = obj.ingresos.count()
+        
+        return format_html(
+            '<strong>Empleados:</strong> {}<br>'
+            '<strong>Items procesados:</strong> {}<br>'
+            '<strong>Finiquitos:</strong> {}<br>'
+            '<strong>Ingresos:</strong> {}',
+            empleados, items, finiquitos, ingresos
+        )
+    resumen_datos.short_description = 'Resumen de Datos'
     
-    def files_summary(self, obj):
-        files = obj.payrollfileupload_set.all()
-        if not files:
-            return "Sin archivos cargados"
+    def incidencias_pendientes(self, obj):
+        incidencias = obj.incidencias.filter(estado_validacion='pendiente')
+        if not incidencias.exists():
+            return "✅ Sin incidencias pendientes"
         
-        summary = []
-        for file_obj in files:
-            summary.append(f"• {file_obj.get_file_type_display()}: {file_obj.get_status_display()}")
+        html = []
+        for inc in incidencias[:5]:  # Mostrar máximo 5
+            color = inc.get_color_prioridad()
+            html.append(f'<span style="color: {color};">● {inc.get_tipo_incidencia_display()}</span>')
         
-        return format_html('<br>'.join(summary))
-    files_summary.short_description = 'Resumen de Archivos'
+        if incidencias.count() > 5:
+            html.append(f'<br><em>... y {incidencias.count() - 5} más</em>')
+        
+        return format_html('<br>'.join(html))
+    incidencias_pendientes.short_description = 'Incidencias Pendientes'
+    
+    def logs_recientes(self, obj):
+        logs = obj.logs.order_by('-timestamp')[:3]
+        if not logs.exists():
+            return "Sin logs recientes"
+        
+        html = []
+        for log in logs:
+            color = log.get_color_resultado()
+            tiempo = timezone.localtime(log.timestamp).strftime('%d/%m %H:%M')
+            html.append(f'<span style="color: {color};">● {log.get_accion_display()} ({tiempo})</span>')
+        
+        return format_html('<br>'.join(html))
+    logs_recientes.short_description = 'Logs Recientes'
 
 
 # ============================================================================
-#                           FILE UPLOAD ADMIN
+#                           EMPLEADOS CIERRE ADMIN
 # ============================================================================
 
-@admin.register(PayrollFileUpload)
-class PayrollFileUploadAdmin(admin.ModelAdmin):
+@admin.register(Empleados_Cierre)
+class EmpleadosCierreAdmin(admin.ModelAdmin):
     list_display = [
-        'id', 'closure_link', 'file_type_badge', 'original_filename', 
-        'status_badge', 'file_size_display', 'parsing_progress', 'created_at'
+        'rut_empleado', 'nombre_completo', 'estado_badge', 
+        'cargo', 'cierre_info', 'items_count', 'liquido_calculado'
     ]
-    list_filter = [
-        'file_type', 'status', 'closure__cliente', 'created_at',
-        'parsing_completed_at'
-    ]
-    search_fields = [
-        'original_filename', 'closure__periodo', 'closure__cliente__nombre',
-        'celery_task_id'
-    ]
-    readonly_fields = [
-        'id', 'file_size_display', 'checksum_md5', 'parsing_duration', 
-        'redis_cache_key', 'created_at', 'updated_at', 'parsing_errors_display'
-    ]
-    raw_id_fields = ['closure']
+    list_filter = ['estado_empleado', 'cierre_payroll__cliente', 'cargo']
+    search_fields = ['rut_empleado', 'nombre_completo', 'cargo']
+    raw_id_fields = ['cierre_payroll']
     
     fieldsets = (
-        ('Información del Archivo', {
-            'fields': ('closure', 'file_type', 'file', 'original_filename', 'file_size_display')
+        ('Información Básica', {
+            'fields': ('cierre_payroll', 'rut_empleado', 'nombre_completo')
         }),
-        ('Estado de Procesamiento', {
-            'fields': ('status', 'parsing_completed_at', 'parsing_duration')
+        ('Estado y Cargo', {
+            'fields': ('estado_empleado', 'cargo', 'departamento', 'centro_costo')
         }),
-        ('Datos Técnicos', {
-            'fields': ('checksum_md5', 'redis_cache_key', 'celery_task_id'),
-            'classes': ('collapse',)
+        ('Fechas', {
+            'fields': ('fecha_ingreso', 'fecha_salida')
         }),
-        ('Metadatos', {
-            'fields': ('metadata', 'parsing_errors_display'),
-            'classes': ('collapse',)
-        }),
-        ('Auditoría', {
-            'fields': ('created_at', 'updated_at'),
+        ('Timestamps', {
+            'fields': ('creado_en', 'actualizado_en'),
             'classes': ('collapse',)
         })
     )
-    
-    def closure_link(self, obj):
-        url = reverse('admin:payroll_payrollclosure_change', args=[obj.closure.id])
-        return format_html('<a href="{}">{}</a>', url, obj.closure)
-    closure_link.short_description = 'Cierre'
-    
-    def file_type_badge(self, obj):
-        colors = {
-            'LIBRO_REMUNERACIONES': '#007bff',
-            'MOVIMIENTOS_MES': '#28a745',
-            'FINIQUITOS': '#ffc107',
-            'INGRESOS': '#17a2b8',
-            'INCIDENCIAS': '#fd7e14',
-            'NOVEDADES': '#6f42c1'
-        }
-        color = colors.get(obj.file_type, '#6c757d')
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 2px 6px; '
-            'border-radius: 3px; font-size: 11px;">{}</span>',
-            color, obj.get_file_type_display()
-        )
-    file_type_badge.short_description = 'Tipo'
-    
-    def status_badge(self, obj):
-        colors = {
-            'UPLOADED': '#6c757d',
-            'PARSING': '#007bff',
-            'PARSED': '#28a745',
-            'ERROR': '#dc3545'
-        }
-        color = colors.get(obj.status, '#6c757d')
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 2px 6px; '
-            'border-radius: 3px; font-size: 11px;">{}</span>',
-            color, obj.get_status_display()
-        )
-    status_badge.short_description = 'Estado'
-    
-    def file_size_display(self, obj):
-        if obj.file_size:
-            if obj.file_size > 1024*1024:
-                return f"{obj.file_size/(1024*1024):.1f} MB"
-            elif obj.file_size > 1024:
-                return f"{obj.file_size/1024:.1f} KB"
-            else:
-                return f"{obj.file_size} bytes"
-        return "N/A"
-    file_size_display.short_description = 'Tamaño'
-    
-    def parsing_progress(self, obj):
-        if obj.status == 'PARSING':
-            return format_html('<span style="color: #007bff;">⏳ Procesando...</span>')
-        elif obj.status == 'PARSED':
-            return format_html('<span style="color: #28a745;">✅ Completado</span>')
-        elif obj.status == 'ERROR':
-            return format_html('<span style="color: #dc3545;">❌ Error</span>')
-        else:
-            return format_html('<span style="color: #6c757d;">⏸️ Pendiente</span>')
-    parsing_progress.short_description = 'Progreso'
-    
-    def parsing_errors_display(self, obj):
-        if obj.parsing_errors:
-            try:
-                errors = obj.parsing_errors if isinstance(obj.parsing_errors, list) else [obj.parsing_errors]
-                return format_html('<br>'.join([f"• {error}" for error in errors]))
-            except:
-                return str(obj.parsing_errors)
-        return "Sin errores"
-    parsing_errors_display.short_description = 'Errores de Parsing'
-
-
-# ============================================================================
-#                           VALIDATION ADMIN
-# ============================================================================
-
-@admin.register(ValidationRun)
-class ValidationRunAdmin(admin.ModelAdmin):
-    list_display = [
-        'id', 'closure_link', 'validation_type_badge', 'status_badge',
-        'progress_percentage', 'discrepancies_count', 'started_at', 'duration'
-    ]
-    list_filter = [
-        'validation_type', 'status', 'closure__cliente', 'started_at'
-    ]
-    search_fields = [
-        'closure__periodo', 'closure__cliente__nombre', 'celery_task_id'
-    ]
-    readonly_fields = [
-        'id', 'duration', 'discrepancies_count', 'created_at', 'updated_at'
-    ]
-    raw_id_fields = ['closure']
+    readonly_fields = ['creado_en', 'actualizado_en']
     
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related('closure').annotate(
-            discrepancies_count=Count('discrepancyresult')
+        return super().get_queryset(request).select_related(
+            'cierre_payroll', 'cierre_payroll__cliente'
+        ).annotate(
+            items_count=Count('items')
         )
     
-    def closure_link(self, obj):
-        url = reverse('admin:payroll_payrollclosure_change', args=[obj.closure.id])
-        return format_html('<a href="{}">{}</a>', url, obj.closure)
-    closure_link.short_description = 'Cierre'
-    
-    def validation_type_badge(self, obj):
+    def estado_badge(self, obj):
         colors = {
-            'STRUCTURE': '#007bff',
-            'BUSINESS_RULES': '#28a745',
-            'CROSS_VALIDATION': '#ffc107',
-            'COMPLETENESS': '#17a2b8'
+            'activo': '#28a745',
+            'nuevo_ingreso': '#17a2b8',
+            'finiquito': '#dc3545',
+            'licencia': '#ffc107',
+            'suspension': '#fd7e14'
         }
-        color = colors.get(obj.validation_type, '#6c757d')
+        color = colors.get(obj.estado_empleado, '#6c757d')
         return format_html(
             '<span style="background-color: {}; color: white; padding: 2px 6px; '
             'border-radius: 3px; font-size: 11px;">{}</span>',
-            color, obj.get_validation_type_display()
+            color, obj.get_estado_empleado_display()
         )
-    validation_type_badge.short_description = 'Tipo'
+    estado_badge.short_description = 'Estado'
     
-    def status_badge(self, obj):
-        colors = {
-            'PENDING': '#6c757d',
-            'RUNNING': '#007bff',
-            'COMPLETED': '#28a745',
-            'FAILED': '#dc3545'
-        }
-        color = colors.get(obj.status, '#6c757d')
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 2px 6px; '
-            'border-radius: 3px; font-size: 11px;">{}</span>',
-            color, obj.get_status_display()
-        )
-    status_badge.short_description = 'Estado'
+    def cierre_info(self, obj):
+        return f"{obj.cierre_payroll.cliente.nombre} - {obj.cierre_payroll.periodo}"
+    cierre_info.short_description = 'Cierre'
     
-    def progress_percentage(self, obj):
-        if obj.total_records and obj.processed_records:
-            progress = (obj.processed_records / obj.total_records) * 100
-            return f"{progress:.1f}%"
-        return "N/A"
-    progress_percentage.short_description = 'Progreso'
+    def items_count(self, obj):
+        return obj.items_count
+    items_count.short_description = 'Items'
+    items_count.admin_order_field = 'items_count'
     
-    def discrepancies_count(self, obj):
-        return obj.discrepancies_count
-    discrepancies_count.short_description = 'Discrepancias'
-    discrepancies_count.admin_order_field = 'discrepancies_count'
-    
-    def duration(self, obj):
-        if obj.started_at and obj.completed_at:
-            duration = obj.completed_at - obj.started_at
-            return str(duration).split('.')[0]  # Remove microseconds
-        return "N/A"
-    duration.short_description = 'Duración'
+    def liquido_calculado(self, obj):
+        try:
+            liquido = obj.get_liquido_pagado()
+            return f"${liquido:,.0f}"
+        except:
+            return "N/A"
+    liquido_calculado.short_description = 'Líquido'
 
 
-@admin.register(DiscrepancyResult)
-class DiscrepancyResultAdmin(admin.ModelAdmin):
+# ============================================================================
+#                           ITEM CIERRE ADMIN
+# ============================================================================
+
+@admin.register(Item_Cierre)
+class ItemCierreAdmin(admin.ModelAdmin):
     list_display = [
-        'id', 'closure_link', 'discrepancy_type_badge', 'severity_badge',
-        'employee_rut', 'concept_code', 'is_resolved', 'created_at'
+        'codigo_item', 'nombre_item', 'tipo_badge', 'cierre_info',
+        'es_imponible', 'es_variable', 'empleados_con_item', 'total_monto'
+    ]
+    list_filter = ['tipo_item', 'es_imponible', 'es_variable', 'cierre_payroll__cliente']
+    search_fields = ['codigo_item', 'nombre_item']
+    raw_id_fields = ['cierre_payroll']
+    
+    def tipo_badge(self, obj):
+        colors = {
+            'haberes': '#28a745',
+            'descuentos': '#dc3545',
+            'aportes': '#17a2b8',
+            'informativos': '#6c757d'
+        }
+        color = colors.get(obj.tipo_item, '#6c757d')
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 2px 6px; '
+            'border-radius: 3px; font-size: 11px;">{}</span>',
+            color, obj.get_tipo_item_display()
+        )
+    tipo_badge.short_description = 'Tipo'
+    
+    def cierre_info(self, obj):
+        return f"{obj.cierre_payroll.cliente.nombre} - {obj.cierre_payroll.periodo}"
+    cierre_info.short_description = 'Cierre'
+    
+    def empleados_con_item(self, obj):
+        return obj.get_empleados_count()
+    empleados_con_item.short_description = 'Empleados'
+    
+    def total_monto(self, obj):
+        total = obj.get_total_monto()
+        return f"${total:,.0f}"
+    total_monto.short_description = 'Total'
+
+
+# ============================================================================
+#                           ITEM EMPLEADO ADMIN
+# ============================================================================
+
+@admin.register(Item_Empleado)
+class ItemEmpleadoAdmin(admin.ModelAdmin):
+    list_display = [
+        'empleado_nombre', 'item_codigo', 'monto_formateado', 
+        'cantidad', 'origen_badge', 'variacion_info'
     ]
     list_filter = [
-        'discrepancy_type', 'severity', 'is_resolved', 'closure__cliente',
-        'created_at', 'resolved_at'
+        'origen_dato', 'item_cierre__tipo_item', 
+        'empleado_cierre__cierre_payroll__cliente'
     ]
     search_fields = [
-        'employee_rut', 'concept_code', 'description', 
-        'closure__periodo', 'closure__cliente__nombre'
+        'empleado_cierre__nombre_completo', 
+        'item_cierre__codigo_item',
+        'empleado_cierre__rut_empleado'
     ]
-    readonly_fields = [
-        'id', 'calculated_difference', 'created_at', 'updated_at'
-    ]
-    raw_id_fields = ['closure', 'validation_run']
+    raw_id_fields = ['empleado_cierre', 'item_cierre']
     
-    fieldsets = (
-        ('Información de la Discrepancia', {
-            'fields': ('closure', 'validation_run', 'discrepancy_type', 'severity')
-        }),
-        ('Detalles del Empleado', {
-            'fields': ('employee_rut', 'employee_name', 'concept_code')
-        }),
-        ('Valores', {
-            'fields': ('expected_value', 'actual_value', 'calculated_difference')
-        }),
-        ('Descripción y Resolución', {
-            'fields': ('description', 'is_resolved', 'resolution_notes', 'resolved_by', 'resolved_at')
-        }),
-        ('Metadatos', {
-            'fields': ('additional_data',),
-            'classes': ('collapse',)
-        })
-    )
+    def empleado_nombre(self, obj):
+        return obj.empleado_cierre.nombre_completo
+    empleado_nombre.short_description = 'Empleado'
     
-    def closure_link(self, obj):
-        url = reverse('admin:payroll_payrollclosure_change', args=[obj.closure.id])
-        return format_html('<a href="{}">{}</a>', url, obj.closure)
-    closure_link.short_description = 'Cierre'
+    def item_codigo(self, obj):
+        return obj.item_cierre.codigo_item
+    item_codigo.short_description = 'Item'
     
-    def discrepancy_type_badge(self, obj):
+    def monto_formateado(self, obj):
+        return f"${obj.monto:,.0f}"
+    monto_formateado.short_description = 'Monto'
+    
+    def origen_badge(self, obj):
         colors = {
-            'MISSING_EMPLOYEE': '#dc3545',
-            'DUPLICATE_EMPLOYEE': '#fd7e14',
-            'AMOUNT_MISMATCH': '#ffc107',
-            'INVALID_CONCEPT': '#6f42c1',
-            'DATE_INCONSISTENCY': '#17a2b8'
+            'talana': '#28a745',
+            'analista': '#17a2b8',
+            'manual': '#ffc107',
+            'calculado': '#6f42c1'
         }
-        color = colors.get(obj.discrepancy_type, '#6c757d')
+        color = colors.get(obj.origen_dato, '#6c757d')
         return format_html(
             '<span style="background-color: {}; color: white; padding: 2px 6px; '
             'border-radius: 3px; font-size: 11px;">{}</span>',
-            color, obj.get_discrepancy_type_display()
+            color, obj.get_origen_dato_display()
         )
-    discrepancy_type_badge.short_description = 'Tipo'
+    origen_badge.short_description = 'Origen'
     
-    def severity_badge(self, obj):
-        colors = {
-            'LOW': '#28a745',
-            'MEDIUM': '#ffc107',
-            'HIGH': '#fd7e14',
-            'CRITICAL': '#dc3545'
-        }
-        color = colors.get(obj.severity, '#6c757d')
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 2px 6px; '
-            'border-radius: 3px; font-size: 11px;">{}</span>',
-            color, obj.get_severity_display()
-        )
-    severity_badge.short_description = 'Severidad'
-    
-    def calculated_difference(self, obj):
-        if obj.expected_value is not None and obj.actual_value is not None:
-            try:
-                diff = float(obj.actual_value) - float(obj.expected_value)
-                return f"{diff:,.2f}"
-            except (ValueError, TypeError):
-                return "N/A"
-        return "N/A"
-    calculated_difference.short_description = 'Diferencia'
+    def variacion_info(self, obj):
+        try:
+            variacion = obj.calcular_variacion_porcentual()
+            if variacion is None:
+                return "Nuevo"
+            
+            color = '#dc3545' if abs(variacion) > 20 else '#ffc107' if abs(variacion) > 10 else '#28a745'
+            signo = '+' if variacion > 0 else ''
+            return format_html(
+                '<span style="color: {}; font-weight: bold;">{}{:.1f}%</span>',
+                color, signo, variacion
+            )
+        except:
+            return "N/A"
+    variacion_info.short_description = 'Variación'
 
 
 # ============================================================================
-#                           AUDIT & LOGS ADMIN
+#                           INCIDENCIAS ADMIN
 # ============================================================================
 
-@admin.register(PayrollActivityLog)
-class PayrollActivityLogAdmin(admin.ModelAdmin):
+@admin.register(Incidencias_Cierre)
+class IncidenciasCierreAdmin(admin.ModelAdmin):
     list_display = [
-        'id', 'closure_link', 'activity_type_badge', 'user', 
-        'is_successful', 'execution_time_ms', 'created_at'
+        'empleado_item', 'tipo_badge', 'prioridad_badge', 
+        'variacion_display', 'estado_badge', 'asignado_a', 'fecha_deteccion'
     ]
     list_filter = [
-        'activity_type', 'is_successful', 'closure__cliente', 'created_at', 'user'
+        'tipo_incidencia', 'prioridad', 'estado_validacion',
+        'cierre_payroll__cliente', 'fecha_deteccion'
     ]
     search_fields = [
-        'description', 'user__username', 'closure__periodo',
-        'related_object_type', 'related_object_id'
+        'item_empleado_actual__empleado_cierre__nombre_completo',
+        'explicacion', 'accion_tomada'
     ]
-    readonly_fields = ['id', 'created_at', 'updated_at', 'details_display']
-    raw_id_fields = ['closure', 'user']
-    date_hierarchy = 'created_at'
+    raw_id_fields = [
+        'item_empleado_actual', 'item_empleado_anterior',
+        'asignado_a', 'validado_por'
+    ]
     
-    fieldsets = (
-        ('Información de la Actividad', {
-            'fields': ('closure', 'user', 'activity_type', 'is_successful')
-        }),
-        ('Detalles', {
-            'fields': ('description', 'details_display')
-        }),
-        ('Objeto Relacionado', {
-            'fields': ('related_object_type', 'related_object_id'),
-            'classes': ('collapse',)
-        }),
-        ('Rendimiento', {
-            'fields': ('execution_time_ms',),
-            'classes': ('collapse',)
-        })
-    )
+    actions = ['asignar_a_mi', 'marcar_como_validada']
     
-    def closure_link(self, obj):
-        if obj.closure:
-            url = reverse('admin:payroll_payrollclosure_change', args=[obj.closure.id])
-            return format_html('<a href="{}">{}</a>', url, obj.closure)
-        return "N/A"
-    closure_link.short_description = 'Cierre'
+    def empleado_item(self, obj):
+        empleado = obj.get_empleado_nombre()
+        item = obj.get_item_codigo()
+        return f"{empleado} - {item}"
+    empleado_item.short_description = 'Empleado - Item'
     
-    def activity_type_badge(self, obj):
+    def tipo_badge(self, obj):
         colors = {
-            'FILE_UPLOAD': '#007bff',
-            'FILE_PARSING': '#17a2b8',
-            'VALIDATION': '#28a745',
-            'DISCREPANCY_RESOLUTION': '#ffc107',
-            'STATUS_CHANGE': '#6f42c1',
-            'ERROR': '#dc3545'
+            'variacion_significativa': '#dc3545',
+            'empleado_nuevo': '#17a2b8',
+            'empleado_salida': '#fd7e14',
+            'item_nuevo': '#28a745',
+            'valor_cero': '#6c757d'
         }
-        color = colors.get(obj.activity_type, '#6c757d')
+        color = colors.get(obj.tipo_incidencia, '#6c757d')
         return format_html(
             '<span style="background-color: {}; color: white; padding: 2px 6px; '
             'border-radius: 3px; font-size: 11px;">{}</span>',
-            color, obj.get_activity_type_display()
+            color, obj.get_tipo_incidencia_display()
         )
-    activity_type_badge.short_description = 'Tipo de Actividad'
+    tipo_badge.short_description = 'Tipo'
     
-    def details_display(self, obj):
-        if obj.details:
-            try:
-                if isinstance(obj.details, dict):
-                    return format_html('<pre>{}</pre>', json.dumps(obj.details, indent=2))
-                else:
-                    return str(obj.details)
-            except:
-                return str(obj.details)
-        return "Sin detalles"
-    details_display.short_description = 'Detalles JSON'
+    def prioridad_badge(self, obj):
+        color = obj.get_color_prioridad()
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 2px 6px; '
+            'border-radius: 3px; font-size: 11px; font-weight: bold;">{}</span>',
+            color, obj.get_prioridad_display().upper()
+        )
+    prioridad_badge.short_description = 'Prioridad'
+    
+    def estado_badge(self, obj):
+        color = obj.get_color_estado()
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 2px 6px; '
+            'border-radius: 3px; font-size: 11px;">{}</span>',
+            color, obj.get_estado_validacion_display()
+        )
+    estado_badge.short_description = 'Estado'
+    
+    def variacion_display(self, obj):
+        return obj.get_resumen_variacion()
+    variacion_display.short_description = 'Variación'
+    
+    def asignar_a_mi(self, request, queryset):
+        count = queryset.update(
+            asignado_a=request.user,
+            fecha_asignacion=timezone.now(),
+            estado_validacion='en_revision'
+        )
+        self.message_user(request, f'{count} incidencias asignadas a ti.')
+    asignar_a_mi.short_description = 'Asignar a mí'
+    
+    def marcar_como_validada(self, request, queryset):
+        count = queryset.update(
+            estado_validacion='validada',
+            validado_por=request.user,
+            fecha_validacion=timezone.now()
+        )
+        self.message_user(request, f'{count} incidencias marcadas como validadas.')
+    marcar_como_validada.short_description = 'Marcar como validada'
 
 
-@admin.register(RedisCache)
-class RedisCacheAdmin(admin.ModelAdmin):
+# ============================================================================
+#                           OTROS ADMINS
+# ============================================================================
+
+@admin.register(Finiquitos_Cierre)
+class FiniquitosCierreAdmin(admin.ModelAdmin):
     list_display = [
-        'id', 'cache_key_short', 'cache_type_badge', 'data_size_mb',
-        'access_count', 'is_active', 'expires_at', 'last_accessed'
+        'empleado_nombre', 'fecha_finiquito', 'motivo_salida',
+        'monto_formateado', 'estado_badge'
     ]
-    list_filter = [
-        'cache_type', 'is_active', 'data_structure', 'created_at'
-    ]
-    search_fields = [
-        'cache_key', 'description', 'related_object_type'
-    ]
-    readonly_fields = [
-        'id', 'data_size_mb', 'created_at', 'updated_at', 'cache_metadata_display'
-    ]
+    list_filter = ['motivo_salida', 'estado_finiquito', 'fecha_finiquito']
+    search_fields = ['empleado_cierre__nombre_completo']
+    raw_id_fields = ['empleado_cierre', 'aprobado_por']
     
-    def cache_key_short(self, obj):
-        if len(obj.cache_key) > 50:
-            return f"{obj.cache_key[:47]}..."
-        return obj.cache_key
-    cache_key_short.short_description = 'Cache Key'
+    def empleado_nombre(self, obj):
+        return obj.empleado_cierre.nombre_completo
+    empleado_nombre.short_description = 'Empleado'
     
-    def cache_type_badge(self, obj):
-        colors = {
-            'FILE_PARSED_DATA': '#007bff',
-            'VALIDATION_PROGRESS': '#28a745',
-            'CLOSURE_STATUS': '#17a2b8',
-            'DISCREPANCY_CACHE': '#ffc107',
-            'TEMP_DATA': '#6c757d'
-        }
-        color = colors.get(obj.cache_type, '#6c757d')
+    def monto_formateado(self, obj):
+        return f"${obj.monto_finiquito:,.0f}"
+    monto_formateado.short_description = 'Monto'
+    
+    def estado_badge(self, obj):
+        color = obj.get_color_estado()
         return format_html(
             '<span style="background-color: {}; color: white; padding: 2px 6px; '
             'border-radius: 3px; font-size: 11px;">{}</span>',
-            color, obj.get_cache_type_display()
+            color, obj.get_estado_finiquito_display()
         )
-    cache_type_badge.short_description = 'Tipo'
+    estado_badge.short_description = 'Estado'
+
+
+@admin.register(Ingresos_Cierre)
+class IngresosCierreAdmin(admin.ModelAdmin):
+    list_display = [
+        'empleado_nombre', 'fecha_ingreso', 'tipo_contrato',
+        'sueldo_formateado', 'estado_badge'
+    ]
+    list_filter = ['tipo_contrato', 'estado_ingreso', 'fecha_ingreso']
+    search_fields = ['empleado_cierre__nombre_completo']
+    raw_id_fields = ['empleado_cierre', 'aprobado_por']
     
-    def data_size_mb(self, obj):
-        if obj.data_size_bytes:
-            mb = obj.data_size_bytes / (1024 * 1024)
-            if mb >= 1:
-                return f"{mb:.2f} MB"
-            else:
-                kb = obj.data_size_bytes / 1024
-                return f"{kb:.1f} KB"
-        return "0 B"
-    data_size_mb.short_description = 'Tamaño'
+    def empleado_nombre(self, obj):
+        return obj.empleado_cierre.nombre_completo
+    empleado_nombre.short_description = 'Empleado'
     
-    def cache_metadata_display(self, obj):
-        if obj.cache_metadata:
-            return format_html('<pre>{}</pre>', json.dumps(obj.cache_metadata, indent=2))
-        return "Sin metadata"
-    cache_metadata_display.short_description = 'Metadata'
-
-
-# ============================================================================
-#                           SMALLER MODELS
-# ============================================================================
-
-@admin.register(ValidationRule)
-class ValidationRuleAdmin(admin.ModelAdmin):
-    list_display = ['id', 'name', 'validation_type', 'is_active', 'execution_order']
-    list_filter = ['validation_type', 'is_active']
-    search_fields = ['name', 'description']
-    ordering = ['execution_order', 'name']
-
-
-@admin.register(ComparisonResult)
-class ComparisonResultAdmin(admin.ModelAdmin):
-    list_display = ['id', 'validation_run', 'comparison_type', 'source_file', 'target_file']
-    list_filter = ['comparison_type']
-    raw_id_fields = ['validation_run', 'source_file', 'target_file']
-
-
-@admin.register(ParsedDataStorage)
-class ParsedDataStorageAdmin(admin.ModelAdmin):
-    list_display = ['id', 'file_upload', 'data_rows_count', 'is_cached_in_redis', 'last_accessed']
-    list_filter = ['is_cached_in_redis', 'expires_at']
-    raw_id_fields = ['file_upload']
-    readonly_fields = ['data_size_mb']
+    def sueldo_formateado(self, obj):
+        return f"${obj.sueldo_base:,.0f}"
+    sueldo_formateado.short_description = 'Sueldo Base'
     
-    def data_rows_count(self, obj):
-        if obj.parsed_data and isinstance(obj.parsed_data, list):
-            return len(obj.parsed_data)
-        elif obj.parsed_data and isinstance(obj.parsed_data, dict) and 'rows' in obj.parsed_data:
-            return len(obj.parsed_data['rows'])
-        return "N/A"
-    data_rows_count.short_description = 'Filas de Datos'
+    def estado_badge(self, obj):
+        color = obj.get_color_estado()
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 2px 6px; '
+            'border-radius: 3px; font-size: 11px;">{}</span>',
+            color, obj.get_estado_ingreso_display()
+        )
+    estado_badge.short_description = 'Estado'
+
+
+@admin.register(Ausentismos_Cierre)
+class AusentismosCierreAdmin(admin.ModelAdmin):
+    list_display = [
+        'empleado_nombre', 'tipo_ausentismo', 'fecha_inicio',
+        'dias_ausentismo', 'monto_descontado', 'estado_badge'
+    ]
+    list_filter = ['tipo_ausentismo', 'estado_ausentismo', 'fecha_inicio']
+    search_fields = ['empleado_cierre__nombre_completo']
+    raw_id_fields = ['empleado_cierre', 'validado_por']
     
-    def data_size_mb(self, obj):
-        import json
-        if obj.parsed_data:
-            data_str = json.dumps(obj.parsed_data)
-            size_bytes = len(data_str.encode('utf-8'))
-            return f"{size_bytes / (1024 * 1024):.2f} MB"
-        return "0 MB"
-    data_size_mb.short_description = 'Tamaño'
-
-
-@admin.register(AuditTrail)
-class AuditTrailAdmin(admin.ModelAdmin):
-    list_display = ['id', 'content_type', 'object_id', 'action', 'user', 'created_at']
-    list_filter = ['action', 'content_type', 'created_at']
-    search_fields = ['object_id', 'user__username', 'content_type__model']
-    readonly_fields = ['id', 'changes_display']
+    def empleado_nombre(self, obj):
+        return obj.empleado_cierre.nombre_completo
+    empleado_nombre.short_description = 'Empleado'
     
-    def changes_display(self, obj):
-        changes = {}
-        if obj.old_values or obj.new_values:
-            changes['old_values'] = obj.old_values
-            changes['new_values'] = obj.new_values
-            changes['changed_fields'] = obj.changed_fields
-            return format_html('<pre>{}</pre>', json.dumps(changes, indent=2))
-        return "Sin cambios"
-    changes_display.short_description = 'Cambios'
+    def estado_badge(self, obj):
+        color = obj.get_color_estado()
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 2px 6px; '
+            'border-radius: 3px; font-size: 11px;">{}</span>',
+            color, obj.get_estado_ausentismo_display()
+        )
+    estado_badge.short_description = 'Estado'
 
 
-@admin.register(PerformanceLog)
-class PerformanceLogAdmin(admin.ModelAdmin):
-    list_display = ['id', 'operation_name', 'execution_time_ms', 'is_successful', 'created_at']
-    list_filter = ['operation_type', 'is_successful', 'created_at']
-    search_fields = ['operation_name']
-    readonly_fields = ['id', 'performance_data_display']
+@admin.register(Logs_Comparacion)
+class LogsComparacionAdmin(admin.ModelAdmin):
+    list_display = [
+        'timestamp', 'cierre_info', 'usuario', 'accion_badge',
+        'resultado_badge', 'duracion_formateada'
+    ]
+    list_filter = ['accion', 'resultado', 'timestamp']
+    search_fields = ['cierre_payroll__periodo', 'usuario__username', 'detalles']
+    readonly_fields = ['timestamp']
+    raw_id_fields = ['cierre_payroll', 'usuario']
     
-    def performance_data_display(self, obj):
-        if obj.performance_data:
-            return format_html('<pre>{}</pre>', json.dumps(obj.performance_data, indent=2))
-        return "Sin datos de rendimiento"
-    performance_data_display.short_description = 'Datos de Rendimiento'
-
-
-# ============================================================================
-#                           ADMIN SITE CUSTOMIZATION
-# ============================================================================
-
-# Configuración central del admin (se ejecuta al final por orden de apps)
-admin.site.site_header = "SGM - Sistema de Gestión Empresarial"
-admin.site.site_title = "SGM Admin"
-admin.site.index_title = "Panel de Administración - Nóminas y Tareas"
+    def cierre_info(self, obj):
+        return f"{obj.cierre_payroll.cliente.nombre} - {obj.cierre_payroll.periodo}"
+    cierre_info.short_description = 'Cierre'
+    
+    def accion_badge(self, obj):
+        return format_html(
+            '<span style="background-color: #17a2b8; color: white; padding: 2px 6px; '
+            'border-radius: 3px; font-size: 11px;">{}</span>',
+            obj.get_accion_display()
+        )
+    accion_badge.short_description = 'Acción'
+    
+    def resultado_badge(self, obj):
+        color = obj.get_color_resultado()
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 2px 6px; '
+            'border-radius: 3px; font-size: 11px;">{}</span>',
+            color, obj.get_resultado_display()
+        )
+    resultado_badge.short_description = 'Resultado'
+    
+    def duracion_formateada(self, obj):
+        return obj.get_duracion_display()
+    duracion_formateada.short_description = 'Duración'

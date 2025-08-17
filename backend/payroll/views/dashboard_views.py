@@ -12,11 +12,16 @@ from django.db.models import Q, Count, Sum, Avg
 from django.utils import timezone
 from datetime import datetime, timedelta
 
+# REST Framework imports
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
 from ..models import (
     CierrePayroll, Empleados_Cierre, Item_Cierre, 
     Incidencias_Cierre, Logs_Actividad
 )
-from api.models import Cliente
+from api.models import Cliente, Usuario, AsignacionClienteUsuario
 
 
 class PayrollDashboardView(LoginRequiredMixin, TemplateView):
@@ -337,3 +342,194 @@ def metricas_rendimiento_ajax(request):
         'total_operaciones': logs_con_duracion.count(),
         'periodo': '24 horas'
     })
+
+
+# ============================================================================
+#                           CLIENTES PAYROLL API VIEWS
+# ============================================================================
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def clientes_asignados_payroll(request):
+    """
+    Obtiene clientes asignados al usuario actual con información de estado de cierre payroll
+    Equivalente a /clientes/asignados/ pero con datos específicos de payroll
+    """
+    try:
+        # Obtener usuario actual
+        usuario = Usuario.objects.get(correo_bdo=request.user.correo_bdo)
+        
+        # Obtener clientes asignados al usuario
+        asignaciones = AsignacionClienteUsuario.objects.filter(
+            usuario=usuario
+        ).select_related('cliente')
+        
+        clientes_data = []
+        for asignacion in asignaciones:
+            cliente = asignacion.cliente
+            
+            # Obtener el último cierre de payroll del cliente
+            ultimo_cierre = CierrePayroll.objects.filter(
+                cliente=cliente
+            ).order_by('-fecha_creacion').first()
+            
+            # Determinar estado del cierre
+            if ultimo_cierre:
+                estado_cierre = ultimo_cierre.estado
+                periodo_ultimo = ultimo_cierre.periodo
+                fecha_ultimo = ultimo_cierre.fecha_creacion.strftime('%Y-%m-%d')
+            else:
+                estado_cierre = "sin_cierres"
+                periodo_ultimo = None
+                fecha_ultimo = None
+            
+            clientes_data.append({
+                'id': cliente.id,
+                'nombre': cliente.nombre,
+                'rut': cliente.rut,
+                'bilingue': cliente.bilingue,
+                'industria_nombre': cliente.industria.nombre if cliente.industria else None,
+                # Información específica de payroll
+                'ultimo_cierre_payroll': {
+                    'periodo': periodo_ultimo,
+                    'estado': estado_cierre,
+                    'fecha': fecha_ultimo
+                },
+                'tipo_info': 'payroll'  # Indicador para el frontend
+            })
+        
+        return Response(clientes_data)
+        
+    except Usuario.DoesNotExist:
+        return Response({'error': 'Usuario no encontrado'}, status=404)
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def clientes_por_area_payroll(request):
+    """
+    Obtiene clientes del área del usuario actual con información de estado de cierre payroll
+    Equivalente a /clientes-por-area/ pero con datos específicos de payroll
+    """
+    try:
+        # Obtener usuario actual
+        usuario = Usuario.objects.get(correo_bdo=request.user.correo_bdo)
+        areas_usuario = usuario.areas.all()
+        
+        if not areas_usuario.exists():
+            return Response([])
+        
+        areas_usuario_ids = list(areas_usuario.values_list('id', flat=True))
+        
+        # Obtener clientes que tienen áreas directas en común
+        clientes_directos = Cliente.objects.filter(
+            areas__id__in=areas_usuario_ids
+        ).distinct()
+        
+        # Obtener clientes que tienen servicios en las áreas del usuario
+        clientes_servicios = Cliente.objects.filter(
+            servicios_contratados__servicio__area_id__in=areas_usuario_ids
+        ).exclude(id__in=clientes_directos.values_list('id', flat=True))
+        
+        # Combinar ambos querysets
+        todos_clientes = clientes_directos.union(clientes_servicios)
+        
+        clientes_data = []
+        for cliente in todos_clientes:
+            # Obtener el último cierre de payroll del cliente
+            ultimo_cierre = CierrePayroll.objects.filter(
+                cliente=cliente
+            ).order_by('-fecha_creacion').first()
+            
+            # Determinar estado del cierre
+            if ultimo_cierre:
+                estado_cierre = ultimo_cierre.estado
+                periodo_ultimo = ultimo_cierre.periodo
+                fecha_ultimo = ultimo_cierre.fecha_creacion.strftime('%Y-%m-%d')
+            else:
+                estado_cierre = "sin_cierres"
+                periodo_ultimo = None
+                fecha_ultimo = None
+            
+            # Obtener áreas efectivas
+            areas_efectivas = cliente.get_areas_efectivas()
+            
+            clientes_data.append({
+                'id': cliente.id,
+                'nombre': cliente.nombre,
+                'rut': cliente.rut,
+                'bilingue': cliente.bilingue,
+                'areas_efectivas': [{'nombre': area.nombre} for area in areas_efectivas],
+                'areas': [{'nombre': area.nombre} for area in cliente.areas.all()],
+                'industria_nombre': cliente.industria.nombre if cliente.industria else None,
+                # Información específica de payroll
+                'ultimo_cierre_payroll': {
+                    'periodo': periodo_ultimo,
+                    'estado': estado_cierre,
+                    'fecha': fecha_ultimo
+                },
+                'tipo_info': 'payroll'  # Indicador para el frontend
+            })
+        
+        return Response(clientes_data)
+        
+    except Usuario.DoesNotExist:
+        return Response({'error': 'Usuario no encontrado'}, status=404)
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def resumen_cliente_payroll(request, cliente_id):
+    """
+    Obtiene resumen detallado de un cliente específico para payroll
+    """
+    try:
+        cliente = Cliente.objects.get(id=cliente_id)
+        
+        # Estadísticas básicas de payroll
+        total_cierres = CierrePayroll.objects.filter(cliente=cliente).count()
+        ultimo_cierre = CierrePayroll.objects.filter(
+            cliente=cliente
+        ).order_by('-fecha_creacion').first()
+        
+        # Empleados activos (si existe la relación)
+        total_empleados = 0
+        try:
+            if ultimo_cierre:
+                total_empleados = ultimo_cierre.empleados_cierre.count()
+        except:
+            total_empleados = 0
+        
+        resumen = {
+            'cliente': {
+                'id': cliente.id,
+                'nombre': cliente.nombre,
+                'rut': cliente.rut,
+                'bilingue': cliente.bilingue,
+                'industria_nombre': cliente.industria.nombre if cliente.industria else None
+            },
+            'estadisticas_payroll': {
+                'total_cierres': total_cierres,
+                'total_empleados': total_empleados,
+                'ultimo_periodo': ultimo_cierre.periodo if ultimo_cierre else None,
+                'estado_actual': ultimo_cierre.estado if ultimo_cierre else 'sin_cierres'
+            },
+            'ultimo_cierre': {
+                'id': ultimo_cierre.id if ultimo_cierre else None,
+                'periodo': ultimo_cierre.periodo if ultimo_cierre else None,
+                'estado': ultimo_cierre.estado if ultimo_cierre else None,
+                'fecha_creacion': ultimo_cierre.fecha_creacion.isoformat() if ultimo_cierre else None
+            } if ultimo_cierre else None
+        }
+        
+        return Response(resumen)
+        
+    except Cliente.DoesNotExist:
+        return Response({'error': 'Cliente no encontrado'}, status=404)
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)

@@ -7,6 +7,7 @@ export const useClientesData = () => {
   const [filtro, setFiltro] = useState("");
   const [usuario, setUsuario] = useState(null);
   const [areaActiva, setAreaActiva] = useState(null);
+  const [tipoModulo, setTipoModulo] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
 
@@ -32,18 +33,21 @@ export const useClientesData = () => {
         setAreaActiva(area);
         localStorage.setItem("area_activa", area);
 
-        // Obtener configuración y API según tipo de usuario
-        const userConfig = getUserConfig(userData.tipo_usuario);
+        // Obtener configuración y API según tipo de usuario Y área activa
+        const userConfig = getUserConfig(userData.tipo_usuario, area);
         const data = await userConfig.apiFunction();
         
         console.log('=== DEBUG: Clientes cargados ===');
         console.log('Tipo usuario:', userData.tipo_usuario);
         console.log('Área activa:', area);
+        console.log('Módulo:', userConfig.tipoModulo);
         console.log('Total clientes:', data.length);
-        console.log('Clientes:', data);
+        console.log('Endpoint usado:', userConfig.endpoint);
+        console.log('Estructura primer cliente:', data[0]);
         console.log('===============================');
         
         setClientes(data);
+        setTipoModulo(userConfig.tipoModulo);
       } catch (err) {
         setError(MESSAGES.error);
         console.error("Error al cargar usuario/clientes:", err);
@@ -67,6 +71,7 @@ export const useClientesData = () => {
     setFiltro,
     usuario,
     areaActiva,
+    tipoModulo,
     cargando,
     error
   };

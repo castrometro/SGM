@@ -1,7 +1,7 @@
 import React from 'react';
 import { useClientesData } from './hooks/useClientesData';
 import DebugButton from './components/DebugButton';
-import ClienteRow from '../../components/ClienteRow';
+import ClienteRow from './components/ClienteRow';
 import { MESSAGES } from './config/clientesConfig';
 
 const Clientes = () => {
@@ -12,6 +12,7 @@ const Clientes = () => {
     setFiltro,
     usuario,
     areaActiva,
+    tipoModulo,
     cargando,
     error
   } = useClientesData();
@@ -105,6 +106,7 @@ const Clientes = () => {
                   key={cliente.id}
                   cliente={cliente}
                   areaActiva={areaActiva}
+                  tipoModulo={tipoModulo}
                 />
               ))}
             </tbody>

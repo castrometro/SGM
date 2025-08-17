@@ -1,12 +1,11 @@
 # payroll/urls.py
 from django.urls import path
-from . import views
+from .views import clientes_views
 
 app_name = "payroll"
 
 urlpatterns = [
-    # Aquí puedes agregar tus URLs específicas para payroll
-    # Ejemplo:
-    # path("employees/", views.employee_list, name="employee_list"),
-    # path("payslips/", views.payslip_list, name="payslip_list"),
+    # Endpoints para obtener clientes con información de payroll
+    path('clientes/asignados/', clientes_views.clientes_asignados_payroll, name='clientes_asignados_payroll'),
+    path('clientes/por-area/', clientes_views.clientes_por_area_payroll, name='clientes_por_area_payroll'),
 ]

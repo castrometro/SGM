@@ -1,8 +1,14 @@
 import api from "./config";
+import { obtenerClientesConEstadoCierre } from "./contabilidad";
 
 export const obtenerClientesAsignados = async () => {
   const response = await api.get("/clientes/asignados/");
   return response.data;
+};
+
+export const obtenerClientesAsignadosContabilidad = async () => {
+  const clientes = await obtenerClientesAsignados();
+  return await obtenerClientesConEstadoCierre(clientes);
 };
 
 export const obtenerTodosLosClientes = async () => {
@@ -13,6 +19,11 @@ export const obtenerTodosLosClientes = async () => {
 export const obtenerClientesPorArea = async () => {
   const response = await api.get("/clientes-por-area/");
   return response.data;
+};
+
+export const obtenerClientesPorAreaContabilidad = async () => {
+  const clientes = await obtenerClientesPorArea();
+  return await obtenerClientesConEstadoCierre(clientes);
 };
 
 

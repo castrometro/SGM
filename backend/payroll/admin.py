@@ -80,26 +80,31 @@ class CierrePayrollAdmin(admin.ModelAdmin):
     def progress_bar(self, obj):
         progress = obj.get_progress_percentage()
         color = '#28a745' if progress >= 75 else '#ffc107' if progress >= 50 else '#dc3545'
+        progress_rounded = round(progress, 0)
         return format_html(
             '<div style="width: 100px; background-color: #e9ecef; border-radius: 3px;">'
-            '<div style="width: {}%; height: 20px; background-color: {}; '
+            '<div style="width: {progress}%; height: 20px; background-color: {color}; '
             'border-radius: 3px; text-align: center; color: white; font-size: 12px; '
-            'line-height: 20px;">{:.0f}%</div></div>',
-            progress, color, progress
+            'line-height: 20px;">{progress_rounded}%</div></div>',
+            progress=progress, color=color, progress_rounded=progress_rounded
         )
     progress_bar.short_description = 'Progreso'
     
     def acciones(self, obj):
-        empleados_url = reverse('admin:payroll_empleados_cierre_changelist') + f'?cierre_payroll__id__exact={obj.id}'
-        incidencias_url = reverse('admin:payroll_incidencias_cierre_changelist') + f'?cierre_payroll__id__exact={obj.id}'
-        logs_url = reverse('admin:payroll_logs_comparacion_changelist') + f'?cierre_payroll__id__exact={obj.id}'
-        
-        return format_html(
-            '<a href="{}" style="margin-right: 5px;">👥 Empleados</a>'
-            '<a href="{}" style="margin-right: 5px;">⚠️ Incidencias</a>'
-            '<a href="{}">📋 Logs</a>',
-            empleados_url, incidencias_url, logs_url
-        )
+        try:
+            empleados_url = reverse('admin:payroll_empleados_cierre_changelist') + f'?cierre_payroll__id__exact={obj.id}'
+            incidencias_url = reverse('admin:payroll_incidencias_cierre_changelist') + f'?cierre_payroll__id__exact={obj.id}'
+            logs_url = reverse('admin:payroll_logs_actividad_changelist') + f'?cierre_payroll__id__exact={obj.id}'
+            
+            return format_html(
+                '<a href="{}" style="margin-right: 5px;">👥 Empleados</a>'
+                '<a href="{}" style="margin-right: 5px;">⚠️ Incidencias</a>'
+                '<a href="{}">📋 Logs</a>',
+                empleados_url, incidencias_url, logs_url
+            )
+        except Exception as e:
+            # Fallback si hay problemas con reverse
+            return format_html('<span style="color: gray;">Enlaces no disponibles</span>')
     acciones.short_description = 'Acciones'
     
     def progress_display(self, obj):

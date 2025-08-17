@@ -1,33 +1,84 @@
-import { obtenerClientesAsignados, obtenerTodosLosClientes, obtenerClientesPorArea } from '../../../api/clientes';
+import { obtenerClientesAsignadosContabilidad, obtenerClientesPorAreaContabilidad } from '../../../api/clientes';
+import { obtenerClientesAsignadosPayroll, obtenerClientesPorAreaPayroll } from '../../../api/payroll/clientes_api';
 
 /**
  * Configuración de tipos de usuario y sus APIs correspondientes
+ * Maneja tanto CONTABILIDAD como PAYROLL según el área activa
  */
-export const USER_TYPES_CONFIG = {
+
+// Configuraciones para CONTABILIDAD
+export const CONTABILIDAD_CONFIG = {
   gerente: {
     title: "Gerente",
     description: "Ve todos los clientes de sus áreas asignadas",
-    apiFunction: obtenerClientesPorArea,
-    endpoint: "📊 /clientes-por-area/ (Gerente - clientes de sus áreas)"
+    apiFunction: obtenerClientesPorAreaContabilidad,
+    endpoint: "📊 /clientes-por-area/ + cierres contables (Gerente - clientes de sus áreas)",
+    tipoModulo: 'contabilidad'
   },
   analista: {
     title: "Analista", 
     description: "Ve solo los clientes que tienen asignados",
-    apiFunction: obtenerClientesAsignados,
-    endpoint: "👤 /clientes/asignados/ (Analista - solo asignados)"
+    apiFunction: obtenerClientesAsignadosContabilidad,
+    endpoint: "👤 /clientes/asignados/ + cierres contables (Analista - solo asignados)",
+    tipoModulo: 'contabilidad'
   },
   supervisor: {
     title: "Supervisor",
     description: "Ve clientes del área que supervisan", 
-    apiFunction: obtenerClientesPorArea,
-    endpoint: "👁️ /clientes-por-area/ (Supervisor - área supervisada)"
+    apiFunction: obtenerClientesPorAreaContabilidad,
+    endpoint: "👁️ /clientes-por-area/ + cierres contables (Supervisor - área supervisada)",
+    tipoModulo: 'contabilidad'
   },
   default: {
     title: "Usuario",
     description: "Ve clientes por área por defecto",
-    apiFunction: obtenerClientesPorArea,
-    endpoint: "🔧 /clientes-por-area/ (Por defecto)"
+    apiFunction: obtenerClientesPorAreaContabilidad,
+    endpoint: "🔧 /clientes-por-area/ + cierres contables (Por defecto)",
+    tipoModulo: 'contabilidad'
   }
+};
+
+// Configuraciones para PAYROLL
+export const PAYROLL_CONFIG = {
+  gerente: {
+    title: "Gerente",
+    description: "Ve todos los clientes de sus áreas asignadas",
+    apiFunction: obtenerClientesPorAreaPayroll,
+    endpoint: "📊 /payroll/clientes/por-area/ (Gerente - clientes de sus áreas)",
+    tipoModulo: 'payroll'
+  },
+  analista: {
+    title: "Analista", 
+    description: "Ve solo los clientes que tienen asignados",
+    apiFunction: obtenerClientesAsignadosPayroll,
+    endpoint: "👤 /payroll/clientes/asignados/ (Analista - solo asignados)",
+    tipoModulo: 'payroll'
+  },
+  supervisor: {
+    title: "Supervisor",
+    description: "Ve clientes del área que supervisan", 
+    apiFunction: obtenerClientesPorAreaPayroll,
+    endpoint: "👁️ /payroll/clientes/por-area/ (Supervisor - área supervisada)",
+    tipoModulo: 'payroll'
+  },
+  default: {
+    title: "Usuario",
+    description: "Ve clientes por área por defecto",
+    apiFunction: obtenerClientesPorAreaPayroll,
+    endpoint: "🔧 /payroll/clientes/por-area/ (Por defecto)",
+    tipoModulo: 'payroll'
+  }
+};
+
+/**
+ * Función para obtener la configuración según el tipo de usuario y área activa
+ */
+export const getUserConfig = (tipoUsuario, areaActiva) => {
+  // Determinar qué configuración usar según el área activa
+  const isPayrollArea = areaActiva === "Payroll" || areaActiva === "Nomina";
+  const configSet = isPayrollArea ? PAYROLL_CONFIG : CONTABILIDAD_CONFIG;
+  
+  return configSet[tipoUsuario] || configSet.default;
 };
 
 /**
@@ -43,11 +94,4 @@ export const MESSAGES = {
   noClientsFound: "No se encontraron clientes que coincidan con",
   analistaNoClients: "No tienes clientes asignados. Contacta a tu supervisor.",
   defaultNoClients: "No hay clientes registrados para esta área."
-};
-
-/**
- * Función para obtener la configuración según el tipo de usuario
- */
-export const getUserConfig = (tipoUsuario) => {
-  return USER_TYPES_CONFIG[tipoUsuario] || USER_TYPES_CONFIG.default;
 };

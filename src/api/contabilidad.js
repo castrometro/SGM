@@ -9,6 +9,44 @@ export const obtenerResumenContable = async (clienteId) => {
   return response.data;
 };
 
+// ==================== CLIENTES CON INFORMACIÓN CONTABLE ====================
+export const obtenerClientesConEstadoCierre = async (clientes) => {
+  // Función para enriquecer una lista de clientes con información de sus cierres contables
+  console.log('🔍 Enriqueciendo', clientes.length, 'clientes con información de cierres contables...');
+  
+  const clientesConCierres = await Promise.all(
+    clientes.map(async (cliente) => {
+      try {
+        const cierres = await obtenerCierresCliente(cliente.id);
+        const ultimoCierre = cierres.length > 0 ? cierres[cierres.length - 1] : null;
+        
+        console.log(`✅ Cliente ${cliente.nombre}: ${cierres.length} cierres, último:`, 
+          ultimoCierre ? `${ultimoCierre.periodo} (${ultimoCierre.estado})` : 'Sin cierres');
+        
+        return {
+          ...cliente,
+          ultimo_cierre_contabilidad: ultimoCierre ? {
+            id: ultimoCierre.id,
+            periodo: ultimoCierre.periodo,
+            estado: ultimoCierre.estado,
+            fecha_creacion: ultimoCierre.fecha_creacion,
+            fecha_finalizacion: ultimoCierre.fecha_finalizacion
+          } : null
+        };
+      } catch (error) {
+        console.error(`❌ Error obteniendo cierres para cliente ${cliente.id}:`, error);
+        return {
+          ...cliente,
+          ultimo_cierre_contabilidad: null
+        };
+      }
+    })
+  );
+  
+  console.log('🎯 Clientes enriquecidos:', clientesConCierres.length);
+  return clientesConCierres;
+};
+
 // ==================== PLANTILLAS ====================
 export const descargarPlantillaTipoDocumento = () => {
   return `${api.defaults.baseURL}/contabilidad/plantilla-tipo-doc/`;

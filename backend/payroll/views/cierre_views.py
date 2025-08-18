@@ -264,12 +264,163 @@ def upload_excel_view(request, pk):
 # ============================================================================
 #                           API VIEWS
 # ============================================================================
-# API views comentadas hasta tener REST framework configurado
+# API views para integración REST
 
-# from rest_framework import viewsets, status
-# from rest_framework.decorators import action
-# from rest_framework.response import Response
-# from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework import status
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def crear_cierre_mensual_payroll(request, cliente_id):
+    """
+    API para crear un nuevo cierre mensual de payroll
+    """
+    try:
+        cliente = get_object_or_404(Cliente, id=cliente_id)
+        periodo = request.data.get('periodo')
+        
+        if not periodo:
+            return Response({'error': 'Periodo es requerido'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Verificar si ya existe un cierre para este periodo
+        cierre_existente = CierrePayroll.objects.filter(
+            cliente=cliente,
+            periodo=periodo
+        ).first()
+        
+        if cierre_existente:
+            return Response({
+                'error': 'Ya existe un cierre para este periodo',
+                'cierre_id': cierre_existente.id
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Crear el nuevo cierre
+        cierre = CierrePayroll.objects.create(
+            cliente=cliente,
+            periodo=periodo,
+            estado='pendiente',
+            usuario=request.user
+        )
+        
+        # Por ahora omitir el log hasta identificar el problema
+        # Logs_Actividad.objects.create(
+        #     cierre_payroll=cierre,
+        #     usuario=request.user,
+        #     accion='creacion_cierre',
+        #     resultado='exito',
+        #     detalles=f'Cierre creado para {cliente.nombre} - {periodo}'
+        # )
+        
+        return Response({
+            'id': cierre.id,
+            'periodo': cierre.periodo,
+            'estado': cierre.estado,
+            'cliente': {
+                'id': cliente.id,
+                'nombre': cliente.nombre,
+                'rut': cliente.rut
+            },
+            'fecha_creacion': cierre.fecha_creacion.isoformat(),
+            'usuario_responsable': request.user.correo_bdo
+        }, status=status.HTTP_201_CREATED)
+        
+    except Cliente.DoesNotExist:
+        return Response({'error': 'Cliente no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def obtener_cierre_mensual_payroll(request, cliente_id, periodo):
+    """
+    API para obtener un cierre específico por periodo
+    """
+    try:
+        cliente = get_object_or_404(Cliente, id=cliente_id)
+        
+        cierre = CierrePayroll.objects.filter(
+            cliente=cliente,
+            periodo=periodo
+        ).first()
+        
+        if not cierre:
+            return Response({'error': 'Cierre no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+        
+        return Response({
+            'id': cierre.id,
+            'periodo': cierre.periodo,
+            'estado': cierre.estado,
+            'fecha_creacion': cierre.fecha_creacion,
+            'fecha_finalizacion': cierre.fecha_completado,
+            'usuario_responsable': cierre.usuario.correo_bdo if cierre.usuario else None,
+            'cliente': {
+                'id': cliente.id,
+                'nombre': cliente.nombre,
+                'rut': cliente.rut
+            }
+        })
+        
+    except Cliente.DoesNotExist:
+        return Response({'error': 'Cliente no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def cierres_cliente_payroll(request, cliente_id):
+    """
+    Obtiene la lista de cierres de payroll para un cliente específico
+    """
+    try:
+        cliente = get_object_or_404(Cliente, id=cliente_id)
+        
+        # Obtener todos los cierres del cliente ordenados por fecha de creación (más reciente primero)
+        cierres = CierrePayroll.objects.filter(
+            cliente=cliente
+        ).order_by('-fecha_creacion')
+        
+        # Serializar los datos para la respuesta
+        cierres_data = []
+        for cierre in cierres:
+            cierres_data.append({
+                'id': cierre.id,
+                'periodo': cierre.periodo,
+                'estado': cierre.estado,
+                'fecha_creacion': cierre.fecha_creacion.isoformat(),
+                'fecha_finalizacion': cierre.fecha_completado.isoformat() if cierre.fecha_completado else None,
+                'total_empleados': cierre.total_empleados or 0,
+                'usuario_responsable': cierre.usuario.correo_bdo if cierre.usuario else None,
+                'observaciones': '',  # Campo no disponible en el modelo actual
+                # Agregar estadísticas básicas
+                'puede_finalizar': cierre.estado in ['sin_incidencias', 'procesado'],
+                'en_proceso': cierre.estado in ['procesando', 'generando_reportes']
+            })
+        
+        return Response({
+            'count': len(cierres_data),
+            'cliente': {
+                'id': cliente.id,
+                'nombre': cliente.nombre,
+                'rut': cliente.rut
+            },
+            'results': cierres_data
+        })
+        
+    except Cliente.DoesNotExist:
+        return Response({'error': 'Cliente no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ============================================================================
+#                           VIEWSETS COMENTADOS
+# ============================================================================
+# ViewSets más complejos para futuras implementaciones
 
 
 # class CierrePayrollViewSet(viewsets.ModelViewSet):

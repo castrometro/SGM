@@ -7,7 +7,7 @@ import {
 import {
   obtenerCierreMensualPayroll,
   crearCierreMensualPayroll,
-} from "../../../api/payroll";
+} from "../../../api/payroll/clientes_payroll";
 
 const areaLabels = {
   Contabilidad: "Crear Cierre Mensual de Contabilidad",

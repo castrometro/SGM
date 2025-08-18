@@ -191,36 +191,83 @@ export const obtenerCierresPayrollCliente = async (clienteId, params = {}) => {
         count: 6,
         next: null,
         previous: null,
+        cliente: {
+          id: parseInt(clienteId),
+          nombre: "Cliente de Prueba Payroll",
+          rut: "12345678-9"
+        },
         results: [
           {
             id: 1,
             periodo: "2025-01",
-            nombre: "Nómina Enero 2025",
             estado: "pendiente",
-            fecha_inicio: "2025-01-01",
-            fecha_fin: null,
+            fecha_creacion: "2025-01-31T10:00:00Z",
+            fecha_finalizacion: null,
             total_empleados: 25,
-            monto_total: 28500000
+            usuario_responsable: "analista@payroll.com",
+            observaciones: "Cierre en proceso",
+            puede_finalizar: false,
+            en_proceso: true
           },
           {
             id: 2,
             periodo: "2024-12",
-            nombre: "Nómina Diciembre 2024",
             estado: "completado",
-            fecha_inicio: "2024-12-01",
-            fecha_fin: "2024-12-15",
+            fecha_creacion: "2024-12-31T10:00:00Z",
+            fecha_finalizacion: "2025-01-05T15:30:00Z",
             total_empleados: 24,
-            monto_total: 27800000
+            usuario_responsable: "analista@payroll.com",
+            observaciones: "Cierre completado sin observaciones",
+            puede_finalizar: false,
+            en_proceso: false
           },
           {
             id: 3,
             periodo: "2024-11",
-            nombre: "Nómina Noviembre 2024",
-            estado: "completado",
-            fecha_inicio: "2024-11-01",
-            fecha_fin: "2024-11-14",
+            estado: "finalizado",
+            fecha_creacion: "2024-11-30T10:00:00Z",
+            fecha_finalizacion: "2024-12-10T14:20:00Z",
             total_empleados: 23,
-            monto_total: 26900000
+            usuario_responsable: "supervisor@payroll.com",
+            observaciones: "Cierre mensual completado",
+            puede_finalizar: false,
+            en_proceso: false
+          },
+          {
+            id: 4,
+            periodo: "2024-10",
+            estado: "procesando",
+            fecha_creacion: "2024-10-31T10:00:00Z",
+            fecha_finalizacion: null,
+            total_empleados: 23,
+            usuario_responsable: "analista@payroll.com",
+            observaciones: "Revisión de liquidaciones pendiente",
+            puede_finalizar: false,
+            en_proceso: true
+          },
+          {
+            id: 5,
+            periodo: "2024-09",
+            estado: "sin_incidencias",
+            fecha_creacion: "2024-09-30T10:00:00Z",
+            fecha_finalizacion: null,
+            total_empleados: 22,
+            usuario_responsable: "analista@payroll.com",
+            observaciones: "Listo para finalizar",
+            puede_finalizar: true,
+            en_proceso: false
+          },
+          {
+            id: 6,
+            periodo: "2024-08",
+            estado: "finalizado",
+            fecha_creacion: "2024-08-31T10:00:00Z",
+            fecha_finalizacion: "2024-09-15T16:45:00Z",
+            total_empleados: 22,
+            usuario_responsable: "supervisor@payroll.com",
+            observaciones: "Cierre histórico",
+            puede_finalizar: false,
+            en_proceso: false
           }
         ]
       };
@@ -306,12 +353,12 @@ export const crearCierrePayrollCliente = async (clienteId, datosCierre) => {
  */
 export const obtenerCierreMensualPayroll = async (clienteId, periodo) => {
   try {
-    const response = await api.get(`/payroll/clientes/${clienteId}/cierres/mensual/${periodo}/`);
+    const response = await api.get(`/payroll/clientes/${clienteId}/cierres/${periodo}/`);
     return response.data;
   } catch (error) {
     // Si el endpoint no existe (404), simular que no hay cierre
     if (error.response?.status === 404) {
-      console.warn(`⚠️  Endpoint /payroll/clientes/${clienteId}/cierres/mensual/${periodo}/ no implementado. Simulando que no existe cierre.`);
+      console.warn(`⚠️  Endpoint /payroll/clientes/${clienteId}/cierres/${periodo}/ no implementado. Simulando que no existe cierre.`);
       return null; // No existe cierre para este período
     }
     throw error;
@@ -324,16 +371,15 @@ export const obtenerCierreMensualPayroll = async (clienteId, periodo) => {
  */
 export const crearCierreMensualPayroll = async (clienteId, periodo) => {
   try {
-    const response = await api.post(`/payroll/clientes/${clienteId}/cierres/mensual/`, {
+    const response = await api.post(`/payroll/clientes/${clienteId}/cierres/crear/`, {
       periodo,
-      nombre: `Cierre Payroll ${periodo}`,
-      descripcion: `Cierre mensual de payroll para el período ${periodo}`
+      observaciones: `Cierre mensual de payroll para el período ${periodo}`
     });
     return response.data;
   } catch (error) {
     // Si el endpoint no existe (404), devolver datos simulados
     if (error.response?.status === 404) {
-      console.warn(`⚠️  Endpoint /payroll/clientes/${clienteId}/cierres/mensual/ no implementado. Devolviendo cierre simulado.`);
+      console.warn(`⚠️  Endpoint /payroll/clientes/${clienteId}/cierres/crear/ no implementado. Devolviendo cierre simulado.`);
       
       // Generar ID único basado en timestamp
       const cierreId = Date.now();

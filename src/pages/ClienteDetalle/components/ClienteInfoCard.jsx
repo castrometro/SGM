@@ -1,23 +1,38 @@
 import EstadoBadge from "../../../components/EstadoBadge";
 
 const ClienteInfoCard = ({ cliente, resumen, areaActiva }) => {
-  // Determinar el estado del cierre según el área activa
-  const getEstadoCierre = () => {
-    if (!resumen) return null;
+  // Determinar información del último cierre según el área activa
+  const getCierreInfo = () => {
+    if (!resumen) return { periodo: null, estado: null };
     
-    // Para nómina usamos estado_cierre_actual
-    if (areaActiva === "Nomina") {
-      return resumen.estado_cierre_actual;
+    if (areaActiva === "Payroll" || areaActiva === "Nomina") {
+      // Para payroll: usar la estructura del API de payroll
+      if (resumen.ultimo_cierre) {
+        return {
+          periodo: resumen.ultimo_cierre.periodo,
+          estado: resumen.ultimo_cierre.estado
+        };
+      } else if (resumen.estadisticas_payroll) {
+        return {
+          periodo: resumen.estadisticas_payroll.ultimo_periodo,
+          estado: resumen.estadisticas_payroll.estado_actual
+        };
+      }
+      // Fallback para estructura simplificada de payroll
+      return {
+        periodo: resumen.ultimo_cierre || resumen.ultimo_periodo,
+        estado: resumen.estado_cierre_actual || resumen.estado_ultimo_cierre
+      };
+    } else {
+      // Para contabilidad: usar la estructura del API de contabilidad
+      return {
+        periodo: resumen.ultimo_cierre || resumen.ultimo_periodo,
+        estado: resumen.estado_ultimo_cierre || resumen.estado_cierre_actual
+      };
     }
-    
-    // Para contabilidad usamos estado_ultimo_cierre
-    if (areaActiva === "Contabilidad") {
-      return resumen.estado_ultimo_cierre;
-    }
-    
-    // Fallback: intentar cualquiera de los dos campos
-    return resumen.estado_cierre_actual || resumen.estado_ultimo_cierre;
   };
+
+  const cierreInfo = getCierreInfo();
 
   return (
     <div className="bg-gray-800 p-6 rounded-lg shadow-lg">
@@ -34,17 +49,17 @@ const ClienteInfoCard = ({ cliente, resumen, areaActiva }) => {
       </div>
       <p className="text-gray-300 mb-1">RUT: {cliente.rut}</p>
       <p className="text-gray-300 mb-1">
-        Industria: {cliente.industria_nombre || "—"}
+        Industria: {cliente.industria_nombre || cliente.industria?.nombre || "—"}
       </p>
 
       <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="bg-gray-700 p-4 rounded">
           <h3 className="text-sm text-gray-400">Último Cierre</h3>
-          <p className="text-lg font-semibold">{resumen.ultimo_cierre || "—"}</p>
+          <p className="text-lg font-semibold">{cierreInfo.periodo || "Sin cierres"}</p>
         </div>
         <div className="bg-gray-700 p-4 rounded">
           <h3 className="text-sm text-gray-400">Estado</h3>
-          <EstadoBadge estado={getEstadoCierre()} />
+          <EstadoBadge estado={cierreInfo.estado || "sin_cierres"} />
         </div>
       </div>
     </div>

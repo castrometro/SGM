@@ -1,5 +1,5 @@
 import { obtenerResumenContable } from '../../../api/contabilidad';
-import { obtenerResumenPayrollCliente } from '../../../api/payroll';
+import { obtenerResumenPayrollCliente } from '../../../api/payroll/clientes_payroll';
 // import { obtenerResumenNomina } from '../../../api/nomina'; // REMOVIDO - Limpieza de nómina
 
 /**

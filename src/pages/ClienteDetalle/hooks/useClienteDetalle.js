@@ -36,13 +36,27 @@ export const useClienteDetalle = () => {
         const area = determinarAreaActiva(usuario);
         setAreaActiva(area);
 
+        console.log('=== DEBUG: Cliente Detalle ===');
+        console.log('Cliente ID:', id);
+        console.log('Usuario:', usuario.username);
+        console.log('Área activa:', area);
+
         // Obtener configuración del área
         const areaConfig = getAreaConfig(area);
+        console.log('Configuración área:', {
+          title: areaConfig.title,
+          hasAPI: !!areaConfig.apiFunction,
+          showKpi: areaConfig.showKpiResumen
+        });
         
         // Cargar resumen según el área (si tiene API configurada)
         let resumenData = null;
         if (areaConfig.apiFunction) {
+          console.log('Cargando resumen con API específica...');
           resumenData = await areaConfig.apiFunction(id);
+          console.log('Resumen cargado:', resumenData);
+        } else {
+          console.log('No hay API configurada para esta área');
         }
 
         // Cargar servicios

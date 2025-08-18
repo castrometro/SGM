@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import CierreProgresoContabilidad from '../areas/Contabilidad/CierreProgresoContabilidad';
 import CierreProgresoNomina from '../areas/Nomina/CierreProgresoNomina';
+import CierreProgresoPayroll from '../areas/Payroll/CierreProgresoPayroll';
 import CierreProgresoRRHH from '../areas/RRHH/CierreProgresoRRHH';
 
 const CierreAreaRouter = ({ cierre, cliente, tipoModulo = "contabilidad" }) => {
@@ -16,6 +17,9 @@ const CierreAreaRouter = ({ cierre, cliente, tipoModulo = "contabilidad" }) => {
       
       case "nomina":
         return <CierreProgresoNomina cierre={cierre} cliente={cliente} />;
+      
+      case "payroll":
+        return <CierreProgresoPayroll cierre={cierre} cliente={cliente} />;
       
       case "rrhh":
         return <CierreProgresoRRHH cierre={cierre} cliente={cliente} />;
@@ -38,10 +42,12 @@ const CierreAreaRouter = ({ cierre, cliente, tipoModulo = "contabilidad" }) => {
           <div className={`w-3 h-3 rounded-full ${
             tipoModulo === 'contabilidad' ? 'bg-blue-500' :
             tipoModulo === 'nomina' ? 'bg-green-500' :
+            tipoModulo === 'payroll' ? 'bg-green-500' :
             tipoModulo === 'rrhh' ? 'bg-purple-500' : 'bg-gray-500'
           }`}></div>
           <h2 className="text-xl font-bold text-white capitalize">
-            {tipoModulo === 'rrhh' ? 'Recursos Humanos' : tipoModulo}
+            {tipoModulo === 'rrhh' ? 'Recursos Humanos' : 
+             tipoModulo === 'payroll' ? 'Payroll' : tipoModulo}
           </h2>
         </div>
         <span className="text-gray-400 text-sm">

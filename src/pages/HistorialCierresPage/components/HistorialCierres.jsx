@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { obtenerCierresCliente as obtenerCierresContabilidad } from "../../../api/contabilidad";
-import { obtenerCierresPayrollCliente } from "../../../api/payroll";
+import { obtenerCierresPayrollCliente } from "../../../api/payroll/clientes_payroll";
 // import { obtenerCierresCliente as obtenerCierresNomina } from "../../../api/nomina"; // REMOVIDO - Limpieza de nómina
 import EstadoBadge from "../../../components/EstadoBadge";
 

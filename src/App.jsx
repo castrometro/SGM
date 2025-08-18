@@ -58,7 +58,7 @@ function App() {
           {/* ----------- ÁREA: PAYROLL CLIENTES ------------- */}
           <Route path="clientes/:clienteId/cierres-payroll" element={<HistorialCierresPage />} />
           <Route path="clientes/:clienteId/crear-cierre-payroll" element={<CrearCierre />} />
-          <Route path="clientes/:clienteId/cierres-payroll/:cierreId" element={<div className="text-white p-8">Detalle Cierre Payroll - En desarrollo</div>} />
+          <Route path="clientes/:clienteId/cierres-payroll/:cierreId" element={<CierreDetalle />} />
 
           {/* ----------- ÁREA: CONTABILIDAD ------------- */}
           <Route path="cierres/:cierreId" element={<CierreDetalle />} />

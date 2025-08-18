@@ -18,7 +18,7 @@ export const determinarAreaUsuario = (usuario) => {
 
 export const determinarModuloCierre = (cierre, usuario, path) => {
   // Prioridad 1: Detectar desde la URL
-  if (path.includes('/nomina/')) return 'nomina';
+  if (path.includes('/nomina/') || path.includes('/cierres-payroll/')) return 'payroll';
   if (path.includes('/rrhh/')) return 'rrhh';
   if (path.includes('/contabilidad/')) return 'contabilidad';
   
@@ -34,6 +34,11 @@ export const AREAS_CONFIG = {
     nombre: 'Contabilidad',
     color: 'blue',
     descripcion: 'Gestión de cierres contables y libros mayores'
+  },
+  payroll: {
+    nombre: 'Payroll', 
+    color: 'green',
+    descripcion: 'Procesamiento de nóminas y remuneraciones'
   },
   nomina: {
     nombre: 'Nómina', 

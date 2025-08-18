@@ -2,7 +2,7 @@ import EstadoBadge from "../../../components/EstadoBadge";
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-const CierreInfoBarContabilidad = ({ cierre, cliente, onCierreActualizado }) => {
+const CierreInfoBar = ({ cierre, cliente, onCierreActualizado, tipoModulo = "contabilidad" }) => {
   const navigate = useNavigate();
   const [actualizandoEstado, setActualizandoEstado] = useState(false);
   const [finalizando, setFinalizando] = useState(false);
@@ -13,14 +13,27 @@ const CierreInfoBarContabilidad = ({ cierre, cliente, onCierreActualizado }) => 
   const manejarActualizarEstado = async () => {
     setActualizandoEstado(true);
     try {
-      const { actualizarEstadoCierre } = await import('../../../api/contabilidad');
-      const data = await actualizarEstadoCierre(cierre.id);
+      let data;
       
-      if (onCierreActualizado) {
-        onCierreActualizado(data.cierre);
+      // Manejar diferentes APIs según el tipo de módulo
+      if (tipoModulo === "contabilidad") {
+        const { actualizarEstadoCierre } = await import('../../../api/contabilidad');
+        data = await actualizarEstadoCierre(cierre.id);
+        
+        if (onCierreActualizado) {
+          onCierreActualizado(data.cierre);
+        }
+        // Refresh de la página como fallback
+        window.location.reload();
+      } else if (tipoModulo === "nomina") {
+        // TODO: Implementar API de nómina
+        console.log('API de nómina aún no implementada');
+        alert('La funcionalidad de nómina está en desarrollo');
+      } else if (tipoModulo === "rrhh") {
+        // TODO: Implementar API de RRHH
+        console.log('API de RRHH aún no implementada');
+        alert('La funcionalidad de RRHH está en desarrollo');
       }
-      // Refresh de la página como fallback
-      window.location.reload();
     } catch (error) {
       console.error('Error al actualizar estado del cierre:', error);
       alert('Error al actualizar el estado del cierre');
@@ -171,47 +184,78 @@ const CierreInfoBarContabilidad = ({ cierre, cliente, onCierreActualizado }) => 
           )}
         </button>
 
-        {/* Botón Ver Libro - Solo para estados permitidos */}
-        {['sin_incidencias', 'generando_reportes', 'finalizado'].includes(cierre?.estado) && (
-          <button
-            onClick={() => navigate(`/menu/cierres/${cierre.id}/libro`)}
-            className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2"
-          >
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            Ver Libro
-          </button>
+        {/* Botones para estados permitidos del libro - Solo para contabilidad */}
+        {tipoModulo === "contabilidad" && ['sin_incidencias', 'generando_reportes', 'finalizado'].includes(cierre?.estado) && (
+          <>
+            {/* Botón Ver Libro */}
+            <button
+              onClick={() => navigate(`/menu/cierres/${cierre.id}/libro`)}
+              className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Ver Libro
+            </button>
+          </>
         )}
 
-        {/* Botón Finalizar Cierre solo para sin_incidencias */}
-        {cierre?.estado === 'sin_incidencias' && (
-          <button
-            onClick={iniciarFinalizacion}
-            disabled={finalizando}
-            className="bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white px-6 py-2 rounded-lg font-bold text-sm transition-colors flex items-center gap-2 shadow-lg"
-          >
-            {finalizando ? (
-              <>
-                <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Finalizando...
-              </>
-            ) : (
-              <>
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                Finalizar Cierre y Generar Reportes
-              </>
-            )}
-          </button>
+        {/* Botones para visualización de datos - Para nómina */}
+        {tipoModulo === "nomina" && ['datos_consolidados', 'con_incidencias', 'sin_incidencias', 'incidencias_resueltas', 'finalizado'].includes(cierre?.estado) && (
+          <>
+            <button
+              onClick={() => navigate(`/menu/cierres-nomina/${cierre.id}/libro-remuneraciones`)}
+              className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Ver Libro de Remuneraciones
+            </button>
+
+            <button
+              onClick={() => navigate(`/menu/cierres-nomina/${cierre.id}/movimientos`)}
+              className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+              </svg>
+              Ver Movimientos del Mes
+            </button>
+          </>
         )}
 
-        {/* Indicador de estado generando reportes con progreso */}
-        {(cierre?.estado === 'generando_reportes' || finalizando) && (
+        {/* Botón Finalizar Cierre solo para sin_incidencias en contabilidad */}
+        {tipoModulo === "contabilidad" && cierre?.estado === 'sin_incidencias' && (
+          <>
+            {/* Botón Finalizar Cierre */}
+            <button
+              onClick={iniciarFinalizacion}
+              disabled={finalizando}
+              className="bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white px-6 py-2 rounded-lg font-bold text-sm transition-colors flex items-center gap-2 shadow-lg"
+            >
+              {finalizando ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Finalizando...
+                </>
+              ) : (
+                <>
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Finalizar Cierre y Generar Reportes
+                </>
+              )}
+            </button>
+          </>
+        )}
+
+        {/* Indicador de estado generando reportes con progreso - Solo para contabilidad */}
+        {tipoModulo === "contabilidad" && (cierre?.estado === 'generando_reportes' || finalizando) && (
           <div className="bg-yellow-600 text-white px-4 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 min-w-[300px]">
             <svg className="animate-spin h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -249,8 +293,8 @@ const CierreInfoBarContabilidad = ({ cierre, cliente, onCierreActualizado }) => 
           </div>
         )}
 
-        {/* Indicador de cierre finalizado */}
-        {cierre?.estado === 'finalizado' && (
+        {/* Indicador de cierre finalizado - Solo para contabilidad */}
+        {tipoModulo === "contabilidad" && cierre?.estado === 'finalizado' && (
           <>
             <div className="bg-green-600 text-white px-4 py-2 rounded-lg font-semibold text-sm flex items-center gap-2">
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -290,4 +334,4 @@ const CierreInfoBarContabilidad = ({ cierre, cliente, onCierreActualizado }) => 
   );
 };
 
-export default CierreInfoBarContabilidad;
+export default CierreInfoBar;

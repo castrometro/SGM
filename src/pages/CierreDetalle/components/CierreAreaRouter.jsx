@@ -1,6 +1,5 @@
 import { Suspense } from 'react';
 import CierreProgresoContabilidad from '../areas/Contabilidad/CierreProgresoContabilidad';
-import CierreProgresoNomina from '../areas/Nomina/CierreProgresoNomina';
 import CierreProgresoPayroll from '../areas/Payroll/CierreProgresoPayroll';
 import CierreProgresoRRHH from '../areas/RRHH/CierreProgresoRRHH';
 
@@ -15,8 +14,6 @@ const CierreAreaRouter = ({ cierre, cliente, tipoModulo = "contabilidad" }) => {
           </Suspense>
         );
       
-      case "nomina":
-        return <CierreProgresoNomina cierre={cierre} cliente={cliente} />;
       
       case "payroll":
         return <CierreProgresoPayroll cierre={cierre} cliente={cliente} />;

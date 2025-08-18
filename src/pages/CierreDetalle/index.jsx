@@ -1,8 +1,7 @@
 import React from "react";
 import { useParams } from "react-router-dom";
 import { useCierreDetalle } from "./hooks/useCierreDetalle";
-import CierreInfoBar from "./components/CierreInfoBar";
-import CierreAreaRouter from "./components/CierreAreaRouter";
+import CierreAreaCompleto from "./components/CierreAreaCompleto";
 import { determinarModuloCierre } from "./config/areas";
 
 const CierreDetalle = () => {
@@ -53,19 +52,12 @@ const CierreDetalle = () => {
 
   return (
     <div className="space-y-6">
-      {/* Barra de información del cierre */}
-      <CierreInfoBar 
-        cierre={cierre} 
-        cliente={cliente} 
+      {/* Router unificado que maneja toda la UI específica del área */}
+      <CierreAreaCompleto
+        cierre={cierre}
+        cliente={cliente}
+        tipoModulo={tipoModulo}
         onCierreActualizado={actualizarCierre}
-        tipoModulo={tipoModulo}
-      />
-
-      {/* Router de área específica */}
-      <CierreAreaRouter 
-        cierre={cierre} 
-        cliente={cliente} 
-        tipoModulo={tipoModulo}
       />
     </div>
   );

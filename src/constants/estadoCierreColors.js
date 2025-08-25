@@ -13,6 +13,11 @@ const estadoCierreColors = {
   aprobado:           { texto: "Aprobado", color: "bg-green-500" },
   finalizado:         { texto: "Finalizado", color: "bg-green-700" },
   
+  // Estados especiales
+  sin_cierres:        { texto: "Sin Cierres", color: "bg-gray-600" },
+  completado:         { texto: "Completado", color: "bg-green-600" },
+  error:              { texto: "Error", color: "bg-red-600" },
+  
   // Estados específicos de nómina
   datos_consolidados: { texto: "Datos Consolidados", color: "bg-blue-600" },
   incidencias_resueltas: { texto: "Incidencias Resueltas", color: "bg-green-500" },

@@ -7,18 +7,18 @@ const TarjetaDetectorDiscrepancias = ({
   pollingActivo = true 
 }) => {
   
-  // Estado interno de la tarjeta
+  // Estado interno de la tarjeta - SIMPLIFICADO para pruebas
   const [estadoInterno, setEstadoInterno] = useState({
     archivosTalana: {
       libroRemuneraciones: null,
-      movimientosDelMes: null
+      // movimientosDelMes: null // COMENTADO para simplificar
     },
-    archivosAnalista: {
-      ingresos: null,
-      finiquitos: null,
-      ausentismos: null,
-      novedades: null
-    },
+    // archivosAnalista: { // COMENTADO para simplificar
+    //   ingresos: null,
+    //   finiquitos: null,
+    //   ausentismos: null,
+    //   novedades: null
+    // },
     procesoActual: 'subida_archivos', // subida_archivos, mapeando_headers, verificando_discrepancias
     discrepancias: {
       intentos: 0,
@@ -28,15 +28,15 @@ const TarjetaDetectorDiscrepancias = ({
     procesando: false
   });
 
-  // Calcular progreso de la tarjeta
+  // Calcular progreso de la tarjeta - SIMPLIFICADO para 1 archivo
   const calcularProgreso = () => {
-    const totalArchivos = 6; // 2 Talana + 4 Analista
+    const totalArchivos = 1; // Solo Libro de Remuneraciones
     const archivosSubidos = [
       ...Object.values(estadoInterno.archivosTalana),
-      ...Object.values(estadoInterno.archivosAnalista)
+      // ...Object.values(estadoInterno.archivosAnalista) // COMENTADO
     ].filter(archivo => archivo !== null).length;
     
-    let progreso = (archivosSubidos / totalArchivos) * 60; // 60% por archivos
+    let progreso = (archivosSubidos / totalArchivos) * 60; // 60% por archivo
     
     if (estadoInterno.procesoActual === 'mapeando_headers') {
       progreso += 20; // 80% total
@@ -56,19 +56,19 @@ const TarjetaDetectorDiscrepancias = ({
     return Math.round(Math.max(0, Math.min(100, progreso)));
   };
 
-  // Actualizar estado al componente padre
+  // Actualizar estado al componente padre - SIMPLIFICADO para 1 archivo
   const notificarCambio = () => {
     // Calcular estado actual directamente
     const todosArchivosSubidos = [
       ...Object.values(estadoInterno.archivosTalana),
-      ...Object.values(estadoInterno.archivosAnalista)
-    ].filter(archivo => archivo !== null).length === 6;
+      // ...Object.values(estadoInterno.archivosAnalista) // COMENTADO
+    ].filter(archivo => archivo !== null).length === 1; // Solo 1 archivo ahora
     
     const haRealizadoVerificacion = estadoInterno.discrepancias.intentos > 0;
     const sinDiscrepancias = estadoInterno.discrepancias.ultimoIntento?.total === 0;
     const esCompleta = todosArchivosSubidos && haRealizadoVerificacion && sinDiscrepancias;
     
-    console.log('[TARJETA 1] Calculando estado:', {
+    console.log('[TARJETA 1] Calculando estado (SIMPLIFICADO):', {
       todosArchivosSubidos,
       haRealizadoVerificacion,
       intentos: estadoInterno.discrepancias.intentos,
@@ -96,13 +96,13 @@ const TarjetaDetectorDiscrepancias = ({
         }
       };
       
-      // Actualizar proceso si todos los archivos están subidos
+      // Actualizar proceso si todos los archivos están subidos - SIMPLIFICADO
       const totalArchivos = [
         ...Object.values(nuevoEstado.archivosTalana),
-        ...Object.values(nuevoEstado.archivosAnalista)
+        // ...Object.values(nuevoEstado.archivosAnalista) // COMENTADO
       ].filter(archivo => archivo !== null).length;
       
-      if (totalArchivos === 6 && prev.procesoActual === 'subida_archivos') {
+      if (totalArchivos === 1 && prev.procesoActual === 'subida_archivos') { // Solo 1 archivo ahora
         nuevoEstado.procesoActual = 'mapeando_headers';
       }
       
@@ -266,10 +266,41 @@ const TarjetaDetectorDiscrepancias = ({
         </div>
       </div>
 
-      {/* Contenido principal */}
+      {/* Contenido principal - SIMPLIFICADO para 1 archivo */}
       <div className="space-y-6">
         
-        {/* Sección: Archivos Talana */}
+        {/* Sección: Solo Libro de Remuneraciones */}
+        <div>
+          <h5 className="text-md font-semibold text-white mb-3">📁 Archivo Principal</h5>
+          <div className="bg-gray-700 p-4 rounded-lg">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-white font-medium">
+                📊 Libro de Remuneraciones
+              </span>
+              <div className="flex items-center gap-2">
+                {getIconoArchivo(estadoInterno.archivosTalana.libroRemuneraciones)}
+                <button
+                  onClick={() => manejarSubidaArchivo('archivosTalana', 'libroRemuneraciones', `libroRemuneraciones.xlsx`)}
+                  className="text-sm bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded text-white transition-colors"
+                  disabled={estadoInterno.procesando}
+                >
+                  {estadoInterno.archivosTalana.libroRemuneraciones ? '🔄 Cambiar Archivo' : '⬆️ Subir Archivo'}
+                </button>
+              </div>
+            </div>
+            {estadoInterno.archivosTalana.libroRemuneraciones && (
+              <div className="text-xs text-green-400 mt-2">
+                ✅ Archivo cargado: {estadoInterno.archivosTalana.libroRemuneraciones}
+              </div>
+            )}
+            <div className="text-xs text-gray-400 mt-2">
+              💡 Archivo Excel (.xlsx) con datos de remuneraciones del período
+            </div>
+          </div>
+        </div>
+
+        {/* Comentamos las secciones de otros archivos */}
+        {/*
         <div>
           <h5 className="text-md font-semibold text-white mb-3">Archivos Talana</h5>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -292,8 +323,10 @@ const TarjetaDetectorDiscrepancias = ({
             ))}
           </div>
         </div>
+        */}
 
-        {/* Sección: Archivos Analista */}
+        {/* Comentamos la sección de archivos del analista para simplificar */}
+        {/*
         <div>
           <h5 className="text-md font-semibold text-white mb-3">Archivos Analista</h5>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -314,6 +347,7 @@ const TarjetaDetectorDiscrepancias = ({
             ))}
           </div>
         </div>
+        */}
 
         {/* Sección: Verificación de Discrepancias */}
         {estadoInterno.procesoActual !== 'subida_archivos' && (

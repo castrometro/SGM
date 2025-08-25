@@ -15,7 +15,7 @@ import api from "../config";
  */
 export const obtenerResumenPayrollCliente = async (clienteId) => {
   try {
-    const response = await api.get(`/payroll/clientes/${clienteId}/resumen/`);
+    const response = await api.get(`/payroll/api/clientes/${clienteId}/resumen/`);
     return response.data;
   } catch (error) {
     // Si el endpoint no existe (404), devolver datos simulados

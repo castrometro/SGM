@@ -715,10 +715,24 @@ def clientes_disponibles(request, analista_id):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticatedAndActive & IsGerente])
+@permission_classes([IsAuthenticatedAndActive])
 def clientes_asignados(request, analista_id):
     """Obtener clientes asignados a un analista específico"""
     try:
+        # Verificar permisos: gerentes pueden ver cualquier analista, 
+        # analistas solo pueden ver sus propios clientes
+        if request.user.tipo_usuario == 'analista':
+            if request.user.id != analista_id:
+                return Response(
+                    {'error': 'No tienes permisos para ver los clientes de otro analista'}, 
+                    status=403
+                )
+        elif request.user.tipo_usuario not in ['gerente', 'supervisor']:
+            return Response(
+                {'error': 'No tienes permisos para acceder a esta información'}, 
+                status=403
+            )
+        
         analista = Usuario.objects.get(id=analista_id, tipo_usuario='analista')
         
         asignaciones = AsignacionClienteUsuario.objects.filter(

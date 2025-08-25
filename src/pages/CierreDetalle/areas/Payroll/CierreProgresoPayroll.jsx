@@ -169,11 +169,11 @@ const CierreProgresoPayroll = ({ cierre, cliente }) => {
       {/* Tarjetas del workflow con sistema acordeón */}
       <div className="space-y-3">
         
-        {/* Tarjeta 1: Detector de Discrepancias */}
+        {/* Tarjeta 1: Detector de Discrepancias - SIMPLIFICADA */}
         <TarjetaColapsable 
           nombreTarjeta="detectorDiscrepancias"
-          titulo="1. Detector de Discrepancias"
-          icono="🔍"
+          titulo="1. Subida de Libro de Remuneraciones"
+          icono="📄"
         >
           <TarjetaDetectorDiscrepancias
             onEstadoChange={(nuevoEstado) => actualizarEstadoTarjeta('detectorDiscrepancias', nuevoEstado)}
@@ -187,12 +187,12 @@ const CierreProgresoPayroll = ({ cierre, cliente }) => {
         <div className="text-center py-8 bg-gray-800 rounded-lg border-2 border-dashed border-gray-600">
           <h4 className="text-lg text-gray-400 mb-2">🚧 Próximas Fases del Workflow</h4>
           <div className="space-y-1 text-sm text-gray-500">
-            <div>2. Consolidación de Datos</div>
-            <div>3. Gestión de Incidencias</div>
-            <div>4. Supervisión Final</div>
+            <div>2. Mapeo de Headers</div>
+            <div>3. Verificación de Discrepancias</div>
+            <div>4. Validación y Procesamiento</div>
           </div>
           <p className="text-xs text-gray-600 mt-3">
-            Se implementarán progresivamente según las necesidades del flujo
+            <strong>Fase actual:</strong> Solo subida de Libro de Remuneraciones para pruebas
           </p>
         </div>
 

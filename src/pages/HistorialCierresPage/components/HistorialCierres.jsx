@@ -1,13 +1,36 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { obtenerCierresCliente as obtenerCierresContabilidad } from "../../../api/contabilidad";
-import { obtenerCierresPayrollCliente } from "../../../api/payroll/clientes_payroll";
+import { obtenerCierresClientePayroll } from "../../../api/payroll/clientes_api";
 // import { obtenerCierresCliente as obtenerCierresNomina } from "../../../api/nomina"; // REMOVIDO - Limpieza de nómina
 import EstadoBadge from "../../../components/EstadoBadge";
 
 const HistorialCierres = ({ clienteId, areaActiva }) => {
   const [cierres, setCierres] = useState([]);
   const navigate = useNavigate();
+
+  // Helper para obtener la fecha de creación según el área
+  const getFechaCreacion = (cierre) => {
+    if (areaActiva === "Contabilidad") {
+      return cierre.fecha_creacion;
+    } else if (areaActiva === "Payroll" || areaActiva === "Nomina") {
+      return cierre.fecha_inicio;
+    }
+    return cierre.fecha_creacion || cierre.fecha_inicio;
+  };
+
+  // Helper para formatear fecha de manera segura
+  const formatearFecha = (fecha) => {
+    if (!fecha) return 'N/A';
+    try {
+      const date = new Date(fecha);
+      if (isNaN(date.getTime())) return 'N/A';
+      return date.toLocaleDateString();
+    } catch (error) {
+      console.error('Error formateando fecha:', error);
+      return 'N/A';
+    }
+  };
 
   // Helper para determinar si un cierre puede ser finalizado
   const puedeFinalizarse = (cierre) => {
@@ -51,11 +74,8 @@ const HistorialCierres = ({ clienteId, areaActiva }) => {
       if (areaActiva === "Contabilidad") {
         res = await obtenerCierresContabilidad(clienteId);
       } else if (areaActiva === "Payroll" || areaActiva === "Nomina") {
-        res = await obtenerCierresPayrollCliente(clienteId);
-        // Ajustar la estructura si es necesario para que coincida con la tabla
-        if (res.results) {
-          res = res.results; // La API de payroll devuelve {count, results}
-        }
+        res = await obtenerCierresClientePayroll(clienteId);
+        // La función devuelve un array directamente, no necesita .results
       } else {
         // Fallback para otras áreas
         res = await obtenerCierresContabilidad(clienteId);
@@ -78,10 +98,8 @@ const HistorialCierres = ({ clienteId, areaActiva }) => {
         if (areaActiva === "Contabilidad") {
           res = await obtenerCierresContabilidad(clienteId);
         } else if (areaActiva === "Payroll" || areaActiva === "Nomina") {
-          res = await obtenerCierresPayrollCliente(clienteId);
-          if (res.results) {
-            res = res.results; // La API de payroll devuelve {count, results}
-          }
+          res = await obtenerCierresClientePayroll(clienteId);
+          // La función devuelve un array directamente, no necesita .results
         } else {
           // Fallback para otras áreas
           res = await obtenerCierresContabilidad(clienteId);
@@ -115,7 +133,7 @@ const HistorialCierres = ({ clienteId, areaActiva }) => {
                 <td className="px-4 py-2">
                   <EstadoBadge estado={cierre.estado} size="sm" />
                 </td>
-                <td className="px-4 py-2">{new Date(cierre.fecha_creacion).toLocaleDateString()}</td>
+                <td className="px-4 py-2">{formatearFecha(getFechaCreacion(cierre))}</td>
                 <td className="px-4 py-2">
                   <button
                     className="text-blue-500 underline font-medium"

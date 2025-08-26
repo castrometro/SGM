@@ -109,12 +109,6 @@ const CierreProgresoPayroll = ({ cierre, cliente }) => {
                 {titulo}
               </h3>
               <div className="flex items-center gap-2 text-sm">
-                <span className={`${
-                  completada ? 'text-green-400' : 
-                  bloqueada ? 'text-gray-500' : 'text-blue-400'
-                }`}>
-                  {progreso}% completado
-                </span>
                 {completada && <span className="text-green-400">✅ Completada</span>}
                 {bloqueada && <span className="text-gray-500">🔒 Bloqueada</span>}
               </div>
@@ -147,33 +141,16 @@ const CierreProgresoPayroll = ({ cierre, cliente }) => {
 
   return (
     <div className="space-y-6">
-      
-      {/* Header con progreso general */}
-      <div className="bg-gray-800 p-6 rounded-lg shadow-lg">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-xl font-bold text-white">Cierre Payroll - {cierre?.periodo || 'Agosto 2025'}</h3>
-          <div className="text-right">
-            <div className="text-2xl font-bold text-white">{calcularProgresoGeneral()}%</div>
-            <div className="text-sm text-gray-400">Progreso General</div>
-          </div>
-        </div>
-        
-        <div className="w-full bg-gray-700 rounded-full h-3">
-          <div 
-            className="bg-blue-500 h-3 rounded-full transition-all duration-500"
-            style={{ width: `${calcularProgresoGeneral()}%` }}
-          ></div>
-        </div>
-      </div>
+ 
 
       {/* Tarjetas del workflow con sistema acordeón */}
       <div className="space-y-3">
         
-        {/* Tarjeta 1: Detector de Discrepancias - SIMPLIFICADA */}
+        {/* Tarjeta 1: Detector de Discrepancias */}
         <TarjetaColapsable 
           nombreTarjeta="detectorDiscrepancias"
-          titulo="1. Subida de Libro de Remuneraciones"
-          icono="📄"
+          titulo="1. Detector de Discrepancias"
+          icono="🔍"
         >
           <TarjetaDetectorDiscrepancias
             onEstadoChange={(nuevoEstado) => actualizarEstadoTarjeta('detectorDiscrepancias', nuevoEstado)}
@@ -187,12 +164,12 @@ const CierreProgresoPayroll = ({ cierre, cliente }) => {
         <div className="text-center py-8 bg-gray-800 rounded-lg border-2 border-dashed border-gray-600">
           <h4 className="text-lg text-gray-400 mb-2">🚧 Próximas Fases del Workflow</h4>
           <div className="space-y-1 text-sm text-gray-500">
-            <div>2. Mapeo de Headers</div>
-            <div>3. Verificación de Discrepancias</div>
-            <div>4. Validación y Procesamiento</div>
+            <div>2. Consolidación de Datos</div>
+            <div>3. Gestión de Incidencias</div>
+            <div>4. Supervisión Final</div>
           </div>
           <p className="text-xs text-gray-600 mt-3">
-            <strong>Fase actual:</strong> Solo subida de Libro de Remuneraciones para pruebas
+            Se implementarán progresivamente según las necesidades del flujo
           </p>
         </div>
 

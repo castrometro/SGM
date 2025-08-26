@@ -7,18 +7,18 @@ const TarjetaDetectorDiscrepancias = ({
   pollingActivo = true 
 }) => {
   
-  // Estado interno de la tarjeta - SIMPLIFICADO para pruebas
+  // Estado interno de la tarjeta
   const [estadoInterno, setEstadoInterno] = useState({
     archivosTalana: {
       libroRemuneraciones: null,
-      // movimientosDelMes: null // COMENTADO para simplificar
+      movimientosDelMes: null
     },
-    // archivosAnalista: { // COMENTADO para simplificar
-    //   ingresos: null,
-    //   finiquitos: null,
-    //   ausentismos: null,
-    //   novedades: null
-    // },
+    archivosAnalista: {
+      ingresos: null,
+      finiquitos: null,
+      ausentismos: null,
+      novedades: null
+    },
     procesoActual: 'subida_archivos', // subida_archivos, mapeando_headers, verificando_discrepancias
     discrepancias: {
       intentos: 0,
@@ -28,15 +28,15 @@ const TarjetaDetectorDiscrepancias = ({
     procesando: false
   });
 
-  // Calcular progreso de la tarjeta - SIMPLIFICADO para 1 archivo
+  // Calcular progreso de la tarjeta
   const calcularProgreso = () => {
-    const totalArchivos = 1; // Solo Libro de Remuneraciones
+    const totalArchivos = 6; // 2 Talana + 4 Analista
     const archivosSubidos = [
       ...Object.values(estadoInterno.archivosTalana),
-      // ...Object.values(estadoInterno.archivosAnalista) // COMENTADO
+      ...Object.values(estadoInterno.archivosAnalista)
     ].filter(archivo => archivo !== null).length;
     
-    let progreso = (archivosSubidos / totalArchivos) * 60; // 60% por archivo
+    let progreso = (archivosSubidos / totalArchivos) * 60; // 60% por archivos
     
     if (estadoInterno.procesoActual === 'mapeando_headers') {
       progreso += 20; // 80% total
@@ -56,19 +56,19 @@ const TarjetaDetectorDiscrepancias = ({
     return Math.round(Math.max(0, Math.min(100, progreso)));
   };
 
-  // Actualizar estado al componente padre - SIMPLIFICADO para 1 archivo
+  // Actualizar estado al componente padre
   const notificarCambio = () => {
     // Calcular estado actual directamente
     const todosArchivosSubidos = [
       ...Object.values(estadoInterno.archivosTalana),
-      // ...Object.values(estadoInterno.archivosAnalista) // COMENTADO
-    ].filter(archivo => archivo !== null).length === 1; // Solo 1 archivo ahora
+      ...Object.values(estadoInterno.archivosAnalista)
+    ].filter(archivo => archivo !== null).length === 6;
     
     const haRealizadoVerificacion = estadoInterno.discrepancias.intentos > 0;
     const sinDiscrepancias = estadoInterno.discrepancias.ultimoIntento?.total === 0;
     const esCompleta = todosArchivosSubidos && haRealizadoVerificacion && sinDiscrepancias;
     
-    console.log('[TARJETA 1] Calculando estado (SIMPLIFICADO):', {
+    console.log('[TARJETA 1] Calculando estado:', {
       todosArchivosSubidos,
       haRealizadoVerificacion,
       intentos: estadoInterno.discrepancias.intentos,
@@ -96,13 +96,13 @@ const TarjetaDetectorDiscrepancias = ({
         }
       };
       
-      // Actualizar proceso si todos los archivos están subidos - SIMPLIFICADO
+      // Actualizar proceso si todos los archivos están subidos
       const totalArchivos = [
         ...Object.values(nuevoEstado.archivosTalana),
-        // ...Object.values(nuevoEstado.archivosAnalista) // COMENTADO
+        ...Object.values(nuevoEstado.archivosAnalista)
       ].filter(archivo => archivo !== null).length;
       
-      if (totalArchivos === 1 && prev.procesoActual === 'subida_archivos') { // Solo 1 archivo ahora
+      if (totalArchivos === 6 && prev.procesoActual === 'subida_archivos') {
         nuevoEstado.procesoActual = 'mapeando_headers';
       }
       
@@ -234,73 +234,10 @@ const TarjetaDetectorDiscrepancias = ({
       
       <div className="p-6">
       
-      {/* Header de la tarjeta */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-2">
-          {completada ? (
-            <svg className="w-6 h-6 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-            </svg>
-          ) : (
-            <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
-              <span className="text-white text-sm font-bold">1</span>
-            </div>
-          )}
-          <h4 className="text-lg font-bold text-white">Detector de Discrepancias</h4>
-        </div>
-        <div className="text-right">
-          <div className="text-xl font-bold text-white">{calcularProgreso()}%</div>
-          <div className="text-xs text-gray-400">Progreso</div>
-        </div>
-      </div>
-
-      {/* Barra de progreso de la tarjeta */}
-      <div className="mb-6">
-        <div className="w-full bg-gray-700 rounded-full h-2">
-          <div 
-            className={`h-2 rounded-full transition-all duration-500 ${
-              completada ? 'bg-green-500' : 'bg-blue-500'
-            }`}
-            style={{ width: `${calcularProgreso()}%` }}
-          ></div>
-        </div>
-      </div>
-
-      {/* Contenido principal - SIMPLIFICADO para 1 archivo */}
+      {/* Contenido principal */}
       <div className="space-y-6">
         
-        {/* Sección: Solo Libro de Remuneraciones */}
-        <div>
-          <h5 className="text-md font-semibold text-white mb-3">📁 Archivo Principal</h5>
-          <div className="bg-gray-700 p-4 rounded-lg">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-white font-medium">
-                📊 Libro de Remuneraciones
-              </span>
-              <div className="flex items-center gap-2">
-                {getIconoArchivo(estadoInterno.archivosTalana.libroRemuneraciones)}
-                <button
-                  onClick={() => manejarSubidaArchivo('archivosTalana', 'libroRemuneraciones', `libroRemuneraciones.xlsx`)}
-                  className="text-sm bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded text-white transition-colors"
-                  disabled={estadoInterno.procesando}
-                >
-                  {estadoInterno.archivosTalana.libroRemuneraciones ? '🔄 Cambiar Archivo' : '⬆️ Subir Archivo'}
-                </button>
-              </div>
-            </div>
-            {estadoInterno.archivosTalana.libroRemuneraciones && (
-              <div className="text-xs text-green-400 mt-2">
-                ✅ Archivo cargado: {estadoInterno.archivosTalana.libroRemuneraciones}
-              </div>
-            )}
-            <div className="text-xs text-gray-400 mt-2">
-              💡 Archivo Excel (.xlsx) con datos de remuneraciones del período
-            </div>
-          </div>
-        </div>
-
-        {/* Comentamos las secciones de otros archivos */}
-        {/*
+        {/* Sección: Archivos Talana */}
         <div>
           <h5 className="text-md font-semibold text-white mb-3">Archivos Talana</h5>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -323,10 +260,8 @@ const TarjetaDetectorDiscrepancias = ({
             ))}
           </div>
         </div>
-        */}
 
-        {/* Comentamos la sección de archivos del analista para simplificar */}
-        {/*
+        {/* Sección: Archivos Analista */}
         <div>
           <h5 className="text-md font-semibold text-white mb-3">Archivos Analista</h5>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -347,13 +282,12 @@ const TarjetaDetectorDiscrepancias = ({
             ))}
           </div>
         </div>
-        */}
 
         {/* Sección: Verificación de Discrepancias */}
         {estadoInterno.procesoActual !== 'subida_archivos' && (
           <div className="border-t border-gray-700 pt-4">
             <div className="flex items-center justify-between mb-4">
-              <h5 className="text-md font-semibold text-white">Verificación de Discrepancias</h5>
+              
               <button
                 onClick={verificarDiscrepancias}
                 disabled={estadoInterno.procesando}

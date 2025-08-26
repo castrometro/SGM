@@ -119,9 +119,6 @@ const CierreAreaCompleto = ({ cierre, cliente, tipoModulo, onCierreActualizado }
             {titulo}
           </h2>
         </div>
-        <span className="text-gray-400 text-sm">
-          Periodo: {cierre?.periodo}
-        </span>
       </div>
 
       {/* Componente de progreso específico del área */}

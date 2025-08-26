@@ -3,12 +3,12 @@ import React from 'react';
 // Importar componentes de barras de información específicas
 import CierreInfoBarContabilidad from './CierreInfoBar';
 import CierreInfoBarPayroll from './CierreInfoBarPayroll';
-import CierreInfoBarRRHH from './CierreInfoBarRRHH';
+
 
 // Importar componentes de progreso específicos por área
 import CierreProgresoContabilidad from '../areas/Contabilidad/CierreProgresoContabilidad';
 import CierreProgresoPayroll from '../areas/Payroll/CierreProgresoPayroll';
-import CierreProgresoRRHH from '../areas/RRHH/CierreProgresoRRHH';
+
 
 const CierreAreaCompleto = ({ cierre, cliente, tipoModulo, onCierreActualizado }) => {
 
@@ -53,24 +53,7 @@ const CierreAreaCompleto = ({ cierre, cliente, tipoModulo, onCierreActualizado }
           color: "green"
         };
 
-      case "rrhh":
-        return {
-          infoBar: (
-            <CierreInfoBarRRHH
-              cierre={cierre}
-              cliente={cliente}
-              onCierreActualizado={onCierreActualizado}
-            />
-          ),
-          progreso: (
-            <CierreProgresoRRHH
-              cierre={cierre}
-              cliente={cliente}
-            />
-          ),
-          titulo: "Recursos Humanos",
-          color: "purple"
-        };
+     
 
       default:
         return {

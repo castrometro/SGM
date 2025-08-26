@@ -4,4 +4,4 @@ export { default as CierreAreaRouter } from './CierreAreaRouter';
 export { default as CierreInfoBarContabilidad } from './CierreInfoBar';
 export { default as CierreInfoBarGenerico } from './CierreInfoBarGenerico';
 export { default as CierreInfoBarPayroll } from './CierreInfoBarPayroll';
-export { default as CierreInfoBarRRHH } from './CierreInfoBarRRHH';
+

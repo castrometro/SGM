@@ -83,7 +83,7 @@ const AnalisisLibro = () => {
   }
 
   // Validar acceso al libro según el estado del cierre
-  const estadosPermitidos = ['listo_para_entrega', 'entregado', 'completado','finalizado'];
+  const estadosPermitidos = ['sin_incidencias','listo_para_entrega', 'entregado', 'completado','finalizado'];
   const accesoPermitido = estadosPermitidos.includes(cierre.estado);
 
   if (!accesoPermitido || (resumen && Array.isArray(resumen) && resumen.length === 0 && cierre.estado)) {

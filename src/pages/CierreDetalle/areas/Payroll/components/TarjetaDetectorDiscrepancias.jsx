@@ -1,13 +1,19 @@
 import React, { useState, useEffect } from "react";
+import LibroRemuneraciones from "./archivos/LibroRemuneraciones";
+import MovimientosDelMes from "./archivos/MovimientosDelMes";
+import Ingresos from "./archivos/Ingresos";
+import Finiquitos from "./archivos/Finiquitos";
+import Ausentismos from "./archivos/Ausentismos";
+import Novedades from "./archivos/Novedades";
 
 const TarjetaDetectorDiscrepancias = ({ 
-  onEstadoChange, 
-  bloqueada = false, 
-  completada = false,
-  pollingActivo = true 
+  activa = false,
+  onCompletada = () => {},
+  cierre,
+  cliente
 }) => {
   
-  // Estado interno de la tarjeta
+  // Estado interno simplificado
   const [estadoInterno, setEstadoInterno] = useState({
     archivosTalana: {
       libroRemuneraciones: null,
@@ -28,341 +34,308 @@ const TarjetaDetectorDiscrepancias = ({
     procesando: false
   });
 
-  // Calcular progreso de la tarjeta
-  const calcularProgreso = () => {
-    const totalArchivos = 6; // 2 Talana + 4 Analista
+  // Polling inteligente: solo cuando está activa
+  useEffect(() => {
+    if (!activa || !cierre?.id) return;
+    
+    console.log('[DETECTOR] Tarjeta activa - iniciando polling inteligente');
+    
+    const interval = setInterval(() => {
+      // Solo hacer polling si hay procesos en curso
+      if (estadoInterno.procesando || estadoInterno.procesoActual !== 'subida_archivos') {
+        console.log('[DETECTOR] Polling activo - verificando estado');
+        verificarEstadoProceso();
+      }
+    }, 3000); // Cada 3 segundos cuando está activa
+
+    return () => {
+      console.log('[DETECTOR] Tarjeta inactiva - deteniendo polling');
+      clearInterval(interval);
+    };
+  }, [activa, cierre?.id, estadoInterno.procesando, estadoInterno.procesoActual]);
+
+  // Verificar estado del proceso (simulado por ahora)
+  const verificarEstadoProceso = async () => {
+    if (!cierre?.id) return;
+    
+    try {
+      // TODO: Implementar llamada real al backend
+      console.log('[DETECTOR] Verificando estado del proceso para cierre:', cierre.id);
+      
+      // Simular respuesta del backend por ahora
+      // En producción aquí iría:
+      // const response = await fetch(`/api/payroll/cierres/${cierre.id}/detector-discrepancias/`);
+      // const data = await response.json();
+      
+    } catch (error) {
+      console.error('[DETECTOR] Error verificando estado:', error);
+    }
+  };
+
+  // Verificar si el proceso está completado
+  const verificarCompletitud = () => {
+    const totalArchivos = 6;
     const archivosSubidos = [
       ...Object.values(estadoInterno.archivosTalana),
       ...Object.values(estadoInterno.archivosAnalista)
     ].filter(archivo => archivo !== null).length;
     
-    let progreso = (archivosSubidos / totalArchivos) * 60; // 60% por archivos
+    // Completado si todos los archivos están subidos y no hay discrepancias
+    const completado = archivosSubidos === totalArchivos && 
+                     estadoInterno.procesoActual === 'verificando_discrepancias' &&
+                     estadoInterno.discrepancias.ultimoIntento.total === 0 &&
+                     estadoInterno.discrepancias.intentos > 0;
+    
+    if (completado) {
+      console.log('[DETECTOR] Proceso completado - notificando al padre');
+      onCompletada();
+    }
+  };
+
+  // Efecto para verificar completitud cuando cambia el estado
+  useEffect(() => {
+    verificarCompletitud();
+  }, [estadoInterno]);
+
+  // Simular inicio del mapeo de headers
+  const iniciarMapeoHeaders = async () => {
+    if (!activa) return;
+    
+    setEstadoInterno(prev => ({ 
+      ...prev, 
+      procesoActual: 'mapeando_headers', 
+      procesando: true 
+    }));
+    
+    // Simular tiempo de mapeo
+    setTimeout(() => {
+      setEstadoInterno(prev => ({ 
+        ...prev, 
+        procesoActual: 'verificando_discrepancias', 
+        procesando: false 
+      }));
+    }, 3000);
+  };
+
+  // Simular verificación de discrepancias
+  const verificarDiscrepancias = async () => {
+    if (!activa) return;
+    
+    setEstadoInterno(prev => ({ ...prev, procesando: true }));
+    
+    // Simular tiempo de verificación
+    setTimeout(() => {
+      const nuevoIntento = {
+        total: Math.floor(Math.random() * 5), // 0-4 discrepancias aleatorias
+        resueltas: 0,
+        timestamp: Date.now()
+      };
+      
+      setEstadoInterno(prev => ({
+        ...prev,
+        discrepancias: {
+          ...prev.discrepancias,
+          intentos: prev.discrepancias.intentos + 1,
+          ultimoIntento: nuevoIntento,
+          historial: [...prev.discrepancias.historial, nuevoIntento]
+        },
+        procesando: false
+      }));
+    }, 4000);
+  };
+
+  // Calcular progreso visual
+  const calcularProgreso = () => {
+    const totalArchivos = 6;
+    const archivosSubidos = [
+      ...Object.values(estadoInterno.archivosTalana),
+      ...Object.values(estadoInterno.archivosAnalista)
+    ].filter(archivo => archivo !== null).length;
+    
+    let progreso = (archivosSubidos / totalArchivos) * 60;
     
     if (estadoInterno.procesoActual === 'mapeando_headers') {
-      progreso += 20; // 80% total
+      progreso += 20;
     }
     
     if (estadoInterno.procesoActual === 'verificando_discrepancias') {
-      progreso += 30; // 90% base para verificación
+      progreso += 20;
       
-      // Si la última verificación tiene 0 discrepancias, llegar al 100%
       if (estadoInterno.discrepancias.ultimoIntento.total === 0 && estadoInterno.discrepancias.intentos > 0) {
         progreso = 100;
       }
     }
     
-    if (completada) progreso = 100;
-    
     return Math.round(Math.max(0, Math.min(100, progreso)));
   };
 
-  // Actualizar estado al componente padre
-  const notificarCambio = () => {
-    // Calcular estado actual directamente
-    const todosArchivosSubidos = [
-      ...Object.values(estadoInterno.archivosTalana),
-      ...Object.values(estadoInterno.archivosAnalista)
-    ].filter(archivo => archivo !== null).length === 6;
-    
-    const haRealizadoVerificacion = estadoInterno.discrepancias.intentos > 0;
-    const sinDiscrepancias = estadoInterno.discrepancias.ultimoIntento?.total === 0;
-    const esCompleta = todosArchivosSubidos && haRealizadoVerificacion && sinDiscrepancias;
-    
-    console.log('[TARJETA 1] Calculando estado:', {
-      todosArchivosSubidos,
-      haRealizadoVerificacion,
-      intentos: estadoInterno.discrepancias.intentos,
-      ultimoIntento: estadoInterno.discrepancias.ultimoIntento,
-      sinDiscrepancias,
-      esCompleta
-    });
-    
-    if (onEstadoChange) {
-      onEstadoChange({
-        completada: esCompleta,
-        progreso: esCompleta ? 100 : calcularProgreso()
-      });
-    }
-  };
-
-  // Manejar subida de archivos
-  const manejarSubidaArchivo = (tipo, categoria, archivo) => {
-    setEstadoInterno(prev => {
-      const nuevoEstado = {
-        ...prev,
-        [tipo]: {
-          ...prev[tipo],
-          [categoria]: archivo
-        }
-      };
-      
-      // Actualizar proceso si todos los archivos están subidos
-      const totalArchivos = [
-        ...Object.values(nuevoEstado.archivosTalana),
-        ...Object.values(nuevoEstado.archivosAnalista)
-      ].filter(archivo => archivo !== null).length;
-      
-      if (totalArchivos === 6 && prev.procesoActual === 'subida_archivos') {
-        nuevoEstado.procesoActual = 'mapeando_headers';
-      }
-      
-      return nuevoEstado;
-    });
-    
-    // Ya no necesitamos llamar notificarCambio porque useEffect lo detectará automáticamente
-  };
-
-  // Simular verificación de discrepancias
-  const verificarDiscrepancias = async () => {
-    console.log('[TARJETA 1] verificarDiscrepancias iniciado');
-    setEstadoInterno(prev => ({ ...prev, procesando: true, procesoActual: 'verificando_discrepancias' }));
-    
-    try {
-      // Simulación de verificación
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      setEstadoInterno(prev => {
-        console.log('[TARJETA 1] Actualizando estado después de verificación, intentos previos:', prev.discrepancias.intentos);
-        
-        // Lógica de discrepancias: intento par = 1-3 discrepancias, impar = 0 discrepancias
-        const numeroIntento = prev.discrepancias.intentos + 1;
-        const esPar = numeroIntento % 2 === 0;
-        const discrepanciasEncontradas = esPar ? Math.floor(Math.random() * 3) + 1 : 0; // Par: 1-3, Impar: 0
-        
-        console.log('[TARJETA 1] Nuevo intento:', { numeroIntento, esPar, discrepanciasEncontradas });
-        
-        const nuevoIntento = {
-          intento: numeroIntento,
-          total: discrepanciasEncontradas,
-          resueltas: discrepanciasEncontradas,
-          fecha: new Date().toLocaleString()
-        };
-        
-        const nuevoEstado = {
-          ...prev,
-          procesando: false,
-          discrepancias: {
-            intentos: numeroIntento,
-            ultimoIntento: { total: discrepanciasEncontradas, resueltas: discrepanciasEncontradas },
-            historial: [...prev.discrepancias.historial, nuevoIntento]
-          }
-        };
-        
-        // Notificar inmediatamente con los valores calculados
-        setTimeout(() => {
-          console.log('[TARJETA 1] Notificando con valores calculados:', {
-            intentos: numeroIntento,
-            total: discrepanciasEncontradas
-          });
-          
-          // Calcular estado de completado con los nuevos valores
-          const todosArchivosSubidos = [
-            ...Object.values(nuevoEstado.archivosTalana),
-            ...Object.values(nuevoEstado.archivosAnalista)
-          ].filter(archivo => archivo !== null).length === 6;
-          
-          const haRealizadoVerificacion = numeroIntento > 0;
-          const sinDiscrepancias = discrepanciasEncontradas === 0;
-          const esCompleta = todosArchivosSubidos && haRealizadoVerificacion && sinDiscrepancias;
-          
-          console.log('[TARJETA 1] Estado calculado directamente:', {
-            todosArchivosSubidos,
-            haRealizadoVerificacion,
-            sinDiscrepancias,
-            esCompleta
-          });
-          
-          if (onEstadoChange) {
-            onEstadoChange({
-              completada: esCompleta,
-              progreso: esCompleta ? 100 : calcularProgreso()
-            });
-          }
-        }, 100);
-        
-        return nuevoEstado;
-      });
-      
-    } catch (error) {
-      console.error('Error verificando discrepancias:', error);
-      setEstadoInterno(prev => ({ ...prev, procesando: false }));
-    }
-  };
-
-  // Obtener icono según estado del archivo
-  const getIconoArchivo = (archivo) => {
-    if (archivo) {
-      return (
-        <svg className="w-5 h-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-        </svg>
-      );
-    }
+  // Si la tarjeta no está activa, mostrar versión comprimida
+  if (!activa) {
     return (
-      <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
-      </svg>
-    );
-  };
-
-  if (bloqueada) {
-    return (
-      <div className="bg-gray-800 p-6 opacity-50">
-        <div className="flex items-center gap-2 mb-4">
-          <svg className="w-5 h-5 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-          </svg>
-          <h4 className="text-lg font-bold text-gray-500">Detector de Discrepancias</h4>
-          <span className="text-xs bg-gray-700 px-2 py-1 rounded text-gray-400">Bloqueada</span>
-        </div>
-        <p className="text-gray-500 text-sm">
-          Esta fase se desbloqueará cuando se complete la fase anterior.
-        </p>
+      <div className="p-4 text-center text-gray-400">
+        <div className="text-2xl mb-2">😴</div>
+        <p className="text-sm">Tarjeta inactiva - No hay polling ni procesos en curso</p>
       </div>
     );
   }
 
+  // Renderizado completo cuando está activa
   return (
-    <div className="bg-gray-800">
-      
-      {/* Indicador de polling en debug */}
-      {!pollingActivo && (
-        <div className="bg-orange-900 text-orange-200 text-xs px-3 py-1 text-center">
-          ⏸️ Polling pausado - Tarjeta en modo snapshot
+    <div className="bg-gray-800 space-y-6">
+
+      {/* Sección de archivos de Talana */}
+      <div className="space-y-4 pt-4">
+        <h4 className="text-white font-semibold border-b border-gray-600 pb-2">
+          📊 Archivos de Talana (2/2)
+        </h4>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <LibroRemuneraciones
+            activa={activa}
+            onArchivoSubido={(archivo) => {
+              setEstadoInterno(prev => ({
+                ...prev,
+                archivosTalana: {
+                  ...prev.archivosTalana,
+                  libroRemuneraciones: archivo
+                }
+              }));
+            }}
+          />
+          
+          <MovimientosDelMes
+            activa={activa}
+            onArchivoSubido={(archivo) => {
+              setEstadoInterno(prev => ({
+                ...prev,
+                archivosTalana: {
+                  ...prev.archivosTalana,
+                  movimientosDelMes: archivo
+                }
+              }));
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Sección de archivos del Analista */}
+      <div className="space-y-4">
+        <h4 className="text-white font-semibold border-b border-gray-600 pb-2">
+          👤 Archivos del Analista (4/4)
+        </h4>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Ingresos
+            activa={activa}
+            onArchivoSubido={(archivo) => {
+              setEstadoInterno(prev => ({
+                ...prev,
+                archivosAnalista: {
+                  ...prev.archivosAnalista,
+                  ingresos: archivo
+                }
+              }));
+            }}
+          />
+          
+          <Finiquitos
+            activa={activa}
+            onArchivoSubido={(archivo) => {
+              setEstadoInterno(prev => ({
+                ...prev,
+                archivosAnalista: {
+                  ...prev.archivosAnalista,
+                  finiquitos: archivo
+                }
+              }));
+            }}
+          />
+          
+          <Ausentismos
+            activa={activa}
+            onArchivoSubido={(archivo) => {
+              setEstadoInterno(prev => ({
+                ...prev,
+                archivosAnalista: {
+                  ...prev.archivosAnalista,
+                  ausentismos: archivo
+                }
+              }));
+            }}
+          />
+          
+          <Novedades
+            activa={activa}
+            onArchivoSubido={(archivo) => {
+              setEstadoInterno(prev => ({
+                ...prev,
+                archivosAnalista: {
+                  ...prev.archivosAnalista,
+                  novedades: archivo
+                }
+              }));
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Botones de acción */}
+      <div className="flex gap-4">
+        {estadoInterno.procesoActual === 'subida_archivos' && (
+          <button 
+            onClick={iniciarMapeoHeaders}
+            disabled={estadoInterno.procesando || calcularProgreso() < 60}
+            className="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white px-4 py-2 rounded font-medium"
+          >
+            Iniciar Mapeo de Headers
+          </button>
+        )}
+        
+        {estadoInterno.procesoActual === 'verificando_discrepancias' && (
+          <button 
+            onClick={verificarDiscrepancias}
+            disabled={estadoInterno.procesando}
+            className="bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 text-white px-4 py-2 rounded font-medium"
+          >
+            Verificar Discrepancias
+          </button>
+        )}
+      </div>
+
+      {/* Resultados de discrepancias */}
+      {estadoInterno.discrepancias.intentos > 0 && (
+        <div className="bg-gray-900 p-4 rounded-lg">
+          <h4 className="text-white font-semibold mb-3">Resultados de Verificación</h4>
+          <div className="space-y-2">
+            <div className="flex justify-between">
+              <span className="text-gray-300">Intentos realizados:</span>
+              <span className="text-white">{estadoInterno.discrepancias.intentos}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-300">Discrepancias detectadas:</span>
+              <span className={estadoInterno.discrepancias.ultimoIntento.total === 0 ? 'text-green-400' : 'text-red-400'}>
+                {estadoInterno.discrepancias.ultimoIntento.total}
+              </span>
+            </div>
+            {estadoInterno.discrepancias.ultimoIntento.total === 0 && (
+              <div className="text-green-400 text-sm mt-2">
+                ✅ ¡Perfecto! No se detectaron discrepancias. El proceso está completado.
+              </div>
+            )}
+          </div>
         </div>
       )}
-      
-      <div className="p-6">
-      
-      {/* Contenido principal */}
-      <div className="space-y-6">
-        
-        {/* Sección: Archivos Talana */}
-        <div>
-          <h5 className="text-md font-semibold text-white mb-3">Archivos Talana</h5>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {Object.entries(estadoInterno.archivosTalana).map(([key, archivo]) => (
-              <div key={key} className="bg-gray-700 p-3 rounded flex items-center justify-between">
-                <span className="text-sm text-gray-300">
-                  {key === 'libroRemuneraciones' ? 'Libro Remuneraciones' : 'Movimientos del Mes'}
-                </span>
-                <div className="flex items-center gap-2">
-                  {getIconoArchivo(archivo)}
-                  <button
-                    onClick={() => manejarSubidaArchivo('archivosTalana', key, `${key}.xlsx`)}
-                    className="text-xs bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded text-white"
-                    disabled={estadoInterno.procesando}
-                  >
-                    {archivo ? 'Cambiar' : 'Subir'}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+
+      {/* Debug - Solo visible cuando activa */}
+      <div className="bg-gray-900 p-3 rounded text-xs">
+        <div className="text-gray-400 mb-1">Debug (Tarjeta Activa):</div>
+        <div className="text-gray-300">
+          🟢 Polling: {activa ? 'Activo' : 'Inactivo'} | 
+          ⚡ Proceso: {estadoInterno.procesoActual} | 
+          🎯 Progreso: {calcularProgreso()}%
         </div>
-
-        {/* Sección: Archivos Analista */}
-        <div>
-          <h5 className="text-md font-semibold text-white mb-3">Archivos Analista</h5>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {Object.entries(estadoInterno.archivosAnalista).map(([key, archivo]) => (
-              <div key={key} className="bg-gray-700 p-3 rounded flex items-center justify-between">
-                <span className="text-sm text-gray-300 capitalize">{key}</span>
-                <div className="flex items-center gap-2">
-                  {getIconoArchivo(archivo)}
-                  <button
-                    onClick={() => manejarSubidaArchivo('archivosAnalista', key, `${key}.xlsx`)}
-                    className="text-xs bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded text-white"
-                    disabled={estadoInterno.procesando}
-                  >
-                    {archivo ? 'Cambiar' : 'Subir'}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Sección: Verificación de Discrepancias */}
-        {estadoInterno.procesoActual !== 'subida_archivos' && (
-          <div className="border-t border-gray-700 pt-4">
-            <div className="flex items-center justify-between mb-4">
-              
-              <button
-                onClick={verificarDiscrepancias}
-                disabled={estadoInterno.procesando}
-                className={`px-4 py-2 rounded font-semibold ${
-                  estadoInterno.procesando
-                    ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                    : 'bg-orange-600 hover:bg-orange-700 text-white'
-                }`}
-              >
-                {estadoInterno.procesando ? 'Verificando...' : 'Verificar Discrepancias'}
-              </button>
-            </div>
-
-            {/* Historial de intentos */}
-            {estadoInterno.discrepancias.historial.length > 0 && (
-              <div>
-                <h6 className="text-sm font-semibold text-gray-300 mb-2">Historial de Verificaciones</h6>
-                <div className="space-y-2">
-                  {estadoInterno.discrepancias.historial.slice(-3).map((intento, idx) => (
-                    <div key={idx} className={`p-3 rounded border-l-4 ${
-                      intento.total === 0 
-                        ? 'bg-green-900 border-green-500' 
-                        : 'bg-yellow-900 border-yellow-500'
-                    }`}>
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm text-gray-300">
-                          Intento {intento.intento} {intento.intento % 2 === 0 ? '(Par)' : '(Impar)'}
-                        </span>
-                        <span className={`text-sm font-semibold ${
-                          intento.total === 0 ? 'text-green-400' : 'text-yellow-400'
-                        }`}>
-                          {intento.total} discrepancias
-                        </span>
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">{intento.fecha}</div>
-                      {intento.total === 0 && (
-                        <div className="text-xs text-green-400 mt-1 font-semibold">
-                          ✅ ¡Sin discrepancias! Tarjeta completada.
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                
-                {/* Mensaje explicativo */}
-                <div className="mt-3 p-3 bg-blue-900 rounded border border-blue-700">
-                  <div className="text-xs text-blue-300">
-                    <strong>Patrón de simulación:</strong><br/>
-                    • Intentos <strong>pares</strong> (2, 4, 6...): 1-3 discrepancias aleatorias<br/>
-                    • Intentos <strong>impares</strong> (1, 3, 5...): 0 discrepancias (sin problemas)
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Estado de completitud */}
-            {estadoInterno.discrepancias.ultimoIntento.total === 0 && estadoInterno.discrepancias.intentos > 0 && (
-              <div className="mt-4 p-4 bg-green-900 rounded-lg border border-green-700">
-                <div className="flex items-center gap-2 text-green-300">
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                  </svg>
-                  <span className="font-semibold">Fase Completada</span>
-                </div>
-                <p className="text-green-200 text-sm mt-1">
-                  Sin discrepancias detectadas. La siguiente fase se ha desbloqueado automáticamente.
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
       </div>
-      
-      </div>
+
     </div>
   );
 };

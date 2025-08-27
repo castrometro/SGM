@@ -183,8 +183,8 @@ class ArchivoSubidoViewSet(viewsets.ModelViewSet):
                 cierre.estado = 'archivos_subidos'
                 cierre.save()
             
-            # 7. Respuesta exitosa
-            return Response({
+            # 7. Respuesta exitosa (el procesamiento se dispara automáticamente via signal)
+            respuesta_data = {
                 'success': True,
                 'archivo': {
                     'id': nuevo_archivo.id,
@@ -197,7 +197,17 @@ class ArchivoSubidoViewSet(viewsets.ModelViewSet):
                 },
                 'mensaje': f'Archivo {tipo_archivo} {"reemplazado" if archivo_reemplazado else "subido"} exitosamente',
                 'archivo_reemplazado': archivo_reemplazado
-            }, status=status.HTTP_201_CREATED)
+            }
+            
+            # Indicar que el procesamiento se iniciará automáticamente para libro_remuneraciones
+            if tipo_archivo == 'libro_remuneraciones':
+                respuesta_data['procesamiento'] = {
+                    'iniciado': True,
+                    'automatico': True,
+                    'mensaje': 'Procesamiento se iniciará automáticamente'
+                }
+            
+            return Response(respuesta_data, status=status.HTTP_201_CREATED)
             
         except Exception as e:
             # Manejo de errores inesperados
@@ -384,6 +394,7 @@ def verificar_existencia_archivo(request):
                     'tipo_archivo': archivo.tipo_archivo,
                     'nombre_original': archivo.nombre_original,
                     'estado': archivo.estado,
+                    'estado_procesamiento': archivo.estado_procesamiento,
                     'fecha_subida': archivo.fecha_subida,
                     'tamaño': archivo.tamaño,
                     'url': archivo.archivo.url if archivo.archivo else None,
@@ -408,3 +419,84 @@ def verificar_existencia_archivo(request):
             'codigo_error': 'VERIFICATION_ERROR',
             'detalles': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'])
+    def estado_procesamiento(self, request, pk=None):
+        """
+        Consulta el estado de procesamiento de un archivo específico.
+        
+        Para archivos del tipo libro_remuneraciones, incluye información 
+        detallada sobre el progreso de las tareas CHAIN.
+        """
+        try:
+            archivo = self.get_object()
+            
+            respuesta = {
+                'success': True,
+                'archivo': {
+                    'id': archivo.id,
+                    'tipo_archivo': archivo.tipo_archivo,
+                    'estado': archivo.estado,
+                    'estado_procesamiento': archivo.estado_procesamiento,
+                    'registros_procesados': archivo.registros_procesados,
+                    'errores_detectados': archivo.errores_detectados,
+                    'fecha_subida': archivo.fecha_subida
+                }
+            }
+            
+            # Si es libro de remuneraciones, consultar estado de las tareas staging
+            if archivo.tipo_archivo == 'libro_remuneraciones':
+                try:
+                    from ..models import ListaEmpleados_stg, ItemsRemuneraciones_stg, ValorItemEmpleado_stg
+                    
+                    # Contar registros en cada tabla staging
+                    empleados_count = ListaEmpleados_stg.objects.filter(archivo_subido=archivo).count()
+                    items_count = ItemsRemuneraciones_stg.objects.filter(archivo_subido=archivo).count()
+                    valores_count = ValorItemEmpleado_stg.objects.filter(archivo_subido=archivo).count()
+                    
+                    respuesta['procesamiento'] = {
+                        'empleados_extraidos': empleados_count,
+                        'items_extraidos': items_count,
+                        'valores_extraidos': valores_count,
+                        'fase_completada': self._determinar_fase_completada(archivo, empleados_count, items_count, valores_count)
+                    }
+                    
+                    # Información adicional según el estado
+                    if archivo.estado == 'procesando':
+                        respuesta['procesamiento']['mensaje'] = 'Procesamiento en curso...'
+                    elif archivo.estado == 'procesado':
+                        respuesta['procesamiento']['mensaje'] = 'Procesamiento completado exitosamente'
+                    elif archivo.estado == 'error':
+                        respuesta['procesamiento']['mensaje'] = 'Error durante el procesamiento'
+                        if archivo.log_errores:
+                            respuesta['procesamiento']['errores'] = archivo.log_errores
+                    
+                except Exception as e:
+                    print(f"❌ Error consultando estado de staging: {e}")
+                    respuesta['procesamiento'] = {
+                        'error': 'No se pudo consultar el estado del procesamiento',
+                        'detalle': str(e)
+                    }
+            
+            return Response(respuesta)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': 'Error al consultar estado de procesamiento',
+                'codigo_error': 'PROCESSING_STATUS_ERROR',
+                'detalles': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _determinar_fase_completada(self, archivo, empleados_count, items_count, valores_count):
+        """
+        Determina qué fase del procesamiento CHAIN se ha completado basándose en los datos staging.
+        """
+        if valores_count > 0:
+            return 'valores_extraidos'  # Fase 3 completada (todo el CHAIN)
+        elif empleados_count > 0:
+            return 'empleados_extraidos'  # Fase 2 completada  
+        elif items_count > 0:
+            return 'headers_extraidos'   # Fase 1 completada
+        else:
+            return 'iniciando'  # No hay datos aún

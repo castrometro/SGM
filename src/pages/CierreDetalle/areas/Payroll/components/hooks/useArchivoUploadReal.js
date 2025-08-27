@@ -90,8 +90,20 @@ const useArchivoUploadReal = (tipoArchivo, cierreId) => {
       });
 
       if (respuesta.success) {
+        // Determinar el estado inicial basándose en la respuesta
+        let estadoInicial = respuesta.archivo.estado;
+        
+        // Si se inició procesamiento automático, actualizar estado
+        if (respuesta.procesamiento?.iniciado) {
+          estadoInicial = 'procesando';
+          console.log('🚀 Procesamiento automático iniciado:', respuesta.procesamiento);
+        }
+        
         setEstado({
-          archivo: respuesta.archivo,
+          archivo: {
+            ...respuesta.archivo,
+            estado: estadoInicial
+          },
           subiendo: false,
           progreso: 100,
           error: null,

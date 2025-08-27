@@ -182,6 +182,31 @@ export const eliminarArchivo = async (archivoId) => {
   }
 };
 
+/**
+ * Consulta el estado de procesamiento de un archivo específico
+ * 
+ * @param {number} archivoId - ID del archivo
+ * @returns {Promise<Object>} Estado del procesamiento
+ */
+export const consultarEstadoProcesamiento = async (archivoId) => {
+  try {
+    console.log(`📊 Consultando estado de procesamiento del archivo ${archivoId}`);
+    
+    const response = await api.get(`/payroll/archivos/${archivoId}/estado_procesamiento/`);
+    
+    console.log('✅ Estado obtenido:', response.data);
+    return response.data;
+    
+  } catch (error) {
+    console.error('❌ Error consultando estado de procesamiento:', error);
+    
+    if (error.response?.data) {
+      throw new Error(error.response.data.error || 'Error al consultar estado');
+    }
+    throw new Error('Error de conexión al consultar estado');
+  }
+};
+
 // Tipos de archivo disponibles (debe coincidir con el backend)
 export const TIPOS_ARCHIVO_PAYROLL = {
   LIBRO_REMUNERACIONES: 'libro_remuneraciones',

@@ -95,7 +95,7 @@ def extraer_headers_task(self, archivo_subido_id):
             'Rut del Trabajador', 'Nombre', 'Apellido Paterno', 'Apellido Materno'
         ]
         
-        empleados_headers_detectados = 0
+        empleados_count = 0
         remuneraciones_count = 0
         
         # Procesar cada columna
@@ -103,7 +103,7 @@ def extraer_headers_task(self, archivo_subido_id):
             columna_str = str(columna).strip()
             codigo_columna = _get_excel_column_name(idx)
             
-            # Determinar si es header de empleado
+            # Determinar si es header de empleado o item de remuneración
             es_header_empleado = any(
                 emp_header.lower() in columna_str.lower() 
                 for emp_header in headers_empleados
@@ -112,32 +112,31 @@ def extraer_headers_task(self, archivo_subido_id):
             # Items de remuneraciones desde columna H (índice 7)
             es_item_remuneracion = idx >= 7  # Columna H = índice 7
             
-            # SOLO guardar items de remuneraciones, NO headers de empleados
+            # Asignar tipo basado en posición y contenido
             if es_header_empleado:
-                empleados_headers_detectados += 1
-                logger.info(f"📋 Header empleado detectado {codigo_columna}: {columna_str} (no se guarda en staging)")
-                continue  # No guardar en ItemsRemuneraciones_stg
+                tipo_asignado = 'empleado'
+                empleados_count += 1
             elif es_item_remuneracion:
-                # Solo guardar items de remuneraciones
-                header = ItemsRemuneraciones_stg.objects.create(
-                    archivo_subido=archivo,
-                    codigo_columna=codigo_columna,
-                    nombre_concepto=columna_str,
-                    nombre_normalizado=normalizar_concepto(columna_str),
-                    tipo_concepto=None,  # Se clasificará posteriormente
-                    orden=idx,
-                    fila_header=1
-                )
+                tipo_asignado = None  # Se clasificará posteriormente
                 remuneraciones_count += 1
             else:
-                # Otras columnas (E, F, G) tampoco se guardan como items de remuneraciones
-                logger.info(f"📋 Columna {codigo_columna}: {columna_str} (omitida - no es item de remuneración)")
-                continue
+                tipo_asignado = None  # Otras columnas
+            
+            # Crear registro
+            header = ItemsRemuneraciones_stg.objects.create(
+                archivo_subido=archivo,
+                codigo_columna=codigo_columna,
+                nombre_concepto=columna_str,
+                nombre_normalizado=normalizar_concepto(columna_str),
+                tipo_concepto=tipo_asignado,
+                orden=idx,
+                fila_header=1
+            )
         
         headers_count = ItemsRemuneraciones_stg.objects.filter(archivo_subido=archivo).count()
-        logger.info(f"✅ Items remuneraciones extraídos: {headers_count} conceptos")
-        logger.info(f"� Headers empleados detectados: {empleados_headers_detectados}")
-        logger.info(f"💰 Items remuneraciones guardados: {remuneraciones_count}")
+        logger.info(f"✅ Headers extraídos: {headers_count} conceptos")
+        logger.info(f"👥 Headers empleados: {empleados_count}")
+        logger.info(f"💰 Items remuneraciones: {remuneraciones_count}")
         return archivo_subido_id  # Retornar ID para la siguiente tarea en CHAIN
         
     except Exception as e:
@@ -163,33 +162,32 @@ def extraer_empleados_task(self, resultado_anterior, archivo_subido_id):
         ListaEmpleados_stg.objects.filter(archivo_subido=archivo).delete()
         logger.info(f"🧹 Empleados previos eliminados para archivo {archivo_subido_id}")
         
-        # Leer Excel para detectar headers de empleados directamente
-        df = pd.read_excel(archivo.archivo.path, header=0)
+        # Obtener headers de empleados (tipo_concepto = 'empleado')
+        headers_empleados = ItemsRemuneraciones_stg.objects.filter(
+            archivo_subido=archivo,
+            tipo_concepto='empleado'
+        ).order_by('orden')
         
-        # Headers de empleados esperados
-        headers_empleados_esperados = [
-            'Rut del Trabajador', 'Nombre', 'Apellido Paterno', 'Apellido Materno'
-        ]
+        if headers_empleados.count() < 4:
+            raise Exception(f"❌ Se esperan al menos 4 headers de empleados, encontrados: {headers_empleados.count()}")
         
-        # Mapear headers por contenido esperado directamente del Excel
+        # Mapear headers por contenido esperado
         header_map = {}
-        for idx, columna in enumerate(df.columns):
-            columna_str = str(columna).strip()
-            nombre_lower = columna_str.lower()
-            
-            if 'rut' in nombre_lower and 'trabajador' in nombre_lower:
-                header_map['rut'] = idx
+        for header in headers_empleados:
+            nombre_lower = header.nombre_concepto.lower()
+            if 'rut' in nombre_lower:
+                header_map['rut'] = header.orden
             elif 'nombre' in nombre_lower and 'apellido' not in nombre_lower:
-                header_map['nombre'] = idx
+                header_map['nombre'] = header.orden
             elif 'paterno' in nombre_lower:
-                header_map['apellido_paterno'] = idx
+                header_map['apellido_paterno'] = header.orden
             elif 'materno' in nombre_lower:
-                header_map['apellido_materno'] = idx
+                header_map['apellido_materno'] = header.orden
         
-        logger.info(f"📋 Headers empleados mapeados: {header_map}")
+        logger.info(f"📋 Headers mapeados: {header_map}")
         
-        if len(header_map) < 4:
-            raise Exception(f"❌ Se esperan 4 headers de empleados, encontrados: {len(header_map)}")
+        # Leer Excel (saltando header)
+        df = pd.read_excel(archivo.archivo.path, header=0)
         
         empleados_validos = 0
         empleados_omitidos = 0
@@ -211,11 +209,11 @@ def extraer_empleados_task(self, resultado_anterior, archivo_subido_id):
             # Crear registro de empleado válido
             empleado = ListaEmpleados_stg.objects.create(
                 archivo_subido=archivo,
-                rut_trabajador=rut_limpio,
+                rut=rut_limpio,
                 nombre=nombre.strip(),
                 apellido_paterno=apellido_pat.strip(),
                 apellido_materno=apellido_mat.strip(),
-                fila_excel=idx + 2  # +2 porque pandas usa 0-index y hay header
+                numero_fila=idx + 2  # +2 porque pandas usa 0-index y hay header
             )
             empleados_validos += 1
         
@@ -252,7 +250,7 @@ def extraer_valores_task(self, resultado_anterior, archivo_subido_id):
             orden__gte=7  # Columna H y siguientes
         ).order_by('orden')
         
-        empleados = ListaEmpleados_stg.objects.filter(archivo_subido=archivo).order_by('fila_excel')
+        empleados = ListaEmpleados_stg.objects.filter(archivo_subido=archivo).order_by('numero_fila')
         
         logger.info(f"💰 Items remuneraciones disponibles: {items_remuneraciones.count()}")
         logger.info(f"👥 Empleados disponibles: {empleados.count()}")
@@ -269,10 +267,10 @@ def extraer_valores_task(self, resultado_anterior, archivo_subido_id):
         # Para cada empleado
         for empleado in empleados:
             # Calcular índice de fila en DataFrame (fila_excel - 2 porque hay header)
-            fila_idx = empleado.fila_excel - 2
+            fila_idx = empleado.numero_fila - 2
             
             if fila_idx >= len(df):
-                logger.warning(f"⚠️ Empleado {empleado.rut_trabajador} fila {empleado.fila_excel} fuera del rango del Excel")
+                logger.warning(f"⚠️ Empleado {empleado.rut} fila {empleado.numero_fila} fuera del rango del Excel")
                 continue
                 
             fila_df = df.iloc[fila_idx]  # Fila correspondiente en el DataFrame
@@ -306,7 +304,7 @@ def extraer_valores_task(self, resultado_anterior, archivo_subido_id):
                     valor_original=valor_original,
                     valor_numerico=valor_numerico,
                     valor_texto=valor_original if not es_numerico else "",
-                    fila_excel=empleado.fila_excel,
+                    fila_excel=empleado.numero_fila,
                     columna_excel=item.codigo_columna,
                     es_numerico=es_numerico
                 )
@@ -314,7 +312,6 @@ def extraer_valores_task(self, resultado_anterior, archivo_subido_id):
                 valores_extraidos += 1
         
         # Actualizar estado final del archivo
-        archivo.registros_procesados = valores_extraidos
         archivo.estado_procesamiento = 'parsing_completo'
         archivo.save()
         

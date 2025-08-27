@@ -15,16 +15,17 @@ logger = logging.getLogger(__name__)
 def trigger_procesamiento_automatico(sender, instance, created, **kwargs):
     """
     Signal que dispara automáticamente el procesamiento cuando:
-    1. Se crea un nuevo archivo (created=True) Y es pendiente
+    1. Se crea un nuevo archivo (created=True) 
     2. Solo para archivos de tipo libro_remuneraciones
+    3. Solo si está en estado 'subido' y estado_procesamiento 'pendiente'
     """
     
     # Solo disparar para archivos de tipo libro_remuneraciones
     if instance.tipo_archivo != 'libro_remuneraciones':
         return
     
-    # Solo disparar para archivos nuevos en estado pendiente
-    if created and instance.estado_procesamiento == 'pendiente':
+    # Solo disparar para archivos nuevos en estado correcto
+    if created and instance.estado == 'subido' and instance.estado_procesamiento == 'pendiente':
         
         logger.info(f"🔔 Signal: Disparando procesamiento para archivo NUEVO {instance.id}")
         
@@ -38,5 +39,6 @@ def trigger_procesamiento_automatico(sender, instance, created, **kwargs):
             logger.error(f"❌ Signal: Error disparando task para archivo {instance.id}: {str(e)}")
             
             # Marcar archivo como error
+            instance.estado = 'error'
             instance.estado_procesamiento = 'error'
-            instance.save(update_fields=['estado_procesamiento'])
+            instance.save(update_fields=['estado', 'estado_procesamiento'])

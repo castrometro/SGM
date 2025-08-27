@@ -86,7 +86,7 @@ class ItemsRemuneraciones_stg(models.Model):
     nombre_normalizado = models.CharField(max_length=200, blank=True)  # Procesado
     
     # Clasificación del concepto
-    tipo_concepto = models.CharField(max_length=15, choices=TIPOS_CONCEPTO, blank=True)
+    tipo_concepto = models.CharField(max_length=15, choices=TIPOS_CONCEPTO, blank=True, null=True)
     
     # Orden y ubicación en el Excel
     orden = models.IntegerField()

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { TIPOS_ARCHIVO_PAYROLL } from '../../../../../../api/payroll';
 import useArchivoUploadReal from '../hooks/useArchivoUploadReal';
+import useProcesamientoStatus from '../hooks/useProcesamientoStatus';
 
 const LibroRemuneraciones = ({ activa, cierreId, onArchivoSubido }) => {
   const {
@@ -13,6 +14,17 @@ const LibroRemuneraciones = ({ activa, cierreId, onArchivoSubido }) => {
     tieneError,
     estaVerificando
   } = useArchivoUploadReal(TIPOS_ARCHIVO_PAYROLL.LIBRO_REMUNERACIONES, cierreId);
+
+  // Hook para monitorear procesamiento (solo si hay archivo)
+  const {
+    esProcesando,
+    esProcesado,
+    tieneError: tieneErrorProcesamiento,
+    obtenerMensajeProgreso,
+    calcularPorcentaje,
+    refrescar,
+    cargando: consultandoEstado
+  } = useProcesamientoStatus(estado.archivo?.id, cierreId, TIPOS_ARCHIVO_PAYROLL.LIBRO_REMUNERACIONES);
 
   const handleFileChange = async (e) => {
     const archivo = e.target.files[0];
@@ -84,16 +96,38 @@ const LibroRemuneraciones = ({ activa, cierreId, onArchivoSubido }) => {
         <div className="flex items-center space-x-2">
           {tieneArchivo && (
             <div className="flex items-center space-x-2">
+              {/* Estado de subida */}
               <span className="text-green-400 text-sm">✅ Subido</span>
-              {estado.archivo?.estado && estado.archivo.estado !== 'subido' && (
-                <span className={`text-xs px-2 py-1 rounded ${
-                  estado.archivo.estado === 'procesado' ? 'bg-green-600 text-white' :
-                  estado.archivo.estado === 'procesando' ? 'bg-yellow-600 text-white' :
-                  estado.archivo.estado === 'error' ? 'bg-red-600 text-white' :
+              
+              {/* Estado de procesamiento */}
+              {esProcesando && (
+                <span className="text-blue-400 text-sm animate-pulse font-bold">🔄 Procesando</span>
+              )}
+              {esProcesado && (
+                <span className="text-green-400 text-sm">🎉 Procesado</span>
+              )}
+              {tieneErrorProcesamiento && (
+                <span className="text-red-400 text-sm animate-pulse">❌ Error</span>
+              )}
+              
+              {/* Badge del estado de procesamiento */}
+              {estado.archivo?.estado_procesamiento && estado.archivo.estado_procesamiento !== 'pendiente' && (
+                <span className={`text-xs px-2 py-1 rounded font-medium ${
+                  estado.archivo.estado_procesamiento === 'parsing_completo' ? 'bg-green-600 text-white' :
+                  estado.archivo.estado_procesamiento === 'parseando' ? 'bg-blue-600 text-white animate-pulse' :
+                  estado.archivo.estado_procesamiento === 'error' ? 'bg-red-600 text-white animate-pulse' :
                   'bg-gray-600 text-gray-300'
                 }`}>
-                  {estado.archivo.estado}
+                  {estado.archivo.estado_procesamiento === 'parsing_completo' ? 'completado' : estado.archivo.estado_procesamiento}
                 </span>
+              )}
+
+              {/* Ruedita de procesamiento automático */}
+              {esProcesando && (
+                <div className="flex items-center space-x-1 text-blue-400">
+                  <div className="animate-spin">⚙️</div>
+                  <span className="text-xs">Procesando...</span>
+                </div>
               )}
             </div>
           )}
@@ -132,6 +166,68 @@ const LibroRemuneraciones = ({ activa, cierreId, onArchivoSubido }) => {
         </div>
       )}
       
+      {/* Barra de progreso de procesamiento automático */}
+      {esProcesando && (
+        <div className="mb-3 bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border-2 border-blue-300 dark:border-blue-600 shadow-lg">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center space-x-3">
+              <div className="animate-spin text-2xl">🔄</div>
+              <div>
+                <div className="text-sm font-bold text-blue-700 dark:text-blue-300">
+                  🚀 Procesando automáticamente
+                </div>
+                <div className="text-xs text-blue-600 dark:text-blue-400">
+                  El sistema está analizando tu archivo...
+                </div>
+              </div>
+            </div>
+            {consultandoEstado && (
+              <div className="text-xs text-blue-500 animate-pulse">🔄 Actualizando...</div>
+            )}
+          </div>
+          
+          <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-3 mb-2 shadow-inner">
+            <div 
+              className="bg-gradient-to-r from-blue-400 to-blue-600 h-3 rounded-full transition-all duration-700 ease-in-out shadow-sm"
+              style={{ width: `${calcularPorcentaje()}%` }}
+            />
+          </div>
+          
+          <div className="flex justify-between items-center text-xs">
+            <span className="text-blue-600 dark:text-blue-400 font-medium">
+              {obtenerMensajeProgreso() || '⏳ Iniciando procesamiento...'}
+            </span>
+            <span className="text-blue-500 font-bold">
+              {calcularPorcentaje()}%
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Notificación de completado */}
+      {esProcesado && !estaSubiendo && (
+        <div className="mb-3 bg-green-50 dark:bg-green-900/20 p-3 rounded-lg border border-green-200 dark:border-green-800">
+          <div className="flex items-center space-x-2">
+            <span className="text-green-500">✅</span>
+            <span className="text-sm font-medium text-green-700 dark:text-green-300">
+              Procesamiento completado exitosamente
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Notificación de error */}
+      {tieneErrorProcesamiento && (
+        <div className="mb-3 bg-red-50 dark:bg-red-900/20 p-3 rounded-lg border border-red-200 dark:border-red-800">
+          <div className="flex items-center space-x-2">
+            <span className="text-red-500">❌</span>
+            <span className="text-sm font-medium text-red-700 dark:text-red-300">
+              Error durante el procesamiento
+            </span>
+          </div>
+        </div>
+      )}
+      
       {tieneArchivo && estado.archivo && (
         <div className="text-xs text-gray-300 space-y-1">
           <div>📄 {estado.archivo.nombre_original}</div>
@@ -143,6 +239,13 @@ const LibroRemuneraciones = ({ activa, cierreId, onArchivoSubido }) => {
           {estado.archivo.errores_detectados > 0 && (
             <div className="text-yellow-400">
               ⚠️ {estado.archivo.errores_detectados} errores detectados
+            </div>
+          )}
+          
+          {/* Información de procesamiento detallada */}
+          {esProcesado && obtenerMensajeProgreso() && (
+            <div className="text-green-400">
+              {obtenerMensajeProgreso()}
             </div>
           )}
         </div>

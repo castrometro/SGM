@@ -93,11 +93,8 @@ class ArchivoUploadSerializer(serializers.ModelSerializer):
                 f"No se pueden subir archivos. El cierre está en estado: {cierre.get_estado_display()}"
             )
         
-        # Verificar que no exista ya un archivo del mismo tipo
-        if ArchivoSubido.objects.filter(cierre=cierre, tipo_archivo=tipo_archivo).exists():
-            raise serializers.ValidationError(
-                f"Ya existe un archivo de tipo {dict(ArchivoSubido.TIPOS_ARCHIVO)[tipo_archivo]} para este cierre"
-            )
+        # Nota: Se permite reemplazar archivos existentes del mismo tipo
+        # La lógica de reemplazo se maneja en el ViewSet upload()
         
         return data
     

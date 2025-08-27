@@ -7,5 +7,4 @@ class PayrollConfig(AppConfig):
     verbose_name = 'Sistema de Nómina'
     
     def ready(self):
-        # import payroll.signals  # Importar señales cuando las creemos
-        pass
+        import payroll.signals  # Importar señales para trigger automático

@@ -2,7 +2,7 @@
 
 echo "🚀 Iniciando sistema multi-worker de Celery..."
 echo "📊 Configuración:"
-echo "   - Worker Nómina: concurrencia 3 (nomina_queue)"
+echo "   - Worker Payroll: concurrencia 3 (payroll_queue)"
 echo "   - Worker Contabilidad: concurrencia 2 (contabilidad_queue)" 
 echo "   - Worker General: concurrencia 1 (default)"
 echo ""
@@ -19,9 +19,9 @@ cleanup() {
 trap cleanup SIGTERM SIGINT
 
 # Iniciar workers en background
-echo "🔧 Iniciando Worker Nómina (concurrencia: 3)..."
-celery -A sgm_backend worker -Q nomina_queue -c 3 --loglevel=info --hostname=nomina@%h &
-NOMINA_PID=$!
+echo "🔧 Iniciando Worker Payroll (concurrencia: 3)..."
+celery -A sgm_backend worker -Q payroll_queue -c 3 --loglevel=info --hostname=payroll@%h &
+PAYROLL_PID=$!
 
 echo "📊 Iniciando Worker Contabilidad (concurrencia: 2)..."
 celery -A sgm_backend worker -Q contabilidad_queue -c 2 --loglevel=info --hostname=contabilidad@%h &
@@ -33,7 +33,7 @@ GENERAL_PID=$!
 
 echo ""
 echo "✅ Todos los workers iniciados!"
-echo "📈 PIDs: Nómina=$NOMINA_PID, Contabilidad=$CONTABILIDAD_PID, General=$GENERAL_PID"
+echo "📈 PIDs: Payroll=$PAYROLL_PID, Contabilidad=$CONTABILIDAD_PID, General=$GENERAL_PID"
 echo "🔍 Monitoreando workers... (Ctrl+C para detener)"
 
 # Esperar que todos los procesos terminen

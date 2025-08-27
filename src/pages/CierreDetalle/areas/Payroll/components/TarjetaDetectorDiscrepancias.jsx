@@ -192,6 +192,7 @@ const TarjetaDetectorDiscrepancias = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <LibroRemuneraciones
             activa={activa}
+            cierreId={cierre?.id}
             onArchivoSubido={(archivo) => {
               setEstadoInterno(prev => ({
                 ...prev,
@@ -205,6 +206,7 @@ const TarjetaDetectorDiscrepancias = ({
           
           <MovimientosDelMes
             activa={activa}
+            cierreId={cierre?.id}
             onArchivoSubido={(archivo) => {
               setEstadoInterno(prev => ({
                 ...prev,
@@ -227,6 +229,7 @@ const TarjetaDetectorDiscrepancias = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Ingresos
             activa={activa}
+            cierreId={cierre?.id}
             onArchivoSubido={(archivo) => {
               setEstadoInterno(prev => ({
                 ...prev,
@@ -240,6 +243,7 @@ const TarjetaDetectorDiscrepancias = ({
           
           <Finiquitos
             activa={activa}
+            cierreId={cierre?.id}
             onArchivoSubido={(archivo) => {
               setEstadoInterno(prev => ({
                 ...prev,
@@ -253,6 +257,7 @@ const TarjetaDetectorDiscrepancias = ({
           
           <Ausentismos
             activa={activa}
+            cierreId={cierre?.id}
             onArchivoSubido={(archivo) => {
               setEstadoInterno(prev => ({
                 ...prev,
@@ -266,6 +271,7 @@ const TarjetaDetectorDiscrepancias = ({
           
           <Novedades
             activa={activa}
+            cierreId={cierre?.id}
             onArchivoSubido={(archivo) => {
               setEstadoInterno(prev => ({
                 ...prev,

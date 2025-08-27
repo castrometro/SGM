@@ -15,7 +15,7 @@ import api from "../config";
  */
 export const obtenerResumenPayrollCliente = async (clienteId) => {
   try {
-    const response = await api.get(`/payroll/api/clientes/${clienteId}/resumen/`);
+    const response = await api.get(`/payroll/clientes/${clienteId}/resumen/`);
     return response.data;
   } catch (error) {
     // Si el endpoint no existe (404), devolver datos simulados
@@ -280,7 +280,7 @@ export const obtenerCierresPayrollCliente = async (clienteId, params = {}) => {
  * Obtiene el detalle de un cierre de nómina específico
  */
 export const obtenerCierrePayrollDetalle = async (clienteId, cierreId) => {
-  const response = await api.get(`/payroll/clientes/${clienteId}/cierres/${cierreId}/`);
+  const response = await api.get(`/payroll/cierres/${cierreId}/`);
   return response.data;
 };
 
@@ -353,14 +353,23 @@ export const crearCierrePayrollCliente = async (clienteId, datosCierre) => {
  */
 export const obtenerCierreMensualPayroll = async (clienteId, periodo) => {
   try {
-    const response = await api.get(`/payroll/clientes/${clienteId}/cierres/${periodo}/`);
-    return response.data;
-  } catch (error) {
-    // Si el endpoint no existe (404), simular que no hay cierre
-    if (error.response?.status === 404) {
-      console.warn(`⚠️  Endpoint /payroll/clientes/${clienteId}/cierres/${periodo}/ no implementado. Simulando que no existe cierre.`);
-      return null; // No existe cierre para este período
+    // Buscar cierre por cliente y período usando query parameters
+    const response = await api.get(`/payroll/cierres/`, {
+      params: {
+        cliente: clienteId,
+        periodo: periodo
+      }
+    });
+    
+    // Si encontramos cierres, devolver el primero (debería ser único por cliente+período)
+    if (response.data && response.data.length > 0) {
+      return response.data[0];
     }
+    
+    // No existe cierre para este período
+    return null;
+  } catch (error) {
+    console.error('Error buscando cierre payroll:', error);
     throw error;
   }
 };
@@ -371,34 +380,17 @@ export const obtenerCierreMensualPayroll = async (clienteId, periodo) => {
  */
 export const crearCierreMensualPayroll = async (clienteId, periodo) => {
   try {
-    const response = await api.post(`/payroll/clientes/${clienteId}/cierres/crear/`, {
-      periodo,
-      observaciones: `Cierre mensual de payroll para el período ${periodo}`
+    console.log('🚀 Creando cierre payroll:', { clienteId, periodo });
+    
+    const response = await api.post(`/payroll/cierres/`, {
+      cliente: parseInt(clienteId),
+      periodo: periodo
     });
+    
+    console.log('✅ Cierre creado exitosamente:', response.data);
     return response.data;
   } catch (error) {
-    // Si el endpoint no existe (404), devolver datos simulados
-    if (error.response?.status === 404) {
-      console.warn(`⚠️  Endpoint /payroll/clientes/${clienteId}/cierres/crear/ no implementado. Devolviendo cierre simulado.`);
-      
-      // Generar ID único basado en timestamp
-      const cierreId = Date.now();
-      
-      return {
-        id: cierreId,
-        cliente_id: parseInt(clienteId),
-        periodo: periodo,
-        nombre: `Cierre Payroll ${periodo}`,
-        descripcion: `Cierre mensual de payroll para el período ${periodo}`,
-        estado: "pendiente",
-        fecha_inicio: new Date().toISOString(),
-        fecha_fin: null,
-        total_empleados: 25,
-        monto_total: 28500000,
-        creado_por: "Usuario Actual",
-        fecha_creacion: new Date().toISOString()
-      };
-    }
+    console.error('❌ Error creando cierre payroll:', error);
     throw error;
   }
 };

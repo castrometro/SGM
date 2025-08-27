@@ -8,7 +8,7 @@ import api from "../config";
  */
 export const obtenerCierresClientePayroll = async (clienteId) => {
   try {
-    const response = await api.get(`/payroll/api/cierres/?cliente=${clienteId}`);
+    const response = await api.get(`/payroll/cierres/?cliente=${clienteId}`);
     return response.data;
   } catch (error) {
     console.error(`Error obteniendo cierres payroll para cliente ${clienteId}:`, error);

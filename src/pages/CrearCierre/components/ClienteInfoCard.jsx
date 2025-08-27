@@ -5,6 +5,11 @@ const ClienteInfoCard = ({ cliente, resumen, areaActiva }) => {
   const getEstadoCierre = () => {
     if (!resumen) return null;
     
+    // Para Payroll usamos ultimo_cierre.estado
+    if (areaActiva === "Payroll") {
+      return resumen.ultimo_cierre?.estado;
+    }
+    
     // Para nómina usamos estado_cierre_actual
     if (areaActiva === "Nomina") {
       return resumen.estado_cierre_actual;
@@ -15,8 +20,8 @@ const ClienteInfoCard = ({ cliente, resumen, areaActiva }) => {
       return resumen.estado_ultimo_cierre;
     }
     
-    // Fallback: intentar cualquiera de los dos campos
-    return resumen.estado_cierre_actual || resumen.estado_ultimo_cierre;
+    // Fallback: intentar cualquiera de los campos disponibles
+    return resumen.ultimo_cierre?.estado || resumen.estado_cierre_actual || resumen.estado_ultimo_cierre;
   };
 
   return (
@@ -40,7 +45,9 @@ const ClienteInfoCard = ({ cliente, resumen, areaActiva }) => {
       <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="bg-gray-700 p-4 rounded">
           <h3 className="text-sm text-gray-400">Último Cierre</h3>
-          <p className="text-lg font-semibold">{resumen.ultimo_cierre || "—"}</p>
+          <p className="text-lg font-semibold">
+            {resumen?.ultimo_cierre?.periodo || "—"}
+          </p>
         </div>
         <div className="bg-gray-700 p-4 rounded">
           <h3 className="text-sm text-gray-400">Estado</h3>

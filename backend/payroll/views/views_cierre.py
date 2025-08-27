@@ -5,7 +5,7 @@ from django.shortcuts import get_object_or_404
 from datetime import datetime
 
 from ..models import CierrePayroll
-from ..serializers import CierrePayrollSerializer
+from ..serializers import CierrePayrollSerializer, CierrePayrollCreateSerializer
 
 
 class CierrePayrollViewSet(viewsets.ModelViewSet):
@@ -15,6 +15,24 @@ class CierrePayrollViewSet(viewsets.ModelViewSet):
     """
     queryset = CierrePayroll.objects.all()
     serializer_class = CierrePayrollSerializer
+    
+    def get_serializer_class(self):
+        """Usar serializer específico para creación"""
+        if self.action == 'create':
+            return CierrePayrollCreateSerializer
+        return CierrePayrollSerializer
+    
+    def create(self, request, *args, **kwargs):
+        """Override create para devolver respuesta completa después de crear"""
+        # Usar el CreateSerializer para validar y crear
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        cierre = serializer.save()
+        
+        # Devolver respuesta usando el serializer completo
+        response_serializer = CierrePayrollSerializer(cierre)
+        headers = self.get_success_headers(response_serializer.data)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
     
     def get_queryset(self):
         queryset = super().get_queryset()

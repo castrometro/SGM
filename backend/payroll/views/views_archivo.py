@@ -1,11 +1,15 @@
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.permissions import AllowAny
+from django.utils import timezone
 from datetime import datetime
+import os
 
 from ..models import ArchivoSubido
 from ..serializers import ArchivoSubidoSerializer, ArchivoUploadSerializer
+from ..config.archivo_config import ArchivoConfig
 
 
 class ArchivoSubidoViewSet(viewsets.ModelViewSet):
@@ -29,30 +33,263 @@ class ArchivoSubidoViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['post'])
     def upload(self, request):
-        """Endpoint específico para subir archivos"""
-        serializer = ArchivoUploadSerializer(data=request.data)
+        """
+        Endpoint universal para subir archivos de payroll.
         
-        if serializer.is_valid():
-            # Verificar que no exista ya un archivo del mismo tipo para este cierre
-            cierre = serializer.validated_data['cierre']
-            tipo_archivo = serializer.validated_data['tipo_archivo']
+        Funcionalidades:
+        1. Reemplaza archivo existente del mismo tipo (elimina BD + storage)
+        2. Valida archivo según configuración del tipo
+        3. Genera nomenclatura específica por tipo
+        4. Guarda con estructura organizada
+        """
+        # Validaciones manuales básicas
+        cierre_id = request.data.get('cierre')
+        tipo_archivo = request.data.get('tipo_archivo')
+        archivo = request.FILES.get('archivo')
+        
+        if not all([cierre_id, tipo_archivo, archivo]):
+            return Response({
+                'success': False,
+                'error': 'Faltan parámetros requeridos',
+                'codigo_error': 'MISSING_PARAMS',
+                'detalles': {
+                    'requeridos': ['cierre', 'tipo_archivo', 'archivo'],
+                    'recibidos': {
+                        'cierre': bool(cierre_id),
+                        'tipo_archivo': bool(tipo_archivo),
+                        'archivo': bool(archivo)
+                    }
+                }
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Obtener el cierre
+            from ..models import CierrePayroll
+            cierre = CierrePayroll.objects.get(id=cierre_id)
+        except CierrePayroll.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Cierre no encontrado',
+                'codigo_error': 'CIERRE_NOT_FOUND'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Validar estado del cierre
+        if cierre.estado in ['cerrado', 'error']:
+            return Response({
+                'success': False,
+                'error': f'No se pueden subir archivos. El cierre está en estado: {cierre.get_estado_display()}',
+                'codigo_error': 'INVALID_CIERRE_STATE'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validar extensión del archivo
+        allowed_extensions = ['.xlsx', '.xls', '.csv']
+        file_extension = archivo.name.lower().split('.')[-1]
+        if f".{file_extension}" not in allowed_extensions:
+            return Response({
+                'success': False,
+                'error': f'Extensión de archivo no permitida. Extensiones permitidas: {allowed_extensions}',
+                'codigo_error': 'INVALID_EXTENSION'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validar tamaño del archivo
+        max_size = 50 * 1024 * 1024  # 50MB
+        if archivo.size > max_size:
+            return Response({
+                'success': False,
+                'error': 'El archivo es demasiado grande. Tamaño máximo permitido: 50MB',
+                'codigo_error': 'FILE_TOO_LARGE'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # 1. Validar archivo según configuración (incluyendo formato de nombre)
+            is_valid, validation_errors = ArchivoConfig.validate_file(archivo, tipo_archivo, cierre)
+            if not is_valid:
+                return Response({
+                    'success': False,
+                    'error': 'Archivo no válido',
+                    'codigo_error': 'INVALID_FILE',
+                    'detalles': validation_errors
+                }, status=status.HTTP_400_BAD_REQUEST)
             
-            if ArchivoSubido.objects.filter(cierre=cierre, tipo_archivo=tipo_archivo).exists():
-                return Response(
-                    {'error': f'Ya existe un archivo de tipo {tipo_archivo} para este cierre'},
-                    status=status.HTTP_400_BAD_REQUEST
+            # 2. REEMPLAZAR archivo existente del mismo tipo si existe
+            archivo_existente = ArchivoSubido.objects.filter(
+                cierre=cierre, 
+                tipo_archivo=tipo_archivo
+            ).first()
+            
+            # 3. Generar nomenclatura específica y ruta
+            file_ext = os.path.splitext(archivo.name)[1].lower()
+            upload_path = ArchivoConfig.get_upload_path(cierre, tipo_archivo, file_ext)
+            
+            if archivo_existente:
+                # ACTUALIZAR archivo existente en lugar de eliminar y crear
+                print(f"🔄 Actualizando archivo existente: {archivo_existente.nombre_original}")
+                
+                # Eliminar archivo físico anterior
+                if archivo_existente.archivo:
+                    try:
+                        if archivo_existente.archivo.storage.exists(archivo_existente.archivo.name):
+                            archivo_existente.archivo.storage.delete(archivo_existente.archivo.name)
+                            print(f"�️ Archivo físico anterior eliminado: {archivo_existente.archivo.name}")
+                    except Exception as e:
+                        print(f"❌ Error eliminando archivo físico anterior: {e}")
+                
+                # Actualizar campos del archivo existente
+                archivo_existente.nombre_original = archivo.name
+                archivo_existente.tamaño = archivo.size
+                archivo_existente.estado = 'subido'
+                archivo_existente.fecha_subida = timezone.now()
+                archivo_existente.registros_procesados = 0
+                archivo_existente.errores_detectados = 0
+                archivo_existente.log_errores = []
+                archivo_existente.metadatos = {}
+                archivo_existente.hash_md5 = ''  # Se calculará en save()
+                
+                # Asignar nuevo archivo
+                archivo_existente.archivo.save(
+                    os.path.basename(upload_path),
+                    archivo,
+                    save=False
                 )
+                
+                # Guardar cambios (esto calculará el hash)
+                archivo_existente.save()
+                nuevo_archivo = archivo_existente
+                archivo_reemplazado = True
+                
+            else:
+                # 4. Crear nuevo archivo si no existe uno previo
+                nuevo_archivo = ArchivoSubido(
+                    cierre=cierre,
+                    tipo_archivo=tipo_archivo,
+                    nombre_original=archivo.name,
+                    tamaño=archivo.size,
+                    estado='subido'
+                )
+                
+                # Asignar archivo con la ruta personalizada
+                nuevo_archivo.archivo.save(
+                    os.path.basename(upload_path),  # Solo el nombre del archivo
+                    archivo,
+                    save=False  # No guardar aún, lo haremos después de calcular hash
+                )
+                
+                # 5. Calcular hash y guardar
+                nuevo_archivo.save()  # Esto ejecutará el método save() que calcula el hash
+                archivo_reemplazado = False
             
-            archivo = serializer.save()
-            
-            # Cambiar estado del cierre si es necesario
+            # 6. Actualizar estado del cierre si es necesario
             if cierre.estado == 'pendiente':
                 cierre.estado = 'archivos_subidos'
                 cierre.save()
             
-            return Response(ArchivoSubidoSerializer(archivo).data, status=status.HTTP_201_CREATED)
+            # 7. Respuesta exitosa
+            return Response({
+                'success': True,
+                'archivo': {
+                    'id': nuevo_archivo.id,
+                    'tipo_archivo': nuevo_archivo.tipo_archivo,
+                    'nombre_original': nuevo_archivo.nombre_original,
+                    'estado': nuevo_archivo.estado,
+                    'fecha_subida': nuevo_archivo.fecha_subida,
+                    'tamaño': nuevo_archivo.tamaño,
+                    'url': nuevo_archivo.archivo.url if nuevo_archivo.archivo else None
+                },
+                'mensaje': f'Archivo {tipo_archivo} {"reemplazado" if archivo_reemplazado else "subido"} exitosamente',
+                'archivo_reemplazado': archivo_reemplazado
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            # Manejo de errores inesperados
+            return Response({
+                'success': False,
+                'error': 'Error interno del servidor',
+                'codigo_error': 'INTERNAL_ERROR',
+                'detalles': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'])
+    def verificar_existencia(self, request):
+        """
+        Verifica si existe un archivo específico para un cierre y tipo.
         
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        Parámetros GET requeridos:
+        - cierre_id: ID del cierre
+        - tipo_archivo: Tipo de archivo a verificar
+        
+        Respuesta:
+        - exists: bool - Si el archivo existe
+        - archivo: dict - Información del archivo si existe
+        """
+        cierre_id = request.query_params.get('cierre_id')
+        tipo_archivo = request.query_params.get('tipo_archivo')
+        
+        # Validar parámetros requeridos
+        if not cierre_id:
+            return Response({
+                'success': False,
+                'error': 'Parámetro cierre_id requerido',
+                'codigo_error': 'MISSING_CIERRE_ID'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not tipo_archivo:
+            return Response({
+                'success': False,
+                'error': 'Parámetro tipo_archivo requerido',
+                'codigo_error': 'MISSING_TIPO_ARCHIVO'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validar que el tipo de archivo es válido
+        tipos_validos = [choice[0] for choice in ArchivoSubido.TIPOS_ARCHIVO]
+        if tipo_archivo not in tipos_validos:
+            return Response({
+                'success': False,
+                'error': f'Tipo de archivo inválido: {tipo_archivo}',
+                'codigo_error': 'INVALID_TIPO_ARCHIVO',
+                'tipos_validos': tipos_validos
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Buscar el archivo
+            archivo = ArchivoSubido.objects.filter(
+                cierre_id=cierre_id,
+                tipo_archivo=tipo_archivo
+            ).first()
+            
+            if archivo:
+                # El archivo existe
+                return Response({
+                    'success': True,
+                    'exists': True,
+                    'archivo': {
+                        'id': archivo.id,
+                        'tipo_archivo': archivo.tipo_archivo,
+                        'nombre_original': archivo.nombre_original,
+                        'estado': archivo.estado,
+                        'fecha_subida': archivo.fecha_subida,
+                        'tamaño': archivo.tamaño,
+                        'url': archivo.archivo.url if archivo.archivo else None,
+                        'hash_md5': archivo.hash_md5,
+                        'registros_procesados': archivo.registros_procesados,
+                        'errores_detectados': archivo.errores_detectados
+                    }
+                })
+            else:
+                # El archivo no existe
+                return Response({
+                    'success': True,
+                    'exists': False,
+                    'archivo': None,
+                    'mensaje': f'No existe archivo de tipo {tipo_archivo} para el cierre {cierre_id}'
+                })
+                
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': 'Error al verificar existencia del archivo',
+                'codigo_error': 'VERIFICATION_ERROR',
+                'detalles': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=True, methods=['post'])
     def procesar(self, request, pk=None):
@@ -91,3 +328,83 @@ class ArchivoSubidoViewSet(viewsets.ModelViewSet):
             'hash_actual': hash_actual,
             'es_integro': es_integro
         })
+
+
+@api_view(['GET'])
+def verificar_existencia_archivo(request):
+    """
+    Vista independiente para verificar si existe un archivo específico.
+    
+    Parámetros GET requeridos:
+    - cierre_id: ID del cierre
+    - tipo_archivo: Tipo de archivo a verificar
+    """
+    cierre_id = request.query_params.get('cierre_id')
+    tipo_archivo = request.query_params.get('tipo_archivo')
+    
+    # Validar parámetros requeridos
+    if not cierre_id:
+        return Response({
+            'success': False,
+            'error': 'Parámetro cierre_id requerido',
+            'codigo_error': 'MISSING_CIERRE_ID'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    if not tipo_archivo:
+        return Response({
+            'success': False,
+            'error': 'Parámetro tipo_archivo requerido',
+            'codigo_error': 'MISSING_TIPO_ARCHIVO'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Validar que el tipo de archivo es válido
+    tipos_validos = [choice[0] for choice in ArchivoSubido.TIPOS_ARCHIVO]
+    if tipo_archivo not in tipos_validos:
+        return Response({
+            'success': False,
+            'error': f'Tipo de archivo inválido: {tipo_archivo}',
+            'codigo_error': 'INVALID_TIPO_ARCHIVO',
+            'tipos_validos': tipos_validos
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        # Buscar el archivo
+        archivo = ArchivoSubido.objects.filter(
+            cierre_id=cierre_id,
+            tipo_archivo=tipo_archivo
+        ).first()
+        
+        if archivo:
+            # El archivo existe
+            return Response({
+                'success': True,
+                'exists': True,
+                'archivo': {
+                    'id': archivo.id,
+                    'tipo_archivo': archivo.tipo_archivo,
+                    'nombre_original': archivo.nombre_original,
+                    'estado': archivo.estado,
+                    'fecha_subida': archivo.fecha_subida,
+                    'tamaño': archivo.tamaño,
+                    'url': archivo.archivo.url if archivo.archivo else None,
+                    'hash_md5': archivo.hash_md5,
+                    'registros_procesados': archivo.registros_procesados,
+                    'errores_detectados': archivo.errores_detectados
+                }
+            })
+        else:
+            # El archivo no existe
+            return Response({
+                'success': True,
+                'exists': False,
+                'archivo': None,
+                'mensaje': f'No existe archivo de tipo {tipo_archivo} para el cierre {cierre_id}'
+            })
+            
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': 'Error al verificar existencia del archivo',
+            'codigo_error': 'VERIFICATION_ERROR',
+            'detalles': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

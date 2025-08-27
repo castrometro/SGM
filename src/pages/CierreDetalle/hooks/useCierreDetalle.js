@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { obtenerCierrePorId } from "../../../api/contabilidad";
 import { obtenerCliente } from "../../../api/clientes";
+import { obtenerCierrePayrollDetalle } from "../../../api/payroll/clientes_payroll";
 
 export const useCierreDetalle = (cierreId, tipoModulo = null) => {
   const [cierre, setCierre] = useState(null);
@@ -32,16 +33,8 @@ export const useCierreDetalle = (cierreId, tipoModulo = null) => {
             throw new Error('No se pudo determinar el ID del cliente desde la URL');
           }
           
-          // Crear objeto cierre simulado para payroll (por ahora)
-          cierreObj = {
-            id: parseInt(cierreId),
-            cliente: parseInt(clienteId),
-            periodo: "2025-08", // TODO: Obtener desde API real
-            estado: "pendiente",
-            tipo_modulo: "payroll",
-            fecha_creacion: new Date().toISOString(),
-            // Agregar más campos según sea necesario
-          };
+          // Obtener cierre real de payroll desde la API
+          cierreObj = await obtenerCierrePayrollDetalle(clienteId, cierreId);
         } else {
           // Usar API de contabilidad
           cierreObj = await obtenerCierrePorId(cierreId);

@@ -9,9 +9,9 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 # Configuración de colas y routing
 app.conf.update(
     task_routes={
-        # Tareas de nómina
-        'nomina.tasks*': {'queue': 'nomina_queue'},
-        'nomina.utils*': {'queue': 'nomina_queue'},
+        # Tareas de payroll
+        'payroll.tasks*': {'queue': 'payroll_queue'},
+        'payroll.utils*': {'queue': 'payroll_queue'},
         
         # Tareas de contabilidad - todas las variantes  
         'contabilidad.tasks*': {'queue': 'contabilidad_queue'},

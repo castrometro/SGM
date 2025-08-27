@@ -1,55 +1,40 @@
 import React, { useState } from 'react';
+import { TIPOS_ARCHIVO_PAYROLL } from '../../../../../../api/payroll';
+import useArchivoUploadReal from '../hooks/useArchivoUploadReal';
 
-const LibroRemuneraciones = ({ activa, onArchivoSubido }) => {
-  const [estado, setEstado] = useState({
-    archivo: null,
-    subiendo: false,
-    progreso: 0,
-    error: null
-  });
+const LibroRemuneraciones = ({ activa, cierreId, onArchivoSubido }) => {
+  const {
+    estado,
+    subirArchivo,
+    validarArchivo,
+    limpiarError,
+    tieneArchivo,
+    estaSubiendo,
+    tieneError,
+    estaVerificando
+  } = useArchivoUploadReal(TIPOS_ARCHIVO_PAYROLL.LIBRO_REMUNERACIONES, cierreId);
 
-  const subirArchivo = async (archivo) => {
-    if (!activa) return;
-    
-    setEstado(prev => ({ ...prev, subiendo: true, progreso: 0, error: null }));
-    
-    try {
-      // Simular progreso
-      const intervalos = [20, 40, 60, 80, 100];
-      for (const progreso of intervalos) {
-        await new Promise(resolve => setTimeout(resolve, 300));
-        setEstado(prev => ({ ...prev, progreso }));
-      }
-      
-      const nuevoArchivo = {
-        id: Math.random().toString(36).substr(2, 9),
-        nombre: archivo.name,
-        tamaño: archivo.size,
-        fechaSubida: new Date().toISOString()
-      };
-      
-      setEstado({
-        archivo: nuevoArchivo,
-        subiendo: false,
-        progreso: 100,
-        error: null
-      });
-      
-      onArchivoSubido && onArchivoSubido(nuevoArchivo);
-      
-    } catch (error) {
-      setEstado(prev => ({
-        ...prev,
-        subiendo: false,
-        error: 'Error al subir el archivo'
-      }));
-    }
-  };
-
-  const handleFileChange = (e) => {
+  const handleFileChange = async (e) => {
     const archivo = e.target.files[0];
-    if (archivo) {
-      subirArchivo(archivo);
+    if (!archivo) return;
+
+    // Limpiar errores previos
+    limpiarError();
+
+    // Solo subir si la tarjeta está activa
+    if (!activa) {
+      console.warn('Intento de subir archivo en tarjeta inactiva');
+      return;
+    }
+
+    try {
+      // El hook se encarga de validar el archivo internamente
+      const exito = await subirArchivo(archivo);
+      if (exito && onArchivoSubido) {
+        onArchivoSubido(estado.archivo);
+      }
+    } catch (error) {
+      console.error('Error en handleFileChange:', error);
     }
   };
 
@@ -61,31 +46,79 @@ const LibroRemuneraciones = ({ activa, onArchivoSubido }) => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  const formatFecha = (fechaISO) => {
+    if (!fechaISO) return 'Fecha no disponible';
+    try {
+      return new Date(fechaISO).toLocaleString('es-CL', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (error) {
+      return 'Fecha inválida';
+    }
+  };
+
+  // Mostrar loading mientras verifica existencia
+  if (estaVerificando) {
+    return (
+      <div className="bg-gray-700 p-4 rounded-lg">
+        <div className="flex justify-between items-center mb-3">
+          <h5 className="font-medium text-white">📊 Libro de Remuneraciones</h5>
+          <span className="text-gray-400 text-sm">Verificando...</span>
+        </div>
+        <div className="text-gray-400 text-xs">
+          🔍 Verificando si existe archivo...
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-gray-700 p-4 rounded-lg">
       <div className="flex justify-between items-center mb-3">
         <h5 className="font-medium text-white">📊 Libro de Remuneraciones</h5>
-        {estado.archivo ? (
-          <span className="text-green-400 text-sm">✅ Subido</span>
-        ) : (
+        
+        <div className="flex items-center space-x-2">
+          {tieneArchivo && (
+            <div className="flex items-center space-x-2">
+              <span className="text-green-400 text-sm">✅ Subido</span>
+              {estado.archivo?.estado && estado.archivo.estado !== 'subido' && (
+                <span className={`text-xs px-2 py-1 rounded ${
+                  estado.archivo.estado === 'procesado' ? 'bg-green-600 text-white' :
+                  estado.archivo.estado === 'procesando' ? 'bg-yellow-600 text-white' :
+                  estado.archivo.estado === 'error' ? 'bg-red-600 text-white' :
+                  'bg-gray-600 text-gray-300'
+                }`}>
+                  {estado.archivo.estado}
+                </span>
+              )}
+            </div>
+          )}
+          
           <label className={`cursor-pointer px-3 py-1 rounded text-sm font-medium transition-colors ${
             !activa ? 'bg-gray-600 text-gray-400 cursor-not-allowed' :
-            estado.subiendo ? 'bg-gray-600 text-gray-300 cursor-not-allowed' :
+            estaSubiendo ? 'bg-gray-600 text-gray-300 cursor-not-allowed' :
+            tieneArchivo ? 'bg-orange-600 hover:bg-orange-700 text-white' :
             'bg-blue-600 hover:bg-blue-700 text-white'
           }`}>
-            {estado.subiendo ? 'Subiendo...' : 'Subir Archivo'}
+            {estaSubiendo ? 'Subiendo...' : 
+             tieneArchivo ? 'Resubir Archivo' : 
+             'Subir Archivo'}
             <input
               type="file"
               className="hidden"
               accept=".xlsx,.xls"
               onChange={handleFileChange}
-              disabled={!activa || estado.subiendo || estado.archivo}
+              disabled={!activa || estaSubiendo}
             />
           </label>
-        )}
+        </div>
       </div>
       
-      {estado.subiendo && (
+      {estaSubiendo && (
         <div className="mb-3">
           <div className="w-full bg-gray-600 rounded-full h-2">
             <div 
@@ -93,27 +126,43 @@ const LibroRemuneraciones = ({ activa, onArchivoSubido }) => {
               style={{ width: `${estado.progreso}%` }}
             />
           </div>
-          <div className="text-xs text-gray-400 mt-1">{estado.progreso}%</div>
+          <div className="text-xs text-gray-400 mt-1">
+            {estado.progreso}% - Subiendo archivo...
+          </div>
         </div>
       )}
       
-      {estado.archivo && (
+      {tieneArchivo && estado.archivo && (
         <div className="text-xs text-gray-300 space-y-1">
-          <div>📄 {estado.archivo.nombre}</div>
+          <div>📄 {estado.archivo.nombre_original}</div>
           <div>💾 {formatBytes(estado.archivo.tamaño)}</div>
-          <div>📅 {new Date(estado.archivo.fechaSubida).toLocaleString('es-CL')}</div>
+          <div>📅 {formatFecha(estado.archivo.fecha_subida)}</div>
+          {estado.archivo.registros_procesados > 0 && (
+            <div>📊 {estado.archivo.registros_procesados} registros procesados</div>
+          )}
+          {estado.archivo.errores_detectados > 0 && (
+            <div className="text-yellow-400">
+              ⚠️ {estado.archivo.errores_detectados} errores detectados
+            </div>
+          )}
         </div>
       )}
       
-      {estado.error && (
+      {tieneError && (
         <div className="text-red-400 text-xs mt-2">
           ⚠️ {estado.error}
         </div>
       )}
       
-      {!activa && (
+      {!activa && !tieneArchivo && (
         <div className="text-gray-500 text-xs mt-2">
           Tarjeta inactiva - Subida deshabilitada
+        </div>
+      )}
+      
+      {!cierreId && (
+        <div className="text-yellow-400 text-xs mt-2">
+          ⚠️ ID de cierre no disponible
         </div>
       )}
     </div>

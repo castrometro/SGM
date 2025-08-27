@@ -1,55 +1,20 @@
-import React, { useState } from 'react';
+import React from 'react';
+import useArchivoUploadReal from '../hooks/useArchivoUploadReal';
 
-const MovimientosDelMes = ({ activa, onArchivoSubido }) => {
-  const [estado, setEstado] = useState({
-    archivo: null,
-    subiendo: false,
-    progreso: 0,
-    error: null
-  });
+const MovimientosDelMes = ({ activa, cierreId, onArchivoSubido }) => {
+  const {
+    estado,
+    subirArchivo,
+    limpiarError
+  } = useArchivoUploadReal('movimientos_mes', cierreId);
 
-  const subirArchivo = async (archivo) => {
-    if (!activa) return;
-    
-    setEstado(prev => ({ ...prev, subiendo: true, progreso: 0, error: null }));
-    
-    try {
-      // Simular progreso
-      const intervalos = [20, 40, 60, 80, 100];
-      for (const progreso of intervalos) {
-        await new Promise(resolve => setTimeout(resolve, 300));
-        setEstado(prev => ({ ...prev, progreso }));
-      }
-      
-      const nuevoArchivo = {
-        id: Math.random().toString(36).substr(2, 9),
-        nombre: archivo.name,
-        tamaño: archivo.size,
-        fechaSubida: new Date().toISOString()
-      };
-      
-      setEstado({
-        archivo: nuevoArchivo,
-        subiendo: false,
-        progreso: 100,
-        error: null
-      });
-      
-      onArchivoSubido && onArchivoSubido(nuevoArchivo);
-      
-    } catch (error) {
-      setEstado(prev => ({
-        ...prev,
-        subiendo: false,
-        error: 'Error al subir el archivo'
-      }));
-    }
-  };
-
-  const handleFileChange = (e) => {
+  const handleFileChange = async (e) => {
     const archivo = e.target.files[0];
-    if (archivo) {
-      subirArchivo(archivo);
+    if (archivo && activa) {
+      const exito = await subirArchivo(archivo);
+      if (exito && onArchivoSubido) {
+        onArchivoSubido(estado.archivo);
+      }
     }
   };
 
@@ -65,24 +30,30 @@ const MovimientosDelMes = ({ activa, onArchivoSubido }) => {
     <div className="bg-gray-700 p-4 rounded-lg">
       <div className="flex justify-between items-center mb-3">
         <h5 className="font-medium text-white">📈 Movimientos del Mes</h5>
-        {estado.archivo ? (
-          <span className="text-green-400 text-sm">✅ Subido</span>
-        ) : (
+        
+        <div className="flex items-center space-x-2">
+          {estado.archivo && !estado.subiendo && (
+            <span className="text-green-400 text-sm">✅ Subido</span>
+          )}
+          
           <label className={`cursor-pointer px-3 py-1 rounded text-sm font-medium transition-colors ${
             !activa ? 'bg-gray-600 text-gray-400 cursor-not-allowed' :
             estado.subiendo ? 'bg-gray-600 text-gray-300 cursor-not-allowed' :
+            estado.archivo ? 'bg-orange-600 hover:bg-orange-700 text-white' :
             'bg-blue-600 hover:bg-blue-700 text-white'
           }`}>
-            {estado.subiendo ? 'Subiendo...' : 'Subir Archivo'}
+            {estado.subiendo ? 'Subiendo...' : 
+             estado.archivo ? 'Resubir Archivo' : 
+             'Subir Archivo'}
             <input
               type="file"
               className="hidden"
               accept=".xlsx,.xls"
               onChange={handleFileChange}
-              disabled={!activa || estado.subiendo || estado.archivo}
+              disabled={!activa || estado.subiendo}
             />
           </label>
-        )}
+        </div>
       </div>
       
       {estado.subiendo && (
@@ -97,17 +68,35 @@ const MovimientosDelMes = ({ activa, onArchivoSubido }) => {
         </div>
       )}
       
+      {estado.verificando && (
+        <div className="mb-3">
+          <div className="flex items-center space-x-2 text-blue-400 text-xs">
+            <div className="animate-spin w-3 h-3 border border-blue-400 border-t-transparent rounded-full"></div>
+            <span>Verificando archivo existente...</span>
+          </div>
+        </div>
+      )}
+      
       {estado.archivo && (
         <div className="text-xs text-gray-300 space-y-1">
-          <div>📄 {estado.archivo.nombre}</div>
+          <div>📄 {estado.archivo.nombre_original}</div>
           <div>💾 {formatBytes(estado.archivo.tamaño)}</div>
-          <div>📅 {new Date(estado.archivo.fechaSubida).toLocaleString('es-CL')}</div>
+          <div>📅 {new Date(estado.archivo.fecha_subida).toLocaleString('es-CL')}</div>
         </div>
       )}
       
       {estado.error && (
         <div className="text-red-400 text-xs mt-2">
-          ⚠️ {estado.error}
+          <div className="flex justify-between items-start">
+            <span>⚠️ {estado.error}</span>
+            <button 
+              onClick={limpiarError}
+              className="text-red-300 hover:text-red-100 ml-2"
+              title="Cerrar error"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
       

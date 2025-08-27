@@ -1,5 +1,11 @@
 from django.contrib import admin
-from .models import CierrePayroll, ArchivoSubido
+from .models import (
+    CierrePayroll, 
+    ArchivoSubido,
+    ListaEmpleados_stg,
+    ItemsRemuneraciones_stg,
+    ValorItemEmpleado_stg,
+)
 # from .models import DiscrepanciaDetectada  # Comentado hasta implementar fase de discrepancias
 
 
@@ -30,17 +36,17 @@ class CierrePayrollAdmin(admin.ModelAdmin):
 @admin.register(ArchivoSubido)
 class ArchivoSubidoAdmin(admin.ModelAdmin):
     list_display = [
-        'cierre', 'tipo_archivo', 'estado', 'nombre_original', 
+        'cierre', 'tipo_archivo', 'estado', 'estado_procesamiento', 'nombre_original', 
         'tamaño_mb', 'registros_procesados', 'errores_detectados',
         'fecha_subida'
     ]
-    list_filter = ['tipo_archivo', 'estado', 'fecha_subida', 'cierre__cliente']
+    list_filter = ['tipo_archivo', 'estado', 'estado_procesamiento', 'fecha_subida', 'cierre__cliente']
     search_fields = ['nombre_original', 'cierre__cliente__nombre', 'cierre__periodo']
     readonly_fields = ['id', 'hash_md5', 'tamaño', 'fecha_subida', 'fecha_procesamiento']
     
     fieldsets = (
         ('Información del Archivo', {
-            'fields': ('id', 'cierre', 'tipo_archivo', 'estado', 'nombre_original', 'archivo')
+            'fields': ('id', 'cierre', 'tipo_archivo', 'estado', 'estado_procesamiento', 'nombre_original', 'archivo')
         }),
         ('Metadatos', {
             'fields': ('hash_md5', 'tamaño', 'fecha_subida', 'fecha_procesamiento')
@@ -104,3 +110,116 @@ class ArchivoSubidoAdmin(admin.ModelAdmin):
 #         queryset.update(resuelta=False, fecha_resolucion=None)
 #         self.message_user(request, f"{queryset.count()} discrepancias marcadas como no resueltas.")
 #     marcar_como_no_resueltas.short_description = "Marcar como no resueltas"
+
+
+# =============================================================================
+# ADMIN PARA MODELOS STAGING
+# =============================================================================
+
+@admin.register(ListaEmpleados_stg)
+class ListaEmpleadosStgAdmin(admin.ModelAdmin):
+    list_display = [
+        'rut_trabajador', 'nombre', 'apellido_paterno', 'apellido_materno',
+        'archivo_subido', 'fila_excel', 'fecha_extraccion'
+    ]
+    list_filter = ['archivo_subido__tipo_archivo', 'archivo_subido__cierre__cliente', 'fecha_extraccion']
+    search_fields = ['rut_trabajador', 'nombre', 'apellido_paterno', 'apellido_materno']
+    readonly_fields = ['fecha_extraccion']
+    
+    fieldsets = (
+        ('Información del Empleado', {
+            'fields': ('rut_trabajador', 'nombre', 'apellido_paterno', 'apellido_materno')
+        }),
+        ('Trazabilidad', {
+            'fields': ('archivo_subido', 'fila_excel', 'fecha_extraccion')
+        }),
+        ('Observaciones', {
+            'fields': ('observaciones',),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('archivo_subido__cierre__cliente')
+
+
+@admin.register(ItemsRemuneraciones_stg)
+class ItemsRemuneracionesStgAdmin(admin.ModelAdmin):
+    list_display = [
+        'codigo_columna', 'nombre_concepto', 'tipo_concepto', 'orden',
+        'archivo_subido', 'fecha_extraccion'
+    ]
+    list_filter = ['tipo_concepto', 'archivo_subido__tipo_archivo', 'archivo_subido__cierre__cliente']
+    search_fields = ['nombre_concepto', 'nombre_normalizado', 'codigo_columna']
+    readonly_fields = ['fecha_extraccion']
+    ordering = ['archivo_subido', 'orden']
+    
+    fieldsets = (
+        ('Información del Concepto', {
+            'fields': ('codigo_columna', 'nombre_concepto', 'nombre_normalizado', 'tipo_concepto')
+        }),
+        ('Ubicación en Excel', {
+            'fields': ('orden', 'fila_header')
+        }),
+        ('Trazabilidad', {
+            'fields': ('archivo_subido', 'fecha_extraccion')
+        }),
+        ('Observaciones', {
+            'fields': ('observaciones',),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('archivo_subido__cierre__cliente')
+
+
+@admin.register(ValorItemEmpleado_stg)
+class ValorItemEmpleadoStgAdmin(admin.ModelAdmin):
+    list_display = [
+        'empleado_rut', 'item_concepto', 'valor_original', 'valor_numerico', 
+        'valor_texto', 'es_numerico', 'fila_excel', 'columna_excel'
+    ]
+    list_filter = [
+        'es_numerico', 'archivo_subido__tipo_archivo', 
+        'archivo_subido__cierre__cliente', 'item_remuneracion__tipo_concepto'
+    ]
+    search_fields = [
+        'empleado__rut_trabajador', 'empleado__nombre', 
+        'item_remuneracion__nombre_concepto', 'valor_original'
+    ]
+    readonly_fields = ['fecha_extraccion']
+    
+    fieldsets = (
+        ('Relaciones', {
+            'fields': ('archivo_subido', 'empleado', 'item_remuneracion')
+        }),
+        ('Valores', {
+            'fields': ('valor_original', 'valor_numerico', 'valor_texto', 'es_numerico')
+        }),
+        ('Ubicación en Excel', {
+            'fields': ('fila_excel', 'columna_excel')
+        }),
+        ('Trazabilidad', {
+            'fields': ('fecha_extraccion',)
+        }),
+        ('Observaciones', {
+            'fields': ('observaciones',),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def empleado_rut(self, obj):
+        return obj.empleado.rut_trabajador
+    empleado_rut.short_description = "RUT Empleado"
+    empleado_rut.admin_order_field = 'empleado__rut_trabajador'
+    
+    def item_concepto(self, obj):
+        return f"[{obj.item_remuneracion.codigo_columna}] {obj.item_remuneracion.nombre_concepto[:30]}..."
+    item_concepto.short_description = "Concepto"
+    item_concepto.admin_order_field = 'item_remuneracion__nombre_concepto'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'empleado', 'item_remuneracion', 'archivo_subido__cierre__cliente'
+        )

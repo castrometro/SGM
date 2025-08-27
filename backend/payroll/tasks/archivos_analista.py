@@ -115,7 +115,7 @@ def procesar_finiquitos_analista(self, archivo_id):
                 logger.error(f"❌ {error_msg}")
         
         # Actualizar archivo con resultados
-        archivo.estado_procesamiento = 'completado'
+        archivo.estado_procesamiento = 'parsing_completo'
         archivo.registros_procesados = registros_creados
         archivo.errores_detectados = len(errores)
         archivo.fecha_procesamiento = timezone.now()
@@ -278,7 +278,7 @@ def procesar_ausentismos_analista(self, archivo_id):
                 logger.error(f"❌ {error_msg}")
         
         # Actualizar archivo con resultados
-        archivo.estado_procesamiento = 'completado'
+        archivo.estado_procesamiento = 'parsing_completo'
         archivo.registros_procesados = registros_creados
         archivo.errores_detectados = len(errores)
         archivo.fecha_procesamiento = timezone.now()
@@ -412,7 +412,7 @@ def procesar_ingresos_analista(self, archivo_id):
                 logger.error(f"❌ {error_msg}")
         
         # Actualizar archivo con resultados
-        archivo.estado_procesamiento = 'completado'
+        archivo.estado_procesamiento = 'parsing_completo'
         archivo.registros_procesados = registros_creados
         archivo.errores_detectados = len(errores)
         archivo.fecha_procesamiento = timezone.now()

@@ -7,6 +7,12 @@ import logging
 
 from .models.models_fase_1 import ArchivoSubido
 from .tasks.libro_remuneraciones import procesar_libro_remuneraciones
+from .tasks.movimientos_mes import procesar_movimientos_mes
+from .tasks.archivos_analista import (
+    procesar_finiquitos_analista,
+    procesar_ausentismos_analista,
+    procesar_ingresos_analista
+)
 
 logger = logging.getLogger(__name__)
 
@@ -16,29 +22,44 @@ def trigger_procesamiento_automatico(sender, instance, created, **kwargs):
     """
     Signal que dispara automáticamente el procesamiento cuando:
     1. Se crea un nuevo archivo (created=True) 
-    2. Solo para archivos de tipo libro_remuneraciones
+    2. Para archivos de tipos soportados
     3. Solo si está en estado 'subido' y estado_procesamiento 'pendiente'
     """
     
-    # Solo disparar para archivos de tipo libro_remuneraciones
-    if instance.tipo_archivo != 'libro_remuneraciones':
+    # Solo disparar para archivos nuevos en estado correcto
+    if not (created and instance.estado == 'subido' and instance.estado_procesamiento == 'pendiente'):
         return
     
-    # Solo disparar para archivos nuevos en estado correcto
-    if created and instance.estado == 'subido' and instance.estado_procesamiento == 'pendiente':
-        
-        logger.info(f"🔔 Signal: Disparando procesamiento para archivo NUEVO {instance.id}")
-        
-        try:
-            # Disparar tarea Celery de forma asíncrona
+    logger.info(f"🔔 Signal: Disparando procesamiento para archivo NUEVO {instance.id} tipo {instance.tipo_archivo}")
+    
+    try:
+        # Determinar qué tarea disparar según el tipo de archivo
+        if instance.tipo_archivo == 'libro_remuneraciones':
             result = procesar_libro_remuneraciones.delay(instance.id)
             
-            logger.info(f"✅ Signal: Task disparada con ID {result.id} para archivo {instance.id}")
+        elif instance.tipo_archivo == 'movimientos_mes':
+            result = procesar_movimientos_mes.delay(instance.id)
             
-        except Exception as e:
-            logger.error(f"❌ Signal: Error disparando task para archivo {instance.id}: {str(e)}")
+        # Archivos del analista
+        elif instance.tipo_archivo == 'finiquitos':
+            result = procesar_finiquitos_analista.delay(instance.id)
             
-            # Marcar archivo como error
-            instance.estado = 'error'
-            instance.estado_procesamiento = 'error'
-            instance.save(update_fields=['estado', 'estado_procesamiento'])
+        elif instance.tipo_archivo == 'ausentismos':
+            result = procesar_ausentismos_analista.delay(instance.id)
+            
+        elif instance.tipo_archivo == 'ingresos':
+            result = procesar_ingresos_analista.delay(instance.id)
+            
+        else:
+            logger.info(f"⚠️ Signal: Tipo de archivo '{instance.tipo_archivo}' no tiene procesamiento automático configurado")
+            return
+        
+        logger.info(f"✅ Signal: Task disparada con ID {result.id} para archivo {instance.id}")
+        
+    except Exception as e:
+        logger.error(f"❌ Signal: Error disparando task para archivo {instance.id}: {str(e)}")
+        
+        # Marcar archivo como error
+        instance.estado = 'error'
+        instance.estado_procesamiento = 'error'
+        instance.save(update_fields=['estado', 'estado_procesamiento'])

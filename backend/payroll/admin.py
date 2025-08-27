@@ -13,6 +13,9 @@ from .models.models_staging import (
     Finiquitos_analista_stg,
     Ausentismos_analista_stg,
     Ingresos_analista_stg,
+    Empleados_Novedades_stg,
+    Items_Novedades_stg,
+    Valores_item_empleado_analista_stg,
 )
 # from .models import DiscrepanciaDetectada  # Comentado hasta implementar fase de discrepancias
 
@@ -480,3 +483,116 @@ class IngresosAnalistaStgAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('archivo_subido__cierre__cliente')
+
+
+# ==============================================
+# ADMIN PARA MODELOS STAGING DE NOVEDADES ANALISTA
+# ==============================================
+
+@admin.register(Empleados_Novedades_stg)
+class EmpleadosNovedadesStgAdmin(admin.ModelAdmin):
+    list_display = [
+        'rut_trabajador', 'nombre', 'apellido_paterno', 'apellido_materno',
+        'archivo_subido', 'fila_excel', 'fecha_extraccion'
+    ]
+    list_filter = ['archivo_subido__tipo_archivo', 'archivo_subido__cierre__cliente', 'fecha_extraccion']
+    search_fields = ['rut_trabajador', 'nombre', 'apellido_paterno', 'apellido_materno']
+    readonly_fields = ['fecha_extraccion']
+    
+    fieldsets = (
+        ('Información del Empleado', {
+            'fields': ('rut_trabajador', 'nombre', 'apellido_paterno', 'apellido_materno')
+        }),
+        ('Trazabilidad', {
+            'fields': ('archivo_subido', 'fila_excel', 'fecha_extraccion')
+        }),
+        ('Observaciones', {
+            'fields': ('observaciones',),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('archivo_subido__cierre__cliente')
+
+
+@admin.register(Items_Novedades_stg)
+class ItemsNovedadesStgAdmin(admin.ModelAdmin):
+    list_display = [
+        'codigo_columna', 'nombre_concepto', 'tipo_concepto', 'orden',
+        'archivo_subido', 'fecha_extraccion'
+    ]
+    list_filter = ['tipo_concepto', 'archivo_subido__tipo_archivo', 'archivo_subido__cierre__cliente']
+    search_fields = ['nombre_concepto', 'nombre_normalizado', 'codigo_columna']
+    readonly_fields = ['fecha_extraccion']
+    ordering = ['archivo_subido', 'orden']
+    
+    fieldsets = (
+        ('Información del Concepto', {
+            'fields': ('codigo_columna', 'nombre_concepto', 'nombre_normalizado', 'tipo_concepto')
+        }),
+        ('Ubicación en Excel', {
+            'fields': ('orden', 'fila_header')
+        }),
+        ('Trazabilidad', {
+            'fields': ('archivo_subido', 'fecha_extraccion')
+        }),
+        ('Observaciones', {
+            'fields': ('observaciones',),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('archivo_subido__cierre__cliente')
+
+
+@admin.register(Valores_item_empleado_analista_stg)
+class ValoresItemEmpleadoAnalistaStgAdmin(admin.ModelAdmin):
+    list_display = [
+        'empleado_rut', 'item_concepto', 'valor_original', 'valor_numerico', 
+        'valor_texto', 'es_numerico', 'fila_excel', 'columna_excel'
+    ]
+    list_filter = [
+        'es_numerico', 'archivo_subido__tipo_archivo', 
+        'archivo_subido__cierre__cliente', 'item_novedad__tipo_concepto'
+    ]
+    search_fields = [
+        'empleado__rut_trabajador', 'empleado__nombre', 
+        'item_novedad__nombre_concepto', 'valor_original'
+    ]
+    readonly_fields = ['fecha_extraccion']
+    
+    fieldsets = (
+        ('Relaciones', {
+            'fields': ('archivo_subido', 'empleado', 'item_novedad')
+        }),
+        ('Valores', {
+            'fields': ('valor_original', 'valor_numerico', 'valor_texto', 'es_numerico')
+        }),
+        ('Ubicación en Excel', {
+            'fields': ('fila_excel', 'columna_excel')
+        }),
+        ('Trazabilidad', {
+            'fields': ('fecha_extraccion',)
+        }),
+        ('Observaciones', {
+            'fields': ('observaciones',),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def empleado_rut(self, obj):
+        return obj.empleado.rut_trabajador
+    empleado_rut.short_description = "RUT Empleado"
+    empleado_rut.admin_order_field = 'empleado__rut_trabajador'
+    
+    def item_concepto(self, obj):
+        return f"[{obj.item_novedad.codigo_columna}] {obj.item_novedad.nombre_concepto[:30]}..."
+    item_concepto.short_description = "Concepto"
+    item_concepto.admin_order_field = 'item_novedad__nombre_concepto'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'empleado', 'item_novedad', 'archivo_subido__cierre__cliente'
+        )

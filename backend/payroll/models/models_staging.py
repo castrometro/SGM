@@ -480,3 +480,219 @@ class Ingresos_analista_stg(models.Model):
     
     def __str__(self):
         return f"Ingreso {self.rut} - {self.nombre} ({self.fecha_ingreso})"
+
+
+# =============================================================================
+# MODELOS STAGING PARA NOVEDADES DEL ANALISTA
+# =============================================================================
+
+class Empleados_Novedades_stg(models.Model):
+    """
+    Entidad 1: Lista de empleados extraídos de archivos de novedades del analista.
+    Almacena únicamente la información básica de identificación del empleado.
+    Formato: RUT | Nombre | Apellido Paterno | Apellido Materno
+    """
+    
+    # Relación con el archivo origen
+    archivo_subido = models.ForeignKey(
+        ArchivoSubido, 
+        on_delete=models.CASCADE,
+        related_name='empleados_novedades'
+    )
+    
+    # Datos básicos del empleado (estructura fija)
+    rut_trabajador = models.CharField(max_length=12, help_text="RUT limpio: 12345678-9")
+    nombre = models.CharField(max_length=100, help_text="Nombre del empleado")
+    apellido_paterno = models.CharField(max_length=100, help_text="Apellido paterno")
+    apellido_materno = models.CharField(max_length=100, blank=True, help_text="Apellido materno")
+    
+    # Trazabilidad en el Excel
+    fila_excel = models.IntegerField(help_text="Número de fila en el Excel")
+    
+    # Metadatos adicionales
+    observaciones = models.TextField(blank=True)
+    
+    # Fechas
+    fecha_extraccion = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = "Empleado Novedades Staging"
+        verbose_name_plural = "Empleados Novedades Staging"
+        unique_together = ['archivo_subido', 'rut_trabajador']
+        indexes = [
+            models.Index(fields=['archivo_subido']),
+            models.Index(fields=['rut_trabajador']),
+            models.Index(fields=['fila_excel']),
+        ]
+    
+    def __str__(self):
+        return f"{self.rut_trabajador} - {self.nombre} {self.apellido_paterno}"
+    
+    @property
+    def nombre_completo(self):
+        """Retorna el nombre completo del empleado"""
+        nombres = [self.nombre, self.apellido_paterno]
+        if self.apellido_materno:
+            nombres.append(self.apellido_materno)
+        return ' '.join(nombres)
+
+
+class Items_Novedades_stg(models.Model):
+    """
+    Entidad 2: Headers/Conceptos de novedades extraídos del Excel del analista.
+    Representa las columnas del Excel después de los datos básicos del empleado.
+    """
+    
+    TIPOS_CONCEPTO = [
+        ('haber', 'Haber'),
+        ('descuento', 'Descuento'),
+        ('informativo', 'Informativo'),
+        ('total', 'Total'),
+        ('novedad', 'Novedad'),
+    ]
+    
+    # Relación con el archivo origen
+    archivo_subido = models.ForeignKey(
+        ArchivoSubido, 
+        on_delete=models.CASCADE,
+        related_name='items_novedades'
+    )
+    
+    # Identificación en el Excel
+    codigo_columna = models.CharField(max_length=10, help_text="Letra de columna: A, B, C, etc.")
+    nombre_concepto = models.CharField(max_length=200, help_text="Como viene del header")
+    nombre_normalizado = models.CharField(max_length=200, blank=True, help_text="Nombre procesado")
+    
+    # Clasificación del concepto
+    tipo_concepto = models.CharField(max_length=15, choices=TIPOS_CONCEPTO, blank=True, null=True)
+    
+    # Orden y ubicación en el Excel
+    orden = models.IntegerField(help_text="Orden de aparición en el Excel")
+    fila_header = models.IntegerField(default=1, help_text="Fila donde está el header")
+    
+    # Metadatos adicionales
+    observaciones = models.TextField(blank=True)
+    
+    # Fechas
+    fecha_extraccion = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = "Item Novedades Staging"
+        verbose_name_plural = "Items Novedades Staging"
+        unique_together = ['archivo_subido', 'codigo_columna']
+        ordering = ['orden']
+        indexes = [
+            models.Index(fields=['archivo_subido', 'tipo_concepto']),
+            models.Index(fields=['orden']),
+            models.Index(fields=['codigo_columna']),
+        ]
+    
+    def __str__(self):
+        return f"[{self.codigo_columna}] {self.nombre_concepto}"
+
+
+class Valores_item_empleado_analista_stg(models.Model):
+    """
+    Entidad 3: Valores de la matriz Empleado x Concepto para novedades del analista.
+    Almacena todos los valores que NO son información básica del empleado.
+    """
+    
+    # Relación con el archivo origen
+    archivo_subido = models.ForeignKey(
+        ArchivoSubido, 
+        on_delete=models.CASCADE,
+        related_name='valores_novedades_analista'
+    )
+    
+    # Relaciones con las otras entidades
+    empleado = models.ForeignKey(
+        Empleados_Novedades_stg,
+        on_delete=models.CASCADE,
+        related_name='valores_novedades'
+    )
+    item_novedad = models.ForeignKey(
+        Items_Novedades_stg,
+        on_delete=models.CASCADE,
+        related_name='valores_empleados'
+    )
+    
+    # Valor como viene del Excel
+    valor_original = models.CharField(max_length=200, help_text="Valor tal como viene del Excel")
+    
+    # Valor procesado
+    valor_numerico = models.DecimalField(
+        max_digits=15, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Valor numérico convertido"
+    )
+    valor_texto = models.CharField(
+        max_length=200, 
+        blank=True, 
+        help_text="Para valores no numéricos"
+    )
+    
+    # Trazabilidad en el Excel
+    fila_excel = models.IntegerField(help_text="Número de fila en el Excel")
+    columna_excel = models.CharField(max_length=10, help_text="Letra de columna")
+    
+    # Indicadores básicos
+    es_numerico = models.BooleanField(default=False)
+    
+    # Metadatos adicionales
+    observaciones = models.TextField(blank=True)
+    
+    # Fechas
+    fecha_extraccion = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = "Valor Item Empleado Analista Staging"
+        verbose_name_plural = "Valores Items Empleados Analista Staging"
+        unique_together = ['empleado', 'item_novedad']
+        indexes = [
+            models.Index(fields=['archivo_subido']),
+            models.Index(fields=['empleado', 'item_novedad']),
+            models.Index(fields=['fila_excel', 'columna_excel']),
+            models.Index(fields=['es_numerico']),
+        ]
+    
+    def __str__(self):
+        return f"{self.empleado.rut_trabajador} - {self.item_novedad.nombre_concepto}: {self.valor_original}"
+
+
+# Funciones de utilidad para novedades del analista
+def limpiar_novedades_analista_por_archivo(archivo_subido):
+    """
+    Limpia todos los datos staging de novedades del analista de un archivo específico
+    """
+    Empleados_Novedades_stg.objects.filter(archivo_subido=archivo_subido).delete()
+    Items_Novedades_stg.objects.filter(archivo_subido=archivo_subido).delete()
+    Valores_item_empleado_analista_stg.objects.filter(archivo_subido=archivo_subido).delete()
+
+
+def obtener_resumen_novedades_analista(archivo_subido):
+    """
+    Obtiene un resumen del estado del staging para un archivo de novedades del analista
+    """
+    empleados = Empleados_Novedades_stg.objects.filter(archivo_subido=archivo_subido)
+    items = Items_Novedades_stg.objects.filter(archivo_subido=archivo_subido)
+    valores = Valores_item_empleado_analista_stg.objects.filter(archivo_subido=archivo_subido)
+    
+    return {
+        'empleados': {
+            'total': empleados.count(),
+        },
+        'items': {
+            'total': items.count(),
+            'haberes': items.filter(tipo_concepto='haber').count(),
+            'descuentos': items.filter(tipo_concepto='descuento').count(),
+            'informativos': items.filter(tipo_concepto='informativo').count(),
+            'novedades': items.filter(tipo_concepto='novedad').count(),
+        },
+        'valores': {
+            'total': valores.count(),
+            'numericos': valores.filter(es_numerico=True).count(),
+            'texto': valores.filter(es_numerico=False).count(),
+        }
+    }

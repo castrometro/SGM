@@ -13,6 +13,9 @@ from .tasks.archivos_analista import (
     procesar_ausentismos_analista,
     procesar_ingresos_analista
 )
+from .tasks.novedades_analista import (
+    procesar_novedades_analista
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +52,9 @@ def trigger_procesamiento_automatico(sender, instance, created, **kwargs):
             
         elif instance.tipo_archivo == 'ingresos':
             result = procesar_ingresos_analista.delay(instance.id)
+            
+        elif instance.tipo_archivo == 'novedades':
+            result = procesar_novedades_analista.delay(instance.id)
             
         else:
             logger.info(f"⚠️ Signal: Tipo de archivo '{instance.tipo_archivo}' no tiene procesamiento automático configurado")

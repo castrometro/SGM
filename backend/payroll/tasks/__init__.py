@@ -22,6 +22,10 @@ from .archivos_analista import (
     procesar_ingresos_analista
 )
 
+from .novedades_analista import (
+    procesar_novedades_analista
+)
+
 __all__ = [
     # Libro de remuneraciones
     'procesar_libro_remuneraciones',
@@ -39,5 +43,8 @@ __all__ = [
     # Archivos del analista
     'procesar_finiquitos_analista',
     'procesar_ausentismos_analista',
-    'procesar_ingresos_analista'
+    'procesar_ingresos_analista',
+    
+    # Novedades del analista
+    'procesar_novedades_analista'
 ]

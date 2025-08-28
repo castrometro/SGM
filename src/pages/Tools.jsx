@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { 
   Wrench, 
   Download, 
@@ -9,7 +10,8 @@ import {
   BarChart3,
   Users,
   RefreshCw,
-  AlertTriangle
+  AlertTriangle,
+  Receipt
 } from "lucide-react";
 import AreaIndicator from "../components/AreaIndicator";
 
@@ -40,11 +42,20 @@ const ToolCard = ({ title, description, icon: Icon, color, onClick, disabled = f
 
 const Tools = () => {
   const [activeSection, setActiveSection] = useState("general");
+  const navigate = useNavigate();
   
   // Obtener usuario para mostrar sus áreas
   const usuario = JSON.parse(localStorage.getItem("usuario"));
 
   const generalTools = [
+    {
+      title: "Captura Masiva de Gastos",
+      description: "Procesar y clasificar gastos desde Excel",
+      icon: Receipt,
+      color: "bg-emerald-600",
+      onClick: () => navigate("captura-gastos"),
+      disabled: false
+    },
     {
       title: "Exportar Datos",
       description: "Exportar información de clientes y cierres",

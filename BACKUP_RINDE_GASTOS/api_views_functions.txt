@@ -1,0 +1,5 @@
+842:from contabilidad.tasks import procesar_captura_masiva_gastos_task
+896:def captura_masiva_gastos(request):
+935:        task = procesar_captura_masiva_gastos_task.delay(
+957:def estado_captura_gastos(request, task_id):
+983:def descargar_resultado_gastos(request, task_id):

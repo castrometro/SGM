@@ -36,6 +36,9 @@ import CacheRedisNomina from "./components/Gerente/CacheRedisNomina";
 import LibroRemuneraciones from "./components/LibroRemuneraciones/LibroRemuneraciones";
 import MovimientosMes from "./components/MovimientosMes/MovimientosMes";
 
+// Importar componentes de Captura Masiva de Gastos
+import CapturaMasivaGastos from "./pages/CapturaMasivaGastos";
+
 function App() {
   return (
     <Router>
@@ -103,6 +106,9 @@ function App() {
           
           {/* ----------- ÁREA: HERRAMIENTAS ------------- */}
           <Route path="tools" element={<Tools />} />
+          
+          {/* ----------- ÁREA: CAPTURA MASIVA DE GASTOS ------------- */}
+          <Route path="captura-gastos" element={<CapturaMasivaGastos />} />
 
           {/* ----------- 404 / OTRAS ------------- */}
           <Route path="*" element={<h1 className="text-white">404 - Página no encontrada</h1>} />

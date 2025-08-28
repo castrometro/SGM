@@ -7,10 +7,15 @@ import logging
 import os
 import re
 import time
+import json
+import redis
 from datetime import date
+from io import BytesIO
 
 import pandas as pd
-from celery import shared_task
+from openpyxl import load_workbook, Workbook
+from openpyxl.styles import Font, Alignment, PatternFill
+from celery import shared_task, group, chord
 from django.contrib.auth.models import User
 from django.core.files.base import ContentFile
 from contabilidad.models import (
@@ -1085,4 +1090,528 @@ def enviar_multiples_reportes_a_cache(reporte_ids):
     )
     
     return resultados
+
+
+# =====================================================
+# FUNCIONES AUXILIARES PARA CAPTURA MASIVA DE GASTOS
+# =====================================================
+
+def get_redis_client_db1():
+    """
+    Obtiene cliente Redis para db1 usando la configuración de Django
+    Con soporte UTF-8 completo
+    """
+    redis_password = os.environ.get('REDIS_PASSWORD', '')
+    if redis_password:
+        return redis.Redis(
+            host='redis', 
+            port=6379, 
+            db=1, 
+            password=redis_password, 
+            decode_responses=True,
+            encoding='utf-8',
+            encoding_errors='strict'
+        )
+    else:
+        return redis.Redis(
+            host='redis', 
+            port=6379, 
+            db=1, 
+            decode_responses=True,
+            encoding='utf-8',
+            encoding_errors='strict'
+        )
+
+def get_redis_client_db1_binary():
+    """
+    Obtiene cliente Redis para db1 para datos binarios (sin decode_responses)
+    Con soporte UTF-8 para metadatos
+    """
+    redis_password = os.environ.get('REDIS_PASSWORD', '')
+    if redis_password:
+        return redis.Redis(
+            host='redis', 
+            port=6379, 
+            db=1, 
+            password=redis_password, 
+            decode_responses=False,
+            encoding='utf-8'
+        )
+    else:
+        return redis.Redis(
+            host='redis', 
+            port=6379, 
+            db=1, 
+            decode_responses=False,
+            encoding='utf-8'
+        )
+
+def serialize_excel_data(data):
+    """
+    Serializa datos de Excel para que sean compatibles con JSON/Redis
+    """
+    if isinstance(data, list):
+        return [serialize_excel_data(item) for item in data]
+    elif isinstance(data, dict):
+        return {key: serialize_excel_data(value) for key, value in data.items()}
+    elif isinstance(data, (datetime.datetime, datetime.date)):
+        return data.isoformat()
+    elif isinstance(data, (int, float, str, bool)) or data is None:
+        # Asegurar que las strings mantengan encoding UTF-8
+        return data
+    else:
+        return data
+
+def contar_centros_costos(fila, headers, mapeo_cc=None):
+    """
+    Cuenta la cantidad de centros de costos en una fila de gastos
+    """
+    if mapeo_cc is None:
+        mapeo_cc = {}
+    
+    count = 0
+    # Buscar columnas que contengan información de centros de costos
+    for header in headers:
+        if header and ('pyc' in header.lower() or 'ps/eb' in header.lower() or 'co' in header.lower()):
+            valor = fila.get(header)
+            if valor and str(valor).strip():
+                count += 1
+    
+    return count
+
+# =====================================================
+# TAREAS DE CAPTURA MASIVA DE GASTOS
+# =====================================================
+
+@shared_task(bind=True)
+def procesar_captura_masiva_gastos_task(self, archivo_content, archivo_nombre, usuario_id, mapeo_cc=None):
+    """
+    Tarea principal que recibe el archivo Excel y dispara el procesamiento con Chord
+    """
+    logger.info(f"🧾 Iniciando captura masiva de gastos para archivo: {archivo_nombre}")
+    
+    # Si no hay mapeo, usar diccionario vacío
+    if mapeo_cc is None:
+        mapeo_cc = {}
+    
+    try:
+        # Configurar Redis db1 para resultados temporales - usar configuración de Django
+        redis_client = get_redis_client_db1()
+        
+        # Cargar el archivo Excel desde el contenido
+        wb = load_workbook(BytesIO(archivo_content))
+        ws = wb.active
+        
+        # Obtener headers de la primera fila
+        headers = []
+        for cell in ws[1]:
+            headers.append(cell.value)
+        
+        logger.info(f"📋 Headers encontrados: {headers}")
+        
+        # Procesar filas desde la fila 2 (saltar header)
+        filas_data = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if any(row):  # Solo procesar filas que no estén completamente vacías
+                fila_dict = dict(zip(headers, row))
+                # Serializar datos para evitar problemas con datetime
+                fila_dict = serialize_excel_data(fila_dict)
+                filas_data.append(fila_dict)
+        
+        logger.info(f"📊 Total filas a procesar: {len(filas_data)}")
+        
+        # Para simplificar inicialmente, procesamos todo en una sola tarea
+        # Generar task_id único para coordinar resultados
+        task_id = self.request.id
+        
+        # Almacenar metadatos en Redis con TTL de 5 minutos - incluir usuario_id en la clave
+        metadata = {
+            'task_id': task_id,
+            'archivo_nombre': archivo_nombre,
+            'usuario_id': usuario_id,
+            'total_filas': len(filas_data),
+            'headers': headers,
+            'mapeo_cc': mapeo_cc,
+            'inicio': timezone.now().isoformat(),
+            'estado': 'procesando'
+        }
+        redis_client.setex(
+            f"captura_gastos_meta:{usuario_id}:{task_id}", 
+            300, 
+            json.dumps(metadata, ensure_ascii=False)
+        )
+        
+        # Procesar directamente (versión simplificada)
+        resultado = procesar_filas_gastos_simple(filas_data, headers, mapeo_cc)
+        
+        # Crear Excel de resultado
+        wb_resultado = crear_excel_resultado_gastos(filas_data, headers, resultado)
+        
+        # Guardar en Redis el archivo resultado
+        excel_bytes = BytesIO()
+        wb_resultado.save(excel_bytes)
+        excel_bytes.seek(0)
+        
+        redis_client_binary = get_redis_client_db1_binary()
+        redis_client_binary.setex(
+            f"captura_gastos_archivo:{usuario_id}:{task_id}",
+            300,  # 5 minutos
+            excel_bytes.getvalue()
+        )
+        
+        # Actualizar metadatos con resultado
+        metadata.update({
+            'estado': 'completado',
+            'fin': timezone.now().isoformat(),
+            'archivo_resultado': f'gastos_procesados_{archivo_nombre}',
+            'resumen': resultado.get('resumen', {})
+        })
+        
+        redis_client.setex(
+            f"captura_gastos_meta:{usuario_id}:{task_id}", 
+            300, 
+            json.dumps(metadata, ensure_ascii=False)
+        )
+        
+        logger.info(f"✅ Captura masiva de gastos completada para {archivo_nombre}")
+        
+        return {
+            'task_id': task_id,
+            'estado': 'completado',
+            'total_filas': len(filas_data),
+            'resumen': resultado.get('resumen', {})
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error procesando captura masiva de gastos: {str(e)}")
+        
+        # Actualizar metadatos con error
+        try:
+            redis_client = get_redis_client_db1()
+            metadata = {
+                'task_id': self.request.id,
+                'estado': 'error',
+                'error': str(e),
+                'fin': timezone.now().isoformat()
+            }
+            redis_client.setex(
+                f"captura_gastos_meta:{usuario_id}:{self.request.id}", 
+                300, 
+                json.dumps(metadata, ensure_ascii=False)
+            )
+        except:
+            pass
+        
+        raise
+
+def procesar_filas_gastos_simple(filas_data, headers, mapeo_cc):
+    """
+    Versión simplificada del procesamiento de gastos
+    """
+    resumen = {
+        'total_procesadas': len(filas_data),
+        'con_centros_costo': 0,
+        'sin_centros_costo': 0
+    }
+    
+    for fila in filas_data:
+        cc_count = contar_centros_costos(fila, headers, mapeo_cc)
+        if cc_count > 0:
+            resumen['con_centros_costo'] += 1
+        else:
+            resumen['sin_centros_costo'] += 1
+    
+    return {'resumen': resumen}
+
+def crear_excel_resultado_gastos(filas_data, headers, resultado):
+    """
+    Crea un archivo Excel con los resultados del procesamiento
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Gastos Procesados"
+    
+    # Agregar headers
+    for col, header in enumerate(headers, 1):
+        ws.cell(row=1, column=col, value=header)
+    
+    # Agregar datos
+    for row_idx, fila in enumerate(filas_data, 2):
+        for col_idx, header in enumerate(headers, 1):
+            valor = fila.get(header)
+            ws.cell(row=row_idx, column=col_idx, value=valor)
+    
+    # Agregar columna de estado
+    estado_col = len(headers) + 1
+    ws.cell(row=1, column=estado_col, value="Estado Procesamiento")
+    
+    for row_idx in range(2, len(filas_data) + 2):
+        ws.cell(row=row_idx, column=estado_col, value="Procesado")
+    
+    return wb
+
+
+# =====================================================
+# FUNCIONES PARA CAPTURA MASIVA DE GASTOS
+# =====================================================
+
+def get_redis_client_db1():
+    """
+    Obtiene cliente Redis para db1 usando la configuración de Django
+    Con soporte UTF-8 completo
+    """
+    redis_password = os.environ.get('REDIS_PASSWORD', '')
+    if redis_password:
+        return redis.Redis(
+            host='redis', 
+            port=6379, 
+            db=1, 
+            password=redis_password, 
+            decode_responses=True,
+            encoding='utf-8',
+            encoding_errors='strict'
+        )
+    else:
+        return redis.Redis(
+            host='redis', 
+            port=6379, 
+            db=1, 
+            decode_responses=True,
+            encoding='utf-8',
+            encoding_errors='strict'
+        )
+
+def get_redis_client_db1_binary():
+    """
+    Obtiene cliente Redis para db1 para datos binarios (sin decode_responses)
+    Con soporte UTF-8 para metadatos
+    """
+    redis_password = os.environ.get('REDIS_PASSWORD', '')
+    if redis_password:
+        return redis.Redis(
+            host='redis', 
+            port=6379, 
+            db=1, 
+            password=redis_password, 
+            decode_responses=False,
+            encoding='utf-8'
+        )
+    else:
+        return redis.Redis(
+            host='redis', 
+            port=6379, 
+            db=1, 
+            decode_responses=False,
+            encoding='utf-8'
+        )
+
+def serialize_excel_data(data):
+    """
+    Serializa datos de Excel para evitar problemas con datetime y otros tipos
+    """
+    if isinstance(data, dict):
+        return {k: serialize_excel_data(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [serialize_excel_data(item) for item in data]
+    elif hasattr(data, 'isoformat'):  # datetime objects
+        return data.isoformat()
+    elif isinstance(data, (str, int, float, bool)) or data is None:
+        # Asegurar que las strings mantengan encoding UTF-8
+        return data
+    else:
+        return data
+
+def contar_centros_costos(fila, headers, mapeo_cc):
+    """
+    Cuenta cuántos centros de costos tiene una fila de gastos
+    """
+    centros_count = 0
+    
+    # Buscar columnas que contengan información de centros de costos
+    cc_columns = []
+    for header in headers:
+        if header and ('centro' in str(header).lower() or 'cc' in str(header).lower() or 
+                      'pyc' in str(header).lower() or 'ps' in str(header).lower() or 
+                      'eb' in str(header).lower() or 'co' in str(header).lower()):
+            cc_columns.append(header)
+    
+    # Contar valores no vacíos en columnas de centros de costos
+    for cc_col in cc_columns:
+        valor = fila.get(cc_col)
+        if valor and str(valor).strip():
+            centros_count += 1
+    
+    return min(centros_count, 3)  # Máximo 3 centros de costos
+
+@shared_task(bind=True)
+def procesar_captura_masiva_gastos_task(self, archivo_content, archivo_nombre, usuario_id, mapeo_cc=None):
+    """
+    Tarea principal que recibe el archivo Excel y procesa captura masiva de gastos
+    """
+    logger.info(f"🧾 Iniciando captura masiva de gastos para archivo: {archivo_nombre}")
+    
+    # Si no hay mapeo, usar diccionario vacío
+    if mapeo_cc is None:
+        mapeo_cc = {}
+    
+    try:
+        # Configurar Redis db1 para resultados temporales
+        redis_client = get_redis_client_db1()
+        redis_client_binary = get_redis_client_db1_binary()
+        
+        # Metadatos iniciales de la tarea
+        task_metadata = {
+            'task_id': self.request.id,
+            'usuario_id': usuario_id,
+            'archivo_nombre': archivo_nombre,
+            'estado': 'procesando',
+            'timestamp_inicio': datetime.datetime.now().isoformat(),
+            'progreso': 0,
+            'total_filas': 0,
+            'filas_procesadas': 0,
+            'errores': []
+        }
+        
+        # Guardar metadatos iniciales
+        redis_client.set(
+            f"captura_gastos_meta:{usuario_id}:{self.request.id}",
+            json.dumps(task_metadata),
+            ex=86400  # 24 horas
+        )
+        
+        # Cargar el archivo Excel desde el contenido
+        wb = load_workbook(BytesIO(archivo_content))
+        ws = wb.active
+        
+        # Obtener headers de la primera fila
+        headers = []
+        for cell in ws[1]:
+            headers.append(cell.value)
+        
+        logger.info(f"📋 Headers encontrados: {headers}")
+        
+        # Procesar filas desde la fila 2 (saltar header)
+        filas_data = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if any(row):  # Solo procesar filas que no estén completamente vacías
+                fila_dict = dict(zip(headers, row))
+                # Serializar datos para evitar problemas con datetime
+                fila_dict = serialize_excel_data(fila_dict)
+                filas_data.append(fila_dict)
+        
+        logger.info(f"📊 Total filas a procesar: {len(filas_data)}")
+        
+        # Actualizar metadatos con total de filas
+        task_metadata['total_filas'] = len(filas_data)
+        task_metadata['progreso'] = 10
+        redis_client.set(
+            f"captura_gastos_meta:{usuario_id}:{self.request.id}",
+            json.dumps(task_metadata),
+            ex=86400
+        )
+        
+        # Procesar filas y generar archivo de resultado
+        filas_procesadas = []
+        errores = []
+        
+        for i, fila in enumerate(filas_data):
+            try:
+                # Aquí iría la lógica de procesamiento específica de gastos
+                # Por ahora, simplemente agregamos la fila con un indicador de procesada
+                fila_procesada = fila.copy()
+                fila_procesada['__ESTADO__'] = 'Procesada'
+                fila_procesada['__FECHA_PROCESO__'] = datetime.datetime.now().isoformat()
+                filas_procesadas.append(fila_procesada)
+                
+                # Actualizar progreso cada 10 filas
+                if i % 10 == 0:
+                    progreso = 10 + int((i / len(filas_data)) * 80)  # De 10% a 90%
+                    task_metadata['progreso'] = progreso
+                    task_metadata['filas_procesadas'] = i + 1
+                    redis_client.set(
+                        f"captura_gastos_meta:{usuario_id}:{self.request.id}",
+                        json.dumps(task_metadata),
+                        ex=86400
+                    )
+                
+            except Exception as e:
+                error_msg = f"Error en fila {i+2}: {str(e)}"
+                errores.append(error_msg)
+                logger.error(error_msg)
+        
+        # Crear archivo Excel de resultado
+        wb_resultado = Workbook()
+        ws_resultado = wb_resultado.active
+        ws_resultado.title = "Gastos Procesados"
+        
+        # Agregar headers (originales + nuevas columnas)
+        headers_resultado = headers + ['__ESTADO__', '__FECHA_PROCESO__']
+        ws_resultado.append(headers_resultado)
+        
+        # Agregar filas procesadas
+        for fila in filas_procesadas:
+            fila_valores = [fila.get(header, '') for header in headers_resultado]
+            ws_resultado.append(fila_valores)
+        
+        # Guardar archivo en Redis
+        archivo_buffer = BytesIO()
+        wb_resultado.save(archivo_buffer)
+        archivo_bytes = archivo_buffer.getvalue()
+        
+        # Nombre del archivo resultado
+        nombre_base = archivo_nombre.rsplit('.', 1)[0] if '.' in archivo_nombre else archivo_nombre
+        archivo_resultado_nombre = f"{nombre_base}_procesado.xlsx"
+        
+        # Guardar archivo en Redis
+        redis_client_binary.set(
+            f"captura_gastos_archivo:{usuario_id}:{self.request.id}",
+            archivo_bytes,
+            ex=86400  # 24 horas
+        )
+        
+        # Actualizar metadatos finales
+        task_metadata.update({
+            'estado': 'completado',
+            'timestamp_fin': datetime.datetime.now().isoformat(),
+            'progreso': 100,
+            'filas_procesadas': len(filas_procesadas),
+            'total_errores': len(errores),
+            'errores': errores[:10],  # Solo primeros 10 errores
+            'archivo_resultado': archivo_resultado_nombre
+        })
+        
+        redis_client.set(
+            f"captura_gastos_meta:{usuario_id}:{self.request.id}",
+            json.dumps(task_metadata),
+            ex=86400
+        )
+        
+        logger.info(f"✅ Captura masiva de gastos completada. Archivo: {archivo_resultado_nombre}")
+        
+        return {
+            'status': 'SUCCESS',
+            'task_id': self.request.id,
+            'archivo_resultado': archivo_resultado_nombre,
+            'filas_procesadas': len(filas_procesadas),
+            'errores': len(errores)
+        }
+        
+    except Exception as e:
+        error_msg = f"Error en captura masiva de gastos: {str(e)}"
+        logger.error(error_msg)
+        
+        # Actualizar metadatos con error
+        task_metadata.update({
+            'estado': 'error',
+            'timestamp_fin': datetime.datetime.now().isoformat(),
+            'error': error_msg
+        })
+        
+        redis_client.set(
+            f"captura_gastos_meta:{usuario_id}:{self.request.id}",
+            json.dumps(task_metadata),
+            ex=86400
+        )
+        
+        raise
 

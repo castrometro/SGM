@@ -5,7 +5,8 @@ from .views import (
     ServicioViewSet, ServicioClienteViewSet, ContratoViewSet,
     AsignacionClienteUsuarioViewSet, AnalistaPerformanceViewSet, ping,
     DashboardViewSet, AnalistasDetalladoViewSet,
-    clientes_disponibles, clientes_asignados, remover_asignacion
+    clientes_disponibles, clientes_asignados, remover_asignacion,
+    captura_masiva_gastos, estado_captura_gastos, descargar_resultado_gastos
 )
 from .views_bypass import (
     clientes_disponibles_bypass, asignar_areas_cliente, 
@@ -46,4 +47,9 @@ urlpatterns = [
     
     # URLs específicas del gerente
     path('gerente/', include('api.urls_gerente')),
+    
+    # URLs para captura masiva de gastos
+    path('captura-masiva-gastos/', captura_masiva_gastos, name='captura-masiva-gastos'),
+    path('estado-captura-gastos/<str:task_id>/', estado_captura_gastos, name='estado-captura-gastos'),
+    path('descargar-resultado-gastos/<str:task_id>/', descargar_resultado_gastos, name='descargar-resultado-gastos'),
 ]

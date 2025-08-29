@@ -39,6 +39,9 @@ import MovimientosMes from "./components/MovimientosMes/MovimientosMes";
 // Importar componentes de Captura Masiva de Gastos
 import CapturaMasivaGastos from "./pages/CapturaMasivaGastos";
 
+// Importar componente V2 de Nómina
+import CierreDetalleNomina_v2 from "./components/CierreNomina_v2/pages/CierreDetalleNomina_v2";
+
 function App() {
   return (
     <Router>
@@ -77,6 +80,7 @@ function App() {
 
           {/* ----------- ÁREA: NÓMINA ------------- */}
           <Route path="nomina/cierres/:cierreId" element={<CierreDetalleNomina />} />
+          <Route path="nomina/cierres-v2/:cierreId" element={<CierreDetalleNomina_v2 />} />
           <Route path="cierres-nomina/:id/libro-remuneraciones" element={<LibroRemuneraciones />} />
           <Route path="cierres-nomina/:id/movimientos" element={<MovimientosMes />} />          {/* ----------- ÁREA: GESTIÓN DE ANALISTAS ------------- */}
           <Route path="analistas" element={<GestionAnalistas />} />

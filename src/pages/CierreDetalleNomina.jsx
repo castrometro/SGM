@@ -33,7 +33,7 @@ const CierreDetalleNomina = () => {
           setCierre(cierreObj);
           const clienteObj = await obtenerCliente(cierreObj.cliente);
           setCliente(clienteObj);
-          console.log('✅ [CierreDetalleNomina] Datos iniciales cargados');
+          console.log('✅ [CierreDetalleNomina] Datos iniciales cargados', { cierre: cierreObj, cliente: clienteObj });
         } catch (error) {
           console.error('❌ Error cargando datos iniciales:', error);
         } finally {

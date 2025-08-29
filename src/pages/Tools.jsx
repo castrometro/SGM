@@ -53,7 +53,7 @@ const Tools = () => {
       description: "Procesar y clasificar gastos desde Excel",
       icon: Receipt,
       color: "bg-emerald-600",
-      onClick: () => navigate("captura-gastos"),
+      onClick: () => navigate("/menu/captura-gastos"),
       disabled: false
     },
     {

@@ -1012,3 +1012,57 @@ def descargar_resultado_gastos(request, task_id):
         return Response({
             'error': f'Error descargando archivo: {str(e)}'
         }, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def leer_headers_excel(request):
+    """
+    Leer los headers de un archivo Excel para mapeo de centros de costos
+    """
+    try:
+        # Validar que se haya enviado un archivo
+        if 'archivo' not in request.FILES:
+            return Response({
+                'error': 'No se encontró archivo en la petición'
+            }, status=400)
+        
+        archivo = request.FILES['archivo']
+        
+        # Validar extensión del archivo
+        if not archivo.name.lower().endswith(('.xlsx', '.xls')):
+            return Response({
+                'error': 'El archivo debe ser un Excel (.xlsx o .xls)'
+            }, status=400)
+        
+        # Leer contenido del archivo
+        archivo_content = archivo.read()
+        
+        # Cargar el archivo Excel
+        from openpyxl import load_workbook
+        from io import BytesIO
+        
+        wb = load_workbook(BytesIO(archivo_content))
+        ws = wb.active
+        
+        # Obtener headers de la primera fila
+        headers = []
+        for cell in ws[1]:
+            headers.append(cell.value)
+        
+        # Detectar columnas de centros de costos
+        centros_costos = {}
+        for i, header in enumerate(headers):
+            if header and ('pyc' in header.lower() or 'ps/eb' in header.lower() or 'co' in header.lower()):
+                centros_costos[f'col{i}'] = header
+        
+        return Response({
+            'headers': headers,
+            'centros_costos_detectados': centros_costos,
+            'total_columnas': len(headers)
+        })
+        
+    except Exception as e:
+        return Response({
+            'error': f'Error leyendo headers: {str(e)}'
+        }, status=500)

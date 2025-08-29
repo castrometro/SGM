@@ -92,7 +92,7 @@ export const useCapturaGastos = () => {
       formData.append('archivo', archivoSeleccionado);
       
       const token = localStorage.getItem('token');
-      const response = await fetch('http://172.17.11.18:8000/api/gastos/leer-headers/', {
+      const response = await fetch('http://172.17.11.18:8000/api/captura-masiva-gastos/leer-headers/', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,

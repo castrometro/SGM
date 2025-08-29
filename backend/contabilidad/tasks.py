@@ -1220,7 +1220,25 @@ def procesar_captura_masiva_gastos_task(self, archivo_content, archivo_nombre, u
         
         logger.info(f"📊 Total filas a procesar: {len(filas_data)}")
         
-        # Para simplificar inicialmente, procesamos todo en una sola tarea
+        # Agrupar por "Tipo Doc" (columna 2) + cantidad de Centros de Costos (PyC, PS/EB, CO)
+        tipo_doc_column = headers[1] if len(headers) > 1 else None
+        if not tipo_doc_column:
+            raise ValueError("No se encontró la columna de Tipo Doc (columna 2)")
+        
+        grupos_por_tipo_cc = {}
+        for i, fila in enumerate(filas_data):
+            tipo_doc = fila.get(tipo_doc_column, 'Sin Tipo')
+            cc_count = contar_centros_costos(fila, headers, mapeo_cc)
+            
+            # Crear clave de grupo: "TipoDoc con XCC"
+            clave_grupo = f"{tipo_doc} con {cc_count}CC"
+            
+            if clave_grupo not in grupos_por_tipo_cc:
+                grupos_por_tipo_cc[clave_grupo] = []
+            grupos_por_tipo_cc[clave_grupo].append(fila)
+        
+        logger.info(f"🗂️ Grupos creados por Tipo Doc + CC: {list(grupos_por_tipo_cc.keys())}")
+        
         # Generar task_id único para coordinar resultados
         task_id = self.request.id
         
@@ -1230,6 +1248,7 @@ def procesar_captura_masiva_gastos_task(self, archivo_content, archivo_nombre, u
             'archivo_nombre': archivo_nombre,
             'usuario_id': usuario_id,
             'total_filas': len(filas_data),
+            'grupos': list(grupos_por_tipo_cc.keys()),
             'headers': headers,
             'mapeo_cc': mapeo_cc,
             'inicio': timezone.now().isoformat(),
@@ -1241,30 +1260,18 @@ def procesar_captura_masiva_gastos_task(self, archivo_content, archivo_nombre, u
             json.dumps(metadata, ensure_ascii=False)
         )
         
-        # Procesar directamente (versión simplificada)
-        resultado = procesar_filas_gastos_simple(filas_data, headers, mapeo_cc)
-        
-        # Crear Excel de resultado
-        wb_resultado = crear_excel_resultado_gastos(filas_data, headers, resultado)
-        
-        # Guardar en Redis el archivo resultado
-        excel_bytes = BytesIO()
-        wb_resultado.save(excel_bytes)
-        excel_bytes.seek(0)
-        
-        redis_client_binary = get_redis_client_db1_binary()
-        redis_client_binary.setex(
-            f"captura_gastos_archivo:{usuario_id}:{task_id}",
-            300,  # 5 minutos
-            excel_bytes.getvalue()
-        )
+        # Procesar cada grupo y crear Excel con pestañas
+        logger.info(f"🔧 DEBUG: Llamando a consolidar_resultados_gastos_directo con {len(grupos_por_tipo_cc)} grupos")
+        resultado = consolidar_resultados_gastos_directo(grupos_por_tipo_cc, headers, mapeo_cc, task_id, usuario_id)
+        logger.info(f"🔧 DEBUG: consolidar_resultados_gastos_directo retornó: {resultado}")
         
         # Actualizar metadatos con resultado
         metadata.update({
             'estado': 'completado',
+            'total_filas_procesadas': resultado['total_filas_procesadas'],
             'fin': timezone.now().isoformat(),
-            'archivo_resultado': f'gastos_procesados_{archivo_nombre}',
-            'resumen': resultado.get('resumen', {})
+            'archivo_resultado': f'{archivo_nombre.rsplit(".", 1)[0]}_procesado.xlsx',
+            'archivo_excel_disponible': True
         })
         
         redis_client.setex(
@@ -1273,13 +1280,14 @@ def procesar_captura_masiva_gastos_task(self, archivo_content, archivo_nombre, u
             json.dumps(metadata, ensure_ascii=False)
         )
         
-        logger.info(f"✅ Captura masiva de gastos completada para {archivo_nombre}")
+        logger.info(f"✅ Captura masiva de gastos completada. Archivo: {metadata['archivo_resultado']}")
         
         return {
+            'status': 'SUCCESS',
             'task_id': task_id,
-            'estado': 'completado',
-            'total_filas': len(filas_data),
-            'resumen': resultado.get('resumen', {})
+            'archivo_resultado': metadata['archivo_resultado'],
+            'filas_procesadas': resultado['total_filas_procesadas'],
+            'errores': 0
         }
         
     except Exception as e:
@@ -1303,6 +1311,291 @@ def procesar_captura_masiva_gastos_task(self, archivo_content, archivo_nombre, u
             pass
         
         raise
+
+def consolidar_resultados_gastos_directo(grupos_por_tipo_cc, headers, mapeo_cc, task_id, usuario_id):
+    """
+    Consolida los resultados de todos los grupos y genera el Excel final directamente
+    """
+    logger.info(f"🔄 Consolidando resultados para task_id: {task_id}, usuario: {usuario_id}")
+    
+    try:
+        # Mapeo estático de tipos de documento chilenos comunes
+        tipos_doc_map = {
+            "33": "Factura Electrónica",
+            "34": "Factura Exenta Electrónica", 
+            "39": "Boleta Electrónica",
+            "41": "Boleta Exenta Electrónica",
+            "43": "Liquidación Factura Electrónica",
+            "46": "Factura de Compra Electrónica",
+            "52": "Guía de Despacho Electrónica",
+            "56": "Nota de Débito Electrónica",
+            "61": "Nota de Crédito Electrónica",
+            "110": "Factura de Exportación Electrónica",
+            "111": "Nota de Débito de Exportación Electrónica",
+            "112": "Nota de Crédito de Exportación Electrónica"
+        }
+        logger.info(f"📋 Usando mapeo estático de {len(tipos_doc_map)} tipos de documento chilenos")
+        
+        # Crear un nuevo workbook con pestañas por tipo de documento
+        wb = Workbook()
+        wb.remove(wb.active)  # Remover hoja por defecto
+        
+        total_filas_procesadas = 0
+        
+        # Procesar cada grupo y crear pestañas
+        for clave_grupo, filas_data in grupos_por_tipo_cc.items():
+            
+            # Crear hoja para este grupo - convertir a string y limpiar para Excel
+            nombre_hoja = str(clave_grupo)[:31]  # Excel limita a 31 caracteres
+            # Reemplazar caracteres no válidos para nombres de hoja en Excel
+            nombre_hoja = nombre_hoja.replace(":", "-").replace("/", "-").replace("\\", "-")
+            ws = wb.create_sheet(title=nombre_hoja)
+            
+            # Headers de salida según especificaciones contables
+            headers_salida = get_headers_salida_contabilidad()
+            
+            # Escribir headers de salida
+            for col, header in enumerate(headers_salida, 1):
+                ws.cell(row=1, column=col, value=header)
+            
+            # Escribir datos transformados
+            row_idx = 2  # Comenzar después del header
+            
+            for fila in filas_data:
+                # Extraer tipo de documento y cantidad de CC del nombre del grupo (ej: "33 con 2CC" -> "33", 2)
+                partes_grupo = clave_grupo.split(' ')
+                tipo_doc = partes_grupo[0]
+                cc_count = int(partes_grupo[2].replace('CC', '')) if len(partes_grupo) >= 3 else 1
+                
+                # Aplicar reglas de transformación según tipo de documento y cantidad de CC
+                # Esto puede retornar múltiples filas (ej: para tipo 33 retorna 3 filas: Proveedores, Gastos, IVA)
+                filas_transformadas = aplicar_reglas_tipo_documento(fila, headers, tipo_doc, cc_count, mapeo_cc, tipos_doc_map)
+                
+                # Escribir cada fila transformada
+                for fila_transformada in filas_transformadas:
+                    for col_idx, header in enumerate(headers_salida, 1):
+                        valor = fila_transformada.get(header, "")
+                        ws.cell(row=row_idx, column=col_idx, value=valor)
+                    row_idx += 1
+            
+            # Calcular total de filas de salida para este grupo
+            filas_salida_grupo = 0
+            for fila in filas_data:
+                partes_grupo = clave_grupo.split(' ')
+                tipo_doc = partes_grupo[0]
+                cc_count = int(partes_grupo[2].replace('CC', '')) if len(partes_grupo) >= 3 else 1
+                filas_transformadas = aplicar_reglas_tipo_documento(fila, headers, tipo_doc, cc_count, mapeo_cc, tipos_doc_map)
+                filas_salida_grupo += len(filas_transformadas)
+            
+            total_filas_procesadas += filas_salida_grupo
+            logger.info(f"📊 Hoja '{clave_grupo}' creada con {len(filas_data)} filas de entrada → {filas_salida_grupo} filas de salida")
+        
+        # Convertir workbook a bytes
+        excel_buffer = BytesIO()
+        wb.save(excel_buffer)
+        excel_content = excel_buffer.getvalue()
+        
+        # Almacenar el archivo Excel en Redis con TTL de 5 minutos - incluir usuario_id en la clave
+        redis_client_binary = get_redis_client_db1_binary()
+        redis_client_binary.setex(
+            f"captura_gastos_archivo:{usuario_id}:{task_id}", 
+            300, 
+            excel_content
+        )
+        
+        logger.info(f"✅ Consolidación completada para task_id: {task_id}")
+        
+        return {
+            'task_id': task_id,
+            'estado': 'completado',
+            'total_filas_procesadas': total_filas_procesadas,
+            'total_grupos': len(grupos_por_tipo_cc),
+            'archivo_excel_disponible': True
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error consolidando resultados: {str(e)}")
+        raise
+
+def get_headers_salida_contabilidad():
+    """
+    Headers de salida para el archivo Excel procesado según especificaciones contables
+    """
+    return [
+        'Fecha',
+        'Tipo Doc',
+        'Número Doc',
+        'RUT',
+        'Razón Social',
+        'Cuenta',
+        'Nombre Cuenta',
+        'Debe',
+        'Haber',
+        'Centro Costo',
+        'Proyecto',
+        'Glosa',
+        'Referencia'
+    ]
+
+def aplicar_reglas_tipo_documento(fila, headers, tipo_doc, cc_count, mapeo_cc, tipos_doc_map):
+    """
+    Aplica las reglas de transformación según el tipo de documento
+    Retorna una lista de filas transformadas
+    """
+    filas_resultado = []
+    
+    try:
+        # Headers de entrada esperados
+        fecha_idx = next((i for i, h in enumerate(headers) if h and 'fecha' in h.lower() and 'docto' in h.lower()), 6)
+        folio_idx = next((i for i, h in enumerate(headers) if h and 'folio' in h.lower()), 5)
+        rut_idx = next((i for i, h in enumerate(headers) if h and 'rut' in h.lower()), 3)
+        razon_idx = next((i for i, h in enumerate(headers) if h and 'razon' in h.lower() or 'social' in h.lower()), 4)
+        
+        # Montos
+        monto_neto_idx = next((i for i, h in enumerate(headers) if h and 'neto' in h.lower()), 8)
+        monto_iva_idx = next((i for i, h in enumerate(headers) if h and 'iva' in h.lower() and 'recuperable' in h.lower()), 9)
+        monto_total_idx = next((i for i, h in enumerate(headers) if h and 'total' in h.lower()), 11)
+        
+        # Obtener valores de la fila
+        fecha = fila.get(headers[fecha_idx]) if fecha_idx < len(headers) else ""
+        folio = fila.get(headers[folio_idx]) if folio_idx < len(headers) else ""
+        rut = fila.get(headers[rut_idx]) if rut_idx < len(headers) else ""
+        razon_social = fila.get(headers[razon_idx]) if razon_idx < len(headers) else ""
+        
+        monto_neto = float(fila.get(headers[monto_neto_idx], 0) or 0)
+        monto_iva = float(fila.get(headers[monto_iva_idx], 0) or 0)
+        monto_total = float(fila.get(headers[monto_total_idx], 0) or 0)
+        
+        # Descripción del tipo de documento
+        tipo_doc_desc = tipos_doc_map.get(str(tipo_doc), f"Tipo {tipo_doc}")
+        
+        # Reglas según tipo de documento
+        if tipo_doc == "33":  # Factura Electrónica
+            # 1. Fila de Proveedores (HABER)
+            filas_resultado.append({
+                'Fecha': fecha,
+                'Tipo Doc': tipo_doc,
+                'Número Doc': folio,
+                'RUT': rut,
+                'Razón Social': razon_social,
+                'Cuenta': '2111001',  # Cuenta de proveedores
+                'Nombre Cuenta': 'Proveedores Nacionales',
+                'Debe': '',
+                'Haber': monto_total,
+                'Centro Costo': '',
+                'Proyecto': '',
+                'Glosa': f'{tipo_doc_desc} - {razon_social}',
+                'Referencia': folio
+            })
+            
+            # 2. Fila de Gastos (DEBE)
+            filas_resultado.append({
+                'Fecha': fecha,
+                'Tipo Doc': tipo_doc,
+                'Número Doc': folio,
+                'RUT': rut,
+                'Razón Social': razon_social,
+                'Cuenta': '5111001',  # Cuenta de gastos generales
+                'Nombre Cuenta': 'Gastos Generales',
+                'Debe': monto_neto,
+                'Haber': '',
+                'Centro Costo': get_centro_costo_principal(fila, headers, mapeo_cc),
+                'Proyecto': '',
+                'Glosa': f'{tipo_doc_desc} - {razon_social}',
+                'Referencia': folio
+            })
+            
+            # 3. Fila de IVA (DEBE)
+            if monto_iva > 0:
+                filas_resultado.append({
+                    'Fecha': fecha,
+                    'Tipo Doc': tipo_doc,
+                    'Número Doc': folio,
+                    'RUT': rut,
+                    'Razón Social': razon_social,
+                    'Cuenta': '1141001',  # IVA Crédito Fiscal
+                    'Nombre Cuenta': 'IVA Crédito Fiscal',
+                    'Debe': monto_iva,
+                    'Haber': '',
+                    'Centro Costo': '',
+                    'Proyecto': '',
+                    'Glosa': f'IVA {tipo_doc_desc} - {razon_social}',
+                    'Referencia': folio
+                })
+        
+        elif tipo_doc == "39":  # Boleta Electrónica
+            # Para boletas, solo una fila de gasto (no hay IVA recuperable)
+            filas_resultado.append({
+                'Fecha': fecha,
+                'Tipo Doc': tipo_doc,
+                'Número Doc': folio,
+                'RUT': rut,
+                'Razón Social': razon_social,
+                'Cuenta': '5111002',  # Gastos menores
+                'Nombre Cuenta': 'Gastos Menores',
+                'Debe': monto_total,
+                'Haber': '',
+                'Centro Costo': get_centro_costo_principal(fila, headers, mapeo_cc),
+                'Proyecto': '',
+                'Glosa': f'{tipo_doc_desc} - {razon_social}',
+                'Referencia': folio
+            })
+        
+        else:
+            # Para otros tipos de documento, usar regla genérica
+            filas_resultado.append({
+                'Fecha': fecha,
+                'Tipo Doc': tipo_doc,
+                'Número Doc': folio,
+                'RUT': rut,
+                'Razón Social': razon_social,
+                'Cuenta': '5111003',  # Gastos varios
+                'Nombre Cuenta': 'Gastos Varios',
+                'Debe': monto_total,
+                'Haber': '',
+                'Centro Costo': get_centro_costo_principal(fila, headers, mapeo_cc),
+                'Proyecto': '',
+                'Glosa': f'{tipo_doc_desc} - {razon_social}',
+                'Referencia': folio
+            })
+    
+    except Exception as e:
+        logger.error(f"Error aplicando reglas para tipo {tipo_doc}: {str(e)}")
+        # En caso de error, crear una fila básica
+        filas_resultado.append({
+            'Fecha': '',
+            'Tipo Doc': tipo_doc,
+            'Número Doc': '',
+            'RUT': '',
+            'Razón Social': '',
+            'Cuenta': '5111099',
+            'Nombre Cuenta': 'Gastos Sin Clasificar',
+            'Debe': '',
+            'Haber': '',
+            'Centro Costo': '',
+            'Proyecto': '',
+            'Glosa': f'Error procesando: {str(e)}',
+            'Referencia': ''
+        })
+    
+    return filas_resultado
+
+def get_centro_costo_principal(fila, headers, mapeo_cc):
+    """
+    Obtiene el centro de costo principal de una fila
+    """
+    # Buscar columnas de centros de costo conocidas
+    cc_columns = ['PyC', 'EB', 'CO']
+    
+    for cc_col in cc_columns:
+        if cc_col in headers:
+            valor = fila.get(cc_col)
+            if valor and str(valor).strip():
+                # Aplicar mapeo si existe
+                cc_mapeado = mapeo_cc.get(str(valor), str(valor))
+                return cc_mapeado
+    
+    return ''
 
 def procesar_filas_gastos_simple(filas_data, headers, mapeo_cc):
     """
@@ -1577,7 +1870,8 @@ def procesar_captura_masiva_gastos_task(self, archivo_content, archivo_nombre, u
             'filas_procesadas': len(filas_procesadas),
             'total_errores': len(errores),
             'errores': errores[:10],  # Solo primeros 10 errores
-            'archivo_resultado': archivo_resultado_nombre
+            'archivo_resultado': archivo_resultado_nombre,
+            'archivo_excel_disponible': True
         })
         
         redis_client.set(

@@ -85,7 +85,7 @@ export const leerHeadersExcel = async (archivo) => {
 
   const token = localStorage.getItem('token');
   
-  const response = await fetch(`${API_BASE_URL}/gastos/leer-headers/`, {
+  const response = await fetch(`${API_BASE_URL}/captura-masiva-gastos/leer-headers/`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,

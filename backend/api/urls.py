@@ -6,7 +6,8 @@ from .views import (
     AsignacionClienteUsuarioViewSet, AnalistaPerformanceViewSet, ping,
     DashboardViewSet, AnalistasDetalladoViewSet,
     clientes_disponibles, clientes_asignados, remover_asignacion,
-    captura_masiva_gastos, estado_captura_gastos, descargar_resultado_gastos
+    captura_masiva_gastos, estado_captura_gastos, descargar_resultado_gastos,
+    leer_headers_excel
 )
 from .views_bypass import (
     clientes_disponibles_bypass, asignar_areas_cliente, 
@@ -52,4 +53,5 @@ urlpatterns = [
     path('captura-masiva-gastos/', captura_masiva_gastos, name='captura-masiva-gastos'),
     path('estado-captura-gastos/<str:task_id>/', estado_captura_gastos, name='estado-captura-gastos'),
     path('descargar-resultado-gastos/<str:task_id>/', descargar_resultado_gastos, name='descargar-resultado-gastos'),
+    path('captura-masiva-gastos/leer-headers/', leer_headers_excel, name='leer-headers-excel'),
 ]

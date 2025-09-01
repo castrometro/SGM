@@ -92,7 +92,38 @@ const LibroRemuneracionesCard = ({
     try {
       await onSubirArchivo(archivo);
     } catch (err) {
-      setError("Error al subir el archivo.");
+      // Capturar el mensaje específico del backend
+      console.log('🔍 Error completo:', err);
+      console.log('🔍 Error response:', err?.response);
+      console.log('🔍 Error response data:', err?.response?.data);
+      
+      let errorMessage = "Error al subir el archivo.";
+      
+      if (err?.response?.data) {
+        const data = err.response.data;
+        // Diferentes formatos posibles de ValidationError
+        if (data.detail) {
+          errorMessage = data.detail;
+        } else if (data.message) {
+          errorMessage = data.message;
+        } else if (data.error) {
+          errorMessage = data.error;
+        } else if (Array.isArray(data)) {
+          // ValidationError a veces viene como array
+          errorMessage = data[0];
+        } else if (typeof data === 'string') {
+          errorMessage = data;
+        } else if (data.non_field_errors) {
+          errorMessage = Array.isArray(data.non_field_errors) 
+            ? data.non_field_errors[0] 
+            : data.non_field_errors;
+        }
+      } else if (err?.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
+      console.error('Error subiendo archivo:', err);
     }
   };
 
@@ -138,22 +169,14 @@ const LibroRemuneracionesCard = ({
   // Determinar si está procesando (estado del servidor O estado local)
   const isProcesando = estado === "procesando" || procesandoLocal;
 
-  // ✅ NUEVA LÓGICA: Determinar si se puede subir archivo
-  const puedeSubirArchivo = !isDisabled && 
-    (estado === "no_subido" || estado === "con_error");
+  // 🚀 LÓGICA SIMPLIFICADA: Un solo botón que cambia según si hay archivo
+  const puedeInteractuarConArchivo = !isDisabled && !isProcesando;
   
-  // Estados donde NO se puede cambiar el archivo
-  const estadosConArchivoBloqueado = [
-    "analizando_hdrs",
-    "hdrs_analizados", 
-    "clasif_pendiente",
-    "clasif_en_proceso",
-    "clasificado",
-    "procesando",
-    "procesado"
-  ];
+  // Determinar si hay archivo
+  const tieneArchivo = Boolean(archivoNombre);
   
-  const archivoEsBloqueado = estadosConArchivoBloqueado.includes(estado);
+  // 🎯 NUEVA LÓGICA: Determinar si puede procesar
+  const puedeProcesr = tieneArchivo && estado === "clasificado" && !isProcesando && !isProcessed;
 
   return (
     <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${isDisabled ? "opacity-60 pointer-events-none" : ""}`}>
@@ -186,60 +209,84 @@ const LibroRemuneracionesCard = ({
       </a>
 
       <div className="flex gap-3 items-center">
-        {/* ✅ BOTÓN DE SUBIDA CONDICIONAL */}
-        {puedeSubirArchivo ? (
+        {/* 🚀 BOTÓN ÚNICO INTELIGENTE */}
+        {puedeInteractuarConArchivo ? (
           <button
             type="button"
-            onClick={() => fileInputRef.current.click()}
-            disabled={isDisabled}
-            className={`bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded text-sm font-medium transition ${isDisabled ? "opacity-60 cursor-not-allowed" : ""}`}
+            onClick={() => {
+              if (tieneArchivo && onEliminarArchivo) {
+                // Si hay archivo, eliminar primero
+                handleEliminarArchivo();
+              } else {
+                // Si no hay archivo, abrir selector
+                fileInputRef.current.click();
+              }
+            }}
+            disabled={isDisabled || eliminando}
+            className={`px-3 py-1 rounded text-sm font-medium transition ${
+              isDisabled ? "opacity-60 cursor-not-allowed" : ""
+            } ${
+              tieneArchivo 
+                ? (isProcessed ? "bg-blue-600 hover:bg-blue-700" : "bg-orange-600 hover:bg-orange-700")
+                : "bg-green-600 hover:bg-green-700"
+            }`}
+            title={
+              tieneArchivo 
+                ? (isProcessed ? "Resubir archivo - eliminará datos procesados" : "Reemplazar archivo actual")
+                : "Seleccionar archivo Excel"
+            }
           >
-            {subiendo ? "Subiendo..." : "Elegir archivo .xlsx"}
+            {eliminando ? "Eliminando..." : 
+             subiendo ? "Subiendo..." :
+             tieneArchivo ? (isProcessed ? "Resubir archivo" : "Reemplazar archivo") : "Elegir archivo"}
           </button>
         ) : (
           <button
             type="button"
             disabled={true}
-            className="bg-gray-600 px-3 py-1 rounded text-sm font-medium cursor-not-allowed opacity-60"
-            title="El archivo ya fue procesado y no se puede cambiar"
+            className="bg-gray-600 px-3 py-1 rounded text-sm font-medium cursor-not-allowed opacity-75"
+            title="Archivo en procesamiento, espera a que termine"
           >
-            Archivo bloqueado
+            Procesando...
           </button>
         )}
         
         <span className="text-gray-300 text-xs italic truncate max-w-xs">
           {archivoNombre || "Ningún archivo seleccionado"}
         </span>
-        
-        {/* ✅ BOTÓN DE ELIMINAR/RESUBIR SOLO SI ESTÁ PROCESADO */}
-        {isProcessed && onEliminarArchivo && (
-          <button
-            onClick={handleEliminarArchivo}
-            disabled={eliminando || isDisabled}
-            className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white ml-2"
-            title="Eliminar archivo actual para permitir subir uno nuevo"
-          >
-            {eliminando ? "Eliminando..." : "Resubir archivo"}
-          </button>
-        )}
       </div>
       
-      {/* ✅ INPUT DE ARCHIVO CONDICIONAL */}
+      {/* 🚀 INPUT DE ARCHIVO SIMPLIFICADO */}
       <input
         type="file"
         accept=".xlsx"
         ref={fileInputRef}
         style={{ display: "none" }}
         onChange={handleSeleccionArchivo}
-        disabled={isDisabled || archivoEsBloqueado}
+        disabled={isDisabled || !puedeInteractuarConArchivo}
       />
 
-      {error && <div className="text-xs text-red-400 mt-1">{error}</div>}
+      {error && (
+        <div className="text-xs text-red-400 mt-1 bg-red-900/20 p-2 rounded border-l-2 border-red-400">
+          ❌ <strong>Error:</strong> {error}
+        </div>
+      )}
 
-      {/* ✅ MENSAJE INFORMATIVO CUANDO EL ARCHIVO ESTÁ BLOQUEADO */}
-      {archivoEsBloqueado && (
-        <div className="text-xs text-yellow-400 mt-1 bg-yellow-900/20 p-2 rounded">
-          ℹ️ El archivo ya fue analizado y no se puede cambiar. Si necesitas subir otro archivo, contacta al administrador.
+      {/* ✅ MENSAJE INFORMATIVO DEL FORMATO ESPERADO */}
+      {(estado === "no_subido" || estado === "pendiente") && (
+        <div className="text-xs text-blue-400 mt-1 bg-blue-900/20 p-2 rounded">
+          📋 <strong>Formato requerido:</strong> AAAAMM_libro_remuneraciones_RUT.xlsx
+          <br />
+          <span className="text-blue-300">Ejemplo: 202508_libro_remuneraciones_12345678.xlsx</span>
+        </div>
+      )}
+
+      {/* 🚀 MENSAJE INFORMATIVO MEJORADO CUANDO EL ARCHIVO ESTÁ EN PROCESAMIENTO */}
+      {isProcesando && (
+        <div className="text-xs text-orange-400 mt-1 bg-orange-900/20 p-2 rounded border-l-2 border-orange-400">
+          ⏳ <strong>Procesamiento en curso:</strong> El archivo se está procesando actualmente. 
+          <br />
+          <span className="text-orange-300">Espera a que termine para poder cambiar el archivo si es necesario.</span>
         </div>
       )}
 
@@ -264,15 +311,31 @@ const LibroRemuneracionesCard = ({
         )}
       </div>
 
-      {/* Botón procesar con loader mejorado */}
-      <button
-        onClick={handleProcesar}
-        disabled={headersSinClasificar?.length > 0 || isDisabled || isProcessed}
-        className="mt-2 bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded text-white text-sm font-medium transition shadow w-fit disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
-      >
-        {isProcesando && <Loader2 size={16} className="animate-spin" />}
-        {isProcesando ? "Procesando..." : "Procesar"}
-      </button>
+      {/* 🎯 BOTÓN PROCESAR - Solo aparece cuando se puede procesar */}
+      {puedeProcesr ? (
+        <button
+          onClick={handleProcesar}
+          disabled={headersSinClasificar?.length > 0 || isDisabled}
+          className="mt-2 bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded text-white text-sm font-medium transition shadow w-fit disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+          title={headersSinClasificar?.length > 0 ? "Completa la clasificación antes de procesar" : "Procesar archivo clasificado"}
+        >
+          {isProcesando && <Loader2 size={16} className="animate-spin" />}
+          {isProcesando ? "Procesando..." : "Procesar"}
+        </button>
+      ) : tieneArchivo && estado !== "clasificado" && estado !== "procesado" ? (
+        <div className="mt-2 text-xs text-yellow-400 bg-yellow-900/20 p-2 rounded">
+          ℹ️ <strong>Archivo en proceso:</strong> Espera a que termine la clasificación para poder procesar
+        </div>
+      ) : !tieneArchivo ? (
+        <div className="mt-2 text-xs text-gray-400 bg-gray-900/20 p-2 rounded">
+          📁 <strong>Sin archivo:</strong> Sube un archivo Excel para poder procesarlo
+        </div>
+      ) : isProcessed ? (
+        <div className="mt-2 text-xs text-green-400 bg-green-900/20 p-2 rounded flex items-center gap-2">
+          <CheckCircle2 size={16} />
+          <strong>Archivo procesado:</strong> El procesamiento se completó exitosamente
+        </div>
+      ) : null}
 
       {mensaje && (
         <span className="text-xs text-gray-400 italic mt-2">{mensaje}</span>

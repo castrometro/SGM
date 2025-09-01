@@ -6,6 +6,7 @@ from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 from celery import chain
@@ -68,8 +69,8 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
             
             # 3.5. VALIDAR NOMBRE ESPECÍFICO DEL ARCHIVO
             periodo_formato = cierre.periodo.replace("-", "")  # "2025-08" → "202508"
-            rut_sin_guion = cliente.rut.replace("-", "")       # "12345678-9" → "123456789"
-            patron_regex = f"^{periodo_formato}_libro_remuneraciones_{rut_sin_guion}(_.*)?\\.(xlsx|xls)$"
+            rut_sin_separadores = cliente.rut.replace("-", "").replace(".", "")  # "96.540.690-5" → "965406905"
+            patron_regex = f"^{periodo_formato}_libro_remuneraciones_{rut_sin_separadores}(_.*)?\\.(xlsx|xls)$"
             
             logger.info(f"Validando nombre de archivo con patrón: {patron_regex}")
             validator.validar_nombre_archivo(archivo.name, patron_regex)
@@ -77,7 +78,8 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
             
         except ValueError as e:
             logger.error(f"Error validando archivo: {e}")
-            raise
+            # Convertir ValueError a ValidationError para respuesta HTTP 400
+            raise ValidationError({"detail": str(e)})
         
         # 4. CREAR UPLOAD LOG
         log_mixin = UploadLogNominaMixin()

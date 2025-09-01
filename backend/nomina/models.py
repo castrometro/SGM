@@ -553,6 +553,8 @@ class LibroRemuneracionesUpload(models.Model):
         ('clasif_en_proceso', 'Clasificación en Proceso'),
         ('clasif_pendiente', 'Clasificación Pendiente'),
         ('clasificado', 'Clasificado'),
+        ('procesando', 'Procesando'),
+        ('procesado', 'Procesado'),
         ('con_error', 'Con Error')
     ], default='pendiente')
     header_json = models.JSONField(default=list)

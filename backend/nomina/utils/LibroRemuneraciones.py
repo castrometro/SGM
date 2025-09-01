@@ -108,7 +108,21 @@ def clasificar_headers_libro_remuneraciones(headers, cliente):
 def actualizar_empleados_desde_libro_util(libro):
     """
     Función utilitaria para actualizar empleados desde un libro de remuneraciones
+    
+    🧹 REPLACE COMPLETO: Elimina todos los empleados del cierre y los crea desde cero
     """
+    logger.info(f"🧹 Iniciando REPLACE completo de empleados para cierre {libro.cierre.id}")
+    
+    # 🗑️ PASO 1: ELIMINAR todos los empleados existentes del cierre
+    empleados_existentes = libro.cierre.empleados.all()
+    count_eliminados = empleados_existentes.count()
+    
+    if count_eliminados > 0:
+        # Eliminar en cascada: EmpleadoCierre → RegistroConceptoEmpleado
+        empleados_existentes.delete()
+        logger.info(f"🗑️ Eliminados {count_eliminados} empleados existentes y sus registros")
+    
+    # 📊 PASO 2: PROCESAR archivo Excel
     df = pd.read_excel(libro.archivo.path, engine="openpyxl")
 
     expected = {
@@ -142,30 +156,38 @@ def actualizar_empleados_desde_libro_util(libro):
             continue
         
         rut = str(rut_raw).strip()
+        
+        # 📝 CREAR empleado (ya no update_or_create, solo create porque limpiamos antes)
         defaults = {
             "rut_empresa": str(row.get(expected["rut_empresa"], "")).strip(),
             "nombre": str(row.get(expected["nombre"], "")).strip(),
             "apellido_paterno": str(row.get(expected["ape_pat"], "")).strip(),
             "apellido_materno": str(row.get(expected["ape_mat"], "")).strip(),
         }
-        EmpleadoCierre.objects.update_or_create(
+        
+        EmpleadoCierre.objects.create(
             cierre=cierre,
             rut=rut,
-            defaults=defaults,
+            **defaults
         )
         count += 1
     
     if filas_ignoradas > 0:
         logger.info(f"Se ignoraron {filas_ignoradas} filas con RUT inválido (posibles totales de Talana)")
     
-    logger.info(f"Actualizados {count} empleados desde libro {libro.id}")
+    logger.info(f"✅ REPLACE completo terminado: {count} empleados creados desde cero para libro {libro.id}")
     return count
 
 
 def guardar_registros_nomina_util(libro):
     """
     Función utilitaria para guardar registros de nómina desde un libro de remuneraciones
+    
+    🎯 REPLACE COMPLETO: Los RegistroConceptoEmpleado ya fueron eliminados en cascada 
+    cuando se eliminaron los EmpleadoCierre, así que solo creamos los nuevos registros.
     """
+    logger.info(f"📝 Iniciando creación de registros de conceptos para libro {libro.id}")
+    
     df = pd.read_excel(libro.archivo.path, engine="openpyxl")
 
     expected = {
@@ -265,10 +287,12 @@ def guardar_registros_nomina_util(libro):
                     cliente=libro.cierre.cliente, nombre_concepto=h, vigente=True
                 ).first()
                 
-                RegistroConceptoEmpleado.objects.update_or_create(
+                # 📝 CREAR registro (ya no update_or_create porque limpiamos en cascada)
+                RegistroConceptoEmpleado.objects.create(
                     empleado=empleado,
                     nombre_concepto_original=h,
-                    defaults={"monto": valor, "concepto": concepto},
+                    monto=valor,
+                    concepto=concepto
                 )
                 
             except Exception as concepto_error:
@@ -280,5 +304,5 @@ def guardar_registros_nomina_util(libro):
     if filas_ignoradas > 0:
         logger.info(f"Se ignoraron {filas_ignoradas} filas con RUT inválido (posibles totales de Talana)")
 
-    logger.info(f"Registros nómina guardados desde libro {libro.id}: {count}")
+    logger.info(f"✅ Registros de conceptos creados desde cero: {count} empleados procesados para libro {libro.id}")
     return count

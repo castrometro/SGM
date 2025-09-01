@@ -105,6 +105,35 @@ class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # 3.5. VALIDAR NOMBRE DE ARCHIVO
+        from .utils.validaciones import validar_nombre_archivo_movimientos_mes
+        try:
+            resultado_validacion = validar_nombre_archivo_movimientos_mes(
+                archivo.name, 
+                rut_cliente=cliente.rut,
+                periodo_cierre=cierre.periodo
+            )
+            
+            if not resultado_validacion['es_valido']:
+                errores = resultado_validacion.get('errores', [])
+                mensaje_error = '\n'.join(errores) if errores else "Nombre de archivo inválido"
+                return Response(
+                    {"error": mensaje_error}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+            # Log de advertencias si las hay
+            advertencias = resultado_validacion.get('advertencias', [])
+            if advertencias:
+                logger.warning(f"Advertencias en validación de archivo {archivo.name}: {advertencias}")
+                
+        except Exception as e:
+            logger.error(f"Error validando nombre de archivo {archivo.name}: {e}")
+            return Response(
+                {"error": "Error interno validando el nombre del archivo"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
         # 4. CREAR UPLOAD LOG
         mixin = UploadLogNominaMixin()
         mixin.tipo_upload = "movimientos_mes"
@@ -114,10 +143,11 @@ class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
         upload_log = mixin.crear_upload_log(cliente, archivo)
         logger.info(f"Upload log creado para MovimientosMes con ID: {upload_log.id}")
         
-        # 5. GUARDAR ARCHIVO TEMPORAL
-        nombre_temporal = f"movimientos_mes_cierre_{cierre_id}_{upload_log.id}.xlsx"
-        ruta_temporal = guardar_temporal(nombre_temporal, archivo)
-        upload_log.ruta_archivo = ruta_temporal
+        # 5. GUARDAR ARCHIVO TEMPORAL - ELIMINADO PARA EVITAR DUPLICACIÓN
+        # TODO: Refactorizar para usar solo ubicación definitiva hasta consolidación final
+        # nombre_temporal = f"movimientos_mes_cierre_{cierre_id}_{upload_log.id}.xlsx"
+        # ruta_temporal = guardar_temporal(nombre_temporal, archivo)
+        # upload_log.ruta_archivo = ruta_temporal
         upload_log.cierre = cierre
         upload_log.save()
         
@@ -125,9 +155,9 @@ class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
         movimiento_existente = MovimientosMesUpload.objects.filter(cierre=cierre).first()
         
         if movimiento_existente:
-            # Actualizar existente
+            # Actualizar existente - Las señales se encargan automáticamente de eliminar archivos anteriores
             movimiento_existente.archivo = archivo
-            movimiento_existente.estado = "subido"
+            movimiento_existente.estado = "pendiente"
             movimiento_existente.upload_log = upload_log
             movimiento_existente.save()
             instance = movimiento_existente
@@ -136,7 +166,7 @@ class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
             instance = MovimientosMesUpload.objects.create(
                 cierre=cierre,
                 archivo=archivo,
-                estado="subido",
+                estado="pendiente",
                 upload_log=upload_log
             )
         

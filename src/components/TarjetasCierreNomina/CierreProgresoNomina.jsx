@@ -265,15 +265,17 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
       if (res?.id) {
         setLibroId(res.id);
       }
-      console.log('🔄 [PAUSADO] Polling post-subida de libro pausado temporalmente');
-      // setTimeout(() => {
-      //   obtenerEstadoLibroRemuneraciones(cierre.id).then((data) => {
-      //     setLibro(data);
-      //     if (data?.id) {
-      //       setLibroId(data.id);
-      //     }
-      //   });
-      // }, 1200);
+      console.log('✅ Archivo subido exitosamente, actualizando estado...');
+      // Actualizar estado inmediatamente después de subir
+      setTimeout(() => {
+        obtenerEstadoLibroRemuneraciones(cierre.id).then((data) => {
+          console.log('📡 Estado actualizado post-subida:', data);
+          setLibro(data);
+          if (data?.id) {
+            setLibroId(data.id);
+          }
+        });
+      }, 1000); // 1 segundo para dar tiempo al backend
     } finally {
       setSubiendo(false);
     }
@@ -285,10 +287,14 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
       const formData = new FormData();
       formData.append("archivo", archivo);
       await subirMovimientosMes(cierre.id, formData);
-      console.log('🔄 [PAUSADO] Polling post-subida de movimientos pausado temporalmente');
-      // setTimeout(() => {
-      //   obtenerEstadoMovimientosMes(cierre.id).then(setMovimientos);
-      // }, 1200);
+      console.log('✅ Movimientos subidos exitosamente, actualizando estado...');
+      // Actualizar estado inmediatamente después de subir
+      setTimeout(() => {
+        obtenerEstadoMovimientosMes(cierre.id).then((data) => {
+          console.log('📡 Movimientos actualizados post-subida:', data);
+          setMovimientos(data);
+        });
+      }, 1000); // 1 segundo para dar tiempo al backend
     } finally {
       setSubiendoMov(false);
     }

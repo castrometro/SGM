@@ -399,3 +399,107 @@ def validar_nombre_archivo_libro_remuneraciones(nombre_archivo: str, rut_cliente
     }
     
     return _build_validation_result(True, errores, advertencias, estadisticas)
+
+
+def validar_nombre_archivo_movimientos_mes(nombre_archivo: str, rut_cliente: str = None, periodo_cierre: str = None) -> Dict[str, Any]:
+    """
+    Valida el nombre de archivo de movimientos del mes.
+    
+    Formato esperado:
+    - {AAAAAMM}_movimientos_mes_{RUT}.xlsx
+    
+    Ejemplos: 
+    - 202503_movimientos_mes_12345678.xlsx
+    - 202412_movimientos_mes_87654321.xlsx
+    
+    Args:
+        nombre_archivo (str): Nombre del archivo a validar
+        rut_cliente (str, optional): RUT del cliente para validación específica
+        periodo_cierre (str, optional): Período del cierre en formato "YYYY-MM" (ej: "2024-03")
+        
+    Returns:
+        dict: Resultado de validación
+    """
+    errores = []
+    advertencias = []
+    
+    # Validar extensión
+    if not nombre_archivo.lower().endswith(('.xlsx', '.xls')):
+        errores.append(f"Formato de archivo no soportado: {nombre_archivo}. Solo se aceptan archivos Excel (.xlsx, .xls)")
+        return _build_validation_result(False, errores, advertencias, {})
+    
+    # Validar caracteres problemáticos
+    caracteres_problematicos = ['<', '>', ':', '"', '|', '?', '*']
+    if any(char in nombre_archivo for char in caracteres_problematicos):
+        errores.append(f"El nombre del archivo contiene caracteres no permitidos: {nombre_archivo}")
+        return _build_validation_result(False, errores, advertencias, {})
+    
+    # Patrón de validación: {AAAAAMM}_movimientos_mes_{RUT}.xlsx
+    patron_movimientos = r'^(\d{6})_movimientos_mes_(\d{7,9})\.xlsx?$'
+    match = re.match(patron_movimientos, nombre_archivo, re.IGNORECASE)
+    
+    if not match:
+        errores.append(
+            f"Nombre de archivo incorrecto: {nombre_archivo}. "
+            f"Formato esperado: {{AAAAAMM}}_movimientos_mes_{{RUT}}.xlsx\n"
+            f"Ejemplo: 202503_movimientos_mes_12345678.xlsx"
+        )
+        return _build_validation_result(False, errores, advertencias, {})
+    
+    # Extraer información del nombre
+    fecha_extraida = match.group(1)  # AAAAAMM
+    rut_extraido = match.group(2)    # RUT
+    
+    # Validar formato de fecha (AAAAAMM)
+    try:
+        año = int(fecha_extraida[:4])
+        mes = int(fecha_extraida[4:6])
+        
+        if año < 2020 or año > 2030:
+            errores.append(f"Año inválido en el nombre del archivo: {año}. Debe estar entre 2020 y 2030.")
+            return _build_validation_result(False, errores, advertencias, {})
+            
+        if mes < 1 or mes > 12:
+            errores.append(f"Mes inválido en el nombre del archivo: {mes}. Debe estar entre 01 y 12.")
+            return _build_validation_result(False, errores, advertencias, {})
+            
+    except ValueError:
+        errores.append(f"Formato de fecha inválido en el nombre del archivo: {fecha_extraida}")
+        return _build_validation_result(False, errores, advertencias, {})
+    
+    # Validar RUT del cliente si se proporciona
+    if rut_cliente:
+        rut_cliente_sin_puntos = rut_cliente.replace('.', '').replace('-', '').replace('k', '').replace('K', '')
+        if rut_extraido != rut_cliente_sin_puntos:
+            errores.append(
+                f"El RUT en el nombre del archivo ({rut_extraido}) no coincide con el RUT del cliente ({rut_cliente_sin_puntos})"
+            )
+            return _build_validation_result(False, errores, advertencias, {})
+    
+    # Validar período del cierre si se proporciona
+    if periodo_cierre:
+        try:
+            # Convertir período del cierre (YYYY-MM) a formato del archivo (YYYYMM)
+            año_cierre, mes_cierre = periodo_cierre.split('-')
+            fecha_cierre_esperada = f"{año_cierre}{mes_cierre.zfill(2)}"
+            
+            if fecha_extraida != fecha_cierre_esperada:
+                errores.append(
+                    f"El período en el nombre del archivo ({fecha_extraida}) no coincide con el período del cierre ({fecha_cierre_esperada})"
+                )
+                return _build_validation_result(False, errores, advertencias, {})
+                
+        except (ValueError, IndexError):
+            advertencias.append(f"No se pudo validar el período del cierre: {periodo_cierre}")
+    
+    estadisticas = {
+        'nombre_archivo': nombre_archivo,
+        'fecha_extraida': fecha_extraida,
+        'rut_extraido': rut_extraido,
+        'formato_detectado': 'movimientos_mes_estandar',
+        'extension': nombre_archivo.split('.')[-1].lower(),
+        'año': año,
+        'mes': mes
+    }
+    
+    return _build_validation_result(True, errores, advertencias, estadisticas)

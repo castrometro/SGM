@@ -9,6 +9,9 @@ import { useState, useEffect } from 'react';
 
 const API_BASE = '/api/nomina/activity-log';
 
+// 🔧 FLAG: Habilitar/deshabilitar logging de actividad
+const ACTIVITY_LOGGING_ENABLED = false; // Cambiar a true cuando el backend esté listo
+
 class ActivityLogger {
   constructor(cierreId, tarjeta) {
     this.cierreId = cierreId;
@@ -20,6 +23,12 @@ class ActivityLogger {
    * Método base para enviar requests de logging
    */
   async _sendLogRequest(endpoint, data) {
+    // 🚫 Si el logging está deshabilitado, solo hacer console.log
+    if (!ACTIVITY_LOGGING_ENABLED) {
+      console.log(`📊 [ActivityLogger] ${this.tarjeta} - ${endpoint}:`, data);
+      return { success: true, data: null };
+    }
+
     try {
       const response = await fetch(`${API_BASE}/${endpoint}/`, {
         method: 'POST',
@@ -372,3 +381,33 @@ export function formatLogTimestamp(timestamp) {
 }
 
 export default ActivityLogger;
+
+/*
+🔧 CONFIGURACIÓN DEL ACTIVITY LOGGER
+
+El ActivityLogger está actualmente DESHABILITADO para evitar errores 404.
+
+Para HABILITAR el logging cuando el backend esté listo:
+1. Cambiar ACTIVITY_LOGGING_ENABLED = true (línea 4)
+2. Implementar los siguientes endpoints en el backend:
+   - POST /api/nomina/activity-log/session/
+   - POST /api/nomina/activity-log/polling/
+   - POST /api/nomina/activity-log/file/
+   - POST /api/nomina/activity-log/modal/
+   - POST /api/nomina/activity-log/download/
+
+📊 FUNCIONALIDAD ACTUAL:
+- ✅ Todos los métodos funcionan sin errores
+- ✅ Logging visible en consola del navegador
+- ❌ No se envían datos al backend (intencionalmente)
+
+🎯 BENEFICIOS DEL LOGGING:
+- Tracking de sesiones de usuario
+- Monitoreo de polling y performance
+- Analytics de uso de archivos
+- Métricas de interacción con modales
+- Estadísticas de descargas de templates
+
+Para más información sobre implementación del backend,
+revisar la documentación en: /docs/activity-logging-backend.md
+*/

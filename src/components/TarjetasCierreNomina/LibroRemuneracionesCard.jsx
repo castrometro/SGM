@@ -37,7 +37,7 @@ const LibroRemuneracionesCard = ({
     };
   }, []);
 
-  // Iniciar polling cuando el estado sea "procesando"
+  // 🔄 POLLING REACTIVADO: Iniciar polling cuando el archivo esté en procesamiento o análisis
   useEffect(() => {
     console.log('🎯 useEffect polling - estado actual:', estado, 'deberiaDetener:', deberiaDetenerPolling);
     
@@ -50,22 +50,47 @@ const LibroRemuneracionesCard = ({
       return;
     }
     
-    if (estado === "procesando" && !pollingRef.current && onActualizarEstado && !deberiaDetenerPolling) {
-      console.log('🔄 [PAUSADO] Polling de LibroRemuneracionesCard pausado temporalmente');
+    // 🚀 ESTADOS QUE REQUIEREN POLLING
+    const estadosQueRequierenPolling = [
+      "no_subido",           // ⚠️ NUEVO: Para monitorear cuando se sube por primera vez
+      "pendiente",           // Esperando análisis inicial
+      "analizando_hdrs",     // Analizando headers
+      "hdrs_analizados",     // Headers analizados, esperando clasificación
+      "clasif_en_proceso",   // Clasificando
+      "procesando"           // Procesamiento final
+    ];
+    
+    const deberiaHacerPolling = estadosQueRequierenPolling.includes(estado);
+    
+    if (deberiaHacerPolling && !pollingRef.current && onActualizarEstado && !deberiaDetenerPolling) {
+      console.log(`� Iniciando polling para estado: "${estado}" (archivo: ${archivoNombre || 'ninguno'})`);
       
-      // PAUSADO TEMPORALMENTE - COMENTADO
-      // let contadorPolling = 0;
-      // pollingRef.current = setInterval(async () => {
-      //   contadorPolling++;
-      //   try {
-      //     console.log(`📡 Polling #${contadorPolling} - Verificando estado...`);
-      //     await onActualizarEstado();
-      //   } catch (pollError) {
-      //     console.error(`❌ Error en polling #${contadorPolling}:`, pollError);
-      //   }
-      // }, 5000); // consultar cada 5 segundos
+      let contadorPolling = 0;
+      let contadorErrores = 0;
       
-    } else if ((estado !== "procesando" || deberiaDetenerPolling) && pollingRef.current) {
+      pollingRef.current = setInterval(async () => {
+        contadorPolling++;
+        try {
+          console.log(`📡 Polling #${contadorPolling} - Verificando estado desde "${estado}"...`);
+          await onActualizarEstado();
+          
+          // Reset error counter on success
+          contadorErrores = 0;
+          
+        } catch (pollError) {
+          contadorErrores++;
+          console.error(`❌ Error en polling #${contadorPolling} (${contadorErrores}/3):`, pollError);
+          
+          // Si hay 3 errores consecutivos, parar el polling por seguridad
+          if (contadorErrores >= 3) {
+            console.log('🛑 Demasiados errores consecutivos, deteniendo polling por seguridad');
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+          }
+        }
+      }, 3000); // Consultar cada 3 segundos para mejor UX
+      
+    } else if ((!deberiaHacerPolling || deberiaDetenerPolling) && pollingRef.current) {
       console.log(`✅ Estado cambió a "${estado}" o detención solicitada - deteniendo polling`);
       clearInterval(pollingRef.current);
       pollingRef.current = null;
@@ -90,7 +115,18 @@ const LibroRemuneracionesCard = ({
     if (!archivo) return;
     setError("");
     try {
+      console.log('📁 Iniciando subida de archivo:', archivo.name);
       await onSubirArchivo(archivo);
+      console.log('✅ Archivo subido exitosamente');
+      
+      // 🔄 FORZAR ACTUALIZACIÓN: Llamar al callback de actualización para activar el polling
+      if (onActualizarEstado) {
+        console.log('🔄 Forzando actualización de estado post-subida...');
+        setTimeout(() => {
+          onActualizarEstado();
+        }, 500); // Pequeño delay para dar tiempo al backend
+      }
+      
     } catch (err) {
       // Capturar el mensaje específico del backend
       console.log('🔍 Error completo:', err);
@@ -341,13 +377,17 @@ const LibroRemuneracionesCard = ({
         <span className="text-xs text-gray-400 italic mt-2">{mensaje}</span>
       )}
 
-      {/* Estado visual informativo */}
+      {/* Estado visual informativo con mejor feedback */}
       <span className="text-xs text-gray-400 italic mt-2">
-        {isProcesando
-          ? "🔄 Procesando archivo, por favor espera… (puede tomar hasta 40 segundos)"
-          : estado === "procesado"
-          ? "✔ Archivo cargado correctamente y procesado."
-          : "Aún no se ha subido el archivo."}
+        {estado === "pendiente" && "⏳ Archivo subido, iniciando análisis..."}
+        {estado === "analizando_hdrs" && "🔍 Analizando estructura del archivo Excel..."}
+        {estado === "hdrs_analizados" && "✅ Headers procesados, listo para clasificar"}
+        {estado === "clasif_en_proceso" && "🏷️ Clasificando conceptos automáticamente..."}
+        {estado === "clasificado" && "✔ Archivo analizado y listo para procesar"}
+        {estado === "procesando" && "⚙️ Procesando datos finales, por favor espera... (puede tomar hasta 40 segundos)"}
+        {estado === "procesado" && "✅ Archivo procesado exitosamente"}
+        {estado === "con_error" && "❌ Error en el procesamiento"}
+        {estado === "no_subido" && "📁 Aún no se ha subido el archivo"}
       </span>
     </div>
   );

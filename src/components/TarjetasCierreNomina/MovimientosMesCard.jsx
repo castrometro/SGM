@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Download, Loader2 } from "lucide-react";
+import { Download, Loader2, CheckCircle2 } from "lucide-react";
 import { descargarPlantillaMovimientosMes } from "../../api/nomina";
 import EstadoBadge from "../EstadoBadge";
 import { createActivityLogger } from "../../utils/activityLogger";
@@ -32,18 +32,21 @@ const MovimientosMesCard = ({
     }
   }, [cierreId]);
 
-  // Definir variables de estado inmediatamente después de las declaraciones de estado
-  const isProcesando = estado === "en_proceso" || estado === "procesando";
+  // 🚀 VARIABLES DE ESTADO UNIFICADAS
+  const isProcesando = estado === "en_proceso";
+  const nombreArchivoActual = archivoNombre; // Variable unificada para compatibilidad
+  
+  // Determinar si la tarjeta está deshabilitada
   const isDisabled = disabled || subiendo || isProcesando;
-  const isProcessed = estado === "procesado" || estado === "procesado_parcial";
-  const puedeSubirArchivo = !isDisabled && 
-    (estado === "no_subido" || estado === "pendiente" || estado === "con_error");
-  const estadosConArchivoBloqueado = [
-    "en_proceso",
-    "procesado", 
-    "con_errores_parciales"
-  ];
-  const archivoEsBloqueado = estadosConArchivoBloqueado.includes(estado);
+  
+  // Determinar si ya está procesado (incluye procesado completo o con errores parciales)
+  const isProcessed = estado === "procesado" || estado === "con_errores_parciales";
+  
+  // 🚀 LÓGICA SIMPLIFICADA: Un solo botón que cambia según si hay archivo
+  const puedeInteractuarConArchivo = !isDisabled && !isProcesando;
+  
+  // Determinar si hay archivo
+  const tieneArchivo = Boolean(archivoNombre);
 
   // Limpiar polling al desmontar
   useEffect(() => {
@@ -127,9 +130,51 @@ const MovimientosMesCard = ({
     
     setError("");
     try {
+      console.log('📁 Iniciando subida de archivo MovimientosMes:', archivo.name);
       await onSubirArchivo(archivo);
+      console.log('✅ Archivo MovimientosMes subido exitosamente');
+      
+      // 🔄 FORZAR ACTUALIZACIÓN: Llamar al callback de actualización para activar el polling
+      if (onActualizarEstado) {
+        console.log('🔄 Forzando actualización de estado post-subida MovimientosMes...');
+        setTimeout(() => {
+          onActualizarEstado();
+        }, 500); // Pequeño delay para dar tiempo al backend
+      }
+      
     } catch (err) {
-      setError("Error al subir el archivo.");
+      // Capturar el mensaje específico del backend
+      console.log('🔍 Error completo:', err);
+      console.log('🔍 Error response:', err?.response);
+      console.log('🔍 Error response data:', err?.response?.data);
+      
+      let errorMessage = "Error al subir el archivo.";
+      
+      if (err?.response?.data) {
+        const data = err.response.data;
+        // Diferentes formatos posibles de ValidationError
+        if (data.detail) {
+          errorMessage = data.detail;
+        } else if (data.message) {
+          errorMessage = data.message;
+        } else if (data.error) {
+          errorMessage = data.error;
+        } else if (Array.isArray(data)) {
+          // ValidationError a veces viene como array
+          errorMessage = data[0];
+        } else if (typeof data === 'string') {
+          errorMessage = data;
+        } else if (data.non_field_errors) {
+          errorMessage = Array.isArray(data.non_field_errors) 
+            ? data.non_field_errors[0] 
+            : data.non_field_errors;
+        }
+      } else if (err?.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
+      console.error('Error subiendo archivo MovimientosMes:', err);
     }
   };
 
@@ -183,88 +228,115 @@ const MovimientosMesCard = ({
       </a>
 
       <div className="flex gap-3 items-center">
-        {/* Input de archivo oculto */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          onChange={handleSeleccionArchivo}
-          accept=".xlsx,.xls"
-          className="hidden"
-        />
-        
-        {/* ✅ BOTÓN DE SUBIDA CONDICIONAL */}
-        {puedeSubirArchivo ? (
+        {/* 🚀 BOTÓN ÚNICO INTELIGENTE */}
+        {puedeInteractuarConArchivo ? (
           <button
             type="button"
-            onClick={async () => {
-              // Logging: apertura de modal de selección
-              if (activityLogger.current) {
-                await activityLogger.current.logModalOpen('file_selector', {
-                  trigger: 'user_click',
-                  upload_type: 'movimientos_mes'
-                });
+            onClick={() => {
+              if (tieneArchivo && onEliminarArchivo) {
+                // Si hay archivo, eliminar primero
+                handleEliminarArchivo();
+              } else {
+                // Si no hay archivo, abrir selector
+                fileInputRef.current.click();
               }
-              
-              fileInputRef.current.click();
             }}
-            disabled={isDisabled}
-            className={`bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded text-sm font-medium transition ${isDisabled ? "opacity-60 cursor-not-allowed" : ""}`}
+            disabled={isDisabled || eliminando}
+            className={`px-3 py-1 rounded text-sm font-medium transition ${
+              isDisabled ? "opacity-60 cursor-not-allowed" : ""
+            } ${
+              tieneArchivo 
+                ? (isProcessed ? "bg-blue-600 hover:bg-blue-700" : "bg-orange-600 hover:bg-orange-700")
+                : "bg-green-600 hover:bg-green-700"
+            }`}
+            title={
+              tieneArchivo 
+                ? (isProcessed ? "Resubir archivo - eliminará datos procesados" : "Reemplazar archivo actual")
+                : "Seleccionar archivo Excel"
+            }
           >
-            {isProcesando ? "Procesando..." : subiendo ? "Subiendo..." : "Elegir archivo .xlsx"}
+            {eliminando ? "Eliminando..." : 
+             subiendo ? "Subiendo..." :
+             tieneArchivo ? (isProcessed ? "Resubir archivo" : "Reemplazar archivo") : "Elegir archivo"}
           </button>
         ) : (
           <button
             type="button"
             disabled={true}
-            className="bg-gray-600 px-3 py-1 rounded text-sm font-medium cursor-not-allowed opacity-60"
-            title="El archivo ya fue procesado y no se puede cambiar"
+            className="bg-gray-600 px-3 py-1 rounded text-sm font-medium cursor-not-allowed opacity-75"
+            title="Archivo en procesamiento, espera a que termine"
           >
-            Archivo bloqueado
+            Procesando...
           </button>
         )}
         
-        <span className="text-gray-300 text-xs italic truncate max-w-xs">{archivoNombre || "Ningún archivo seleccionado"}</span>
-        
-        {/* Botón de eliminar/resubir solo si está procesado */}
-        {isProcessed && onEliminarArchivo && (
-          <button
-            onClick={handleEliminarArchivo}
-            disabled={eliminando || isDisabled}
-            className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white ml-2"
-            title="Eliminar archivo actual para permitir subir uno nuevo"
-          >
-            {eliminando ? "Eliminando..." : "Resubir archivo"}
-          </button>
-        )}
+        <span className="text-gray-300 text-xs italic truncate max-w-xs">
+          {archivoNombre || "Ningún archivo seleccionado"}
+        </span>
       </div>
       
-      {/* ✅ INPUT DE ARCHIVO CONDICIONAL */}
+      {/* 🚀 INPUT DE ARCHIVO SIMPLIFICADO */}
       <input
         type="file"
         accept=".xlsx"
         ref={fileInputRef}
         style={{ display: "none" }}
         onChange={handleSeleccionArchivo}
-        disabled={isDisabled || archivoEsBloqueado}
+        disabled={isDisabled || !puedeInteractuarConArchivo}
       />
 
-      {error && <div className="text-xs text-red-400 mt-1">{error}</div>}
-
-      {/* ✅ MENSAJE INFORMATIVO CUANDO EL ARCHIVO ESTÁ BLOQUEADO */}
-      {archivoEsBloqueado && (
-        <div className="text-xs text-yellow-400 mt-1 bg-yellow-900/20 p-2 rounded">
-          ℹ️ El archivo ya fue procesado y no se puede cambiar. Si necesitas subir otro archivo, contacta al administrador.
+      {error && (
+        <div className="text-xs text-red-400 mt-1 bg-red-900/20 p-2 rounded border-l-2 border-red-400">
+          ❌ <strong>Error:</strong> {error}
         </div>
       )}
 
-      <span className="text-xs text-gray-400 italic mt-2">
+      {/* ✅ MENSAJE INFORMATIVO DEL FORMATO ESPERADO */}
+      {(estado === "no_subido" || estado === "pendiente") && (
+        <div className="text-xs text-blue-400 mt-1 bg-blue-900/20 p-2 rounded">
+          📋 <strong>Formato requerido:</strong> AAAAAMM_movimientos_mes_RUT.xlsx
+          <br />
+          <span className="text-blue-300">Ejemplo: 202508_movimientos_mes_12345678.xlsx</span>
+        </div>
+      )}
+
+      {/* ✅ MENSAJE INFORMATIVO CUANDO EL ARCHIVO ESTÁ BLOQUEADO */}
+      {!puedeInteractuarConArchivo && tieneArchivo && (
+        <div className="text-xs text-yellow-400 mt-1 bg-yellow-900/20 p-2 rounded border-l-2 border-yellow-400">
+          🔒 <strong>Archivo procesado:</strong> Este archivo ya fue procesado exitosamente.
+          <br />
+          <span className="text-yellow-300">Si necesitas cambiar el archivo, contacta al administrador.</span>
+        </div>
+      )}
+
+      {/* 🚀 MENSAJE INFORMATIVO MEJORADO CUANDO EL ARCHIVO ESTÁ EN PROCESAMIENTO */}
+      {isProcesando && (
+        <div className="text-xs text-orange-400 mt-1 bg-orange-900/20 p-2 rounded border-l-2 border-orange-400">
+          ⏳ <strong>Procesamiento en curso:</strong> El archivo se está procesando actualmente.
+          <br />
+          <span className="text-orange-300">Espera a que termine para poder cambiar el archivo si es necesario.</span>
+        </div>
+      )}
+
+      {/* ✅ MENSAJE CUANDO EL ARCHIVO ESTÁ PROCESADO */}
+      {isProcessed && tieneArchivo && (
+        <div className="mt-2 text-xs text-green-400 bg-green-900/20 p-2 rounded flex items-center gap-2">
+          <CheckCircle2 size={16} />
+          <strong>Archivo procesado:</strong> El procesamiento se completó exitosamente
+        </div>
+      )}
+
+      {/* 📄 MENSAJE DE ESTADO FINAL */}
+      <span className="text-xs text-gray-400 italic mt-2 block">
         {isProcesando
-          ? "🔄 Procesando archivo, por favor espera…"
+          ? "🔄 Procesando archivo, por favor espera..."
           : estado === "procesado" || estado === "con_errores_parciales"
-          ? "✔ Archivo cargado correctamente y procesado."
+          ? "✅ Archivo procesado exitosamente"
           : estado === "error"
-          ? "❌ Error al procesar el archivo."
-          : "Aún no se ha subido el archivo."}
+          ? "❌ Error al procesar el archivo. Revisa los detalles arriba."
+          : estado === "pendiente"
+          ? `📋 Archivo listo: ${nombreArchivoActual} - Esperando procesamiento`
+          : "📁 Ningún archivo seleccionado aún"}
       </span>
     </div>
   );

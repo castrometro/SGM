@@ -125,7 +125,7 @@ const ArchivosTalanaSection = ({
           
           <MovimientosMesCard
             estado={estadoMovimientos}
-            archivoNombre={movimientos?.archivo_nombre}
+            archivoNombre={movimientos?.archivo ? movimientos.archivo.split('/').pop() : null}
             subiendo={subiendoMov}
             onSubirArchivo={onSubirMovimientos}
             onActualizarEstado={onActualizarEstadoMovimientos}

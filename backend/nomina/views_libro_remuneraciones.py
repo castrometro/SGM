@@ -1,6 +1,7 @@
 # nomina/views_libro_remuneraciones.py
 
 import logging
+import os
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
@@ -64,6 +65,16 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
             validator = ValidacionArchivoCRUDMixin()
             validator.validar_archivo(archivo)
             logger.info(f"Archivo {archivo.name} validado correctamente")
+            
+            # 3.5. VALIDAR NOMBRE ESPECÍFICO DEL ARCHIVO
+            periodo_formato = cierre.periodo.replace("-", "")  # "2025-08" → "202508"
+            rut_sin_guion = cliente.rut.replace("-", "")       # "12345678-9" → "123456789"
+            patron_regex = f"^{periodo_formato}_libro_remuneraciones_{rut_sin_guion}(_.*)?\\.(xlsx|xls)$"
+            
+            logger.info(f"Validando nombre de archivo con patrón: {patron_regex}")
+            validator.validar_nombre_archivo(archivo.name, patron_regex)
+            logger.info(f"Nombre de archivo {archivo.name} válido")
+            
         except ValueError as e:
             logger.error(f"Error validando archivo: {e}")
             raise
@@ -77,10 +88,11 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
         upload_log = log_mixin.crear_upload_log(cliente, archivo)
         logger.info(f"Upload log creado con ID: {upload_log.id}")
         
-        # 5. GUARDAR ARCHIVO TEMPORAL
-        nombre_temporal = f"libro_remuneraciones_cierre_{cierre_id}_{upload_log.id}.xlsx"
-        ruta = guardar_temporal(nombre_temporal, archivo)
-        upload_log.ruta_archivo = ruta
+        # 5. GUARDAR ARCHIVO TEMPORAL - COMENTADO TEMPORALMENTE
+        # TODO: Refactorizar para usar solo temporal hasta consolidación final
+        # nombre_temporal = f"libro_remuneraciones_cierre_{cierre_id}_{upload_log.id}.xlsx"
+        # ruta = guardar_temporal(nombre_temporal, archivo)
+        # upload_log.ruta_archivo = ruta
         upload_log.cierre = cierre
         upload_log.save()
         
@@ -89,7 +101,7 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
             libro_existente = LibroRemuneracionesUpload.objects.filter(cierre=cierre).first()
             
             if libro_existente:
-                # Actualizar existente
+                # Las señales se encargan automáticamente de eliminar archivos anteriores
                 libro_existente.archivo = archivo
                 libro_existente.estado = 'pendiente'
                 libro_existente.header_json = []
@@ -98,6 +110,11 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
                 libro_existente.save()
                 instance = libro_existente
                 logger.info(f"Libro actualizado con ID: {instance.id}")
+                
+                # Actualizar upload_log con la nueva ruta definitiva
+                upload_log.ruta_archivo = instance.archivo.path
+                upload_log.save(update_fields=['ruta_archivo'])
+                logger.info(f"Upload log actualizado con nueva ruta: {instance.archivo.path}")
             else:
                 # Crear nuevo
                 instance = serializer.save(
@@ -106,6 +123,11 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
                     estado='pendiente'
                 )
                 logger.info(f"Libro creado con ID: {instance.id}")
+        
+        # 6.5. ACTUALIZAR UPLOAD_LOG CON RUTA DEFINITIVA
+        upload_log.ruta_archivo = instance.archivo.path
+        upload_log.save(update_fields=['ruta_archivo'])
+        logger.info(f"Upload log actualizado con ruta definitiva: {instance.archivo.path}")
         
         # 7. REGISTRAR ACTIVIDAD
         registrar_actividad_tarjeta_nomina(
@@ -343,7 +365,7 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
             cierre.estado_incidencias = 'pendiente'
             cierre.save(update_fields=['estado', 'estado_incidencias'])
             
-            # 4. Eliminar el libro de remuneraciones
+            # 4. Eliminar el libro de remuneraciones (las señales eliminan el archivo automáticamente)
             instance.delete()
             logger.info(f"Libro de remuneraciones {instance.id} eliminado completamente")
         

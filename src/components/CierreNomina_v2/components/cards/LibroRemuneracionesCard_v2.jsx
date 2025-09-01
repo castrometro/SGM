@@ -17,12 +17,14 @@ const LibroRemuneracionesCard_v2 = ({
   const [subiendo, setSubiendo] = useState(false);
   const [error, setError] = useState(null);
   const [eliminando, setEliminando] = useState(false);
+  const [verificandoArchivo, setVerificandoArchivo] = useState(false);
   
   const fileInputRef = useRef();
 
   // 🎯 DETERMINAR ESTADO ACTUAL
-  const estadoActual = libro?.estado || 'pendiente';
-  const deberiaHacerPolling = estadoActual === 'procesando' && enabled;
+  const estadoActual = libro?.estado || 'no_subido';
+  const tieneArchivo = libro && libro.estado !== 'no_subido';
+  const deberiaHacerPolling = (estadoActual === 'analizando_hdrs' || estadoActual === 'clasif_en_proceso') && enabled;
 
   // 🎯 POLLING ESTANDARIZADO
   const { 
@@ -57,11 +59,34 @@ const LibroRemuneracionesCard_v2 = ({
     if (cierreId && !libro && enabled) {
       const cargarEstadoInicial = async () => {
         try {
+          setVerificandoArchivo(true);
+          console.log('🔍 [LibroCard_v2] Verificando existencia de archivo para cierre:', cierreId);
+          
           const data = await obtenerEstadoLibroRemuneraciones(cierreId);
+          
+          console.log('✅ [LibroCard_v2] Archivo encontrado:', {
+            existe: !!data,
+            estado: data?.estado,
+            nombre: data?.nombre_archivo,
+            registros: data?.total_registros
+          });
+          
           setLibro(data);
+          setError(null); // Limpiar errores previos
+          
         } catch (err) {
-          console.error('❌ [LibroCard_v2] Error cargando estado inicial:', err);
+          console.log('📄 [LibroCard_v2] Análisis de error:', {
+            status: err.response?.status,
+            message: err.message,
+            cierreId
+          });
+          
+          // El endpoint siempre devuelve 200, los errores son problemas reales de conexión
+          console.error('❌ [LibroCard_v2] Error de conexión cargando estado:', err);
           setError(err);
+          setLibro(null);
+        } finally {
+          setVerificandoArchivo(false);
         }
       };
       cargarEstadoInicial();
@@ -140,7 +165,20 @@ const LibroRemuneracionesCard_v2 = ({
 
   // 🎯 CONTENIDO SEGÚN ESTADO
   const renderContenido = () => {
-    if (!libro || estadoActual === 'pendiente') {
+    // Mostrar estado de verificación inicial
+    if (verificandoArchivo) {
+      return (
+        <div className="text-center py-6">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-gray-400 mb-2">Verificando archivo existente...</p>
+          <p className="text-sm text-gray-500">
+            Consultando si ya hay un libro de remuneraciones subido para este cierre.
+          </p>
+        </div>
+      );
+    }
+
+    if (!tieneArchivo) {
       return (
         <div className="text-center py-6">
           <FileText className="mx-auto mb-3 text-gray-400" size={48} />
@@ -210,7 +248,7 @@ const LibroRemuneracionesCard_v2 = ({
 
     return (
       <div className="flex gap-2">
-        {(!libro || estadoActual === 'pendiente') && (
+        {(!libro || estadoActual === 'pendiente' || estadoActual === 'no_subido') && (
           <>
             <input
               ref={fileInputRef}
@@ -266,7 +304,7 @@ const LibroRemuneracionesCard_v2 = ({
     <CardBase
       title="Libro de Remuneraciones"
       estado={estadoActual}
-      loading={subiendo || cargandoEstado || eliminando}
+      loading={subiendo || cargandoEstado || eliminando || verificandoArchivo}
       error={error || errorPolling}
       disabled={!enabled}
       icon={FileText}

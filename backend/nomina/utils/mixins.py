@@ -197,7 +197,18 @@ class ValidacionArchivoCRUDMixin:
         if patron_esperado:
             import re
             if not re.match(patron_esperado, nombre_archivo, re.IGNORECASE):
-                raise ValueError(f"Nombre de archivo no válido. Patrón esperado: {patron_esperado}")
+                # Mensaje más claro para el usuario
+                if "libro_remuneraciones" in patron_esperado:
+                    raise ValueError(
+                        f"El nombre del archivo debe seguir el formato: "
+                        f"AAAAMM_libro_remuneraciones_RUT.xlsx "
+                        f"(ej: 202508_libro_remuneraciones_12345678.xlsx). "
+                        f"Archivo recibido: {nombre_archivo}"
+                    )
+                else:
+                    raise ValueError(f"Nombre de archivo no válido. Patrón esperado: {patron_esperado}")
+        
+        return True
         
         return True
 

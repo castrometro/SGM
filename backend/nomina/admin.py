@@ -1953,7 +1953,10 @@ class UploadLogNominaAdmin(admin.ModelAdmin):
     def resumen_formatted(self, obj):
         """Resumen formateado"""
         if obj.resumen:
-            return format_html(str(obj.resumen).replace('\n', '<br>'))
+            # Convertir dict a string seguro evitando problemas de formateo
+            import json
+            resumen_str = json.dumps(obj.resumen, indent=2, ensure_ascii=False)
+            return format_html('<pre>{}</pre>', resumen_str)
         return "Sin resumen"
     resumen_formatted.short_description = 'Resumen'
     

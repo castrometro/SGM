@@ -27,8 +27,13 @@ const ArchivosTalanaSection = ({
   disabled = false,
   deberiaDetenerPolling = false,
   cierreId,
+  
+  // 🎯 Props para acordeón
+  expandido = true,
+  onToggleExpansion,
 }) => {
-  const [expandido, setExpandido] = useState(true);
+  // Remover estado interno de expandido ya que ahora viene como prop
+  // const [expandido, setExpandido] = useState(true); // ← ELIMINADO
   
   // Calcular estado general de la sección
   const estadoLibro = libro?.estado === "procesando" || libro?.estado === "procesado"
@@ -55,7 +60,7 @@ const ArchivosTalanaSection = ({
             ? 'opacity-60 cursor-not-allowed' 
             : 'cursor-pointer hover:bg-gray-800/50'
         }`}
-        onClick={() => !disabled && setExpandido(!expandido)}
+        onClick={() => !disabled && onToggleExpansion && onToggleExpansion()}
       >
         <div className="flex items-center gap-3">
           <div className={`flex items-center justify-center w-10 h-10 rounded-lg ${

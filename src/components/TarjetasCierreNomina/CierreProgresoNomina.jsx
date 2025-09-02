@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { CheckCircle, ChevronRight, Loader2 } from "lucide-react";
 import ArchivosTalanaSection from "./ArchivosTalanaSection";
 import ArchivosAnalistaSection from "./ArchivosAnalistaSection";
 import VerificadorDatosSection from "./VerificadorDatosSection";
@@ -16,6 +17,8 @@ import {
   guardarConceptosRemuneracion,
   eliminarConceptoRemuneracion,
   actualizarEstadoCierreNomina,
+  obtenerEstadoArchivoAnalista,
+  obtenerEstadoArchivoNovedades,
 } from "../../api/nomina";
 
 const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
@@ -39,6 +42,165 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     verificadorDatos: 'pendiente',   // Estado de verificación de datos
     incidencias: 'pendiente'         // Estado de incidencias
   });
+
+  // 🎯 Estados para el botón "Continuar"
+  const [actualizandoEstado, setActualizandoEstado] = useState(false);
+
+  // 🎯 Estado para manejar acordeón (solo una sección expandida a la vez)
+  const [seccionExpandida, setSeccionExpandida] = useState('archivosTalana'); // Por defecto la primera sección
+
+  // 🎯 Estados para archivos del analista (elevados desde ArchivosAnalistaContainer)
+  const [archivosAnalista, setArchivosAnalista] = useState({
+    finiquitos: { estado: "loading", archivo: null, error: "" },
+    incidencias: { estado: "loading", archivo: null, error: "" },
+    ingresos: { estado: "loading", archivo: null, error: "" },
+    novedades: { estado: "loading", archivo: null, error: "" }
+  });
+
+  // 🎯 Función para manejar la expansión de secciones (acordeón)
+  const manejarExpansionSeccion = (nombreSeccion) => {
+    // Si se hace clic en la sección ya expandida, la colapsamos
+    // Si se hace clic en otra sección, la expandimos y colapsamos las demás
+    setSeccionExpandida(prev => prev === nombreSeccion ? null : nombreSeccion);
+  };
+
+  // 🎯 Función para determinar si una sección está expandida
+  const estaSeccionExpandida = (nombreSeccion) => {
+    return seccionExpandida === nombreSeccion;
+  };
+
+  // 🎯 Función para determinar si mostrar el botón "Continuar"
+  const mostrarBotonContinuar = () => {
+    return estadosSeccion.archivosTalana === 'procesado' && 
+           estadosSeccion.archivosAnalista === 'procesado' && 
+           cierre?.estado === 'pendiente'; // Solo mostrar cuando esté pendiente, no cuando ya sea archivos_completos
+  };
+
+  // 🎯 Función para manejar el botón "Continuar"
+  const handleContinuar = async () => {
+    if (actualizandoEstado) return; // Evitar doble clic
+    
+    try {
+      setActualizandoEstado(true);
+      console.log('🔄 [CierreProgresoNomina] Usuario presionó Continuar - Actualizando estado del cierre...');
+      
+      // Llamar a la API para actualizar el estado del cierre
+      await actualizarEstadoCierreNomina(cierre.id);
+      console.log('✅ [CierreProgresoNomina] Estado del cierre actualizado exitosamente');
+      
+      // Refrescar datos del cierre desde el componente padre
+      if (onCierreActualizado) {
+        await onCierreActualizado();
+        console.log('🔄 [CierreProgresoNomina] Datos del cierre refrescados');
+      }
+      
+    } catch (error) {
+      console.error('❌ [CierreProgresoNomina] Error actualizando estado del cierre:', error);
+      // Aquí podrías mostrar una notificación de error al usuario
+    } finally {
+      setActualizandoEstado(false);
+    }
+  };
+
+  // 🎯 Función para cargar estados de archivos del analista
+  const cargarEstadosArchivosAnalista = useCallback(async () => {
+    if (!cierre?.id) return;
+    
+    console.log('📁 [CierreProgresoNomina] Cargando estados de archivos del analista...');
+    
+    for (const tipo of ['finiquitos', 'incidencias', 'ingresos', 'novedades']) {
+      try {
+        let data;
+        if (tipo === 'novedades') {
+          data = await obtenerEstadoArchivoNovedades(cierre.id);
+          if (data && data.id) {
+            data = [data];
+          } else {
+            data = [];
+          }
+        } else {
+          data = await obtenerEstadoArchivoAnalista(cierre.id, tipo);
+        }
+        
+        if (data && data.length > 0) {
+          const archivo = data[0];
+          setArchivosAnalista(prev => ({
+            ...prev,
+            [tipo]: {
+              ...prev[tipo],
+              estado: archivo.estado,
+              archivo: {
+                id: archivo.id,
+                nombre: archivo.archivo ? archivo.archivo.split('/').pop() : (archivo.archivo_nombre || ''),
+                fecha_subida: archivo.fecha_subida
+              }
+            }
+          }));
+        } else {
+          // Si no hay archivos, cambiar de "loading" a "no_subido"
+          setArchivosAnalista(prev => ({
+            ...prev,
+            [tipo]: {
+              ...prev[tipo],
+              estado: "no_subido",
+              archivo: null
+            }
+          }));
+        }
+      } catch (error) {
+        console.error(`❌ [CierreProgresoNomina] Error cargando estado de ${tipo}:`, error);
+        // En caso de error, cambiar a "no_subido" para permitir que el usuario intente subir
+        setArchivosAnalista(prev => ({
+          ...prev,
+          [tipo]: {
+            ...prev[tipo],
+            estado: "no_subido",
+            archivo: null,
+            error: error.message || "Error cargando estado"
+          }
+        }));
+      }
+    }
+    
+    console.log('✅ [CierreProgresoNomina] Estados de archivos del analista cargados');
+  }, [cierre?.id]);
+
+  // 🎯 Función para actualizar estado de un archivo específico del analista
+  const actualizarEstadoArchivoAnalista = useCallback(async (tipo) => {
+    if (!cierre?.id) return;
+    
+    try {
+      let data;
+      if (tipo === 'novedades') {
+        data = await obtenerEstadoArchivoNovedades(cierre.id);
+        if (data && data.id) {
+          data = [data];
+        } else {
+          data = [];
+        }
+      } else {
+        data = await obtenerEstadoArchivoAnalista(cierre.id, tipo);
+      }
+      
+      if (data && data.length > 0) {
+        const archivo = data[0];
+        setArchivosAnalista(prev => ({
+          ...prev,
+          [tipo]: {
+            ...prev[tipo],
+            estado: archivo.estado,
+            archivo: {
+              id: archivo.id,
+              nombre: archivo.archivo ? archivo.archivo.split('/').pop() : (archivo.archivo_nombre || ''),
+              fecha_subida: archivo.fecha_subida
+            }
+          }
+        }));
+      }
+    } catch (error) {
+      console.error(`❌ Error actualizando estado de ${tipo}:`, error);
+    }
+  }, [cierre?.id]);
 
   const esEstadoPosteriorAConsolidacion = (estado) => {
     // Estados posteriores a la consolidación donde se aplican restricciones específicas
@@ -217,8 +379,11 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
         }
       });
       obtenerEstadoMovimientosMes(cierre.id).then(setMovimientos);
+      
+      // 🎯 Cargar estados de archivos del analista
+      cargarEstadosArchivosAnalista();
     }
-  }, [cierre]);
+  }, [cierre, cargarEstadosArchivosAnalista]);
 
   // Detecta cuando no quedan headers por clasificar
   useEffect(() => {
@@ -251,6 +416,23 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     
     actualizarEstadoSeccion('archivosTalana', estadoGeneral);
   }, [libro, movimientos, libroListo]);
+
+  // 🎯 Efecto para detectar cambios en el estado de Archivos del Analista
+  useEffect(() => {
+    const estadosArchivos = Object.values(archivosAnalista);
+    
+    // Si algún archivo está en "loading", la sección aún está cargando
+    if (estadosArchivos.some(archivo => archivo.estado === "loading")) {
+      actualizarEstadoSeccion('archivosAnalista', 'pendiente');
+      return;
+    }
+    
+    // Si todos están procesados, la sección está procesada
+    const todosProcessados = estadosArchivos.every(archivo => archivo.estado === "procesado");
+    const estadoGeneral = todosProcessados ? "procesado" : "pendiente";
+    
+    actualizarEstadoSeccion('archivosAnalista', estadoGeneral);
+  }, [archivosAnalista]);
 
   // Función para ir al Dashboard
   const handleIrDashboard = () => {
@@ -466,6 +648,9 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
             disabled={estaSeccionBloqueada('archivosTalana')}
             deberiaDetenerPolling={deberiaDetenerPolling}
             cierreId={cierre?.id}
+            // 🎯 Props para acordeón
+            expandido={estaSeccionExpandida('archivosTalana')}
+            onToggleExpansion={() => manejarExpansionSeccion('archivosTalana')}
           />
           
           {/* Sección 2: Archivos del Analista */}
@@ -477,7 +662,54 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
             onCierreActualizado={onCierreActualizado}
             onEstadoChange={onEstadoChangeAnalista}
             deberiaDetenerPolling={deberiaDetenerPolling}
+            // 🎯 Props para acordeón
+            expandido={estaSeccionExpandida('archivosAnalista')}
+            onToggleExpansion={() => manejarExpansionSeccion('archivosAnalista')}
+            // 🎯 Estados elevados (igual que ArchivosTalanaSection)
+            archivosAnalista={archivosAnalista}
+            onActualizarEstadoArchivo={actualizarEstadoArchivoAnalista}
           />
+
+          {/* 🎯 BOTÓN "CONTINUAR" - Solo cuando secciones 1 y 2 están procesadas */}
+          {mostrarBotonContinuar() && (
+            <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 text-center mb-6">
+              <div className="flex items-center justify-center mb-4">
+                <div className="flex items-center justify-center w-12 h-12 bg-green-600 rounded-full mr-4">
+                  <CheckCircle className="h-6 w-6 text-white" />
+                </div>
+                <div className="text-left">
+                  <h3 className="text-white text-lg font-semibold">
+                    Archivos Base Completados
+                  </h3>
+                  <p className="text-gray-400 text-sm">
+                    Todas las secciones requeridas están procesadas
+                  </p>
+                </div>
+              </div>
+              <p className="text-gray-300 mb-6 text-sm leading-relaxed">
+                Las secciones de <strong>Archivos Talana</strong> y <strong>Archivos del Analista</strong> están procesadas completamente.
+                <br />
+                Puedes continuar para habilitar la verificación de datos y avanzar en el proceso de cierre.
+              </p>
+              <button
+                onClick={handleContinuar}
+                disabled={actualizandoEstado}
+                className="bg-blue-700 hover:bg-blue-600 disabled:opacity-60 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg font-medium transition-all duration-200 flex items-center justify-center mx-auto shadow-lg"
+              >
+                {actualizandoEstado ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Actualizando Estado...
+                  </>
+                ) : (
+                  <>
+                    Continuar al Siguiente Paso
+                    <ChevronRight className="h-4 w-4 ml-2" />
+                  </>
+                )}
+              </button>
+            </div>
+          )}
 
           {/* Sección 3: Verificación de Datos (Discrepancias) */}
           <VerificadorDatosSection 
@@ -490,6 +722,9 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
             }}
             onEstadoChange={onEstadoChangeVerificador}
             deberiaDetenerPolling={deberiaDetenerPolling}
+            // 🎯 Props para acordeón
+            expandido={estaSeccionExpandida('verificadorDatos')}
+            onToggleExpansion={() => manejarExpansionSeccion('verificadorDatos')}
           />
 
           {/* Sección 4: Sistema de Incidencias */}
@@ -498,6 +733,9 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
             disabled={estaSeccionBloqueada('incidencias')}
             onCierreActualizado={onCierreActualizado}
             onEstadoChange={onEstadoChangeIncidencias}
+            // 🎯 Props para acordeón
+            expandido={estaSeccionExpandida('incidencias')}
+            onToggleExpansion={() => manejarExpansionSeccion('incidencias')}
           />
         </>
       )}

@@ -14,6 +14,7 @@ const estadoCierreColors = {
   finalizado:         { texto: "Finalizado", color: "bg-green-700" },
   
   // Estados específicos de nómina
+  archivos_completos: { texto: "Archivos Completos", color: "bg-indigo-600" },
   datos_consolidados: { texto: "Datos Consolidados", color: "bg-blue-600" },
   incidencias_resueltas: { texto: "Incidencias Resueltas", color: "bg-green-500" },
   reportes_generados: { texto: "Reportes Generados", color: "bg-purple-600" },

@@ -11,9 +11,20 @@ const ArchivosAnalistaSection = ({
   onCierreActualizado,
   onEstadoChange, // 🎯 Nuevo callback para reportar estado
   deberiaDetenerPolling = false,
+  
+  // 🎯 Props para acordeón
+  expandido = true,
+  onToggleExpansion,
+  
+  // 🎯 Props para estados elevados (igual que ArchivosTalanaSection)
+  archivosAnalista,
+  onActualizarEstadoArchivo,
 }) => {
-  const [expandido, setExpandido] = useState(true);
-  const [estadoArchivos, setEstadoArchivos] = useState({});
+  // Remover estado interno de expandido ya que ahora viene como prop
+  // const [expandido, setExpandido] = useState(true); // ← ELIMINADO
+  
+  // 🎯 Estados elevados: Ya no manejamos estado interno, viene como prop
+  // const [estadoArchivos, setEstadoArchivos] = useState({}); // ← ELIMINADO
   const [estadoCompletadoAnteriormente, setEstadoCompletadoAnteriormente] = useState(false);
   const procesandoCambioEstado = useRef(false);
 
@@ -22,8 +33,13 @@ const ArchivosAnalistaSection = ({
 
   // Función para determinar el estado general de la sección
   const calcularEstadoGeneral = () => {
-    const estados = Object.values(estadoArchivos);
+    if (!archivosAnalista) return "Pendiente";
+    
+    const estados = Object.values(archivosAnalista).map(archivo => archivo.estado);
     if (estados.length === 0) return "Pendiente";
+    
+    // Si algún archivo está en "loading", la sección aún está cargando
+    if (estados.some(estado => estado === "loading")) return "Pendiente";
     
     // Si todos están procesados, la sección está procesada
     const todosProcessados = estados.every(estado => estado === "procesado");
@@ -32,16 +48,18 @@ const ArchivosAnalistaSection = ({
 
   // Función para verificar si todos los archivos están procesados
   const verificarArchivosCompletos = () => {
+    if (!archivosAnalista) return false;
+    
     // Verificar que tenemos todos los archivos requeridos
     const tieneEstadosTodos = archivosRequeridos.every(tipo => 
-      tipo in estadoArchivos
+      tipo in archivosAnalista
     );
     
     if (!tieneEstadosTodos) return false;
 
     // Verificar que todos están procesados
     const todosProcessados = archivosRequeridos.every(tipo => 
-      estadoArchivos[tipo] === "procesado"
+      archivosAnalista[tipo]?.estado === "procesado"
     );
 
     return todosProcessados;
@@ -106,7 +124,7 @@ const ArchivosAnalistaSection = ({
     } else if (archivosCompletos && !estaEnEstadoAnterior) {
       console.log('ℹ️ [ArchivosAnalistaSection] Archivos completos pero cierre ya está en estado posterior - No se actualiza automáticamente');
     }
-  }, [estadoArchivos, cierreId, cierre?.estado, onCierreActualizado, estadoCompletadoAnteriormente]);
+  }, [archivosAnalista, cierreId, cierre?.estado, onCierreActualizado, estadoCompletadoAnteriormente]);
 
   // 🎯 Efecto para reportar el estado de la sección al componente padre
   useEffect(() => {
@@ -120,7 +138,7 @@ const ArchivosAnalistaSection = ({
     }
   }, [
     // Solo las propiedades específicas que afectan el cálculo
-    JSON.stringify(estadoArchivos), 
+    JSON.stringify(archivosAnalista), 
     onEstadoChange
   ]);
 
@@ -136,7 +154,7 @@ const ArchivosAnalistaSection = ({
             ? 'opacity-60 cursor-not-allowed' 
             : 'cursor-pointer hover:bg-gray-800/50'
         }`}
-        onClick={() => !disabled && setExpandido(!expandido)}
+        onClick={() => !disabled && onToggleExpansion && onToggleExpansion()}
       >
         <div className="flex items-center gap-3">
           <div className={`flex items-center justify-center w-10 h-10 rounded-lg ${
@@ -190,9 +208,10 @@ const ArchivosAnalistaSection = ({
           cierreId={cierreId}
           cliente={cliente}
           disabled={disabled}
-          onEstadosChange={setEstadoArchivos}
+          onEstadosChange={onActualizarEstadoArchivo}
           onCierreActualizado={onCierreActualizado}
           deberiaDetenerPolling={deberiaDetenerPolling}
+          archivosIniciales={archivosAnalista} // 🎯 Pasar estados iniciales
         />
       )}
     </section>

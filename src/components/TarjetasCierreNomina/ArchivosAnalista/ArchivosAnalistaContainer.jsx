@@ -24,12 +24,43 @@ const ArchivosAnalistaContainer = ({
   onEstadosChange = null, // Callback para reportar estados al componente padre
   onCierreActualizado = null, // Callback para refrescar el cierre padre
   deberiaDetenerPolling = false,
+  archivosIniciales = null, // 🎯 Nuevos estados iniciales desde el padre
 }) => {
-  const [archivos, setArchivos] = useState({
-    finiquitos: { estado: "no_subido", archivo: null, error: "" },
-    incidencias: { estado: "no_subido", archivo: null, error: "" },
-    ingresos: { estado: "no_subido", archivo: null, error: "" },
-    novedades: { estado: "no_subido", archivo: null, error: "" }
+  // 🎯 ESTADO INICIAL MEJORADO: Usar estados del padre si están disponibles
+  const [archivos, setArchivos] = useState(() => {
+    // Si tenemos estados iniciales del padre, usarlos
+    if (archivosIniciales) {
+      return {
+        finiquitos: { 
+          estado: archivosIniciales.finiquitos?.estado || "no_subido", 
+          archivo: archivosIniciales.finiquitos?.archivo || null, 
+          error: "" 
+        },
+        incidencias: { 
+          estado: archivosIniciales.incidencias?.estado || "no_subido", 
+          archivo: archivosIniciales.incidencias?.archivo || null, 
+          error: "" 
+        },
+        ingresos: { 
+          estado: archivosIniciales.ingresos?.estado || "no_subido", 
+          archivo: archivosIniciales.ingresos?.archivo || null, 
+          error: "" 
+        },
+        novedades: { 
+          estado: archivosIniciales.novedades?.estado || "no_subido", 
+          archivo: archivosIniciales.novedades?.archivo || null, 
+          error: "" 
+        }
+      };
+    }
+    
+    // Si no, usar loading como antes
+    return {
+      finiquitos: { estado: "loading", archivo: null, error: "" },
+      incidencias: { estado: "loading", archivo: null, error: "" },
+      ingresos: { estado: "loading", archivo: null, error: "" },
+      novedades: { estado: "loading", archivo: null, error: "" }
+    };
   });
   const [subiendo, setSubiendo] = useState({});
   const [pollingActivo, setPollingActivo] = useState(false);
@@ -37,25 +68,7 @@ const ArchivosAnalistaContainer = ({
   const pollCounterRef = useRef(0);
 
   // Función para verificar si hay archivos en proceso o si necesitamos hacer polling
-  const necesitaPolling = useCallback(() => {
-    const estadosQueNecesitanPolling = [
-      "en_proceso", 
-      "procesando", 
-      "subiendo",
-      "analizando",
-      "validando"
-    ];
-    
-    const tieneArchivosEnProceso = Object.values(archivos).some(archivo => 
-      estadosQueNecesitanPolling.includes(archivo.estado)
-    );
-    
-    const tieneSubidas = Object.values(subiendo).some(estado => estado === true);
-    
-    return tieneArchivosEnProceso || tieneSubidas;
-  }, [archivos, subiendo]);
-
-  // Función para manejar el polling mejorado
+  // 🔄 POLLING MEJORADO: Implementar igual que LibroRemuneracionesCard
   const manejarPolling = useCallback(async () => {
     pollCounterRef.current += 1;
     console.log(`📡 [Polling #${pollCounterRef.current}] Verificando estados archivos analista...`);
@@ -129,50 +142,99 @@ const ArchivosAnalistaContainer = ({
     }
   }, [cierreId]);
 
-  // Efecto para manejar el polling mejorado
+    // 🔄 POLLING MEJORADO: Implementar igual que LibroRemuneracionesCard
   useEffect(() => {
-    const deberiaHacerPolling = necesitaPolling();
-    
-    console.log('🎯 [ArchivosAnalista] Evaluando necesidad de polling:', {
-      deberiaHacerPolling,
-      pollingActivo,
-      archivos: Object.entries(archivos).map(([tipo, arch]) => ({ tipo, estado: arch.estado })),
-      subiendo: Object.entries(subiendo).filter(([_, estado]) => estado).map(([tipo]) => tipo)
-    });
-    
-    // Verificar si se debe detener el polling globalmente
-    if (deberiaDetenerPolling && pollingActivo) {
+    // Detener polling si se debe detener globalmente
+    if (deberiaDetenerPolling && pollingRef.current) {
       console.log('🛑 [ArchivosAnalista] Deteniendo polling - señal global de parada');
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
       setPollingActivo(false);
-      
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current);
-        pollingRef.current = null;
-      }
       return;
     }
+
+    // 🚀 ESTADOS QUE REQUIEREN POLLING (excluye "loading" para evitar polling prematuro)
+    const estadosQueRequierenPolling = [
+      "no_subido",           // Solo cuando realmente no hay archivo
+      "pendiente", 
+      "analizando_hdrs",
+      "hdrs_analizados",
+      "clasif_en_proceso",
+      "procesando",
+      "en_proceso",
+      "subiendo",
+      "analizando",
+      "validando"
+      // NOTA: "loading" no está incluido para evitar polling prematuro
+    ];
     
-    if (deberiaHacerPolling && !pollingActivo && !deberiaDetenerPolling) {
-      console.log('🔄 Iniciando polling para archivos analista...');
+    // Verificar si algún archivo necesita polling
+    const tieneArchivosEnProceso = Object.values(archivos).some(archivo => 
+      estadosQueRequierenPolling.includes(archivo.estado)
+    );
+    
+    // 🛡️ NO HACER POLLING si hay archivos en estado "loading" (aún cargando estados iniciales)
+    const tieneArchivosLoading = Object.values(archivos).some(archivo => 
+      archivo.estado === "loading"
+    );
+    
+    // Verificar si hay subidas en proceso
+    const tieneSubidas = Object.values(subiendo).some(estado => estado === true);
+    
+    const deberiaHacerPolling = (tieneArchivosEnProceso || tieneSubidas) && !tieneArchivosLoading;
+
+    // 🎯 LOG DESPUÉS de declarar todas las variables
+    console.log('🎯 [ArchivosAnalista] useEffect polling - evaluando necesidad...', {
+      archivos: Object.entries(archivos).map(([tipo, arch]) => ({ tipo, estado: arch.estado })),
+      deberiaDetenerPolling,
+      pollingActivo,
+      tieneArchivosEnProceso,
+      tieneArchivosLoading,
+      tieneSubidas,
+      deberiaHacerPolling
+    });
+
+    if (deberiaHacerPolling && !pollingRef.current && !deberiaDetenerPolling) {
+      console.log('🔄 [ArchivosAnalista] Iniciando polling - archivos en proceso detectados');
       setPollingActivo(true);
       pollCounterRef.current = 0;
+      
+      let contadorErrores = 0;
       
       // Primera consulta inmediata
       manejarPolling();
       
       // Configurar intervalo
-      pollingRef.current = setInterval(manejarPolling, 3000); // Cada 3 segundos
+      pollingRef.current = setInterval(async () => {
+        pollCounterRef.current += 1;
+        try {
+          console.log(`📡 [ArchivosAnalista] Polling #${pollCounterRef.current} - Verificando estados...`);
+          await manejarPolling();
+          
+          // Reset error counter on success
+          contadorErrores = 0;
+          
+        } catch (pollError) {
+          contadorErrores++;
+          console.error(`❌ [ArchivosAnalista] Error en polling #${pollCounterRef.current} (${contadorErrores}/3):`, pollError);
+          
+          // Si hay 3 errores consecutivos, parar el polling por seguridad
+          if (contadorErrores >= 3) {
+            console.log('🛑 [ArchivosAnalista] Demasiados errores consecutivos, deteniendo polling por seguridad');
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+            setPollingActivo(false);
+          }
+        }
+      }, 3000); // Cada 3 segundos
       
-    } else if ((!deberiaHacerPolling || deberiaDetenerPolling) && pollingActivo) {
-      console.log('✅ [ArchivosAnalista] Deteniendo polling - archivos completados o detención solicitada');
+    } else if ((!deberiaHacerPolling || deberiaDetenerPolling) && pollingRef.current) {
+      console.log('✅ [ArchivosAnalista] Todos los archivos procesados o detención solicitada - deteniendo polling');
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
       setPollingActivo(false);
-      
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current);
-        pollingRef.current = null;
-      }
     }
-    
+
     // Cleanup al desmontar
     return () => {
       if (pollingRef.current) {
@@ -181,32 +243,31 @@ const ArchivosAnalistaContainer = ({
         setPollingActivo(false);
       }
     };
-  }, [necesitaPolling, pollingActivo, manejarPolling, deberiaDetenerPolling]);
+  }, [
+    // 🎯 DEPENDENCIAS ESPECÍFICAS: Solo cuando cambian estados de archivos individuales
+    JSON.stringify(Object.entries(archivos).map(([tipo, arch]) => ({ tipo, estado: arch.estado }))),
+    JSON.stringify(subiendo),
+    deberiaDetenerPolling,
+    manejarPolling
+  ]);
 
   // Función para iniciar polling manualmente (usado cuando se sube un archivo)
+  // 🎯 SIMPLIFICADO: Solo forzar una actualización inmediata, el useEffect se encarga del polling
   const iniciarPolling = useCallback(() => {
-    console.log('🚀 [ArchivosAnalista] Iniciando polling manual...');
+    console.log('🚀 [ArchivosAnalista] Solicitud de polling manual...');
     
     // No iniciar si se debe detener globalmente
     if (deberiaDetenerPolling) {
-      console.log('🛑 [ArchivosAnalista] No se inicia polling manual - señal global de parada');
+      console.log('🛑 [ArchivosAnalista] No se ejecuta polling manual - señal global de parada');
       return;
     }
     
-    if (!pollingActivo) {
-      console.log('🔄 Iniciando polling manual para archivos analista...');
-      setPollingActivo(true);
-      pollCounterRef.current = 0;
-      
-      // Primera consulta inmediata
-      manejarPolling();
-      
-      // Configurar intervalo si no existe
-      if (!pollingRef.current) {
-        pollingRef.current = setInterval(manejarPolling, 3000);
-      }
-    }
-  }, [pollingActivo, manejarPolling, deberiaDetenerPolling]);
+    // Solo ejecutar una consulta inmediata, el useEffect se encarga del polling continuo
+    console.log('📡 [ArchivosAnalista] Ejecutando consulta inmediata por solicitud manual...');
+    manejarPolling().catch(error => {
+      console.error('❌ [ArchivosAnalista] Error en consulta manual:', error);
+    });
+  }, [manejarPolling, deberiaDetenerPolling]);
 
   // useEffect para reportar estados al componente padre
   useEffect(() => {
@@ -219,10 +280,22 @@ const ArchivosAnalistaContainer = ({
     }
   }, [archivos, onEstadosChange]);
 
-  // Cargar estado inicial de archivos
+  // Cargar estado inicial de archivos - Solo si no se pasaron estados iniciales
   useEffect(() => {
     const cargarEstados = async () => {
       if (!cierreId) return;
+      
+      // 🎯 Solo cargar estados si tenemos archivos en "loading" (sin estados iniciales)
+      const tieneArchivosLoading = Object.values(archivos).some(archivo => 
+        archivo.estado === "loading"
+      );
+      
+      if (!tieneArchivosLoading) {
+        console.log('🎯 [ArchivosAnalistaContainer] Estados iniciales ya disponibles, saltando carga inicial');
+        return;
+      }
+      
+      console.log('🔄 [ArchivosAnalistaContainer] Cargando estados iniciales...');
       
       for (const tipo of ['finiquitos', 'incidencias', 'ingresos', 'novedades']) {
         try {
@@ -250,6 +323,16 @@ const ArchivosAnalistaContainer = ({
                   nombre: archivo.archivo ? archivo.archivo.split('/').pop() : (archivo.archivo_nombre || ''),
                   fecha_subida: archivo.fecha_subida
                 }
+              }
+            }));
+          } else {
+            // 🎯 IMPORTANTE: Si no hay archivos, cambiar de "loading" a "no_subido"
+            setArchivos(prev => ({
+              ...prev,
+              [tipo]: {
+                ...prev[tipo],
+                estado: "no_subido",
+                archivo: null
               }
             }));
           }
@@ -454,10 +537,7 @@ const ArchivosAnalistaContainer = ({
 
   return (
     <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-4 ${disabled ? "opacity-60 pointer-events-none" : ""}`}>
-      <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-        <FileText size={20} className="text-blue-400" />
-        3. Archivos del Analista
-      </h3>
+     
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <FiniquitosCard

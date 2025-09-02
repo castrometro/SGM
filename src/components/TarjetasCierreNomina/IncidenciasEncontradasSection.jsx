@@ -37,8 +37,18 @@ const nombresClasificaciones = {
   impuestos: "🏛️ Impuestos",
 };
 
-const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActualizado, onEstadoChange }) => {
-  const [expandido, setExpandido] = useState(true);
+const IncidenciasEncontradasSection = ({ 
+  cierre, 
+  disabled = false, 
+  onCierreActualizado, 
+  onEstadoChange,
+  
+  // 🎯 Props para acordeón
+  expandido = true,
+  onToggleExpansion,
+}) => {
+  // Remover estado interno de expandido ya que ahora viene como prop
+  // const [expandido, setExpandido] = useState(true); // ← ELIMINADO
   const [incidencias, setIncidencias] = useState([]);
   const [resumen, setResumen] = useState(null);
   const [cargando, setCargando] = useState(false);
@@ -399,7 +409,7 @@ const IncidenciasEncontradasSection = ({ cierre, disabled = false, onCierreActua
         className={`flex items-center justify-between cursor-pointer hover:bg-gray-800/50 p-3 -m-3 rounded-lg transition-colors ${
           disabled ? 'opacity-60' : ''
         }`}
-        onClick={() => setExpandido(!expandido)}
+        onClick={() => onToggleExpansion && onToggleExpansion()}
       >
         <div className="flex items-center gap-3">
           <div className={`flex items-center justify-center w-10 h-10 rounded-lg ${

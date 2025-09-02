@@ -13,8 +13,19 @@ import {
   obtenerCierreNominaPorId
 } from "../../api/nomina";
 
-const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado, onEstadoChange, deberiaDetenerPolling = false }) => {
-  const [expandido, setExpandido] = useState(true);
+const VerificadorDatosSection = ({ 
+  cierre, 
+  disabled = false, 
+  onCierreActualizado, 
+  onEstadoChange, 
+  deberiaDetenerPolling = false,
+  
+  // 🎯 Props para acordeón
+  expandido = true,
+  onToggleExpansion,
+}) => {
+  // Remover estado interno de expandido ya que ahora viene como prop
+  // const [expandido, setExpandido] = useState(true); // ← ELIMINADO
   const [discrepancias, setDiscrepancias] = useState([]);
   const [resumen, setResumen] = useState(null);
   const [cargando, setCargando] = useState(false);
@@ -448,7 +459,7 @@ const VerificadorDatosSection = ({ cierre, disabled = false, onCierreActualizado
             ? 'opacity-60 cursor-not-allowed' 
             : 'cursor-pointer hover:bg-gray-800/50'
         }`}
-        onClick={() => !disabled && setExpandido(!expandido)}
+        onClick={() => !disabled && onToggleExpansion && onToggleExpansion()}
       >
         <div className="flex items-center gap-3">
           <div className={`flex items-center justify-center w-10 h-10 rounded-lg ${

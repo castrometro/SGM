@@ -57,6 +57,36 @@ class ArchivoAnalistaUploadViewSet(viewsets.ModelViewSet):
         # Validar que sea un archivo Excel
         if not archivo.name.endswith(('.xlsx', '.xls')):
             return Response({"error": "El archivo debe ser de tipo Excel (.xlsx o .xls)"}, status=400)
+
+        # Validar nombre de archivo
+        from .utils.validaciones import validar_nombre_archivo_analista
+        try:
+            resultado_validacion = validar_nombre_archivo_analista(
+                archivo.name, 
+                tipo_archivo=tipo_archivo,
+                rut_cliente=cierre.cliente.rut,
+                periodo_cierre=cierre.periodo
+            )
+            
+            if not resultado_validacion['es_valido']:
+                errores = resultado_validacion.get('errores', [])
+                mensaje_error = '\n'.join(errores) if errores else "Nombre de archivo inválido"
+                return Response(
+                    {"error": mensaje_error}, 
+                    status=400
+                )
+                
+            # Log de advertencias si las hay
+            advertencias = resultado_validacion.get('advertencias', [])
+            if advertencias:
+                logger.warning(f"Advertencias en validación de archivo {archivo.name}: {advertencias}")
+                
+        except Exception as e:
+            logger.error(f"Error validando nombre de archivo {archivo.name}: {e}")
+            return Response(
+                {"error": "Error interno validando el nombre del archivo"}, 
+                status=500
+            )
         
         # Crear el registro del archivo
         archivo_analista = ArchivoAnalistaUpload.objects.create(

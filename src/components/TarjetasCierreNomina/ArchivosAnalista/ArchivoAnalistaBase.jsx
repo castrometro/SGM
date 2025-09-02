@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Download, Loader2 } from "lucide-react";
+import { Download, Loader2, CheckCircle2 } from "lucide-react";
 import EstadoBadge from "../../EstadoBadge";
 
 const ArchivoAnalistaBase = ({
@@ -21,20 +21,18 @@ const ArchivoAnalistaBase = ({
   const fileInputRef = useRef();
   const [eliminando, setEliminando] = useState(false);
   
+  // 🚀 VARIABLES DE ESTADO UNIFICADAS
   const isProcesando = estado === "en_proceso" || estado === "procesando";
   const isDisabled = disabled || subiendo || isProcesando;
-  const isProcessed = estado === "procesado" || estado === "procesado_parcial";
-  const hasError = estado === "con_error";
+  const isProcessed = estado === "procesado" || estado === "con_errores_parciales";
+  const hasError = estado === "con_error" || estado === "error";
   
-  // Determinar si se puede subir un archivo nuevo (solo cuando no hay archivo)
-  const puedeSubirArchivo = !isDisabled && 
-    (estado === "no_subido" || estado === "pendiente") && !archivo?.id;
+  // 🚀 LÓGICA SIMPLIFICADA: Un solo botón que cambia según si hay archivo
+  const puedeInteractuarConArchivo = !isDisabled && !isProcesando;
   
-  // Determinar si se puede resubir (cuando ya hay archivo subido)
-  const puedeResubir = archivo?.id && !isDisabled && onEliminarArchivo;
-  
-  const estadosConArchivoBloqueado = ["en_proceso", "procesando", "procesado"];
-  const archivoEsBloqueado = estadosConArchivoBloqueado.includes(estado);
+  // Determinar si hay archivo
+  const tieneArchivo = Boolean(archivo?.id);
+  const nombreArchivoActual = archivo?.nombre;
 
   const handleSeleccionArchivo = async (e) => {
     const archivoSeleccionado = e.target.files[0];
@@ -92,90 +90,121 @@ const ArchivoAnalistaBase = ({
         Descargar Plantilla
       </a>
 
-      <div className="flex flex-col gap-2">
-        {/* Botón de subida de archivo - solo cuando no hay archivo */}
-        {puedeSubirArchivo ? (
+      <div className="flex gap-3 items-center">
+        {/* 🚀 BOTÓN ÚNICO INTELIGENTE */}
+        {puedeInteractuarConArchivo ? (
           <button
             type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isDisabled}
-            className={`bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded text-sm font-medium transition ${isDisabled ? "opacity-60 cursor-not-allowed" : ""}`}
-          >
-            {isProcesando ? "Procesando..." : subiendo ? "Subiendo..." : "Elegir archivo .xlsx"}
-          </button>
-        ) : archivo?.id ? (
-          /* Cuando hay archivo - mostrar estado y botón resubir */
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={true}
-              className={`px-3 py-1 rounded text-sm font-medium cursor-not-allowed opacity-60 flex-1 ${
-                hasError ? 'bg-red-600' : 
-                isProcesando ? 'bg-orange-600' :
-                isProcessed ? 'bg-gray-600' : 'bg-gray-600'
-              }`}
-              title={
-                hasError ? "El archivo tuvo errores durante el procesamiento" :
-                isProcesando ? "El archivo se está procesando" :
-                isProcessed ? "El archivo ya fue procesado" :
-                "Archivo subido"
+            onClick={() => {
+              if (tieneArchivo && onEliminarArchivo) {
+                // Si hay archivo, eliminar primero
+                handleEliminarArchivo();
+              } else {
+                // Si no hay archivo, abrir selector
+                fileInputRef.current.click();
               }
-            >
-              {hasError ? "Archivo con error" :
-               isProcesando ? "Procesando..." :
-               isProcessed ? "Archivo procesado" :
-               "Archivo subido"}
-            </button>
-            
-            {/* Botón Resubir - disponible desde que hay archivo */}
-            {puedeResubir && (
-              <button
-                type="button"
-                onClick={handleEliminarArchivo}
-                disabled={eliminando}
-                className="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm font-medium transition"
-                title="Eliminar archivo actual para permitir subir uno nuevo"
-              >
-                {eliminando ? "Eliminando..." : "Resubir"}
-              </button>
-            )}
-          </div>
-        ) : null}
-        
-        {/* Botones personalizados (para novedades principalmente) */}
-        {children}
-        
-        {/* Nombre del archivo */}
-        {archivo?.nombre && (
-          <span className="text-gray-300 text-sm italic truncate">
-            {archivo.nombre}
-          </span>
+            }}
+            disabled={isDisabled || eliminando}
+            className={`px-3 py-1 rounded text-sm font-medium transition ${
+              isDisabled ? "opacity-60 cursor-not-allowed" : ""
+            } ${
+              tieneArchivo 
+                ? (isProcessed ? "bg-blue-600 hover:bg-blue-700" : "bg-orange-600 hover:bg-orange-700")
+                : "bg-green-600 hover:bg-green-700"
+            }`}
+            title={
+              tieneArchivo 
+                ? (isProcessed ? "Resubir archivo - eliminará datos procesados" : "Reemplazar archivo actual")
+                : "Seleccionar archivo Excel"
+            }
+          >
+            {eliminando ? "Eliminando..." : 
+             subiendo ? "Subiendo..." :
+             tieneArchivo ? (isProcessed ? "Resubir archivo" : "Reemplazar archivo") : "Elegir archivo"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={true}
+            className="bg-gray-600 px-3 py-1 rounded text-sm font-medium cursor-not-allowed opacity-75"
+            title="Archivo en procesamiento, espera a que termine"
+          >
+            Procesando...
+          </button>
         )}
+        
+        <span className="text-gray-300 text-xs italic truncate max-w-xs">
+          {nombreArchivoActual || "Ningún archivo seleccionado"}
+        </span>
       </div>
       
-      {/* Input de archivo oculto */}
+      {/* Botones personalizados (para novedades principalmente) */}
+      {children}
+      
+      {/* 🚀 INPUT DE ARCHIVO SIMPLIFICADO */}
       <input
         type="file"
         accept=".xlsx,.xls"
         ref={fileInputRef}
         style={{ display: "none" }}
         onChange={handleSeleccionArchivo}
-        disabled={isDisabled || archivoEsBloqueado}
+        disabled={isDisabled || !puedeInteractuarConArchivo}
       />
 
       {/* Mensajes de error */}
       {error && (
-        <div className="text-sm text-red-400 mt-2 bg-red-900/20 p-2 rounded">
-          {error}
+        <div className="text-xs text-red-400 mt-1 bg-red-900/20 p-2 rounded border-l-2 border-red-400">
+          ❌ <strong>Error:</strong> {error}
         </div>
       )}
 
-      {/* Mensaje de éxito */}
-      {archivoEsBloqueado && estado === "procesado" && (
-        <div className="text-sm text-yellow-400 mt-2 bg-yellow-900/20 p-2 rounded">
-          ℹ️ Archivo procesado correctamente
+      {/* ✅ MENSAJE INFORMATIVO DEL FORMATO ESPERADO */}
+      {(estado === "no_subido" || estado === "pendiente") && (
+        <div className="text-xs text-blue-400 mt-1 bg-blue-900/20 p-2 rounded">
+          📋 <strong>Formato requerido:</strong> AAAAAMM_{tipo}_{`{RUT}`}.xlsx
+          <br />
+          <span className="text-blue-300">Ejemplo: 202503_{tipo}_12345678.xlsx</span>
         </div>
       )}
+
+      {/* ✅ MENSAJE INFORMATIVO CUANDO EL ARCHIVO ESTÁ BLOQUEADO */}
+      {!puedeInteractuarConArchivo && tieneArchivo && (
+        <div className="text-xs text-yellow-400 mt-1 bg-yellow-900/20 p-2 rounded border-l-2 border-yellow-400">
+          🔒 <strong>Archivo procesado:</strong> Este archivo ya fue procesado exitosamente.
+          <br />
+          <span className="text-yellow-300">Si necesitas cambiar el archivo, contacta al administrador.</span>
+        </div>
+      )}
+
+      {/* 🚀 MENSAJE INFORMATIVO MEJORADO CUANDO EL ARCHIVO ESTÁ EN PROCESAMIENTO */}
+      {isProcesando && (
+        <div className="text-xs text-orange-400 mt-1 bg-orange-900/20 p-2 rounded border-l-2 border-orange-400">
+          ⏳ <strong>Procesamiento en curso:</strong> El archivo se está procesando actualmente.
+          <br />
+          <span className="text-orange-300">Espera a que termine para poder cambiar el archivo si es necesario.</span>
+        </div>
+      )}
+
+      {/* ✅ MENSAJE CUANDO EL ARCHIVO ESTÁ PROCESADO */}
+      {isProcessed && tieneArchivo && (
+        <div className="mt-2 text-xs text-green-400 bg-green-900/20 p-2 rounded flex items-center gap-2">
+          <CheckCircle2 size={16} />
+          <strong>Archivo procesado:</strong> El procesamiento se completó exitosamente
+        </div>
+      )}
+
+      {/* 📄 MENSAJE DE ESTADO FINAL */}
+      <span className="text-xs text-gray-400 italic mt-2 block">
+        {isProcesando
+          ? "🔄 Procesando archivo, por favor espera..."
+          : isProcessed
+          ? "✅ Archivo procesado exitosamente"
+          : hasError
+          ? "❌ Error al procesar el archivo. Revisa los detalles arriba."
+          : estado === "pendiente"
+          ? `📋 Archivo listo: ${nombreArchivoActual} - Esperando procesamiento`
+          : "📁 Ningún archivo seleccionado aún"}
+      </span>
     </div>
   );
 };

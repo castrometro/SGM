@@ -503,3 +503,124 @@ def validar_nombre_archivo_movimientos_mes(nombre_archivo: str, rut_cliente: str
     }
     
     return _build_validation_result(True, errores, advertencias, estadisticas)
+
+
+def validar_nombre_archivo_analista(nombre_archivo: str, tipo_archivo: str, rut_cliente: str = None, periodo_cierre: str = None) -> Dict[str, Any]:
+    """
+    Valida el nombre de archivo para archivos del analista.
+    
+    Formatos esperados:
+    - {AAAAAMM}_incidencias_{RUT}.xlsx (nota: puede ser incidencias o ausentismos)
+    - {AAAAAMM}_finiquitos_{RUT}.xlsx
+    - {AAAAAMM}_ingresos_{RUT}.xlsx
+    
+    Ejemplos: 
+    - 202503_incidencias_12345678.xlsx
+    - 202503_finiquitos_12345678.xlsx
+    - 202503_ingresos_12345678.xlsx
+    
+    Args:
+        nombre_archivo (str): Nombre del archivo a validar
+        tipo_archivo (str): Tipo de archivo ('incidencias', 'finiquitos', 'ingresos')
+        rut_cliente (str, optional): RUT del cliente para validación específica
+        periodo_cierre (str, optional): Período del cierre en formato "YYYY-MM" (ej: "2024-03")
+        
+    Returns:
+        dict: Resultado de validación
+    """
+    errores = []
+    advertencias = []
+    
+    # Validar tipo de archivo
+    tipos_validos = ['incidencias', 'finiquitos', 'ingresos']
+    if tipo_archivo not in tipos_validos:
+        errores.append(f"Tipo de archivo inválido: {tipo_archivo}. Debe ser uno de: {', '.join(tipos_validos)}")
+        return _build_validation_result(False, errores, advertencias, {})
+    
+    # Validar extensión
+    if not nombre_archivo.lower().endswith(('.xlsx', '.xls')):
+        errores.append(f"Formato de archivo no soportado: {nombre_archivo}. Solo se aceptan archivos Excel (.xlsx, .xls)")
+        return _build_validation_result(False, errores, advertencias, {})
+    
+    # Validar caracteres problemáticos
+    caracteres_problematicos = ['<', '>', ':', '"', '|', '?', '*']
+    if any(char in nombre_archivo for char in caracteres_problematicos):
+        errores.append(f"El nombre del archivo contiene caracteres no permitidos: {nombre_archivo}")
+        return _build_validation_result(False, errores, advertencias, {})
+    
+    # Patrón de validación: {AAAAAMM}_{tipo}_{RUT}.xlsx
+    # Nota: para incidencias también acepta "ausentismos" como alias
+    if tipo_archivo == 'incidencias':
+        # Para incidencias, usa grupo sin captura para la alternancia
+        patron_analista = rf'^(\d{{6}})_(?:incidencias|ausentismos)_(\d{{7,9}})\.xlsx?$'
+    else:
+        patron_analista = rf'^(\d{{6}})_{tipo_archivo}_(\d{{7,9}})\.xlsx?$'
+    
+    match = re.match(patron_analista, nombre_archivo, re.IGNORECASE)
+    
+    if not match:
+        errores.append(
+            f"Nombre de archivo incorrecto: {nombre_archivo}. "
+            f"Formato esperado: {{AAAAAMM}}_{tipo_archivo}_{{RUT}}.xlsx\n"
+            f"Ejemplo: 202503_{tipo_archivo}_12345678.xlsx"
+        )
+        return _build_validation_result(False, errores, advertencias, {})
+    
+    # Extraer información del nombre
+    fecha_extraida = match.group(1)  # AAAAAMM
+    rut_extraido = match.group(2)    # RUT (siempre es el segundo grupo de captura)
+    
+    # Validar formato de fecha (AAAAAMM)
+    try:
+        año = int(fecha_extraida[:4])
+        mes = int(fecha_extraida[4:6])
+        
+        if año < 2020 or año > 2030:
+            errores.append(f"Año inválido en el nombre del archivo: {año}. Debe estar entre 2020 y 2030.")
+            return _build_validation_result(False, errores, advertencias, {})
+            
+        if mes < 1 or mes > 12:
+            errores.append(f"Mes inválido en el nombre del archivo: {mes}. Debe estar entre 01 y 12.")
+            return _build_validation_result(False, errores, advertencias, {})
+            
+    except ValueError:
+        errores.append(f"Formato de fecha inválido en el nombre del archivo: {fecha_extraida}")
+        return _build_validation_result(False, errores, advertencias, {})
+    
+    # Validar RUT del cliente si se proporciona
+    if rut_cliente:
+        rut_cliente_sin_puntos = rut_cliente.replace('.', '').replace('-', '').replace('k', '').replace('K', '')
+        if rut_extraido != rut_cliente_sin_puntos:
+            errores.append(
+                f"El RUT en el nombre del archivo ({rut_extraido}) no coincide con el RUT del cliente ({rut_cliente_sin_puntos})"
+            )
+            return _build_validation_result(False, errores, advertencias, {})
+    
+    # Validar período del cierre si se proporciona
+    if periodo_cierre:
+        try:
+            # Convertir período del cierre (YYYY-MM) a formato del archivo (YYYYMM)
+            año_cierre, mes_cierre = periodo_cierre.split('-')
+            fecha_cierre_esperada = f"{año_cierre}{mes_cierre.zfill(2)}"
+            
+            if fecha_extraida != fecha_cierre_esperada:
+                errores.append(
+                    f"El período en el nombre del archivo ({fecha_extraida}) no coincide con el período del cierre ({fecha_cierre_esperada})"
+                )
+                return _build_validation_result(False, errores, advertencias, {})
+                
+        except (ValueError, IndexError):
+            advertencias.append(f"No se pudo validar el período del cierre: {periodo_cierre}")
+    
+    estadisticas = {
+        'nombre_archivo': nombre_archivo,
+        'tipo_archivo': tipo_archivo,
+        'fecha_extraida': fecha_extraida,
+        'rut_extraido': rut_extraido,
+        'formato_detectado': f'{tipo_archivo}_estandar',
+        'extension': nombre_archivo.split('.')[-1].lower(),
+        'año': año,
+        'mes': mes
+    }
+    
+    return _build_validation_result(True, errores, advertencias, estadisticas)

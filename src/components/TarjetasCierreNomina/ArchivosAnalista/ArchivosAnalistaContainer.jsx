@@ -153,15 +153,15 @@ const ArchivosAnalistaContainer = ({
     }
     
     if (deberiaHacerPolling && !pollingActivo && !deberiaDetenerPolling) {
-      console.log('🔄 [PAUSADO] Polling de ArchivosAnalistaContainer pausado temporalmente');
-      // setPollingActivo(true);
-      // pollCounterRef.current = 0;
+      console.log('🔄 Iniciando polling para archivos analista...');
+      setPollingActivo(true);
+      pollCounterRef.current = 0;
       
       // Primera consulta inmediata
-      // manejarPolling();
+      manejarPolling();
       
-      // Configurar intervalo - PAUSADO TEMPORALMENTE
-      // pollingRef.current = setInterval(manejarPolling, 3000); // Cada 3 segundos
+      // Configurar intervalo
+      pollingRef.current = setInterval(manejarPolling, 3000); // Cada 3 segundos
       
     } else if ((!deberiaHacerPolling || deberiaDetenerPolling) && pollingActivo) {
       console.log('✅ [ArchivosAnalista] Deteniendo polling - archivos completados o detención solicitada');
@@ -194,17 +194,17 @@ const ArchivosAnalistaContainer = ({
     }
     
     if (!pollingActivo) {
-      console.log('🔄 [PAUSADO] Polling inicial de ArchivosAnalistaContainer pausado temporalmente');
-      // setPollingActivo(true);
-      // pollCounterRef.current = 0;
+      console.log('🔄 Iniciando polling manual para archivos analista...');
+      setPollingActivo(true);
+      pollCounterRef.current = 0;
       
-      // Primera consulta inmediata - PAUSADO
-      // manejarPolling();
+      // Primera consulta inmediata
+      manejarPolling();
       
-      // Configurar intervalo si no existe - PAUSADO
-      // if (!pollingRef.current) {
-      //   pollingRef.current = setInterval(manejarPolling, 3000);
-      // }
+      // Configurar intervalo si no existe
+      if (!pollingRef.current) {
+        pollingRef.current = setInterval(manejarPolling, 3000);
+      }
     }
   }, [pollingActivo, manejarPolling, deberiaDetenerPolling]);
 

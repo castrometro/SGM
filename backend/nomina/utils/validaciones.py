@@ -624,3 +624,104 @@ def validar_nombre_archivo_analista(nombre_archivo: str, tipo_archivo: str, rut_
     }
     
     return _build_validation_result(True, errores, advertencias, estadisticas)
+
+
+def validar_nombre_archivo_novedades(nombre_archivo: str, rut_cliente: str = None, periodo_cierre: str = None) -> Dict[str, Any]:
+    """
+    Valida el nombre de archivo de novedades según el formato estándar:
+    AAAAAMM_novedades_{RUT}.xlsx
+    
+    Args:
+        nombre_archivo (str): Nombre del archivo a validar
+        rut_cliente (str): RUT del cliente para validación (opcional)
+        periodo_cierre (str): Período del cierre en formato YYYY-MM (opcional)
+        
+    Returns:
+        dict: Resultado de validación con estructura:
+            - es_valido (bool): True si el archivo pasa todas las validaciones
+            - errores (list): Lista de errores críticos
+            - advertencias (list): Lista de advertencias
+            - estadisticas (dict): Estadísticas del archivo validado
+    """
+    errores = []
+    advertencias = []
+    
+    if not nombre_archivo:
+        errores.append("El nombre del archivo está vacío")
+        return _build_validation_result(False, errores, advertencias, {})
+    
+    # Patrón para archivos de novedades: AAAAAMM_novedades_{RUT}.xlsx
+    patron = r'^(\d{6})_novedades_([0-9]{7,8}-?[0-9kK])\.xlsx$'
+    match = re.match(patron, nombre_archivo, re.IGNORECASE)
+    
+    if not match:
+        errores.append(
+            "El nombre del archivo no cumple con el formato estándar: AAAAAMM_novedades_{RUT}.xlsx\n"
+            "Ejemplo: 202501_novedades_12345678-9.xlsx"
+        )
+        return _build_validation_result(False, errores, advertencias, {})
+    
+    # Extraer componentes del nombre
+    fecha_str = match.group(1)
+    rut_extraido = match.group(2)
+    
+    # Validar fecha
+    try:
+        año = int(fecha_str[:4])
+        mes = int(fecha_str[4:6])
+        
+        if año < 2020 or año > 2030:
+            errores.append(f"El año {año} está fuera del rango válido (2020-2030)")
+        
+        if mes < 1 or mes > 12:
+            errores.append(f"El mes {mes} no es válido (debe estar entre 01-12)")
+            
+    except ValueError:
+        errores.append(f"La fecha {fecha_str} no es válida")
+    
+    # Validar RUT extraído
+    patron_rut = r'^[0-9]{7,8}-?[0-9kK]$'
+    if not re.match(patron_rut, rut_extraido, re.IGNORECASE):
+        errores.append(f"El RUT en el nombre del archivo ({rut_extraido}) no tiene un formato válido")
+    
+    # Validar coincidencia con RUT del cliente si se proporciona
+    if rut_cliente:
+        rut_cliente_limpio = rut_cliente.replace('.', '').replace('-', '').replace('k', '').replace('K', '')
+        rut_archivo_limpio = rut_extraido.replace('-', '').replace('k', '').replace('K', '')
+        
+        if rut_cliente_limpio != rut_archivo_limpio:
+            errores.append(
+                f"El RUT en el nombre del archivo ({rut_extraido}) no coincide con el RUT del cliente ({rut_cliente})"
+            )
+    
+    # Validar coincidencia con período del cierre si se proporciona
+    if periodo_cierre:
+        try:
+            # Convertir período del cierre (YYYY-MM) a formato del archivo (YYYYMM)
+            año_cierre, mes_cierre = periodo_cierre.split('-')
+            fecha_cierre_esperada = f"{año_cierre}{mes_cierre.zfill(2)}"
+            
+            if fecha_str != fecha_cierre_esperada:
+                errores.append(
+                    f"El período en el nombre del archivo ({fecha_str}) no coincide con el período del cierre ({fecha_cierre_esperada})"
+                )
+                
+        except (ValueError, IndexError):
+            advertencias.append(f"No se pudo validar el período del cierre: {periodo_cierre}")
+    
+    # Si hay errores, retornar resultado inválido
+    if errores:
+        return _build_validation_result(False, errores, advertencias, {})
+    
+    estadisticas = {
+        'nombre_archivo': nombre_archivo,
+        'tipo_archivo': 'novedades',
+        'fecha_extraida': fecha_str,
+        'rut_extraido': rut_extraido,
+        'formato_detectado': 'novedades_estandar',
+        'extension': nombre_archivo.split('.')[-1].lower(),
+        'año': año,
+        'mes': mes
+    }
+    
+    return _build_validation_result(True, errores, advertencias, estadisticas)

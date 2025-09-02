@@ -78,6 +78,22 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
         if not archivo.name.endswith(('.xlsx', '.xls')):
             return Response({"error": "El archivo debe ser de tipo Excel (.xlsx o .xls)"}, status=400)
         
+        # Validar nombre del archivo según formato estándar
+        from .utils.validaciones import validar_nombre_archivo_novedades
+        
+        resultado_validacion = validar_nombre_archivo_novedades(
+            nombre_archivo=archivo.name,
+            rut_cliente=cierre.cliente.rut,
+            periodo_cierre=cierre.periodo
+        )
+        
+        if not resultado_validacion['es_valido']:
+            errores = resultado_validacion.get('errores', [])
+            return Response({
+                "error": "Nombre de archivo inválido",
+                "detalles": errores
+            }, status=400)
+        
         # Crear o actualizar el registro de novedades
         archivo_novedades, created = ArchivoNovedadesUpload.objects.get_or_create(
             cierre=cierre,

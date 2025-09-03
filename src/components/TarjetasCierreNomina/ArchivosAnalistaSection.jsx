@@ -1,153 +1,75 @@
-import { useState, useEffect, useRef } from "react";
-import { UserCheck, ChevronDown, ChevronRight, Lock } from "lucide-react";
-import ArchivosAnalistaContainer from "./ArchivosAnalista/ArchivosAnalistaContainer";
-import { actualizarEstadoCierreNomina } from "../../api/nomina";
+import { useState } from "react";
+import { Users, ChevronDown, ChevronRight, Lock } from "lucide-react";
+import IngresosCard from "./IngresosCard";
+import FiniquitosCard from "./FiniquitosCard";
+import AusentismosCard from "./AusentismosCard";
+import NovedadesCard from "./NovedadesCard";
 
 const ArchivosAnalistaSection = ({
-  cierreId,
-  cliente,
-  cierre, // Agregar el objeto cierre para verificar su estado
-  disabled = false,
-  onCierreActualizado,
-  onEstadoChange, // 🎯 Nuevo callback para reportar estado
-  deberiaDetenerPolling = false,
+  // Props para Ingresos
+  ingresos,
+  subiendoIngresos,
+  onSubirIngresos,
+  onActualizarEstadoIngresos,
+  onEliminarIngresos,
   
-  // 🎯 Props para acordeón
+  // Props para Finiquitos
+  finiquitos,
+  subiendoFiniquitos,
+  onSubirFiniquitos,
+  onActualizarEstadoFiniquitos,
+  onEliminarFiniquitos,
+  
+  // Props para Ausentismos
+  ausentismos,
+  subiendoAusentismos,
+  onSubirAusentismos,
+  onActualizarEstadoAusentismos,
+  onEliminarAusentismos,
+  
+  // Props para Novedades
+  novedades,
+  subiendoNovedades,
+  onSubirNovedades,
+  onVerClasificacionNovedades,
+  onProcesarNovedades,
+  onActualizarEstadoNovedades,
+  onEliminarNovedades,
+  headersSinClasificarNovedades,
+  mensajeNovedades,
+  novedadesListo,
+  
+  // Props de control
+  disabled = false,
+  deberiaDetenerPolling = false,
+  cierreId,
+  
+  // Props para acordeón
   expandido = true,
   onToggleExpansion,
-  
-  // 🎯 Props para estados elevados (igual que ArchivosTalanaSection)
-  archivosAnalista,
-  onActualizarEstadoArchivo,
 }) => {
-  // Remover estado interno de expandido ya que ahora viene como prop
-  // const [expandido, setExpandido] = useState(true); // ← ELIMINADO
   
-  // 🎯 Estados elevados: Ya no manejamos estado interno, viene como prop
-  // const [estadoArchivos, setEstadoArchivos] = useState({}); // ← ELIMINADO
-  const [estadoCompletadoAnteriormente, setEstadoCompletadoAnteriormente] = useState(false);
-  const procesandoCambioEstado = useRef(false);
-
-  // Lista de archivos requeridos
-  const archivosRequeridos = ['finiquitos', 'incidencias', 'ingresos', 'novedades'];
-
-  // Función para determinar el estado general de la sección
-  const calcularEstadoGeneral = () => {
-    if (!archivosAnalista) return "Pendiente";
-    
-    const estados = Object.values(archivosAnalista).map(archivo => archivo.estado);
-    if (estados.length === 0) return "Pendiente";
-    
-    // Si algún archivo está en "loading", la sección aún está cargando
-    if (estados.some(estado => estado === "loading")) return "Pendiente";
-    
-    // Si todos están procesados, la sección está procesada
-    const todosProcessados = estados.every(estado => estado === "procesado");
-    return todosProcessados ? "Procesado" : "Pendiente";
-  };
-
-  // Función para verificar si todos los archivos están procesados
-  const verificarArchivosCompletos = () => {
-    if (!archivosAnalista) return false;
-    
-    // Verificar que tenemos todos los archivos requeridos
-    const tieneEstadosTodos = archivosRequeridos.every(tipo => 
-      tipo in archivosAnalista
-    );
-    
-    if (!tieneEstadosTodos) return false;
-
-    // Verificar que todos están procesados
-    const todosProcessados = archivosRequeridos.every(tipo => 
-      archivosAnalista[tipo]?.estado === "procesado"
-    );
-
-    return todosProcessados;
-  };
-
-  // Función para verificar si el cierre está en un estado anterior a "archivos_completos"
-  const estaEnEstadoAnteriorAArchivosCompletos = () => {
-    // Estados anteriores a "archivos_completos" donde SÍ se debe hacer la verificación automática
-    const estadosAnteriores = [
-      'creado',
-      'libro_subido',
-      'movimientos_subidos',
-      'archivos_en_proceso'
-    ];
-    
-    return estadosAnteriores.includes(cierre?.estado);
-  };
-
-  // Efecto para detectar cuando todos los archivos están procesados
-  useEffect(() => {
-    const archivosCompletos = verificarArchivosCompletos();
-    const estaEnEstadoAnterior = estaEnEstadoAnteriorAArchivosCompletos();
-    
-    console.log('🔍 [ArchivosAnalistaSection] Verificando condiciones:', {
-      archivosCompletos,
-      estadoCierre: cierre?.estado,
-      estaEnEstadoAnterior,
-      estadoCompletadoAnteriormente,
-      procesandoCambioEstado: procesandoCambioEstado.current
-    });
-    
-    // Solo proceder si:
-    // 1. Todos los archivos están completos
-    // 2. El cierre está en un estado anterior a "archivos_completos" 
-    // 3. No se ha completado anteriormente
-    // 4. No se está procesando actualmente
-    if (archivosCompletos && estaEnEstadoAnterior && !estadoCompletadoAnteriormente && !procesandoCambioEstado.current) {
-      console.log('🎯 [ArchivosAnalistaSection] Condiciones cumplidas - Actualizando estado del cierre a archivos_completos...');
-      
-      procesandoCambioEstado.current = true;
-      setEstadoCompletadoAnteriormente(true);
-      
-      const actualizarEstado = async () => {
-        try {
-          await actualizarEstadoCierreNomina(cierreId);
-          console.log('✅ [ArchivosAnalistaSection] Estado del cierre actualizado por archivos completos');
-          
-          // Refrescar los datos del cierre en el componente padre
-          if (onCierreActualizado) {
-            await onCierreActualizado();
-          }
-        } catch (error) {
-          console.error('❌ [ArchivosAnalistaSection] Error actualizando estado del cierre:', error);
-          // Revertir el flag en caso de error para permitir retry
-          setEstadoCompletadoAnteriormente(false);
-        } finally {
-          procesandoCambioEstado.current = false;
-        }
-      };
-      
-      actualizarEstado();
-    } else if (archivosCompletos && !estaEnEstadoAnterior) {
-      console.log('ℹ️ [ArchivosAnalistaSection] Archivos completos pero cierre ya está en estado posterior - No se actualiza automáticamente');
-    }
-  }, [archivosAnalista, cierreId, cierre?.estado, onCierreActualizado, estadoCompletadoAnteriormente]);
-
-  // 🎯 Efecto para reportar el estado de la sección al componente padre
-  useEffect(() => {
-    const estadoGeneral = calcularEstadoGeneral();
-    const estadoFinal = estadoGeneral === "Procesado" ? "procesado" : "pendiente";
-    
-    console.log('📊 [ArchivosAnalistaSection] Reportando estado:', estadoFinal);
-    
-    if (onEstadoChange) {
-      onEstadoChange(estadoFinal);
-    }
-  }, [
-    // Solo las propiedades específicas que afectan el cálculo
-    JSON.stringify(archivosAnalista), 
-    onEstadoChange
-  ]);
-
-  const estadoGeneral = calcularEstadoGeneral();
+  // Calcular estado general de la sección
+  const estadoIngresos = ingresos?.estado || "no_subido";
+  const estadoFiniquitos = finiquitos?.estado || "no_subido";
+  const estadoAusentismos = ausentismos?.estado || "no_subido";
+  
+  const estadoNovedades = novedades?.estado === "procesando" || novedades?.estado === "procesado"
+    ? novedades?.estado
+    : novedadesListo
+    ? "clasificado"
+    : novedades?.estado || "no_subido";
+  
+  // Determinar el estado general: Procesado si TODOS están procesados, Pendiente en cualquier otro caso
+  const todosArchivosProcessed = [estadoIngresos, estadoFiniquitos, estadoAusentismos, estadoNovedades]
+    .every(estado => estado === "procesado");
+  
+  const estadoGeneral = todosArchivosProcessed ? "Procesado" : "Pendiente";
   const colorEstado = estadoGeneral === "Procesado" ? "text-green-400" : "text-yellow-400";
 
   return (
     <section className="space-y-6">
-      {/* Header de la sección - ahora clicable (solo si no está disabled) */}
+      {/* Header de la sección - clicable (solo si no está disabled) */}
       <div 
         className={`flex items-center justify-between p-3 -m-3 rounded-lg transition-colors ${
           disabled 
@@ -158,12 +80,12 @@ const ArchivosAnalistaSection = ({
       >
         <div className="flex items-center gap-3">
           <div className={`flex items-center justify-center w-10 h-10 rounded-lg ${
-            disabled ? 'bg-gray-600' : 'bg-green-600'
+            disabled ? 'bg-gray-600' : 'bg-purple-600'
           }`}>
             {disabled ? (
               <Lock size={20} className="text-white" />
             ) : (
-              <UserCheck size={20} className="text-white" />
+              <Users size={20} className="text-white" />
             )}
           </div>
           <div>
@@ -171,14 +93,14 @@ const ArchivosAnalistaSection = ({
               Archivos del Analista
               {disabled && (
                 <span className="ml-2 text-sm font-normal text-gray-500">
-                  (Bloqueado - Datos Consolidados)
+                  (Bloqueado - Cierre Finalizado)
                 </span>
               )}
             </h2>
             <p className="text-gray-400 text-sm">
               {disabled 
-                ? 'Los archivos están bloqueados porque los datos ya han sido consolidados'
-                : 'Archivos complementarios gestionados por el analista'
+                ? 'Los archivos están bloqueados porque el cierre ha sido finalizado'
+                : 'Archivos complementarios procesados por el analista'
               }
             </p>
           </div>
@@ -202,17 +124,65 @@ const ArchivosAnalistaSection = ({
         </div>
       </div>
       
-      {/* Contenedor de archivos del analista - solo se muestra cuando está expandido y no disabled */}
+      {/* Grid de tarjetas - solo se muestra cuando está expandido y no disabled */}
       {expandido && !disabled && (
-        <ArchivosAnalistaContainer
-          cierreId={cierreId}
-          cliente={cliente}
-          disabled={disabled}
-          onEstadosChange={onActualizarEstadoArchivo}
-          onCierreActualizado={onCierreActualizado}
-          deberiaDetenerPolling={deberiaDetenerPolling}
-          archivosIniciales={archivosAnalista} // 🎯 Pasar estados iniciales
-        />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Primera fila: Ingresos y Finiquitos */}
+          <IngresosCard
+            estado={estadoIngresos}
+            archivoNombre={ingresos?.archivo ? ingresos.archivo.split('/').pop() : null}
+            subiendo={subiendoIngresos}
+            onSubirArchivo={onSubirIngresos}
+            onActualizarEstado={onActualizarEstadoIngresos}
+            onEliminarArchivo={onEliminarIngresos}
+            disabled={disabled}
+            deberiaDetenerPolling={deberiaDetenerPolling}
+            cierreId={cierreId}
+          />
+          
+          <FiniquitosCard
+            estado={estadoFiniquitos}
+            archivoNombre={finiquitos?.archivo ? finiquitos.archivo.split('/').pop() : null}
+            subiendo={subiendoFiniquitos}
+            onSubirArchivo={onSubirFiniquitos}
+            onActualizarEstado={onActualizarEstadoFiniquitos}
+            onEliminarArchivo={onEliminarFiniquitos}
+            disabled={disabled}
+            deberiaDetenerPolling={deberiaDetenerPolling}
+            cierreId={cierreId}
+          />
+          
+          {/* Segunda fila: Ausentismos y Novedades */}
+          <AusentismosCard
+            estado={estadoAusentismos}
+            archivoNombre={ausentismos?.archivo ? ausentismos.archivo.split('/').pop() : null}
+            subiendo={subiendoAusentismos}
+            onSubirArchivo={onSubirAusentismos}
+            onActualizarEstado={onActualizarEstadoAusentismos}
+            onEliminarArchivo={onEliminarAusentismos}
+            disabled={disabled}
+            deberiaDetenerPolling={deberiaDetenerPolling}
+            cierreId={cierreId}
+          />
+          
+          <NovedadesCard
+            estado={estadoNovedades}
+            archivoNombre={novedades?.archivo_nombre}
+            subiendo={subiendoNovedades}
+            onSubirArchivo={onSubirNovedades}
+            onVerClasificacion={onVerClasificacionNovedades}
+            onProcesar={onProcesarNovedades}
+            onActualizarEstado={onActualizarEstadoNovedades}
+            onEliminarArchivo={onEliminarNovedades}
+            novedadesId={novedades?.id}
+            cierreId={cierreId}
+            headersSinClasificar={headersSinClasificarNovedades}
+            headerClasificados={novedades?.header_json?.headers_clasificados || []}
+            mensaje={mensajeNovedades}
+            disabled={disabled || novedades?.estado === "procesando"}
+            deberiaDetenerPolling={deberiaDetenerPolling}
+          />
+        </div>
       )}
     </section>
   );

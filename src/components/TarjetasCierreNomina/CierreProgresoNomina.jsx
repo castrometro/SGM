@@ -17,8 +17,20 @@ import {
   guardarConceptosRemuneracion,
   eliminarConceptoRemuneracion,
   actualizarEstadoCierreNomina,
-  obtenerEstadoArchivoAnalista,
+  // Funciones para archivos del analista
+  obtenerEstadoIngresos,
+  subirIngresos,
+  eliminarIngresos,
+  obtenerEstadoFiniquitos,
+  subirFiniquitos,
+  eliminarFiniquitos,
+  obtenerEstadoAusentismos,
+  subirAusentismos,
+  eliminarAusentismos,
   obtenerEstadoArchivoNovedades,
+  subirArchivoNovedades,
+  eliminarArchivoNovedades,
+  procesarFinalNovedades,
 } from "../../api/nomina";
 
 const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
@@ -28,19 +40,33 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
   const [movimientos, setMovimientos] = useState(null);
   const [subiendoMov, setSubiendoMov] = useState(false);
   const [modalAbierto, setModalAbierto] = useState(false);
+  const [tipoModalClasificacion, setTipoModalClasificacion] = useState('libro'); // 'libro' o 'novedades'
   const [libroListo, setLibroListo] = useState(false);
   const [mensajeLibro, setMensajeLibro] = useState("");
   const [modoSoloLectura, setModoSoloLectura] = useState(false);
+  
+  // Estados para archivos del analista
+  const [ingresos, setIngresos] = useState(null);
+  const [subiendoIngresos, setSubiendoIngresos] = useState(false);
+  const [finiquitos, setFiniquitos] = useState(null);
+  const [subiendoFiniquitos, setSubiendoFiniquitos] = useState(false);
+  const [ausentismos, setAusentismos] = useState(null);
+  const [subiendoAusentismos, setSubiendoAusentismos] = useState(false);
+  const [novedades, setNovedades] = useState(null);
+  const [novedadesId, setNovedadesId] = useState(null);
+  const [subiendoNovedades, setSubiendoNovedades] = useState(false);
+  const [novedadesListo, setNovedadesListo] = useState(false);
+  const [mensajeNovedades, setMensajeNovedades] = useState("");
   
   // 🔄 REF: Para trackear si el componente está montado y controlar polling
   const isMountedRef = useRef(true);
   
   // Estados para tracking de secciones
   const [estadosSeccion, setEstadosSeccion] = useState({
-    archivosTalana: 'pendiente',     // Estado de libros + movimientos
-    archivosAnalista: 'pendiente',   // Estado de archivos del analista  
-    verificadorDatos: 'pendiente',   // Estado de verificación de datos
-    incidencias: 'pendiente'         // Estado de incidencias
+    archivosTalana: 'archivos_pendientes',        // Estado de libros + movimientos
+    archivosAnalista: 'archivos_pendientes',      // Estado de archivos del analista
+    verificadorDatos: 'verificacion_pendiente',   // Estado de verificación de datos
+    incidencias: 'incidencias_pendientes'         // Estado de incidencias
   });
 
   // 🎯 Estados para el botón "Continuar"
@@ -48,14 +74,6 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
 
   // 🎯 Estado para manejar acordeón (solo una sección expandida a la vez)
   const [seccionExpandida, setSeccionExpandida] = useState('archivosTalana'); // Por defecto la primera sección
-
-  // 🎯 Estados para archivos del analista (elevados desde ArchivosAnalistaContainer)
-  const [archivosAnalista, setArchivosAnalista] = useState({
-    finiquitos: { estado: "loading", archivo: null, error: "" },
-    incidencias: { estado: "loading", archivo: null, error: "" },
-    ingresos: { estado: "loading", archivo: null, error: "" },
-    novedades: { estado: "loading", archivo: null, error: "" }
-  });
 
   // 🎯 Función para manejar la expansión de secciones (acordeón)
   const manejarExpansionSeccion = (nombreSeccion) => {
@@ -71,9 +89,13 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
 
   // 🎯 Función para determinar si mostrar el botón "Continuar"
   const mostrarBotonContinuar = () => {
-    return estadosSeccion.archivosTalana === 'procesado' && 
-           estadosSeccion.archivosAnalista === 'procesado' && 
-           cierre?.estado === 'pendiente'; // Solo mostrar cuando esté pendiente, no cuando ya sea archivos_completos
+    const talanaOk = estadosSeccion.archivosTalana === 'archivos_completos';
+    const analistaOk = estadosSeccion.archivosAnalista === 'archivos_completos';
+    const cierreOk = cierre?.estado === 'pendiente' || cierre?.estado === 'archivos_completos'; // ✅ Incluye archivos_completos
+    
+    console.log(`🎯 [mostrarBotonContinuar] Talana: ${estadosSeccion.archivosTalana} (${talanaOk}), Analista: ${estadosSeccion.archivosAnalista} (${analistaOk}), Cierre: ${cierre?.estado} (${cierreOk})`);
+    
+    return talanaOk && analistaOk && cierreOk;
   };
 
   // 🎯 Función para manejar el botón "Continuar"
@@ -102,105 +124,10 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     }
   };
 
-  // 🎯 Función para cargar estados de archivos del analista
-  const cargarEstadosArchivosAnalista = useCallback(async () => {
-    if (!cierre?.id) return;
-    
-    console.log('📁 [CierreProgresoNomina] Cargando estados de archivos del analista...');
-    
-    for (const tipo of ['finiquitos', 'incidencias', 'ingresos', 'novedades']) {
-      try {
-        let data;
-        if (tipo === 'novedades') {
-          data = await obtenerEstadoArchivoNovedades(cierre.id);
-          if (data && data.id) {
-            data = [data];
-          } else {
-            data = [];
-          }
-        } else {
-          data = await obtenerEstadoArchivoAnalista(cierre.id, tipo);
-        }
-        
-        if (data && data.length > 0) {
-          const archivo = data[0];
-          setArchivosAnalista(prev => ({
-            ...prev,
-            [tipo]: {
-              ...prev[tipo],
-              estado: archivo.estado,
-              archivo: {
-                id: archivo.id,
-                nombre: archivo.archivo ? archivo.archivo.split('/').pop() : (archivo.archivo_nombre || ''),
-                fecha_subida: archivo.fecha_subida
-              }
-            }
-          }));
-        } else {
-          // Si no hay archivos, cambiar de "loading" a "no_subido"
-          setArchivosAnalista(prev => ({
-            ...prev,
-            [tipo]: {
-              ...prev[tipo],
-              estado: "no_subido",
-              archivo: null
-            }
-          }));
-        }
-      } catch (error) {
-        console.error(`❌ [CierreProgresoNomina] Error cargando estado de ${tipo}:`, error);
-        // En caso de error, cambiar a "no_subido" para permitir que el usuario intente subir
-        setArchivosAnalista(prev => ({
-          ...prev,
-          [tipo]: {
-            ...prev[tipo],
-            estado: "no_subido",
-            archivo: null,
-            error: error.message || "Error cargando estado"
-          }
-        }));
-      }
-    }
-    
-    console.log('✅ [CierreProgresoNomina] Estados de archivos del analista cargados');
-  }, [cierre?.id]);
+  // 🎯 SIMPLIFICADO: Las tarjetas v2 manejan su propio estado
+  // Ya no necesitamos cargar estados centralizadamente
 
-  // 🎯 Función para actualizar estado de un archivo específico del analista
-  const actualizarEstadoArchivoAnalista = useCallback(async (tipo) => {
-    if (!cierre?.id) return;
-    
-    try {
-      let data;
-      if (tipo === 'novedades') {
-        data = await obtenerEstadoArchivoNovedades(cierre.id);
-        if (data && data.id) {
-          data = [data];
-        } else {
-          data = [];
-        }
-      } else {
-        data = await obtenerEstadoArchivoAnalista(cierre.id, tipo);
-      }
-      
-      if (data && data.length > 0) {
-        const archivo = data[0];
-        setArchivosAnalista(prev => ({
-          ...prev,
-          [tipo]: {
-            ...prev[tipo],
-            estado: archivo.estado,
-            archivo: {
-              id: archivo.id,
-              nombre: archivo.archivo ? archivo.archivo.split('/').pop() : (archivo.archivo_nombre || ''),
-              fecha_subida: archivo.fecha_subida
-            }
-          }
-        }));
-      }
-    } catch (error) {
-      console.error(`❌ Error actualizando estado de ${tipo}:`, error);
-    }
-  }, [cierre?.id]);
+  // 🎯 SIMPLIFICADO: Las tarjetas v2 manejan su propio estado
 
   const esEstadoPosteriorAConsolidacion = (estado) => {
     // Estados posteriores a la consolidación donde se aplican restricciones específicas
@@ -221,14 +148,14 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     
     console.log('🔍 [CierreProgresoNomina] Verificando estados de secciones:', {
       archivosTalana,
-      archivosAnalista, 
+      archivosAnalista,
       verificadorDatos,
       incidencias,
       estadoCierre: cierre?.estado
     });
     
     return archivosTalana === 'procesado' && 
-           archivosAnalista === 'procesado' && 
+           archivosAnalista === 'procesado' &&
            verificadorDatos === 'procesado' && 
            incidencias === 'procesado';
   };
@@ -277,7 +204,12 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     });
   }, []);
 
-  // 🎯 Funciones memoizadas específicas para cada sección (evitar infinite polling)
+  // 🎯 ELIMINADO: Callback de Analista - ahora se calcula directamente como Talana
+  // const onEstadoChangeAnalista = useCallback((nuevoEstado) => {
+  //   console.log('🔄 [onEstadoChangeAnalista] CALLBACK EJECUTADO para:', nuevoEstado);
+  //   actualizarEstadoSeccion('archivosAnalista', nuevoEstado);
+  // }, [actualizarEstadoSeccion]);
+
   const onEstadoChangeAnalista = useCallback((nuevoEstado) => {
     console.log('🔄 [onEstadoChangeAnalista] CALLBACK EJECUTADO para:', nuevoEstado);
     actualizarEstadoSeccion('archivosAnalista', nuevoEstado);
@@ -303,23 +235,22 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     // Determinar bloqueo según estado del cierre
     switch (cierre?.estado) {
       case 'pendiente':
-      case 'cargando_archivos':
-        // Solo archivos Talana y Analista están desbloqueados
+        // Archivos Talana y Analista están desbloqueados desde el inicio
         return !['archivosTalana', 'archivosAnalista'].includes(seccion);
         
       case 'archivos_completos':
       case 'verificacion_datos':
       case 'verificado_sin_discrepancias': 
-        // Archivos + Verificador están desbloqueados
+        // Archivos Talana + Analista + Verificador están desbloqueados
         return !['archivosTalana', 'archivosAnalista', 'verificadorDatos'].includes(seccion);
         
       case 'datos_consolidados':
-        // Solo Talana + Verificador + Incidencias están desbloqueados (bloquear archivos analista)
-        return !['archivosTalana', 'verificadorDatos', 'incidencias'].includes(seccion);
+        // Todos excepto incidencias están desbloqueados
+        return !['archivosTalana', 'archivosAnalista', 'verificadorDatos', 'incidencias'].includes(seccion);
         
       case 'con_incidencias':
-        // Solo Talana + Verificador + Incidencias están desbloqueados (mantener archivos analista bloqueados)
-        return !['archivosTalana', 'verificadorDatos', 'incidencias'].includes(seccion);
+        // Todos están desbloqueados
+        return !['archivosTalana', 'archivosAnalista', 'verificadorDatos', 'incidencias'].includes(seccion);
         
       case 'incidencias_resueltas':
         // 🎯 ESTADO ESPECIAL: Solo la sección de incidencias debe estar desbloqueada para mostrar el botón "Finalizar Cierre"
@@ -351,11 +282,19 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
         await guardarConceptosRemuneracion(cliente.id, {}, cierre.id);
       }
 
-      // Refrescamos los conteos consultando nuevamente el backend
-      const nuevoEstado = await obtenerEstadoLibroRemuneraciones(cierre.id);
-      setLibro(nuevoEstado);
-      if (nuevoEstado?.id) {
-        setLibroId(nuevoEstado.id);
+      // Refrescamos los conteos consultando nuevamente el backend según el tipo
+      if (tipoModalClasificacion === 'libro') {
+        const nuevoEstado = await obtenerEstadoLibroRemuneraciones(cierre.id);
+        setLibro(nuevoEstado);
+        if (nuevoEstado?.id) {
+          setLibroId(nuevoEstado.id);
+        }
+      } else if (tipoModalClasificacion === 'novedades') {
+        const nuevoEstado = await obtenerEstadoArchivoNovedades(cierre.id);
+        setNovedades(nuevoEstado);
+        if (nuevoEstado?.id) {
+          setNovedadesId(nuevoEstado.id);
+        }
       }
     } catch (error) {
       console.error("Error al guardar clasificaciones:", error);
@@ -380,10 +319,18 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
       });
       obtenerEstadoMovimientosMes(cierre.id).then(setMovimientos);
       
-      // 🎯 Cargar estados de archivos del analista
-      cargarEstadosArchivosAnalista();
+      // Cargar estados de archivos del analista
+      obtenerEstadoIngresos(cierre.id).then(setIngresos);
+      obtenerEstadoFiniquitos(cierre.id).then(setFiniquitos);
+      obtenerEstadoAusentismos(cierre.id).then(setAusentismos);
+      obtenerEstadoArchivoNovedades(cierre.id).then((data) => {
+        setNovedades(data);
+        if (data?.id) {
+          setNovedadesId(data.id);
+        }
+      });
     }
-  }, [cierre, cargarEstadosArchivosAnalista]);
+  }, [cierre]);
 
   // Detecta cuando no quedan headers por clasificar
   useEffect(() => {
@@ -399,6 +346,20 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     }
   }, [libro, libroListo]);
 
+  // Detecta cuando no quedan headers por clasificar en novedades
+  useEffect(() => {
+    const sinClasificarNovedades = Array.isArray(novedades?.header_json?.headers_sin_clasificar)
+      ? novedades.header_json.headers_sin_clasificar.length === 0
+      : false;
+    const enProcesoNovedades = novedades?.estado === "procesando" || novedades?.estado === "procesado";
+
+    if (sinClasificarNovedades && !enProcesoNovedades && !novedadesListo) {
+      setNovedadesListo(true);
+    } else if ((!sinClasificarNovedades || enProcesoNovedades) && novedadesListo) {
+      setNovedadesListo(false);
+    }
+  }, [novedades, novedadesListo]);
+
   // 🎯 Efecto para detectar cambios en el estado de Archivos Talana
   useEffect(() => {
     const estadoLibro = libro?.estado === "procesando" || libro?.estado === "procesado"
@@ -407,32 +368,36 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
       ? "clasificado"
       : libro?.estado || "no_subido";
       
-    const estadoMovimientos = movimientos?.estado || "pendiente";
+    const estadoMovimientos = movimientos?.estado || "archivos_pendientes";
     
-    // Determinar el estado general: Procesado si ambos están procesados
+    // Determinar el estado general: Archivos completos si ambos están procesados
     const estadoGeneral = (estadoLibro === "procesado" && estadoMovimientos === "procesado") 
-      ? "procesado" 
-      : "pendiente";
+      ? "archivos_completos" 
+      : "archivos_pendientes";
     
     actualizarEstadoSeccion('archivosTalana', estadoGeneral);
   }, [libro, movimientos, libroListo]);
 
   // 🎯 Efecto para detectar cambios en el estado de Archivos del Analista
   useEffect(() => {
-    const estadosArchivos = Object.values(archivosAnalista);
+    const estadoIngresos = ingresos?.estado || "no_subido";
+    const estadoFiniquitos = finiquitos?.estado || "no_subido";
+    const estadoAusentismos = ausentismos?.estado || "no_subido";
     
-    // Si algún archivo está en "loading", la sección aún está cargando
-    if (estadosArchivos.some(archivo => archivo.estado === "loading")) {
-      actualizarEstadoSeccion('archivosAnalista', 'pendiente');
-      return;
-    }
+    const estadoNovedades = novedades?.estado === "procesando" || novedades?.estado === "procesado"
+      ? novedades?.estado
+      : novedadesListo
+      ? "clasificado"
+      : novedades?.estado || "no_subido";
     
-    // Si todos están procesados, la sección está procesada
-    const todosProcessados = estadosArchivos.every(archivo => archivo.estado === "procesado");
-    const estadoGeneral = todosProcessados ? "procesado" : "pendiente";
+    // Determinar el estado general: Archivos completos si TODOS están procesados
+    const todosArchivosProcessed = [estadoIngresos, estadoFiniquitos, estadoAusentismos, estadoNovedades]
+      .every(estado => estado === "procesado");
+    
+    const estadoGeneral = todosArchivosProcessed ? "archivos_completos" : "archivos_pendientes";
     
     actualizarEstadoSeccion('archivosAnalista', estadoGeneral);
-  }, [archivosAnalista]);
+  }, [ingresos, finiquitos, ausentismos, novedades, novedadesListo]);
 
   // Función para ir al Dashboard
   const handleIrDashboard = () => {
@@ -482,6 +447,85 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     }
   };
 
+  // Handlers de subida para archivos del analista
+  const handleSubirIngresos = async (archivo) => {
+    setSubiendoIngresos(true);
+    try {
+      const formData = new FormData();
+      formData.append("archivo", archivo);
+      await subirIngresos(cierre.id, formData);
+      console.log('✅ Ingresos subidos exitosamente, actualizando estado...');
+      setTimeout(() => {
+        obtenerEstadoIngresos(cierre.id).then((data) => {
+          console.log('📡 Ingresos actualizados post-subida:', data);
+          setIngresos(data);
+        });
+      }, 1000);
+    } finally {
+      setSubiendoIngresos(false);
+    }
+  };
+
+  const handleSubirFiniquitos = async (archivo) => {
+    setSubiendoFiniquitos(true);
+    try {
+      const formData = new FormData();
+      formData.append("archivo", archivo);
+      await subirFiniquitos(cierre.id, formData);
+      console.log('✅ Finiquitos subidos exitosamente, actualizando estado...');
+      setTimeout(() => {
+        obtenerEstadoFiniquitos(cierre.id).then((data) => {
+          console.log('📡 Finiquitos actualizados post-subida:', data);
+          setFiniquitos(data);
+        });
+      }, 1000);
+    } finally {
+      setSubiendoFiniquitos(false);
+    }
+  };
+
+  const handleSubirAusentismos = async (archivo) => {
+    setSubiendoAusentismos(true);
+    try {
+      const formData = new FormData();
+      formData.append("archivo", archivo);
+      await subirAusentismos(cierre.id, formData);
+      console.log('✅ Ausentismos subidos exitosamente, actualizando estado...');
+      setTimeout(() => {
+        obtenerEstadoAusentismos(cierre.id).then((data) => {
+          console.log('📡 Ausentismos actualizados post-subida:', data);
+          setAusentismos(data);
+        });
+      }, 1000);
+    } finally {
+      setSubiendoAusentismos(false);
+    }
+  };
+
+  const handleSubirNovedades = async (archivo) => {
+    setSubiendoNovedades(true);
+    try {
+      const formData = new FormData();
+      formData.append("archivo", archivo);
+      const res = await subirArchivoNovedades(cierre.id, formData);
+      if (res?.id) {
+        setNovedadesId(res.id);
+      }
+      console.log('✅ Novedades subidas exitosamente, actualizando estado...');
+      setTimeout(() => {
+        obtenerEstadoArchivoNovedades(cierre.id).then((data) => {
+          console.log('📡 Novedades actualizadas post-subida:', data);
+          setNovedades(data);
+          if (data?.id) {
+            setNovedadesId(data.id);
+          }
+        });
+      }, 1000);
+    } finally {
+      setSubiendoNovedades(false);
+    }
+  };
+
   const handleProcesarLibro = async () => {
     console.log('=== PROCESAR LIBRO ===');
     
@@ -517,6 +561,40 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     }
   };
 
+  const handleProcesarNovedades = async () => {
+    console.log('=== PROCESAR NOVEDADES ===');
+    
+    const id = novedades?.id || novedadesId;
+    console.log('ID final para procesar novedades:', id);
+    
+    if (!id) {
+      console.log('❌ No hay ID para procesar novedades');  
+      return;
+    }
+    
+    try {
+      console.log('🔄 Llamando a procesarFinalNovedades...');
+      
+      // FORZAR el estado a "procesando" ANTES de la llamada
+      setNovedades(prev => ({
+        ...prev,
+        estado: "procesando"
+      }));
+      setNovedadesListo(false);
+      
+      await procesarFinalNovedades(id);
+      console.log('✅ Procesamiento final novedades iniciado - el polling monitoreará el progreso');
+      
+    } catch (error) {
+      console.error("❌ Error al procesar novedades:", error);
+      setMensajeNovedades("Error al procesar novedades");
+      setNovedades(prev => ({ 
+        ...prev, 
+        estado: "con_error" 
+      }));
+    }
+  };
+
   const handleActualizarEstadoMovimientos = useCallback(async () => {
     // Verificar si el componente aún está montado
     if (!isMountedRef.current) {
@@ -531,6 +609,85 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
       }
     } catch (error) {
       console.error("Error al actualizar estado de movimientos:", error);
+    }
+  }, [cierre?.id]);
+
+  // Handlers de actualización para archivos del analista
+  const handleActualizarEstadoIngresos = useCallback(async () => {
+    if (!isMountedRef.current) {
+      console.log('🚫 [handleActualizarEstadoIngresos] Componente desmontado, cancelando operación');
+      return;
+    }
+    
+    try {
+      const estado = await obtenerEstadoIngresos(cierre.id);
+      if (isMountedRef.current) {
+        setIngresos(estado);
+      }
+    } catch (error) {
+      console.error("Error al actualizar estado de ingresos:", error);
+    }
+  }, [cierre?.id]);
+
+  const handleActualizarEstadoFiniquitos = useCallback(async () => {
+    if (!isMountedRef.current) {
+      console.log('🚫 [handleActualizarEstadoFiniquitos] Componente desmontado, cancelando operación');
+      return;
+    }
+    
+    try {
+      const estado = await obtenerEstadoFiniquitos(cierre.id);
+      if (isMountedRef.current) {
+        setFiniquitos(estado);
+      }
+    } catch (error) {
+      console.error("Error al actualizar estado de finiquitos:", error);
+    }
+  }, [cierre?.id]);
+
+  const handleActualizarEstadoAusentismos = useCallback(async () => {
+    if (!isMountedRef.current) {
+      console.log('🚫 [handleActualizarEstadoAusentismos] Componente desmontado, cancelando operación');
+      return;
+    }
+    
+    try {
+      const estado = await obtenerEstadoAusentismos(cierre.id);
+      if (isMountedRef.current) {
+        setAusentismos(estado);
+      }
+    } catch (error) {
+      console.error("Error al actualizar estado de ausentismos:", error);
+    }
+  }, [cierre?.id]);
+
+  const handleActualizarEstadoNovedades = useCallback(async () => {
+    if (!isMountedRef.current) {
+      console.log('🚫 [handleActualizarEstadoNovedades] Componente desmontado, cancelando operación');
+      return;
+    }
+    
+    try {
+      console.log('📡 Consultando estado actual de novedades...');
+      const estadoActual = await obtenerEstadoArchivoNovedades(cierre.id);
+      console.log('📊 Estado novedades recibido del servidor:', estadoActual);
+      
+      if (isMountedRef.current) {
+        setNovedades(estadoActual);
+        
+        if (estadoActual?.estado !== novedades?.estado) {
+          console.log(`🔄 Estado novedades cambió de "${novedades?.estado}" a "${estadoActual?.estado}"`);
+          
+          // ✅ MEJORA: Actualizar novedadesListo cuando se procesa completamente
+          if (estadoActual?.estado === "procesado") {
+            console.log('✅ Novedades procesadas completamente - marcando como listo');
+            setNovedadesListo(true);
+          }
+        }
+      }
+      
+    } catch (error) {
+      console.error('❌ Error actualizando estado novedades:', error);
     }
   }, [cierre?.id]);
 
@@ -566,6 +723,16 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     // Si el libro ya está procesado, forzar modo solo lectura
     const esSoloLectura = soloLectura || libro?.estado === "procesado";
     
+    setTipoModalClasificacion('libro');
+    setModalAbierto(true);
+    setModoSoloLectura(esSoloLectura);
+  };
+
+  const handleVerClasificacionNovedades = (soloLectura = false) => {
+    // Si las novedades ya están procesadas, forzar modo solo lectura
+    const esSoloLectura = soloLectura || novedades?.estado === "procesado";
+    
+    setTipoModalClasificacion('novedades');
     setModalAbierto(true);
     setModoSoloLectura(esSoloLectura);
   };
@@ -596,11 +763,62 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     }
   };
 
+  // Handlers de eliminación para archivos del analista
+  const handleEliminarIngresos = async () => {
+    if (!ingresos?.id) return;
+    
+    try {
+      await eliminarIngresos(ingresos.id);
+      setIngresos(null);
+    } catch (error) {
+      console.error("Error al eliminar ingresos:", error);
+    }
+  };
+
+  const handleEliminarFiniquitos = async () => {
+    if (!finiquitos?.id) return;
+    
+    try {
+      await eliminarFiniquitos(finiquitos.id);
+      setFiniquitos(null);
+    } catch (error) {
+      console.error("Error al eliminar finiquitos:", error);
+    }
+  };
+
+  const handleEliminarAusentismos = async () => {
+    if (!ausentismos?.id) return;
+    
+    try {
+      await eliminarAusentismos(ausentismos.id);
+      setAusentismos(null);
+    } catch (error) {
+      console.error("Error al eliminar ausentismos:", error);
+    }
+  };
+
+  const handleEliminarNovedades = async () => {
+    if (!novedades?.id) return;
+    
+    try {
+      await eliminarArchivoNovedades(novedades.id);
+      setNovedades(null);
+      setNovedadesId(null);
+      setNovedadesListo(false);
+    } catch (error) {
+      console.error("Error al eliminar novedades:", error);
+    }
+  };
+
   const headersSinClasificar = Array.isArray(libro?.header_json?.headers_sin_clasificar)
     ? libro.header_json.headers_sin_clasificar
     : [];
 
-  const estadoMovimientos = movimientos?.estado || "pendiente";
+  const headersSinClasificarNovedades = Array.isArray(novedades?.header_json?.headers_sin_clasificar)
+    ? novedades.header_json.headers_sin_clasificar
+    : [];
+
+  const estadoMovimientos = movimientos?.estado || "archivos_pendientes";
 
   // Agregar esta función temporal para debug
   const debugEstado = async () => {
@@ -655,19 +873,47 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
           
           {/* Sección 2: Archivos del Analista */}
           <ArchivosAnalistaSection
-            cierreId={cierre.id}
-            cliente={cliente}
-            cierre={cierre}
+            // Props para Ingresos
+            ingresos={ingresos}
+            subiendoIngresos={subiendoIngresos}
+            onSubirIngresos={handleSubirIngresos}
+            onActualizarEstadoIngresos={handleActualizarEstadoIngresos}
+            onEliminarIngresos={handleEliminarIngresos}
+            
+            // Props para Finiquitos
+            finiquitos={finiquitos}
+            subiendoFiniquitos={subiendoFiniquitos}
+            onSubirFiniquitos={handleSubirFiniquitos}
+            onActualizarEstadoFiniquitos={handleActualizarEstadoFiniquitos}
+            onEliminarFiniquitos={handleEliminarFiniquitos}
+            
+            // Props para Ausentismos
+            ausentismos={ausentismos}
+            subiendoAusentismos={subiendoAusentismos}
+            onSubirAusentismos={handleSubirAusentismos}
+            onActualizarEstadoAusentismos={handleActualizarEstadoAusentismos}
+            onEliminarAusentismos={handleEliminarAusentismos}
+            
+            // Props para Novedades
+            novedades={novedades}
+            subiendoNovedades={subiendoNovedades}
+            onSubirNovedades={handleSubirNovedades}
+            onVerClasificacionNovedades={handleVerClasificacionNovedades}
+            onProcesarNovedades={handleProcesarNovedades}
+            onActualizarEstadoNovedades={handleActualizarEstadoNovedades}
+            onEliminarNovedades={handleEliminarNovedades}
+            headersSinClasificarNovedades={novedades?.header_json?.headers_sin_clasificar || []}
+            mensajeNovedades={mensajeNovedades}
+            novedadesListo={novedadesListo}
+            
+            // Props de control
             disabled={estaSeccionBloqueada('archivosAnalista')}
-            onCierreActualizado={onCierreActualizado}
-            onEstadoChange={onEstadoChangeAnalista}
             deberiaDetenerPolling={deberiaDetenerPolling}
-            // 🎯 Props para acordeón
+            cierreId={cierre?.id}
+            
+            // Props para acordeón
             expandido={estaSeccionExpandida('archivosAnalista')}
             onToggleExpansion={() => manejarExpansionSeccion('archivosAnalista')}
-            // 🎯 Estados elevados (igual que ArchivosTalanaSection)
-            archivosAnalista={archivosAnalista}
-            onActualizarEstadoArchivo={actualizarEstadoArchivoAnalista}
           />
 
           {/* 🎯 BOTÓN "CONTINUAR" - Solo cuando secciones 1 y 2 están procesadas */}
@@ -715,10 +961,15 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
           <VerificadorDatosSection 
             cierre={cierre} 
             disabled={estaSeccionBloqueada('verificadorDatos')}
-            onCierreActualizado={(nuevoCierre) => {
-              // Callback para actualizar el cierre en el componente padre
-              console.log('🔄 Cierre actualizado desde verificador:', nuevoCierre);
-              // Aquí podrías refrescar el estado completo del cierre si fuera necesario
+            onCierreActualizado={async () => {
+              // 🔄 Callback para actualizar el cierre en el componente padre
+              console.log('🔄 [CierreProgresoNomina] Actualizando cierre desde verificador...');
+              if (onCierreActualizado) {
+                await onCierreActualizado();
+                console.log('✅ [CierreProgresoNomina] Cierre actualizado exitosamente desde verificador');
+              } else {
+                console.log('⚠️ [CierreProgresoNomina] No hay callback onCierreActualizado disponible');
+              }
             }}
             onEstadoChange={onEstadoChangeVerificador}
             deberiaDetenerPolling={deberiaDetenerPolling}
@@ -744,7 +995,7 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
         isOpen={modalAbierto}
         onClose={() => setModalAbierto(false)}
         clienteId={cliente.id}
-        headersSinClasificar={headersSinClasificar}
+        headersSinClasificar={tipoModalClasificacion === 'libro' ? headersSinClasificar : headersSinClasificarNovedades}
         onGuardarClasificaciones={handleGuardarClasificaciones}
         soloLectura={modoSoloLectura}
       />

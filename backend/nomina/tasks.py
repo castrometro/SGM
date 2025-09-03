@@ -531,14 +531,9 @@ def clasificar_headers_archivo_novedades_task(result):
         else:
             archivo.estado = "clasificado"
             
-            # ✅ Si todos los headers se clasificaron automáticamente, continuar con las tareas finales
-            from celery import chain
-            workflow_final = chain(
-                actualizar_empleados_desde_novedades_task.s({"archivo_id": archivo_id}),
-                guardar_registros_novedades_task.s()
-            )
-            workflow_final.apply_async()
-            logger.info(f"Todos los headers se clasificaron automáticamente. Iniciando procesamiento final para archivo {archivo_id}")
+            # ✅ CAMBIO: NO ejecutar automáticamente el procesamiento final
+            # El usuario debe decidir cuándo procesar mediante el botón "Procesar Final"
+            logger.info(f"Archivo novedades {archivo_id}: Todos los headers clasificados automáticamente. Estado: 'clasificado' - esperando acción del usuario")
 
         archivo.save()
         logger.info(

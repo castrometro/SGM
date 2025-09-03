@@ -398,6 +398,10 @@ export const descargarPlantillaIngresos = () => {
   return `${api.defaults.baseURL}/nomina/plantilla-ingresos/`;
 };
 
+export const descargarPlantillaAusentismos = () => {
+  return `${api.defaults.baseURL}/nomina/plantilla-ausentismos/`;
+};
+
 // Funciones para archivos del analista
 export const subirArchivoAnalista = async (cierreId, tipoArchivo, formData) => {
   const response = await api.post(`/nomina/archivos-analista/subir/${cierreId}/${tipoArchivo}/`, formData, {
@@ -409,8 +413,18 @@ export const subirArchivoAnalista = async (cierreId, tipoArchivo, formData) => {
 };
 
 export const obtenerEstadoArchivoAnalista = async (cierreId, tipoArchivo) => {
-  const response = await api.get(`/nomina/archivos-analista/?cierre=${cierreId}&tipo_archivo=${tipoArchivo}`);
-  return response.data;
+  try {
+    const response = await api.get(`/nomina/archivos-analista/?cierre=${cierreId}&tipo_archivo=${tipoArchivo}`);
+    // El endpoint retorna una lista, tomamos el primer elemento o null si está vacía
+    const archivos = response.data;
+    return Array.isArray(archivos) && archivos.length > 0 ? archivos[0] : null;
+  } catch (error) {
+    // Si hay error 404 o similar, retornamos null (no hay archivo aún)
+    if (error.response?.status === 404) {
+      return null;
+    }
+    throw error; // Re-lanzar otros errores
+  }
 };
 
 export const reprocesarArchivoAnalista = async (archivoId) => {
@@ -630,3 +644,66 @@ export const consultarIncidencia = async (incidenciaId, comentario) => {
   });
   return response.data;
 };
+
+// ========== FUNCIONES ESPECÍFICAS PARA ARCHIVOS DEL ANALISTA ==========
+
+// Funciones para Ingresos
+export const subirIngresos = async (cierreId, formData) => {
+  return await subirArchivoAnalista(cierreId, 'ingresos', formData);
+};
+
+export const obtenerEstadoIngresos = async (cierreId) => {
+  try {
+    return await obtenerEstadoArchivoAnalista(cierreId, 'ingresos');
+  } catch (error) {
+    console.error('Error obteniendo estado de ingresos:', error);
+    return null;
+  }
+};
+
+export const eliminarIngresos = async (archivoId) => {
+  return await eliminarArchivoAnalista(archivoId);
+};
+
+// Funciones para Finiquitos
+export const subirFiniquitos = async (cierreId, formData) => {
+  return await subirArchivoAnalista(cierreId, 'finiquitos', formData);
+};
+
+export const obtenerEstadoFiniquitos = async (cierreId) => {
+  try {
+    return await obtenerEstadoArchivoAnalista(cierreId, 'finiquitos');
+  } catch (error) {
+    console.error('Error obteniendo estado de finiquitos:', error);
+    return null;
+  }
+};
+
+export const eliminarFiniquitos = async (archivoId) => {
+  return await eliminarArchivoAnalista(archivoId);
+};
+
+// Funciones para Ausentismos (backend usa 'incidencias')
+export const subirAusentismos = async (cierreId, formData) => {
+  return await subirArchivoAnalista(cierreId, 'incidencias', formData);
+};
+
+export const obtenerEstadoAusentismos = async (cierreId) => {
+  try {
+    return await obtenerEstadoArchivoAnalista(cierreId, 'incidencias');
+  } catch (error) {
+    console.error('Error obteniendo estado de ausentismos:', error);
+    return null;
+  }
+};
+
+export const eliminarAusentismos = async (archivoId) => {
+  return await eliminarArchivoAnalista(archivoId);
+};
+
+// Funciones para Novedades (ya existen, pero agregamos las de manejo de estado)
+// NOTA: La función procesarNovedades usa un endpoint incorrecto, usar procesarFinalNovedades
+// export const procesarNovedades = async (novedadesId) => {
+//   const response = await api.post(`/nomina/archivos-novedades/${novedadesId}/procesar/`);
+//   return response.data;
+// };

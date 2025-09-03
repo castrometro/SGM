@@ -13,8 +13,19 @@ const estadoCierreColors = {
   aprobado:           { texto: "Aprobado", color: "bg-green-500" },
   finalizado:         { texto: "Finalizado", color: "bg-green-700" },
   
-  // Estados específicos de nómina
+  // Estados para nómina - Estados del cierre principal
+  creado:             { texto: "Creado", color: "bg-gray-500" },
+  archivos_pendientes: { texto: "Archivos Pendientes", color: "bg-gray-500" },
+  
+  // Estados para nómina - Estados de secciones internas  
+  archivos_pendientes: { texto: "Archivos Pendientes", color: "bg-gray-500" },
   archivos_completos: { texto: "Archivos Completos", color: "bg-indigo-600" },
+  verificacion_pendiente: { texto: "Verificación Pendiente", color: "bg-gray-500" },
+  verificacion_datos: { texto: "Verificando Datos", color: "bg-yellow-500" },
+  con_discrepancias:  { texto: "Discrepancias Detectadas", color: "bg-red-500" },
+  verificado_sin_discrepancias: { texto: "Verificado", color: "bg-green-600" },
+  sin_discrepancias:  { texto: "Sin Discrepancias", color: "bg-green-600" },
+  incidencias_pendientes: { texto: "Incidencias Pendientes", color: "bg-orange-500" },
   datos_consolidados: { texto: "Datos Consolidados", color: "bg-blue-600" },
   incidencias_resueltas: { texto: "Incidencias Resueltas", color: "bg-green-500" },
   reportes_generados: { texto: "Reportes Generados", color: "bg-purple-600" },

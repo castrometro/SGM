@@ -11,9 +11,12 @@ const ModalMapeoNovedades = ({
   onGuardarMapeos,
   soloLectura = false,
 }) => {
-  // Combine headers based on mode
+  // Combine headers based on mode - TODOS los headers para permitir des-mapeo
   const allHeaders = useMemo(
-    () => (soloLectura ? [...headersSinClasificar, ...headersClasificados] : [...headersSinClasificar]),
+    () => {
+      // SIEMPRE mostrar todos los headers (sin clasificar + clasificados) para permitir des-mapeo
+      return [...headersSinClasificar, ...headersClasificados];
+    },
     [headersSinClasificar, headersClasificados, soloLectura]
   );
 
@@ -38,23 +41,18 @@ const ModalMapeoNovedades = ({
     [mapeos]
   );
 
-  // Compute headers without mapping yet
-  const headersPendientes = useMemo(
-    () => allHeaders.filter(h => !mapeos[h]),
-    [allHeaders, mapeos]
-  );
-
   // Auto-select first pending header when list or mapeos change
   useEffect(() => {
     if (!soloLectura && isOpen) {
       setHeaderSeleccionado(prev => {
         // If previous still pending, keep
         if (prev && !mapeos[prev]) return prev;
-        // Else pick first pending
+        // Find first header without mapping
+        const headersPendientes = allHeaders.filter(h => !mapeos[h]);
         return headersPendientes[0] || null;
       });
     }
-  }, [headersPendientes, soloLectura, isOpen]);
+  }, [allHeaders, soloLectura, isOpen, mapeos]);
 
   // Load conceptos y mapeosExistentes when modal opens
   useEffect(() => {

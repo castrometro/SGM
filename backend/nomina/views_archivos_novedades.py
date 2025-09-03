@@ -192,9 +192,9 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
             headers_clasificados = []
             headers_sin_clasificar = headers_data if isinstance(headers_data, list) else []
         
-        # Si el archivo está procesado, incluir los mapeos existentes
+        # Si el archivo está clasificado o procesado, incluir los mapeos existentes
         mapeos_existentes = {}
-        if archivo.estado == 'procesado':
+        if archivo.estado in ['clasificado', 'procesado']:
             mapeos = ConceptoRemuneracionNovedades.objects.filter(
                 cliente=archivo.cierre.cliente,
                 activo=True,
@@ -224,9 +224,9 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
         """Mapea headers pendientes de un archivo de novedades con conceptos del libro de remuneraciones"""
         archivo = self.get_object()
         
-        if archivo.estado != 'clasif_pendiente':
+        if archivo.estado not in ['clasif_pendiente', 'clasificado']:
             return Response({
-                "error": "El archivo debe estar en estado 'clasif_pendiente' para mapear headers"
+                "error": "El archivo debe estar en estado 'clasif_pendiente' o 'clasificado' para mapear headers"
             }, status=400)
         
         mapeos = request.data.get('mapeos', [])
@@ -244,7 +244,8 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
                 header_novedades = mapeo.get('header_novedades')
                 concepto_libro_id = mapeo.get('concepto_libro_id')
 
-                if header_novedades in headers_sin_clasificar:
+                # Permitir mapear tanto headers sin clasificar como ya clasificados
+                if header_novedades in headers_sin_clasificar or header_novedades in headers_clasificados:
                     if concepto_libro_id:
                         try:
                             concepto_libro = ConceptoRemuneracion.objects.get(
@@ -274,9 +275,10 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
                         mapeo_concepto.activo = True
                         mapeo_concepto.save()
 
-                    # Mover de sin clasificar a clasificados
-                    headers_sin_clasificar.remove(header_novedades)
-                    headers_clasificados.append(header_novedades)
+                    # Solo mover de sin clasificar a clasificados si está en sin clasificar
+                    if header_novedades in headers_sin_clasificar:
+                        headers_sin_clasificar.remove(header_novedades)
+                        headers_clasificados.append(header_novedades)
             
             # Actualizar archivo
             archivo.header_json = {

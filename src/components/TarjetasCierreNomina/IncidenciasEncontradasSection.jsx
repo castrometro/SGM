@@ -542,7 +542,7 @@ const IncidenciasEncontradasSection = ({
                   ) : (
                     <>
                       <AlertOctagon className="w-5 h-5 mr-2" />
-                      Generar Incidencias
+                      Detectar Incidencias
                     </>
                   )}
                 </button>

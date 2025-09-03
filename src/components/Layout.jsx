@@ -1,9 +1,18 @@
 import React from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import Header from './Header';
 import Footer from './Footer';
 
 const Layout = () => {
+    const location = useLocation();
+    // Rutas que requieren layout a pantalla completa (sin container centrado)
+    const isLibroRemuneraciones = (
+        location.pathname.startsWith('/menu/cierres-nomina/') &&
+        location.pathname.endsWith('/libro-remuneraciones')
+    );
+    const mainClass = isLibroRemuneraciones
+        ? 'flex-grow w-full p-0'
+        : 'flex-grow container mx-auto p-6';
     return (
         <div className="flex flex-col min-h-screen bg-gray-900 text-gray-100">
             {/* Fondo con gradiente y desenfoque */}
@@ -17,7 +26,7 @@ const Layout = () => {
                 <Header />
 
                 {/* Asegura que el contenido crezca para empujar el footer */}
-                <main className="flex-grow container mx-auto p-6">
+                <main className={mainClass}>
                     <Outlet />
                 </main>                <Footer />
             </div>

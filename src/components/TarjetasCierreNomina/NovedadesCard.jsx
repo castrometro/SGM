@@ -66,6 +66,7 @@ const NovedadesCard = ({
       "analizando_hdrs",
       "hdrs_analizados", 
       "clasif_en_proceso",
+      "clasificado",  // ✅ AGREGADO: Necesario para monitorear transición a "procesando"
       "procesando"
     ];
     

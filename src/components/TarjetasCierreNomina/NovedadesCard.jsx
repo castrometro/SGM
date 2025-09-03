@@ -73,7 +73,8 @@ const NovedadesCard = ({
     const deberiaHacerPolling = estadosQueRequierenPolling.includes(estado);
     
     if (deberiaHacerPolling && !pollingRef.current && onActualizarEstado && !deberiaDetenerPolling) {
-      console.log(`🚀 Iniciando polling para estado: "${estado}" (archivo: ${archivoNombre || 'ninguno'})`);
+      console.log(`🚀 [NovedadesCard] Iniciando polling para estado: "${estado}" (archivo: ${archivoNombre || 'ninguno'})`);
+      console.log(`📋 Estados que requieren polling: ${estadosQueRequierenPolling.join(', ')}`);
       
       let contadorPolling = 0;
       let contadorErrores = 0;

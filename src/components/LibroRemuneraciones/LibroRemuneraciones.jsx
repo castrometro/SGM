@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { obtenerLibroRemuneraciones } from '../../api/nomina';
+import { obtenerDetalleNominaConsolidada, obtenerResumenNominaConsolidada } from '../../api/nomina';
 import { formatearMonedaChilena } from '../../utils/formatters';
 import { 
   ArrowLeft, 
@@ -19,6 +19,7 @@ const LibroRemuneraciones = () => {
   const navigate = useNavigate();
   
   const [datos, setDatos] = useState(null);
+  const [resumenConsolidado, setResumenConsolidado] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState('');
   const [filtros, setFiltros] = useState({
@@ -35,8 +36,12 @@ const LibroRemuneraciones = () => {
   const cargarDatos = async () => {
     try {
       setCargando(true);
-      const respuesta = await obtenerLibroRemuneraciones(id);
+      const [respuesta, resumen] = await Promise.all([
+        obtenerDetalleNominaConsolidada(id),
+        obtenerResumenNominaConsolidada(id)
+      ]);
       setDatos(respuesta);
+      setResumenConsolidado(resumen);
     } catch (error) {
       console.error('Error cargando libro de remuneraciones:', error);
       setError('Error al cargar los datos del libro de remuneraciones');
@@ -73,6 +78,12 @@ const LibroRemuneraciones = () => {
     if (!valor) return false;
     const numero = parseFloat(valor.toString().replace(/[,$]/g, ''));
     return !isNaN(numero) && numero !== 0;
+  };
+  const formatearNumero = (valor) => {
+    if (valor === null || valor === undefined) return '0';
+    const n = Number(valor);
+    if (Number.isNaN(n)) return String(valor);
+    return new Intl.NumberFormat('es-CL').format(n);
   };
 
   if (cargando) {
@@ -147,7 +158,7 @@ const LibroRemuneraciones = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-400">Total Empleados</p>
-                <p className="text-2xl font-bold text-white">{datos?.resumen?.total_empleados || 0}</p>
+                <p className="text-2xl font-bold text-white">{(resumenConsolidado?.resumen?.total_empleados ?? datos?.resumen?.total_empleados) || 0}</p>
               </div>
               <Users className="w-8 h-8 text-teal-500" />
             </div>
@@ -156,9 +167,9 @@ const LibroRemuneraciones = () => {
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-400">Total Haberes</p>
+                <p className="text-sm text-gray-400">Haberes Imponibles</p>
                 <p className="text-2xl font-bold text-green-400">
-                  {formatearMonto(datos?.resumen?.total_haberes)}
+                  {formatearMonto(resumenConsolidado?.resumen?.total_haberes_imponibles)}
                 </p>
               </div>
               <DollarSign className="w-8 h-8 text-green-500" />
@@ -168,12 +179,12 @@ const LibroRemuneraciones = () => {
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-400">Total Descuentos</p>
-                <p className="text-2xl font-bold text-red-400">
-                  {formatearMonto(datos?.resumen?.total_descuentos)}
+                <p className="text-sm text-gray-400">Haberes No Imponibles</p>
+                <p className="text-2xl font-bold text-green-400">
+                  {formatearMonto(resumenConsolidado?.resumen?.total_haberes_no_imponibles)}
                 </p>
               </div>
-              <DollarSign className="w-8 h-8 text-red-500" />
+              <DollarSign className="w-8 h-8 text-green-500" />
             </div>
           </div>
           
@@ -182,11 +193,39 @@ const LibroRemuneraciones = () => {
               <div>
                 <p className="text-sm text-gray-400">Líquido Total</p>
                 <p className="text-2xl font-bold text-teal-400">
-                  {formatearMonto(datos?.resumen?.liquido_total)}
+                  {formatearMonto(resumenConsolidado?.resumen?.liquido_total ?? datos?.resumen?.liquido_total)}
                 </p>
               </div>
               <DollarSign className="w-8 h-8 text-teal-500" />
             </div>
+          </div>
+        </div>
+
+        {/* Totales por categoría (Consolidado) */}
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-6 mb-2">
+          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <p className="text-xs text-gray-400">Descuentos Legales</p>
+            <p className="text-lg font-semibold text-red-400">{formatearMonto(resumenConsolidado?.resumen?.total_dctos_legales)}</p>
+          </div>
+          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <p className="text-xs text-gray-400">Otros Descuentos</p>
+            <p className="text-lg font-semibold text-red-400">{formatearMonto(resumenConsolidado?.resumen?.total_otros_dctos)}</p>
+          </div>
+          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <p className="text-xs text-gray-400">Impuestos</p>
+            <p className="text-lg font-semibold text-red-400">{formatearMonto(resumenConsolidado?.resumen?.total_impuestos)}</p>
+          </div>
+          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <p className="text-xs text-gray-400">Aportes Patronales</p>
+            <p className="text-lg font-semibold text-green-400">{formatearMonto(resumenConsolidado?.resumen?.total_aportes_patronales)}</p>
+          </div>
+          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <p className="text-xs text-gray-400">Horas Extras (cant.)</p>
+            <p className="text-lg font-semibold text-teal-400">{formatearNumero(resumenConsolidado?.resumen?.horas_extras_cantidad_total)}</p>
+          </div>
+          <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+            <p className="text-xs text-gray-400">Días Ausencia</p>
+            <p className="text-lg font-semibold text-yellow-400">{formatearNumero(resumenConsolidado?.resumen?.dias_ausencia_total)}</p>
           </div>
         </div>
 

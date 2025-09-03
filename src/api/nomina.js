@@ -601,7 +601,13 @@ export const limpiarDiscrepanciasCierre = async (cierreId) => {
 // 📋 VISUALIZACIÓN DE DATOS CONSOLIDADOS
 // ========================================
 
-// Obtener libro de remuneraciones consolidado
+// Detalle de nómina consolidada (empleados, headers, conceptos)
+export const obtenerDetalleNominaConsolidada = async (cierreId) => {
+  const response = await api.get(`/nomina/cierres/${cierreId}/nomina-consolidada/detalle/`);
+  return response.data;
+};
+
+// Libro de remuneraciones (compatibilidad con vistas existentes)
 export const obtenerLibroRemuneraciones = async (cierreId) => {
   const response = await api.get(`/nomina/cierres/${cierreId}/libro-remuneraciones/`);
   return response.data;
@@ -610,6 +616,12 @@ export const obtenerLibroRemuneraciones = async (cierreId) => {
 // Obtener movimientos del mes (ingresos, ausencias, finiquitos)
 export const obtenerMovimientosMes = async (cierreId) => {
   const response = await api.get(`/nomina/cierres/${cierreId}/movimientos/`);
+  return response.data;
+};
+
+// Resumen de nómina consolidada (NominaConsolidada)
+export const obtenerResumenNominaConsolidada = async (cierreId) => {
+  const response = await api.get(`/nomina/cierres/${cierreId}/nomina-consolidada/resumen/`);
   return response.data;
 };
 

@@ -79,6 +79,7 @@ from .views_redis import (
 from django.urls import path
 from django.conf import settings
 from django.views.static import serve
+from .views_nomina_consolidada import obtener_resumen_nomina_consolidada, obtener_detalle_nomina_consolidada
 
 router = routers.DefaultRouter()
 router.register(r'cierres', CierreNominaViewSet)
@@ -242,4 +243,8 @@ urlpatterns = router.urls + [
     path('redis/limpiar-cliente/<int:cliente_id>/', limpiar_cache_cliente, name='limpiar_cache_cliente'),
     path('redis/informes/', listar_informes_redis, name='listar_informes_redis'),
     path('redis/health/', health_check_redis, name='health_check_redis'),
+    
+    # === Resumen Nómina Consolidada ===
+    path('cierres/<int:cierre_id>/nomina-consolidada/resumen/', obtener_resumen_nomina_consolidada, name='resumen_nomina_consolidada'),
+    path('cierres/<int:cierre_id>/nomina-consolidada/detalle/', obtener_detalle_nomina_consolidada, name='detalle_nomina_consolidada'),
 ]

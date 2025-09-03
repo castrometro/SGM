@@ -278,8 +278,93 @@ class ConceptoRemuneracionAdmin(admin.ModelAdmin):
 
 @admin.register(RegistroConceptoEmpleado)
 class RegistroConceptoEmpleadoAdmin(admin.ModelAdmin):
-    list_display = ('empleado', 'concepto', 'nombre_concepto_original', 'monto')
-    search_fields = ('empleado__rut', 'nombre_concepto_original')
+    list_display = ('empleado', 'concepto', 'nombre_concepto_original', 'monto', 'fecha_registro')
+    search_fields = ('empleado__rut', 'nombre_concepto_original', 'empleado__nombre', 'empleado__apellido_paterno')
+    list_filter = (
+        'empleado__cierre__cliente', 
+        'empleado__cierre__periodo', 
+        'fecha_registro',
+        'concepto__clasificacion'
+    )
+    
+    # ✅ CONFIGURACIÓN PARA MANEJAR MUCHOS REGISTROS
+    list_per_page = 50  # Mostrar solo 50 registros por página
+    list_max_show_all = 100  # Máximo 100 registros en "mostrar todos"
+    show_full_result_count = False  # No contar todos los registros (mejora performance)
+    
+    # ✅ ORDENAMIENTO POR DEFECTO (MÁS RECIENTES PRIMERO)
+    ordering = ['-fecha_registro']
+    
+    # ✅ CAMPOS DE SOLO LECTURA PARA PROTEGER DATOS
+    readonly_fields = ('fecha_registro',)
+    
+    # ✅ ACCIONES PERSONALIZADAS PARA ELIMINACIÓN MASIVA
+    actions = ['eliminar_por_cierre', 'eliminar_registros_seleccionados', 'info_estadisticas']
+    
+    def eliminar_por_cierre(self, request, queryset):
+        """Eliminar todos los registros de conceptos por cierre de nómina"""
+        cierres_afectados = set()
+        total_eliminados = 0
+        
+        # Obtener cierres únicos
+        for registro in queryset:
+            cierres_afectados.add(registro.empleado.cierre)
+        
+        # Confirmar eliminación
+        if len(cierres_afectados) > 0:
+            for cierre in cierres_afectados:
+                count = RegistroConceptoEmpleado.objects.filter(empleado__cierre=cierre).count()
+                total_eliminados += count
+                RegistroConceptoEmpleado.objects.filter(empleado__cierre=cierre).delete()
+            
+            self.message_user(
+                request, 
+                f"✅ Eliminados {total_eliminados} registros de conceptos de {len(cierres_afectados)} cierre(s) de nómina."
+            )
+        
+    eliminar_por_cierre.short_description = "🗑️ Eliminar TODOS los conceptos del cierre seleccionado"
+    
+    def eliminar_registros_seleccionados(self, request, queryset):
+        """Eliminar solo los registros seleccionados (más seguro)"""
+        count = queryset.count()
+        queryset.delete()
+        self.message_user(request, f"✅ Eliminados {count} registros de conceptos seleccionados.")
+    
+    eliminar_registros_seleccionados.short_description = "🗑️ Eliminar solo registros seleccionados"
+    
+    def info_estadisticas(self, request, queryset):
+        """Mostrar estadísticas de los registros seleccionados"""
+        total = queryset.count()
+        cierres = queryset.values('empleado__cierre').distinct().count()
+        empleados = queryset.values('empleado').distinct().count()
+        
+        self.message_user(
+            request, 
+            f"📊 Estadísticas: {total} registros, {empleados} empleados, {cierres} cierres diferentes."
+        )
+    
+    info_estadisticas.short_description = "📊 Ver estadísticas de selección"
+    
+    # ✅ FILTROS PERSONALIZADOS PARA NAVEGACIÓN EFICIENTE
+    def get_queryset(self, request):
+        """Optimizar queryset para mejor performance"""
+        return super().get_queryset(request).select_related(
+            'empleado', 'empleado__cierre', 'empleado__cierre__cliente', 'concepto'
+        )
+    
+    # ✅ FIELDSETS PARA ORGANIZAR FORMULARIO
+    fieldsets = (
+        ('Información Principal', {
+            'fields': ('empleado', 'concepto', 'nombre_concepto_original')
+        }),
+        ('Datos Financieros', {
+            'fields': ('monto',)
+        }),
+        ('Información de Sistema', {
+            'fields': ('fecha_registro',),
+            'classes': ('collapse',)
+        }),
+    )
 
 
 # Nuevos admins para los modelos de Movimientos_Mes

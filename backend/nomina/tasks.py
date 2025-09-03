@@ -19,6 +19,7 @@ from .utils.NovedadesRemuneraciones import (
     actualizar_empleados_desde_novedades,
     guardar_registros_novedades,
 )
+from .utils.GenerarIncidencias import normalizar_rut, formatear_rut_con_guion
 from .utils.MovimientoMes import procesar_archivo_movimientos_mes_util
 from .utils.ArchivosAnalista import procesar_archivo_analista_util
 from celery import shared_task, chain, chord, group
@@ -1920,7 +1921,7 @@ def procesar_empleados_libro_paralelo(cierre_id, chunk_size=50):
                 # Crear registro de nómina consolidada
                 nomina_consolidada = NominaConsolidada(
                     cierre=cierre,
-                    rut_empleado=empleado.rut,
+                    rut_empleado=normalizar_rut(empleado.rut),  # ✅ NORMALIZAR RUT
                     nombre_empleado=f"{empleado.nombre} {empleado.apellido_paterno} {empleado.apellido_materno}".strip(),
                     estado_empleado='activo',
                     dias_trabajados=empleado.dias_trabajados,
@@ -1933,49 +1934,64 @@ def procesar_empleados_libro_paralelo(cierre_id, chunk_size=50):
                 )
                 nominas_batch.append(nomina_consolidada)
             
-            # Bulk create nóminas
-            NominaConsolidada.objects.bulk_create(nominas_batch)
+            # Bulk create nóminas con manejo de duplicados
+            NominaConsolidada.objects.bulk_create(nominas_batch, ignore_conflicts=True)
             empleados_consolidados += len(nominas_batch)
             
             # Procesar headers para este lote
             for j, empleado in enumerate(batch_empleados):
-                nomina_consolidada = nominas_batch[j]
-                # Necesitamos obtener el ID después del bulk_create
-                nomina_consolidada = NominaConsolidada.objects.get(
-                    cierre=cierre, 
-                    rut_empleado=empleado.rut
-                )
-                
-                # Crear HeaderValorEmpleado para cada concepto
-                conceptos_empleado = empleado.registroconceptoempleado_set.all()
-                
-                for concepto in conceptos_empleado:
-                    # Determinar si es numérico
-                    valor_numerico = None
-                    es_numerico = False
-                    
-                    if concepto.monto:
-                        try:
-                            # Limpiar el valor mejorado
-                            valor_limpio = str(concepto.monto).replace('$', '').replace(',', '').strip()
-                            if valor_limpio and (valor_limpio.replace('-', '').replace('.', '').isdigit()):
-                                valor_numerico = Decimal(valor_limpio)
-                                es_numerico = True
-                        except (ValueError, InvalidOperation, AttributeError):
-                            pass
-                    
-                    # Crear registro HeaderValorEmpleado
-                    header = HeaderValorEmpleado(
-                        nomina_consolidada=nomina_consolidada,
-                        nombre_header=concepto.nombre_concepto_original,
-                        concepto_remuneracion=concepto.concepto,
-                        valor_original=concepto.monto or '',
-                        valor_numerico=valor_numerico,
-                        es_numerico=es_numerico,
-                        fuente_archivo='libro_remuneraciones',
-                        fecha_consolidacion=timezone.now()
+                try:
+                    # Obtener o crear la nómina consolidada (manejo de duplicados)
+                    nomina_consolidada, created = NominaConsolidada.objects.get_or_create(
+                        cierre=cierre, 
+                        rut_empleado=normalizar_rut(empleado.rut),
+                        defaults={
+                            'nombre_empleado': f"{empleado.nombre} {empleado.apellido_paterno} {empleado.apellido_materno}".strip(),
+                            'estado_empleado': 'activo',
+                            'dias_trabajados': empleado.dias_trabajados,
+                            'fecha_consolidacion': timezone.now(),
+                            'fuente_datos': {
+                                'libro_id': libro.id,
+                                'consolidacion_version': '2.0_optimizada',
+                                'procesamiento': 'paralelo'
+                            }
+                        }
                     )
-                    headers_batch.append(header)
+                
+                    # Crear HeaderValorEmpleado para cada concepto
+                    conceptos_empleado = empleado.registroconceptoempleado_set.all()
+                    
+                    for concepto in conceptos_empleado:
+                        # Determinar si es numérico
+                        valor_numerico = None
+                        es_numerico = False
+                        
+                        if concepto.monto:
+                            try:
+                                # Limpiar el valor mejorado
+                                valor_limpio = str(concepto.monto).replace('$', '').replace(',', '').strip()
+                                if valor_limpio and (valor_limpio.replace('-', '').replace('.', '').isdigit()):
+                                    valor_numerico = Decimal(valor_limpio)
+                                    es_numerico = True
+                            except (ValueError, InvalidOperation, AttributeError):
+                                pass
+                        
+                        # Crear registro HeaderValorEmpleado
+                        header = HeaderValorEmpleado(
+                            nomina_consolidada=nomina_consolidada,
+                            nombre_header=concepto.nombre_concepto_original,
+                            concepto_remuneracion=concepto.concepto,
+                            valor_original=concepto.monto or '',
+                            valor_numerico=valor_numerico,
+                            es_numerico=es_numerico,
+                            fuente_archivo='libro_remuneraciones',
+                            fecha_consolidacion=timezone.now()
+                        )
+                        headers_batch.append(header)
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error procesando empleado {empleado.rut}: {e}")
+                    continue
             
             # Bulk create headers cada cierto número para evitar memoria excesiva
             if len(headers_batch) >= 500:
@@ -2061,7 +2077,7 @@ def procesar_movimientos_personal_paralelo(cierre_id):
             try:
                 nomina_consolidada = NominaConsolidada.objects.get(
                     cierre=cierre, 
-                    rut_empleado=movimiento.rut
+                    rut_empleado=normalizar_rut(movimiento.rut)  # ✅ NORMALIZAR RUT
                 )
                 
                 # Actualizar estado del empleado
@@ -2118,7 +2134,7 @@ def procesar_movimientos_personal_paralelo(cierre_id):
             try:
                 nomina_consolidada = NominaConsolidada.objects.get(
                     cierre=cierre, 
-                    rut_empleado=ausentismo.rut
+                    rut_empleado=normalizar_rut(ausentismo.rut)  # ✅ NORMALIZAR RUT
                 )
                 
                 # Actualizar estado si es ausencia total
@@ -2158,7 +2174,7 @@ def procesar_movimientos_personal_paralelo(cierre_id):
             try:
                 nomina_consolidada = NominaConsolidada.objects.get(
                     cierre=cierre, 
-                    rut_empleado=vacacion.rut
+                    rut_empleado=normalizar_rut(vacacion.rut)  # ✅ NORMALIZAR RUT
                 )
                 
                 mov_personal = MovimientoPersonal(
@@ -2188,7 +2204,7 @@ def procesar_movimientos_personal_paralelo(cierre_id):
             try:
                 nomina_consolidada = NominaConsolidada.objects.get(
                     cierre=cierre, 
-                    rut_empleado=variacion.rut
+                    rut_empleado=normalizar_rut(variacion.rut)  # ✅ NORMALIZAR RUT
                 )
                 
                 mov_personal = MovimientoPersonal(
@@ -2217,7 +2233,7 @@ def procesar_movimientos_personal_paralelo(cierre_id):
             try:
                 nomina_consolidada = NominaConsolidada.objects.get(
                     cierre=cierre, 
-                    rut_empleado=variacion.rut
+                    rut_empleado=normalizar_rut(variacion.rut)  # ✅ NORMALIZAR RUT
                 )
                 
                 mov_personal = MovimientoPersonal(

@@ -66,6 +66,31 @@ def normalizar_rut(rut):
     
     return rut_limpio
 
+def formatear_rut_con_guion(rut):
+    """
+    Formatea RUT agregando guión antes del dígito verificador
+    Ejemplos:
+    - '123456789' -> '12345678-9'
+    - '12345678K' -> '12345678-K'
+    - '12.345.678-9' -> '12345678-9' (primero normaliza, luego formatea)
+    """
+    if not rut:
+        return ""
+    
+    # Primero normalizar para limpiar formato
+    rut_limpio = normalizar_rut(rut)
+    
+    # Validar que tenga al menos 2 caracteres (número + dígito verificador)
+    if len(rut_limpio) < 2:
+        return rut_limpio
+    
+    # Separar número del dígito verificador
+    numero = rut_limpio[:-1]
+    digito_verificador = rut_limpio[-1]
+    
+    # Formatear con guión
+    return f"{numero}-{digito_verificador}"
+
 def ruts_son_equivalentes(rut1, rut2):
     """Compara si dos RUTs son equivalentes después de normalización"""
     return normalizar_rut(rut1) == normalizar_rut(rut2)

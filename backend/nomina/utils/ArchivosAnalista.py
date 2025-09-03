@@ -9,6 +9,7 @@ from nomina.models import (
     AnalistaIncidencia, 
     AnalistaIngreso
 )
+from .GenerarIncidencias import formatear_rut_con_guion, normalizar_rut
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +47,26 @@ def validar_headers_ingresos(df):
     return True
 
 def limpiar_rut(rut_str):
-    """Limpia y normaliza el RUT"""
+    """Limpia y normaliza el RUT agregando guión si es necesario"""
     if pd.isna(rut_str):
         return ""
     
-    rut = str(rut_str).strip().replace('.', '').replace('-', '').upper()
-    return rut
+    # Usar la función de formateo para agregar guión
+    rut_formateado = formatear_rut_con_guion(rut_str)
+    return rut_formateado
+
+def buscar_empleado_por_rut(cierre, rut):
+    """Busca empleado por RUT considerando diferentes formatos"""
+    # Normalizar el RUT de búsqueda
+    rut_normalizado = normalizar_rut(rut)
+    
+    # Buscar empleados cuyo RUT normalizado coincida
+    empleados = EmpleadoCierre.objects.filter(cierre=cierre)
+    for empleado in empleados:
+        if normalizar_rut(empleado.rut) == rut_normalizado:
+            return empleado
+    
+    return None
 
 def parsear_fecha(fecha_str):
     """Convierte string de fecha a objeto date"""
@@ -108,11 +123,8 @@ def procesar_archivo_finiquitos_util(archivo):
                 
                 motivo = str(row.get('Motivo', '')).strip()
                 
-                # Buscar empleado asociado
-                empleado = EmpleadoCierre.objects.filter(
-                    cierre=cierre, 
-                    rut=rut
-                ).first()
+                # Buscar empleado asociado usando normalización de RUT
+                empleado = buscar_empleado_por_rut(cierre, rut)
                 
                 # Crear registro
                 AnalistaFiniquito.objects.create(
@@ -190,11 +202,8 @@ def procesar_archivo_incidencias_util(archivo):
                     errores.append(f"Fila {index + 2}: Tipo de Ausentismo vacío")
                     continue
                 
-                # Buscar empleado asociado
-                empleado = EmpleadoCierre.objects.filter(
-                    cierre=cierre, 
-                    rut=rut
-                ).first()
+                # Buscar empleado asociado usando normalización de RUT
+                empleado = buscar_empleado_por_rut(cierre, rut)
                 
                 # Crear registro
                 AnalistaIncidencia.objects.create(
@@ -257,11 +266,8 @@ def procesar_archivo_ingresos_util(archivo):
                     errores.append(f"Fila {index + 2}: Fecha Ingreso inválida")
                     continue
                 
-                # Buscar empleado asociado
-                empleado = EmpleadoCierre.objects.filter(
-                    cierre=cierre, 
-                    rut=rut
-                ).first()
+                # Buscar empleado asociado usando normalización de RUT
+                empleado = buscar_empleado_por_rut(cierre, rut)
                 
                 # Crear registro
                 AnalistaIngreso.objects.create(

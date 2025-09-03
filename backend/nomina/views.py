@@ -3239,15 +3239,20 @@ class DiscrepanciaCierreViewSet(viewsets.ModelViewSet):
         logger = logging.getLogger(__name__)
         logger.info(f"🚀 Generando discrepancias paralelas para cierre {cierre_id}")
         
-        # 🆕 NUEVO: Usar la nueva tarea paralela con Chord
+        # Obtener el usuario que ejecuta la verificación
+        usuario_id = request.user.id if request.user.is_authenticated else None
+        logger.info(f"👤 Usuario ejecutor: {request.user.correo_bdo} (ID: {usuario_id})" if usuario_id else "👤 Usuario ejecutor: Anónimo")
+        
+        # 🆕 NUEVO: Usar la nueva tarea paralela con Chord (incluyendo usuario_id)
         from .tasks import generar_discrepancias_cierre_paralelo
-        task = generar_discrepancias_cierre_paralelo.delay(cierre_id)
+        task = generar_discrepancias_cierre_paralelo.delay(cierre_id, usuario_id)
         
         return Response({
             "message": "🚀 Generación de discrepancias paralela iniciada",
             "descripcion": "Verificación en paralelo: Libro vs Novedades + Movimientos vs Analista",
             "task_id": task.id,
             "cierre_id": cierre_id,
+            "usuario_ejecutor": request.user.correo_bdo if request.user.is_authenticated else "Anónimo",
             "modo_procesamiento": "paralelo_chord"
         }, status=202)
     
@@ -3733,6 +3738,119 @@ def obtener_estadisticas_cierre(request, cierre_id):
         )
     except Exception as e:
         logging.error(f"Error obteniendo estadísticas del cierre: {str(e)}")
+        return Response(
+            {'error': f'Error interno del servidor: {str(e)}'}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+def estadisticas_historial_verificacion(request, cierre_id):
+    """
+    Endpoint para obtener estadísticas del historial de verificaciones de un cierre
+    """
+    try:
+        from .models import HistorialVerificacionCierre, DiscrepanciaHistorial
+        from django.db.models import Count, Q
+        
+        # Verificar que el cierre existe
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        # Obtener todo el historial de verificaciones
+        historiales = HistorialVerificacionCierre.objects.filter(
+            cierre_id=cierre_id
+        ).order_by('-fecha_ejecucion')
+        
+        if not historiales.exists():
+            return Response({
+                'cierre_id': cierre_id,
+                'mensaje': 'No hay historial de verificaciones para este cierre',
+                'total_verificaciones': 0,
+                'estado_actual': cierre.estado
+            })
+        
+        # Estadísticas generales
+        total_verificaciones = historiales.count()
+        ultima_verificacion = historiales.first()
+        primera_verificacion = historiales.last()
+        
+        # Estadísticas de intentos
+        verificaciones_exitosas = historiales.filter(estado_verificacion='completado').count()
+        verificaciones_con_error = historiales.filter(estado_verificacion='error').count()
+        verificaciones_en_proceso = historiales.filter(estado_verificacion='procesando').count()
+        
+        # Progreso de discrepancias
+        historial_discrepancias = []
+        for historial in historiales:
+            discrepancias_total = DiscrepanciaHistorial.objects.filter(
+                historial_verificacion=historial
+            ).count()
+            
+            historial_discrepancias.append({
+                'intento': historial.numero_intento,
+                'fecha': historial.fecha_ejecucion.isoformat(),
+                'fecha_finalizacion': historial.fecha_finalizacion.isoformat() if historial.fecha_finalizacion else None,
+                'usuario': historial.usuario_ejecutor.username if historial.usuario_ejecutor else 'Sistema',
+                'correo': historial.usuario_ejecutor.correo_bdo if historial.usuario_ejecutor else 'Sin correo',
+                'discrepancias_encontradas': historial.total_discrepancias_encontradas or 0,
+                'discrepancias_libro_vs_novedades': historial.discrepancias_libro_vs_novedades or 0,
+                'discrepancias_movimientos_vs_analista': historial.discrepancias_movimientos_vs_analista or 0,
+                'estado': historial.estado_verificacion,
+                'duracion_segundos': historial.tiempo_ejecucion or 0,
+                'duracion_minutos': (
+                    round(historial.tiempo_ejecucion / 60, 2) if historial.tiempo_ejecucion else None
+                ),
+                'observaciones': historial.observaciones or ''  # ✅ Campo correcto
+            })
+        
+        # Estadísticas de mejora
+        mejora_discrepancias = None
+        if len(historial_discrepancias) >= 2:
+            primera_discrepancias = historial_discrepancias[-1]['discrepancias_encontradas']
+            ultima_discrepancias = historial_discrepancias[0]['discrepancias_encontradas']
+            if primera_discrepancias > 0:
+                mejora_discrepancias = (
+                    (primera_discrepancias - ultima_discrepancias) / primera_discrepancias * 100
+                )
+        
+        data = {
+            'cierre_id': cierre_id,
+            'cierre_estado': cierre.estado,
+            'resumen': {
+                'total_verificaciones': total_verificaciones,
+                'verificaciones_exitosas': verificaciones_exitosas,
+                'verificaciones_con_error': verificaciones_con_error,
+                'verificaciones_en_proceso': verificaciones_en_proceso,
+                'primera_verificacion': primera_verificacion.fecha_ejecucion.isoformat(),
+                'ultima_verificacion': ultima_verificacion.fecha_ejecucion.isoformat(),
+                'mejora_discrepancias_porcentaje': round(mejora_discrepancias, 2) if mejora_discrepancias else None
+            },
+            'historial_detallado': historial_discrepancias,
+            'estadisticas_discrepancias': {
+                'discrepancias_primera_verificacion': (
+                    historial_discrepancias[-1]['discrepancias_encontradas'] 
+                    if historial_discrepancias else 0
+                ),
+                'discrepancias_ultima_verificacion': (
+                    historial_discrepancias[0]['discrepancias_encontradas'] 
+                    if historial_discrepancias else 0
+                ),
+                'objetivo_cero_discrepancias': (
+                    historial_discrepancias[0]['discrepancias_encontradas'] == 0 
+                    if historial_discrepancias else False
+                )
+            }
+        }
+        
+        return Response(data, status=status.HTTP_200_OK)
+        
+    except CierreNomina.DoesNotExist:
+        return Response(
+            {'error': 'Cierre no encontrado'}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        logging.error(f"Error obteniendo estadísticas del historial: {str(e)}")
         return Response(
             {'error': f'Error interno del servidor: {str(e)}'}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR

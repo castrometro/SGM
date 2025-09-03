@@ -3,6 +3,7 @@ from api.models import Cliente
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import datetime
+from django.conf import settings
 
 # Importar modelos de logging
 from .models_logging import UploadLogNomina, TarjetaActivityLogNomina
@@ -1309,6 +1310,15 @@ class DiscrepanciaCierre(models.Model):
     cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE, related_name='discrepancias')
     tipo_discrepancia = models.CharField(max_length=50, choices=TipoDiscrepancia.choices)
     
+    # ✅ NUEVO: Relación con historial de verificaciones
+    historial_verificacion = models.ForeignKey(
+        'HistorialVerificacionCierre',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="Verificación en la que se detectó esta discrepancia"
+    )
+    
     # Empleado afectado
     empleado_libro = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE, null=True, blank=True)
     empleado_novedades = models.ForeignKey('EmpleadoCierreNovedades', on_delete=models.CASCADE, null=True, blank=True)
@@ -1337,6 +1347,146 @@ class DiscrepanciaCierre(models.Model):
     
     def __str__(self):
         return f"Discrepancia: {self.get_tipo_discrepancia_display()} - {self.rut_empleado} - {self.cierre}"
+
+
+class HistorialVerificacionCierre(models.Model):
+    """
+    🔍 HISTORIAL DE VERIFICACIONES DE DATOS
+    
+    Registra cada ejecución de "Verificar Datos" realizada por el analista,
+    permitiendo auditar cuántas iteraciones fueron necesarias para llegar a 0 discrepancias.
+    """
+    cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE, related_name='historial_verificaciones')
+    
+    # Información de la ejecución
+    numero_intento = models.PositiveIntegerField(help_text="Número de intento de verificación (1, 2, 3...)")
+    usuario_ejecutor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        help_text="Usuario que ejecutó la verificación"
+    )
+    
+    # Timestamps
+    fecha_ejecucion = models.DateTimeField(auto_now_add=True)
+    fecha_finalizacion = models.DateTimeField(null=True, blank=True)
+    tiempo_ejecucion = models.PositiveIntegerField(null=True, blank=True, help_text="Duración en segundos")
+    
+    # Resultados de la verificación
+    total_discrepancias_encontradas = models.PositiveIntegerField(default=0)
+    discrepancias_libro_vs_novedades = models.PositiveIntegerField(default=0)
+    discrepancias_movimientos_vs_analista = models.PositiveIntegerField(default=0)
+    
+    # Estado y contexto
+    ESTADO_CHOICES = [
+        ('iniciado', 'Verificación Iniciada'),
+        ('procesando', 'Procesando Verificación'),
+        ('completado', 'Verificación Completada'),
+        ('error', 'Error en Verificación'),
+        ('cancelado', 'Verificación Cancelada'),
+    ]
+    estado_verificacion = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='iniciado')
+    
+    # Detalles de ejecución
+    task_id = models.CharField(max_length=255, null=True, blank=True, help_text="ID de la tarea Celery")
+    observaciones = models.TextField(null=True, blank=True, help_text="Notas del analista sobre esta verificación")
+    error_mensaje = models.TextField(null=True, blank=True, help_text="Mensaje de error si falló")
+    
+    # Metadatos para análisis
+    archivos_analizados = models.JSONField(
+        default=dict,
+        help_text="Información sobre archivos analizados en esta verificación"
+    )
+    estadisticas_procesamiento = models.JSONField(
+        default=dict,
+        help_text="Estadísticas detalladas del procesamiento"
+    )
+    
+    class Meta:
+        verbose_name = "Historial de Verificación"
+        verbose_name_plural = "Historiales de Verificación"
+        unique_together = ('cierre', 'numero_intento')
+        indexes = [
+            models.Index(fields=['cierre', 'numero_intento']),
+            models.Index(fields=['fecha_ejecucion']),
+            models.Index(fields=['estado_verificacion']),
+            models.Index(fields=['total_discrepancias_encontradas']),
+        ]
+        ordering = ['-numero_intento', '-fecha_ejecucion']
+    
+    def __str__(self):
+        return f"Verificación #{self.numero_intento} - {self.cierre} - {self.total_discrepancias_encontradas} discrepancias"
+    
+    def marcar_completado(self):
+        """Marca la verificación como completada y calcula duración"""
+        from django.utils import timezone
+        self.fecha_finalizacion = timezone.now()
+        if self.fecha_ejecucion:
+            duracion = self.fecha_finalizacion - self.fecha_ejecucion
+            self.tiempo_ejecucion = int(duracion.total_seconds())
+        self.estado_verificacion = 'completado'
+        self.save(update_fields=['fecha_finalizacion', 'tiempo_ejecucion', 'estado_verificacion'])
+    
+    def marcar_error(self, mensaje_error):
+        """Marca la verificación como fallida"""
+        from django.utils import timezone
+        self.fecha_finalizacion = timezone.now()
+        if self.fecha_ejecucion:
+            duracion = self.fecha_finalizacion - self.fecha_ejecucion
+            self.tiempo_ejecucion = int(duracion.total_seconds())
+        self.estado_verificacion = 'error'
+        self.error_mensaje = mensaje_error
+        self.save(update_fields=['fecha_finalizacion', 'tiempo_ejecucion', 'estado_verificacion', 'error_mensaje'])
+
+
+class DiscrepanciaHistorial(models.Model):
+    """
+    � DISCREPANCIAS ESPECÍFICAS POR VERIFICACIÓN
+    
+    Almacena una copia de cada discrepancia detectada en una verificación específica,
+    permitiendo ver la evolución entre intentos.
+    """
+    historial_verificacion = models.ForeignKey(
+        HistorialVerificacionCierre, 
+        on_delete=models.CASCADE, 
+        related_name='discrepancias_detectadas'
+    )
+    
+    # Información de la discrepancia
+    tipo_discrepancia = models.CharField(max_length=50)
+    rut_empleado = models.CharField(max_length=20, db_index=True)
+    nombre_empleado = models.CharField(max_length=200)
+    concepto = models.CharField(max_length=200, null=True, blank=True)
+    
+    # Valores comparados
+    valor_esperado = models.CharField(max_length=500, null=True, blank=True)
+    valor_encontrado = models.CharField(max_length=500, null=True, blank=True)
+    diferencia = models.CharField(max_length=500, null=True, blank=True)
+    
+    # Detalles
+    descripcion_detallada = models.TextField(null=True, blank=True)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    
+    # Metadatos
+    orden_deteccion = models.PositiveIntegerField(help_text="Orden en que se detectó esta discrepancia")
+    solucionada_en_siguiente = models.BooleanField(
+        default=False, 
+        help_text="¿Esta discrepancia fue solucionada en la siguiente verificación?"
+    )
+    
+    class Meta:
+        verbose_name = "Discrepancia en Historial"
+        verbose_name_plural = "Discrepancias en Historial"
+        indexes = [
+            models.Index(fields=['historial_verificacion', 'orden_deteccion']),
+            models.Index(fields=['rut_empleado']),
+            models.Index(fields=['fecha_creacion']),
+        ]
+        ordering = ['-fecha_creacion', 'orden_deteccion']
+    
+    def __str__(self):
+        return f"Verificación #{self.historial_verificacion.numero_intento} - {self.tipo_discrepancia} - {self.rut_empleado}"
 
 
 # ==========================================

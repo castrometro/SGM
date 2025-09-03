@@ -13,6 +13,8 @@ from .views import (
     obtener_movimientos_mes,
     # Endpoint para estadísticas del cierre
     obtener_estadisticas_cierre,
+    # Endpoint para historial de verificación
+    estadisticas_historial_verificacion,
 )
 
 # Importar ViewSets de archivos específicos desde sus módulos dedicados
@@ -224,6 +226,9 @@ urlpatterns = router.urls + [
     
     # === URL para Estadísticas del Cierre ===
     path('cierres/<int:cierre_id>/estadisticas/', obtener_estadisticas_cierre, name='estadisticas_cierre'),
+    
+    # === URL para Historial de Verificación ===
+    path('cierres/<int:cierre_id>/historial-verificacion/', estadisticas_historial_verificacion, name='historial_verificacion'),
     
     # === URLs para Informes de Cierre ===
     path('cierres/<int:cierre_id>/informe/', obtener_informe_cierre, name='obtener_informe_cierre'),

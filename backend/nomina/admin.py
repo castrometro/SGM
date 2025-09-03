@@ -13,6 +13,7 @@ from .models import (
     IncidenciaCierre, ResolucionIncidencia,
     # Modelos de análisis y discrepancias
     AnalisisDatosCierre, IncidenciaVariacionSalarial, DiscrepanciaCierre,
+    HistorialVerificacionCierre, DiscrepanciaHistorial,  # ✅ NUEVOS MODELOS
     # Modelos consolidados (están en models.py)
     NominaConsolidada, HeaderValorEmpleado, ConceptoConsolidado, MovimientoPersonal
 )
@@ -2397,3 +2398,21 @@ class InformeNominaAdmin(admin.ModelAdmin):
             'cierre',
             'cierre__cliente'
         )
+
+
+# =============================================================================
+# ✅ ADMINS PARA AUDITORÍA DE VERIFICACIONES
+# =============================================================================
+
+@admin.register(HistorialVerificacionCierre)
+class HistorialVerificacionCierreAdmin(admin.ModelAdmin):
+    list_display = ('cierre', 'numero_intento', 'total_discrepancias_encontradas')
+    list_filter = ('numero_intento',)
+    search_fields = ('cierre__cliente__nombre', 'cierre__periodo')
+
+
+@admin.register(DiscrepanciaHistorial)  
+class DiscrepanciaHistorialAdmin(admin.ModelAdmin):
+    list_display = ('historial_verificacion', 'tipo_discrepancia', 'rut_empleado')
+    list_filter = ('tipo_discrepancia',)
+    search_fields = ('rut_empleado', 'nombre_empleado')

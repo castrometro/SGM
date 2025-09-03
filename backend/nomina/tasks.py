@@ -2106,7 +2106,7 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                 if movimiento.alta_o_baja == 'BAJA':
                     nomina_consolidada = NominaConsolidada.objects.create(
                         cierre=cierre,
-                        rut_empleado=movimiento.rut,
+                        rut_empleado=normalizar_rut(movimiento.rut),
                         nombre_empleado=movimiento.nombres_apellidos,
                         estado_empleado='finiquito',
                         fecha_consolidacion=timezone.now(),
@@ -2172,9 +2172,14 @@ def procesar_movimientos_personal_paralelo(cierre_id):
         
         for vacacion in vacaciones:
             try:
+                # 🔍 DEBUG: Agregar logging para debugging del matching
+                rut_original = vacacion.rut
+                rut_normalizado = normalizar_rut(vacacion.rut)
+                logger.debug(f"🔍 Buscando vacación - RUT original: '{rut_original}' → RUT normalizado: '{rut_normalizado}'")
+                
                 nomina_consolidada = NominaConsolidada.objects.get(
                     cierre=cierre, 
-                    rut_empleado=normalizar_rut(vacacion.rut)  # ✅ NORMALIZAR RUT
+                    rut_empleado=rut_normalizado  # ✅ NORMALIZAR RUT
                 )
                 
                 mov_personal = MovimientoPersonal(
@@ -2191,7 +2196,16 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                 contador_vacaciones += 1
                 
             except NominaConsolidada.DoesNotExist:
-                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {vacacion.rut} en vacaciones")
+                # 🔍 DEBUG: Agregar información detallada del error
+                rut_normalizado = normalizar_rut(vacacion.rut)
+                empleados_en_cierre = NominaConsolidada.objects.filter(cierre=cierre).count()
+                existe_rut = NominaConsolidada.objects.filter(cierre=cierre, rut_empleado=rut_normalizado).exists()
+                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {vacacion.rut} → {rut_normalizado} en vacaciones")
+                logger.warning(f"   📊 Empleados en cierre: {empleados_en_cierre}, ¿Existe RUT?: {existe_rut}")
+                if existe_rut:
+                    # Si existe el RUT pero no se encontró, hay un problema en la query
+                    empleado = NominaConsolidada.objects.get(cierre=cierre, rut_empleado=rut_normalizado)
+                    logger.error(f"   🚨 ERROR: RUT existe pero query falló. Empleado encontrado: {empleado.id}")
                 continue
         
         logger.info(f"✅ [PARALELO] {contador_vacaciones} movimientos de vacaciones procesados")
@@ -2207,12 +2221,15 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                     rut_empleado=normalizar_rut(variacion.rut)  # ✅ NORMALIZAR RUT
                 )
                 
+                # El modelo MovimientoVariacionSueldo no tiene campo 'motivo'. Usar descripción informativa
+                motivo_text = f"Cambio de sueldo: de ${variacion.sueldo_base_anterior:,.0f} a ${variacion.sueldo_base_actual:,.0f}"
                 mov_personal = MovimientoPersonal(
                     nomina_consolidada=nomina_consolidada,
                     tipo_movimiento='cambio_sueldo',
-                    motivo=f"Cambio de sueldo: {variacion.motivo}",
-                    fecha_movimiento=variacion.fecha_cambio,
-                    observaciones=f"De ${variacion.sueldo_anterior:,.0f} a ${variacion.sueldo_nuevo:,.0f}",
+                    motivo=motivo_text,
+                    # Algunos modelos no tienen 'fecha_cambio' — usar fallback seguro
+                    fecha_movimiento=getattr(variacion, 'fecha_cambio', getattr(variacion, 'fecha_ingreso', timezone.now())),
+                    observaciones=f"De ${variacion.sueldo_base_anterior:,.0f} a ${variacion.sueldo_base_actual:,.0f}",
                     fecha_deteccion=timezone.now(),
                     detectado_por_sistema='consolidacion_paralela_v2'
                 )
@@ -2236,12 +2253,15 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                     rut_empleado=normalizar_rut(variacion.rut)  # ✅ NORMALIZAR RUT
                 )
                 
+                # El modelo MovimientoVariacionContrato no tiene campo 'motivo' ni 'tipo_contrato_nuevo'
+                motivo_text = f"Cambio de contrato: de {variacion.tipo_contrato_anterior} a {variacion.tipo_contrato_actual}"
                 mov_personal = MovimientoPersonal(
                     nomina_consolidada=nomina_consolidada,
                     tipo_movimiento='cambio_contrato',
-                    motivo=f"Cambio de contrato: {variacion.motivo}",
-                    fecha_movimiento=variacion.fecha_cambio,
-                    observaciones=f"De {variacion.tipo_contrato_anterior} a {variacion.tipo_contrato_nuevo}",
+                    motivo=motivo_text,
+                    # Algunos modelos no tienen 'fecha_cambio' — usar fallback seguro
+                    fecha_movimiento=getattr(variacion, 'fecha_cambio', getattr(variacion, 'fecha_ingreso', timezone.now())),
+                    observaciones=f"De {variacion.tipo_contrato_anterior} a {variacion.tipo_contrato_actual}",
                     fecha_deteccion=timezone.now(),
                     detectado_por_sistema='consolidacion_paralela_v2'
                 )
@@ -2640,7 +2660,7 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
             # Crear registro de nómina consolidada
             nomina_consolidada = NominaConsolidada.objects.create(
                 cierre=cierre,
-                rut_empleado=empleado.rut,
+                rut_empleado=normalizar_rut(empleado.rut),
                 nombre_empleado=f"{empleado.nombre} {empleado.apellido_paterno} {empleado.apellido_materno}".strip(),
                 estado_empleado='activo',  # TODO: Detectar estado según movimientos
                 dias_trabajados=empleado.dias_trabajados,
@@ -2711,28 +2731,28 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
             try:
                 nomina_consolidada = NominaConsolidada.objects.get(
                     cierre=cierre, 
-                    rut_empleado=movimiento.rut
+                    rut_empleado=normalizar_rut(movimiento.rut)
                 )
             except NominaConsolidada.DoesNotExist:
                 # Si no existe, crear uno nuevo para este movimiento
-                nomina_consolidada = NominaConsolidada.objects.create(
-                    cierre=cierre,
-                    rut_empleado=movimiento.rut,
-                    nombre_empleado=movimiento.nombres_apellidos,
-                    cargo=movimiento.cargo,
-                    centro_costo=movimiento.centro_de_costo,
-                    estado_empleado='nueva_incorporacion' if movimiento.alta_o_baja == 'ALTA' else 'finiquito',
-                    dias_trabajados=movimiento.dias_trabajados,
-                    total_haberes=movimiento.sueldo_base,
-                    liquido_pagar=movimiento.sueldo_base,
-                    fecha_consolidacion=timezone.now(),
-                    fuente_datos={
-                        'libro_id': libro.id,
-                        'movimientos_id': movimientos.id,
-                        'consolidacion_version': '1.0',
-                        'movimiento_tipo': 'alta_baja'
-                    }
-                )
+                    nomina_consolidada = NominaConsolidada.objects.create(
+                        cierre=cierre,
+                        rut_empleado=normalizar_rut(movimiento.rut),
+                        nombre_empleado=movimiento.nombres_apellidos,
+                        cargo=movimiento.cargo,
+                        centro_costo=movimiento.centro_de_costo,
+                        estado_empleado='nueva_incorporacion' if movimiento.alta_o_baja == 'ALTA' else 'finiquito',
+                        dias_trabajados=movimiento.dias_trabajados,
+                        total_haberes=movimiento.sueldo_base,
+                        liquido_pagar=movimiento.sueldo_base,
+                        fecha_consolidacion=timezone.now(),
+                        fuente_datos={
+                            'libro_id': libro.id,
+                            'movimientos_id': movimientos.id,
+                            'consolidacion_version': '1.0',
+                            'movimiento_tipo': 'alta_baja'
+                        }
+                    )
             
             # Actualizar estado según el movimiento
             if movimiento.alta_o_baja == 'ALTA':
@@ -2763,7 +2783,7 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
             try:
                 nomina_consolidada = NominaConsolidada.objects.get(
                     cierre=cierre, 
-                    rut_empleado=ausentismo.rut
+                    rut_empleado=normalizar_rut(ausentismo.rut)
                 )
                 
                 # Actualizar estado si es ausencia total
@@ -2791,7 +2811,7 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
                 movimientos_creados += 1
                 
             except NominaConsolidada.DoesNotExist:
-                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {ausentismo.rut} en ausentismo")
+                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {normalizar_rut(ausentismo.rut)} en ausentismo")
                 continue
         
         # 5.3 Procesar VACACIONES
@@ -2802,7 +2822,7 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
             try:
                 nomina_consolidada = NominaConsolidada.objects.get(
                     cierre=cierre, 
-                    rut_empleado=vacacion.rut
+                    rut_empleado=normalizar_rut(vacacion.rut)
                 )
                 
                 # Crear MovimientoPersonal para vacaciones
@@ -2820,7 +2840,7 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
                 movimientos_creados += 1
                 
             except NominaConsolidada.DoesNotExist:
-                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {vacacion.rut} en vacaciones")
+                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {normalizar_rut(vacacion.rut)} en vacaciones")
                 continue
         
         # 5.4 Procesar VARIACIONES DE SUELDO
@@ -2831,7 +2851,7 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
             try:
                 nomina_consolidada = NominaConsolidada.objects.get(
                     cierre=cierre, 
-                    rut_empleado=variacion.rut
+                    rut_empleado=normalizar_rut(variacion.rut)
                 )
                 
                 # Crear MovimientoPersonal
@@ -2848,7 +2868,7 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
                 movimientos_creados += 1
                 
             except NominaConsolidada.DoesNotExist:
-                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {variacion.rut} en variación de sueldo")
+                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {normalizar_rut(variacion.rut)} en variación de sueldo")
                 continue
         
         # 5.5 Procesar VARIACIONES DE CONTRATO
@@ -2859,7 +2879,7 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
             try:
                 nomina_consolidada = NominaConsolidada.objects.get(
                     cierre=cierre, 
-                    rut_empleado=variacion.rut
+                    rut_empleado=normalizar_rut(variacion.rut)
                 )
                 
                 # Crear MovimientoPersonal
@@ -2876,7 +2896,7 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
                 movimientos_creados += 1
                 
             except NominaConsolidada.DoesNotExist:
-                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {variacion.rut} en variación de contrato")
+                logger.warning(f"⚠️ No se encontró empleado consolidado para RUT {normalizar_rut(variacion.rut)} en variación de contrato")
                 continue
         
         # 5.6 CONSOLIDAR CONCEPTOS POR EMPLEADO
@@ -3424,7 +3444,7 @@ def actualizar_estado_cierre_post_procesamiento(cierre_id, comparacion):
 # ===== 🚀 NUEVO SISTEMA PARALELO DE DISCREPANCIAS =====
 
 @shared_task
-def generar_discrepancias_cierre_paralelo(cierre_id):
+def generar_discrepancias_cierre_paralelo(cierre_id, usuario_id=None):
     """
     🚀 TASK PRINCIPAL: Sistema paralelo de generación de discrepancias
     
@@ -3432,12 +3452,55 @@ def generar_discrepancias_cierre_paralelo(cierre_id):
     1. Chunk 1: Discrepancias Libro vs Novedades
     2. Chunk 2: Discrepancias Movimientos vs Analista
     3. Consolidación: Unificación y actualización del estado
+    
+    Args:
+        cierre_id: ID del cierre a verificar
+        usuario_id: ID del usuario que ejecuta la verificación (para auditoría)
     """
     logger.info(f"🚀 Iniciando generación paralela de discrepancias para cierre {cierre_id}")
     
     try:
-        from .models import CierreNomina
+        from .models import CierreNomina, HistorialVerificacionCierre
+        from django.contrib.auth import get_user_model
+        from django.utils import timezone
+        from django.db import models
+        
+        User = get_user_model()
         cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        # 📊 CREAR REGISTRO DE AUDITORÍA
+        # Obtener el número de intento (contando intentos anteriores + 1)
+        ultimo_intento = HistorialVerificacionCierre.objects.filter(
+            cierre=cierre
+        ).aggregate(
+            max_intento=models.Max('numero_intento')
+        )['max_intento'] or 0
+        
+        nuevo_intento = ultimo_intento + 1
+        
+        # Obtener usuario ejecutor si se proporciona
+        usuario_ejecutor = None
+        if usuario_id:
+            try:
+                usuario_ejecutor = User.objects.get(id=usuario_id)
+                logger.info(f"👤 Usuario ejecutor: {usuario_ejecutor.nombre} ({usuario_ejecutor.correo_bdo})")
+            except User.DoesNotExist:
+                logger.warning(f"⚠️ Usuario {usuario_id} no encontrado")
+        
+        # Crear el registro de historial
+        historial = HistorialVerificacionCierre.objects.create(
+            cierre=cierre,
+            numero_intento=nuevo_intento,
+            usuario_ejecutor=usuario_ejecutor,
+            estado_verificacion='procesando',  # ✅ Estado correcto del modelo
+            task_id=generar_discrepancias_cierre_paralelo.request.id if hasattr(generar_discrepancias_cierre_paralelo, 'request') else None,
+            archivos_analizados={
+                'inicio_procesamiento': timezone.now().isoformat(),
+                'chunk_types': ['libro_vs_novedades', 'movimientos_vs_analista']
+            }
+        )
+        
+        logger.info(f"📋 Creado historial de verificación #{nuevo_intento} para cierre {cierre_id}")
         
         # Cambiar estado a verificacion_datos al iniciar
         cierre.estado = 'verificacion_datos'
@@ -3447,11 +3510,15 @@ def generar_discrepancias_cierre_paralelo(cierre_id):
         cierre.discrepancias.all().delete()
         logger.info(f"🧹 Discrepancias anteriores limpiadas para cierre {cierre_id}")
         
+        # Actualizar historial como procesando
+        historial.estado_verificacion = 'procesando'
+        historial.save(update_fields=['estado_verificacion'])
+        
         # Ejecutar procesamientos en paralelo usando chord
         chord_paralelo = chord([
-            procesar_discrepancias_chunk.s(cierre_id, 'libro_vs_novedades'),
-            procesar_discrepancias_chunk.s(cierre_id, 'movimientos_vs_analista')
-        ])(consolidar_discrepancias_finales.s(cierre_id))
+            procesar_discrepancias_chunk.s(cierre_id, 'libro_vs_novedades', historial.id),
+            procesar_discrepancias_chunk.s(cierre_id, 'movimientos_vs_analista', historial.id)
+        ])(consolidar_discrepancias_finales.s(cierre_id, historial.id))
         
         logger.info(f"📊 Chord de discrepancias iniciado para cierre {cierre_id}")
         return {
@@ -3472,32 +3539,44 @@ def generar_discrepancias_cierre_paralelo(cierre_id):
 
 
 @shared_task
-def procesar_discrepancias_chunk(cierre_id, tipo_chunk):
+def procesar_discrepancias_chunk(cierre_id, tipo_chunk, historial_id):
     """
     🔧 TASK: Procesa un chunk específico de discrepancias
     
     Args:
         cierre_id: ID del cierre
         tipo_chunk: 'libro_vs_novedades' o 'movimientos_vs_analista'
+        historial_id: ID del historial de verificación para auditoría
     """
-    logger.info(f"🔧 Procesando chunk '{tipo_chunk}' para cierre {cierre_id}")
+    logger.info(f"🔧 Procesando chunk '{tipo_chunk}' para cierre {cierre_id} (historial {historial_id})")
     
     try:
-        from .models import CierreNomina
+        from .models import CierreNomina, HistorialVerificacionCierre
         from .utils.GenerarDiscrepancias import (
             generar_discrepancias_libro_vs_novedades,
             generar_discrepancias_movimientos_vs_analista
         )
         
         cierre = CierreNomina.objects.get(id=cierre_id)
+        historial = HistorialVerificacionCierre.objects.get(id=historial_id)
         
         if tipo_chunk == 'libro_vs_novedades':
             resultado = generar_discrepancias_libro_vs_novedades(cierre)
             logger.info(f"📚 Libro vs Novedades: {resultado['total_discrepancias']} discrepancias")
             
+            # Crear registros de DiscrepanciaHistorial
+            from .utils.GenerarDiscrepancias import crear_discrepancias_historial
+            registros_creados = crear_discrepancias_historial(cierre_id, historial_id, 'libro_vs_novedades')
+            logger.info(f"📝 Creados {registros_creados} registros de auditoría para libro vs novedades")
+            
         elif tipo_chunk == 'movimientos_vs_analista':
             resultado = generar_discrepancias_movimientos_vs_analista(cierre)
             logger.info(f"📋 Movimientos vs Analista: {resultado['total_discrepancias']} discrepancias")
+            
+            # Crear registros de DiscrepanciaHistorial
+            from .utils.GenerarDiscrepancias import crear_discrepancias_historial
+            registros_creados = crear_discrepancias_historial(cierre_id, historial_id, 'movimientos_vs_analista')
+            logger.info(f"📝 Creados {registros_creados} registros de auditoría para movimientos vs analista")
             
         else:
             raise ValueError(f"Tipo de chunk desconocido: {tipo_chunk}")
@@ -3523,18 +3602,28 @@ def procesar_discrepancias_chunk(cierre_id, tipo_chunk):
 
 
 @shared_task
-def consolidar_discrepancias_finales(resultados_chunks, cierre_id):
+def consolidar_discrepancias_finales(resultados_chunks, cierre_id, historial_id):
     """
     🎯 TASK FINAL: Consolida los resultados de ambos chunks y actualiza el estado
+    
+    Args:
+        resultados_chunks: Resultados de los chunks procesados
+        cierre_id: ID del cierre
+        historial_id: ID del historial de verificación para auditoría
     """
-    logger.info(f"🎯 Consolidando discrepancias finales para cierre {cierre_id}")
+    logger.info(f"🎯 Consolidando discrepancias finales para cierre {cierre_id} (historial {historial_id})")
     
     try:
-        from .models import CierreNomina
+        from .models import CierreNomina, HistorialVerificacionCierre, DiscrepanciaHistorial
+        from django.utils import timezone
+        
         cierre = CierreNomina.objects.get(id=cierre_id)
+        historial = HistorialVerificacionCierre.objects.get(id=historial_id)
         
         # Procesar resultados de ambos chunks
         total_discrepancias = 0
+        discrepancias_libro_vs_novedades = 0
+        discrepancias_movimientos_vs_analista = 0
         resultados_detallados = {}
         chunks_exitosos = 0
         
@@ -3545,6 +3634,13 @@ def consolidar_discrepancias_finales(resultados_chunks, cierre_id):
                 chunk_total = resultado['total_discrepancias']
                 
                 total_discrepancias += chunk_total
+                
+                # Contar por tipo para el historial
+                if chunk_tipo == 'libro_vs_novedades':
+                    discrepancias_libro_vs_novedades = chunk_total
+                elif chunk_tipo == 'movimientos_vs_analista':
+                    discrepancias_movimientos_vs_analista = chunk_total
+                
                 resultados_detallados[chunk_tipo] = resultado['detalle']
                 
                 logger.info(f"✅ Chunk '{chunk_tipo}': {chunk_total} discrepancias")
@@ -3576,13 +3672,92 @@ def consolidar_discrepancias_finales(resultados_chunks, cierre_id):
             'timestamp': timezone.now().isoformat(),
             'success': True
         }
-        
+
         logger.info(f"✅ Consolidación completada para cierre {cierre_id}: {mensaje}")
-        
+        # IMPORTANTE: Esta tarea es solo para consolidar los resultados de la
+        # verificación y registrar el historial de ejecución. NO debe iniciar
+        # automáticamente el proceso de consolidación de datos (`consolidar_datos_nomina_task`).
+        # La consolidación debe ser disparada explícitamente por el usuario cuando
+        # confirme que desea proceder (por ejemplo, mediante el botón UI que llama
+        # a `consolidar_datos_nomina_task.delay(cierre_id)` cuando `total_discrepancias == 0`).
+        # Esto evita condiciones de carrera y ejecuciones indeseadas durante flows
+        # automáticos de verificación.
+
+        # Actualizar historial de verificación si existe
+        if historial_id:
+            try:
+                from .models import HistorialVerificacionCierre
+                from django.utils import timezone
+
+                historial = HistorialVerificacionCierre.objects.get(id=historial_id)
+
+                # Calcular tiempo de ejecución en segundos
+                tiempo_ejecucion_segundos = None
+                if historial.fecha_ejecucion:
+                    tiempo_ejecucion_segundos = int((timezone.now() - historial.fecha_ejecucion).total_seconds())
+
+                # Actualizar con todos los campos requeridos
+                historial.fecha_finalizacion = timezone.now()
+                historial.tiempo_ejecucion = tiempo_ejecucion_segundos
+                historial.total_discrepancias_encontradas = total_discrepancias
+                historial.estado_verificacion = 'completado'  # ✅ Estado correcto del modelo
+                historial.observaciones = mensaje  # ✅ Campo correcto
+
+                # Actualizar estadísticas por tipo si están disponibles
+                if 'libro_vs_novedades' in resultados_detallados:
+                    historial.discrepancias_libro_vs_novedades = resultados_detallados['libro_vs_novedades'].get('total_discrepancias', 0)
+
+                if 'movimientos_vs_analista' in resultados_detallados:
+                    historial.discrepancias_movimientos_vs_analista = resultados_detallados['movimientos_vs_analista'].get('total_discrepancias', 0)
+
+                historial.save(update_fields=[
+                    'fecha_finalizacion',
+                    'tiempo_ejecucion',
+                    'total_discrepancias_encontradas',
+                    'discrepancias_libro_vs_novedades',
+                    'discrepancias_movimientos_vs_analista',
+                    'estado_verificacion',
+                    'observaciones'
+                ])
+
+                logger.info(f"✅ Historial {historial_id} completado - Usuario: {historial.usuario_ejecutor.correo_bdo if historial.usuario_ejecutor else 'Sin usuario'}, Duración: {tiempo_ejecucion_segundos}s, Discrepancias: {total_discrepancias}")
+
+            except Exception as e:
+                logger.warning(f"⚠️ No se pudo actualizar historial {historial_id}: {e}")
+
         return consolidacion_final
-        
+
     except Exception as e:
         logger.error(f"❌ Error consolidando discrepancias para cierre {cierre_id}: {e}")
+        
+        # Actualizar historial en caso de error
+        if historial_id:
+            try:
+                from .models import HistorialVerificacionCierre
+                from django.utils import timezone
+                
+                historial = HistorialVerificacionCierre.objects.get(id=historial_id)
+                
+                # Calcular tiempo de ejecución en segundos
+                tiempo_ejecucion_segundos = None
+                if historial.fecha_ejecucion:
+                    tiempo_ejecucion_segundos = int((timezone.now() - historial.fecha_ejecucion).total_seconds())
+                
+                historial.fecha_finalizacion = timezone.now()
+                historial.tiempo_ejecucion = tiempo_ejecucion_segundos
+                historial.estado_verificacion = 'error'  # ✅ Estado correcto del modelo
+                historial.observaciones = f"Error durante consolidación: {str(e)}"  # ✅ Campo correcto
+                historial.save(update_fields=[
+                    'fecha_finalizacion', 
+                    'tiempo_ejecucion',
+                    'estado_verificacion', 
+                    'observaciones'  # ✅ Campo correcto
+                ])
+                
+                logger.info(f"❌ Historial {historial_id} marcado con error - Usuario: {historial.usuario_ejecutor.email if historial.usuario_ejecutor else 'Sin usuario'}, Duración: {tiempo_ejecucion_segundos}s")
+                
+            except Exception as e2:
+                logger.warning(f"⚠️ No se pudo actualizar historial {historial_id} con error: {e2}")
         
         # En caso de error, establecer estado de seguridad
         try:

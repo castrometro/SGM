@@ -552,3 +552,62 @@ def obtener_resumen_discrepancias(cierre):
         'fecha_ultimo_analisis': timezone.now(),
         'top_tipos_discrepancia': top_tipos
     }
+
+
+def crear_discrepancias_historial(cierre_id, historial_id, tipo_comparacion):
+    """
+    Crea registros DiscrepanciaHistorial para las discrepancias encontradas
+    
+    Args:
+        cierre_id: ID del cierre
+        historial_id: ID del historial de verificación  
+        tipo_comparacion: 'libro_vs_novedades' o 'movimientos_vs_analista'
+    """
+    from django.utils import timezone
+    from ..models import DiscrepanciaCierre, DiscrepanciaHistorial
+    
+    try:
+        # Obtener discrepancias recién creadas
+        discrepancias = DiscrepanciaCierre.objects.filter(cierre_id=cierre_id)
+        
+        if tipo_comparacion == 'libro_vs_novedades':
+            # Filtrar solo discrepancias de libro vs novedades
+            discrepancias = discrepancias.filter(
+                tipo_discrepancia__in=[
+                    'empleado_solo_novedades',
+                    'concepto_solo_novedades', 
+                    'diferencia_monto'
+                ]
+            )
+        elif tipo_comparacion == 'movimientos_vs_analista':
+            # Filtrar solo discrepancias de movimientos vs analista
+            discrepancias = discrepancias.filter(
+                tipo_discrepancia__in=[
+                    'ingreso_no_reportado',
+                    'finiquito_no_reportado',
+                    'ausentismo_no_reportado'
+                ]
+            )
+        
+        # Crear registros de historial
+        registros_historial = []
+        for discrepancia in discrepancias:
+            registros_historial.append(DiscrepanciaHistorial(
+                historial_verificacion_id=historial_id,
+                discrepancia=discrepancia,
+                fecha_detectada=timezone.now(),
+                tipo_comparacion=tipo_comparacion,
+                detalle_discrepancia=discrepancia.descripcion[:500] if discrepancia.descripcion else '',
+                estado_resolucion='pendiente'
+            ))
+        
+        # Bulk create para eficiencia
+        if registros_historial:
+            DiscrepanciaHistorial.objects.bulk_create(registros_historial)
+            logger.info(f"✅ Creados {len(registros_historial)} registros DiscrepanciaHistorial para {tipo_comparacion}")
+        
+        return len(registros_historial)
+        
+    except Exception as e:
+        logger.error(f"❌ Error creando DiscrepanciaHistorial para {tipo_comparacion}: {e}")
+        return 0

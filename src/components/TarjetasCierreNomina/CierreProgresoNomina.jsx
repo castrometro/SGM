@@ -91,7 +91,7 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
   const mostrarBotonContinuar = () => {
     const talanaOk = estadosSeccion.archivosTalana === 'archivos_completos';
     const analistaOk = estadosSeccion.archivosAnalista === 'archivos_completos';
-    const cierreOk = cierre?.estado === 'pendiente' || cierre?.estado === 'archivos_completos'; // ✅ Incluye archivos_completos
+    const cierreOk = cierre?.estado === 'pendiente'  // ✅ Incluye archivos_completos
     
     console.log(`🎯 [mostrarBotonContinuar] Talana: ${estadosSeccion.archivosTalana} (${talanaOk}), Analista: ${estadosSeccion.archivosAnalista} (${analistaOk}), Cierre: ${cierre?.estado} (${cierreOk})`);
     
@@ -245,8 +245,9 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
         return !['archivosTalana', 'archivosAnalista', 'verificadorDatos'].includes(seccion);
         
       case 'datos_consolidados':
-        // Todos excepto incidencias están desbloqueados
-        return !['archivosTalana', 'archivosAnalista', 'verificadorDatos', 'incidencias'].includes(seccion);
+  // Cuando el estado es 'datos_consolidados' solo permitimos la sección de incidencias
+  // Bloqueamos todo lo demás para evitar cambios posteriores a la consolidación
+  return seccion !== 'incidencias';
         
       case 'con_incidencias':
         // Todos están desbloqueados

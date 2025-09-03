@@ -194,21 +194,24 @@ def _consolidar_empleado_individual(cierre, rut_empleado):
     if not registro_libro and not movimientos_empleado.exists():
         return None
     
-    # Calcular totales
-    total_haberes = Decimal('0')
+    # Calcular totales por categoría (mapeo temporal desde las fuentes existentes)
+    total_haberes_imponibles = Decimal('0')
+    total_haberes_no_imponibles = Decimal('0')
     total_descuentos = Decimal('0')
     
     # Sumar desde libro de remuneraciones
     if registro_libro:
+        # Mapear el total_haberes del registro del libro a haberes_imponibles por compatibilidad
         if registro_libro.total_haberes:
-            total_haberes += Decimal(str(registro_libro.total_haberes))
+            total_haberes_imponibles += Decimal(str(registro_libro.total_haberes))
         if registro_libro.total_descuentos:
             total_descuentos += Decimal(str(registro_libro.total_descuentos))
     
     # Sumar desde movimientos
     for mov in movimientos_empleado:
         if mov.tipo_valor == 'haber' and mov.valor:
-            total_haberes += Decimal(str(mov.valor))
+            # Asumir haberes imponibles para importes provenientes de movimientos
+            total_haberes_imponibles += Decimal(str(mov.valor))
         elif mov.tipo_valor == 'descuento' and mov.valor:
             total_descuentos += Decimal(str(mov.valor))
     
@@ -220,9 +223,10 @@ def _consolidar_empleado_individual(cierre, rut_empleado):
         cargo=getattr(registro_libro, 'cargo', None),
         centro_costo=getattr(registro_libro, 'centro_costo', None),
         estado_empleado=_determinar_estado_empleado(cierre, rut_empleado),
-        total_haberes=total_haberes,
-        total_descuentos=total_descuentos,
-        liquido_a_pagar=total_haberes - total_descuentos,
+        haberes_imponibles=total_haberes_imponibles,
+        haberes_no_imponibles=total_haberes_no_imponibles,
+        dctos_legales=total_descuentos,
+        liquido_a_pagar=total_haberes_imponibles - total_descuentos,
         fuente_datos={
             'libro_remuneraciones': bool(registro_libro),
             'movimientos_mes': movimientos_empleado.count(),

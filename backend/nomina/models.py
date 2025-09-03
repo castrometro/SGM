@@ -1518,10 +1518,14 @@ class NominaConsolidada(models.Model):
     ]
     estado_empleado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='activo')
     
-    # Totales consolidados finales
-    total_haberes = models.DecimalField(max_digits=15, decimal_places=2, default=0)
-    total_descuentos = models.DecimalField(max_digits=15, decimal_places=2, default=0)
-    liquido_pagar = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    # Totales consolidados por categoría (nuevo esquema)
+    haberes_imponibles = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    haberes_no_imponibles = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    dctos_legales = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    otros_dctos = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    impuestos = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    horas_extras_cantidad = models.DecimalField(max_digits=10, decimal_places=4, default=0, help_text='Cantidad de horas extra')
+    aportes_patronales = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     
     # Días trabajados/ausencias
     dias_trabajados = models.IntegerField(null=True, blank=True)
@@ -1538,12 +1542,15 @@ class NominaConsolidada(models.Model):
         indexes = [
             models.Index(fields=['cierre', 'estado_empleado']),
             models.Index(fields=['rut_empleado']),
-            models.Index(fields=['liquido_pagar']),
         ]
         ordering = ['nombre_empleado']
     
     def __str__(self):
-        return f"{self.nombre_empleado} - {self.cierre.periodo} - ${self.liquido_pagar:,.0f}"
+        try:
+            liquido = ((self.haberes_imponibles or 0) + (self.haberes_no_imponibles or 0)) - ((self.dctos_legales or 0) + (self.otros_dctos or 0) + (self.impuestos or 0))
+            return f"{self.nombre_empleado} - {self.cierre.periodo} - ${liquido:,.0f}"
+        except Exception:
+            return f"{self.nombre_empleado} - {self.cierre.periodo}"
 
 
 class HeaderValorEmpleado(models.Model):

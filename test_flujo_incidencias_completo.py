@@ -55,9 +55,9 @@ def probar_flujo_completo():
     empleados_consolidados = cierre_consolidado.nomina_consolidada.count()
     print(f"📊 Datos consolidados:")
     print(f"   - Empleados: {empleados_consolidados}")
-    print(f"   - Headers-valores: {sum(nc.headervaloreempleado_set.count() for nc in cierre_consolidado.nomina_consolidada.all())}")
-    print(f"   - Movimientos: {sum(nc.movimientopersonal_set.count() for nc in cierre_consolidado.nomina_consolidada.all())}")
-    print(f"   - Conceptos: {sum(nc.conceptoconsolidado_set.count() for nc in cierre_consolidado.nomina_consolidada.all())}")
+    print(f"   - Headers-valores: {sum(nc.header_valores.count() for nc in cierre_consolidado.nomina_consolidada.all())}")
+    print(f"   - Movimientos: {sum(nc.movimientos.count() for nc in cierre_consolidado.nomina_consolidada.all())}")
+    print(f"   - Conceptos: {sum(nc.conceptos.count() for nc in cierre_consolidado.nomina_consolidada.all())}")
     print()
     
     # 3. Generar incidencias

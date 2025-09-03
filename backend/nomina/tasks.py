@@ -2347,8 +2347,14 @@ def procesar_conceptos_consolidados_paralelo(cierre_id):
                 concepto_remuneracion__isnull=False
             )
             
-            total_haberes = Decimal('0')
-            total_descuentos = Decimal('0')
+            # Totales por nuevas categorías
+            total_haberes_imponibles = Decimal('0')
+            total_haberes_no_imponibles = Decimal('0')
+            total_dctos_legales = Decimal('0')
+            total_otros_dctos = Decimal('0')
+            total_impuestos = Decimal('0')
+            total_horas_extras = Decimal('0')
+            total_aportes_patronales = Decimal('0')
             
             # Agrupar por concepto y sumar
             conceptos_agrupados = {}
@@ -2368,11 +2374,25 @@ def procesar_conceptos_consolidados_paralelo(cierre_id):
                 conceptos_agrupados[concepto_nombre]['monto_total'] += header.valor_numerico
                 conceptos_agrupados[concepto_nombre]['cantidad'] += 1
                 
-                # Sumar a haberes o descuentos según clasificación
-                if clasificacion in ['haberes_imponibles', 'haberes_no_imponibles', 'horas_extras']:
-                    total_haberes += header.valor_numerico
-                elif clasificacion in ['descuentos_legales', 'otros_descuentos']:
-                    total_descuentos += header.valor_numerico
+                # Sumar a la categoría correspondiente según clasificación proporcionada por analista
+                if clasificacion == 'haberes_imponibles':
+                    total_haberes_imponibles += header.valor_numerico
+                elif clasificacion == 'haberes_no_imponibles':
+                    total_haberes_no_imponibles += header.valor_numerico
+                elif clasificacion == 'horas_extras':
+                    # acumular cantidad de horas (usar cantidad si disponible)
+                    try:
+                        total_horas_extras += Decimal(header.valor_numerico) if header.valor_numerico is not None else Decimal('0')
+                    except Exception:
+                        total_horas_extras += Decimal('0')
+                elif clasificacion == 'descuentos_legales':
+                    total_dctos_legales += header.valor_numerico
+                elif clasificacion == 'otros_descuentos':
+                    total_otros_dctos += header.valor_numerico
+                elif clasificacion == 'impuestos':
+                    total_impuestos += header.valor_numerico
+                elif clasificacion == 'aportes_patronales':
+                    total_aportes_patronales += header.valor_numerico
             
             # Crear ConceptoConsolidado para cada concepto agrupado
             for concepto_nombre, datos in conceptos_agrupados.items():
@@ -2399,11 +2419,15 @@ def procesar_conceptos_consolidados_paralelo(cierre_id):
                 )
                 conceptos_batch.append(concepto_consolidado)
             
-            # Actualizar totales en la nómina consolidada
-            nomina_consolidada.total_haberes = total_haberes
-            nomina_consolidada.total_descuentos = total_descuentos
-            nomina_consolidada.liquido_pagar = total_haberes - total_descuentos
-            nomina_consolidada.save(update_fields=['total_haberes', 'total_descuentos', 'liquido_pagar'])
+            # Actualizar nuevos campos por categoría en la nómina consolidada
+            nomina_consolidada.haberes_imponibles = total_haberes_imponibles
+            nomina_consolidada.haberes_no_imponibles = total_haberes_no_imponibles
+            nomina_consolidada.dctos_legales = total_dctos_legales
+            nomina_consolidada.otros_dctos = total_otros_dctos
+            nomina_consolidada.impuestos = total_impuestos
+            nomina_consolidada.horas_extras_cantidad = total_horas_extras
+            nomina_consolidada.aportes_patronales = total_aportes_patronales
+            nomina_consolidada.save(update_fields=['haberes_imponibles', 'haberes_no_imponibles', 'dctos_legales', 'otros_dctos', 'impuestos', 'horas_extras_cantidad', 'aportes_patronales'])
         
         # Bulk create conceptos
         if conceptos_batch:
@@ -2508,6 +2532,32 @@ def consolidar_resultados_finales(resultados_paralelos, cierre_id):
                 conceptos_consolidados = 0
         except Exception as e:
             logger.error(f"❌ [FINAL] Excepción procesando conceptos: {e}")
+
+        # 🎯 AGREGAR RESUMEN POR TIPO DE CONCEPTO (guardar en fuente_datos)
+        try:
+            from .utils.aggregate_by_tipo_concepto import aggregate_by_tipo
+            from .models import NominaConsolidada
+
+            logger.info("🔎 [FINAL] Generando resumen por tipo_concepto para cada nómina consolidada...")
+            nominas = NominaConsolidada.objects.filter(cierre=cierre)
+            resumen_global = {}
+            for nom in nominas:
+                try:
+                    resumen = aggregate_by_tipo(nom)
+                    # Guardar en fuente_datos['resumen_totales']
+                    fuente = nom.fuente_datos or {}
+                    fuente['resumen_totales'] = {k: str(v) for k, v in resumen.items()}
+                    nom.fuente_datos = fuente
+                    nom.save(update_fields=['fuente_datos'])
+
+                    # Agregar al resumen global para logging
+                    resumen_global[nom.rut_empleado] = resumen
+                except Exception as ex:
+                    logger.error(f"⚠️ Error al agregar resumen para nomina {nom.id}: {ex}")
+
+            logger.info(f"✅ [FINAL] Resumen por tipo_concepto generado para {len(resumen_global)} nóminas")
+        except Exception as e:
+            logger.error(f"❌ [FINAL] Error generando resumen por tipo_concepto: {e}")
             conceptos_consolidados = 0
         
         # FINALIZAR CONSOLIDACIÓN EXITOSA
@@ -2735,24 +2785,31 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
                 )
             except NominaConsolidada.DoesNotExist:
                 # Si no existe, crear uno nuevo para este movimiento
+                    # Crear nómina consolidada usando los nuevos campos por categoría.
+                    # Sueldo base se considera haberes imponibles por defecto.
                     nomina_consolidada = NominaConsolidada.objects.create(
-                        cierre=cierre,
-                        rut_empleado=normalizar_rut(movimiento.rut),
-                        nombre_empleado=movimiento.nombres_apellidos,
-                        cargo=movimiento.cargo,
-                        centro_costo=movimiento.centro_de_costo,
-                        estado_empleado='nueva_incorporacion' if movimiento.alta_o_baja == 'ALTA' else 'finiquito',
-                        dias_trabajados=movimiento.dias_trabajados,
-                        total_haberes=movimiento.sueldo_base,
-                        liquido_pagar=movimiento.sueldo_base,
-                        fecha_consolidacion=timezone.now(),
-                        fuente_datos={
-                            'libro_id': libro.id,
-                            'movimientos_id': movimientos.id,
-                            'consolidacion_version': '1.0',
-                            'movimiento_tipo': 'alta_baja'
-                        }
-                    )
+                            cierre=cierre,
+                            rut_empleado=normalizar_rut(movimiento.rut),
+                            nombre_empleado=movimiento.nombres_apellidos,
+                            cargo=movimiento.cargo,
+                            centro_costo=movimiento.centro_de_costo,
+                            estado_empleado='nueva_incorporacion' if movimiento.alta_o_baja == 'ALTA' else 'finiquito',
+                            dias_trabajados=movimiento.dias_trabajados,
+                            haberes_imponibles=movimiento.sueldo_base or Decimal('0'),
+                            haberes_no_imponibles=Decimal('0'),
+                            dctos_legales=Decimal('0'),
+                            otros_dctos=Decimal('0'),
+                            impuestos=Decimal('0'),
+                            horas_extras_cantidad=Decimal('0'),
+                            aportes_patronales=Decimal('0'),
+                            fecha_consolidacion=timezone.now(),
+                            fuente_datos={
+                                'libro_id': libro.id,
+                                'movimientos_id': movimientos.id,
+                                'consolidacion_version': '1.0',
+                                'movimiento_tipo': 'alta_baja'
+                            }
+                        )
             
             # Actualizar estado según el movimiento
             if movimiento.alta_o_baja == 'ALTA':
@@ -2929,11 +2986,24 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
                     conceptos_agrupados[concepto_nombre]['monto_total'] += header.valor_numerico
                     conceptos_agrupados[concepto_nombre]['cantidad'] += 1
                     
-                    # Sumar a haberes o descuentos según clasificación
-                    if clasificacion in ['haberes_imponibles', 'haberes_no_imponibles', 'horas_extras']:
-                        total_haberes += header.valor_numerico
-                    elif clasificacion in ['descuentos_legales', 'otros_descuentos']:
-                        total_descuentos += header.valor_numerico
+                    # Sumar a la categoría correspondiente según clasificación proporcionada por analista
+                    if clasificacion == 'haberes_imponibles':
+                        total_haberes_imponibles += header.valor_numerico
+                    elif clasificacion == 'haberes_no_imponibles':
+                        total_haberes_no_imponibles += header.valor_numerico
+                    elif clasificacion == 'horas_extras':
+                        try:
+                            total_horas_extras += Decimal(header.valor_numerico) if header.valor_numerico is not None else Decimal('0')
+                        except Exception:
+                            total_horas_extras += Decimal('0')
+                    elif clasificacion == 'descuentos_legales':
+                        total_dctos_legales += header.valor_numerico
+                    elif clasificacion == 'otros_descuentos':
+                        total_otros_dctos += header.valor_numerico
+                    elif clasificacion == 'impuestos':
+                        total_impuestos += header.valor_numerico
+                    elif clasificacion == 'aportes_patronales':
+                        total_aportes_patronales += header.valor_numerico
             
             # Crear ConceptoConsolidado para cada concepto agrupado
             for concepto_nombre, datos in conceptos_agrupados.items():
@@ -2961,11 +3031,15 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
                 )
                 conceptos_consolidados += 1
             
-            # Actualizar totales en la nómina consolidada
-            nomina_consolidada.total_haberes = total_haberes
-            nomina_consolidada.total_descuentos = total_descuentos
-            nomina_consolidada.liquido_pagar = total_haberes - total_descuentos
-            nomina_consolidada.save(update_fields=['total_haberes', 'total_descuentos', 'liquido_pagar'])
+            # Actualizar nuevos campos por categoría en la nómina consolidada
+            nomina_consolidada.haberes_imponibles = total_haberes_imponibles
+            nomina_consolidada.haberes_no_imponibles = total_haberes_no_imponibles
+            nomina_consolidada.dctos_legales = total_dctos_legales
+            nomina_consolidada.otros_dctos = total_otros_dctos
+            nomina_consolidada.impuestos = total_impuestos
+            nomina_consolidada.horas_extras_cantidad = total_horas_extras
+            nomina_consolidada.aportes_patronales = total_aportes_patronales
+            nomina_consolidada.save(update_fields=['haberes_imponibles', 'haberes_no_imponibles', 'dctos_legales', 'otros_dctos', 'impuestos', 'horas_extras_cantidad', 'aportes_patronales'])
         
         logger.info(f"💰 {conceptos_consolidados} conceptos consolidados creados")
         

@@ -3462,9 +3462,10 @@ def obtener_libro_remuneraciones(request, cierre_id):
             },
             'resumen': {
                 'total_empleados': empleados.count(),
-                'total_haberes': sum(emp.total_haberes for emp in empleados),
-                'total_descuentos': sum(emp.total_descuentos for emp in empleados),
-                'liquido_total': sum(emp.liquido_pagar for emp in empleados),
+                # Calcular total haberes como suma de ambas categorías
+                'total_haberes': sum((emp.haberes_imponibles or 0) + (emp.haberes_no_imponibles or 0) for emp in empleados),
+                'total_descuentos': sum((emp.dctos_legales or 0) + (emp.otros_dctos or 0) + (emp.impuestos or 0) for emp in empleados),
+                'liquido_total': sum(((emp.haberes_imponibles or 0) + (emp.haberes_no_imponibles or 0)) - ((emp.dctos_legales or 0) + (emp.otros_dctos or 0) + (emp.impuestos or 0)) for emp in empleados),
             },
             'empleados': []
         }
@@ -3498,9 +3499,9 @@ def obtener_libro_remuneraciones(request, cierre_id):
                 'cargo': empleado.cargo,
                 'centro_costo': empleado.centro_costo,
                 'estado_empleado': empleado.estado_empleado,
-                'total_haberes': str(empleado.total_haberes),
-                'total_descuentos': str(empleado.total_descuentos),
-                'liquido_pagar': str(empleado.liquido_pagar),
+                'total_haberes': str((empleado.haberes_imponibles or 0) + (empleado.haberes_no_imponibles or 0)),
+                'total_descuentos': str((empleado.dctos_legales or 0) + (empleado.otros_dctos or 0) + (empleado.impuestos or 0)),
+                'liquido_pagar': str(((empleado.haberes_imponibles or 0) + (empleado.haberes_no_imponibles or 0)) - ((empleado.dctos_legales or 0) + (empleado.otros_dctos or 0) + (empleado.impuestos or 0))),
                 'dias_trabajados': empleado.dias_trabajados,
                 'dias_ausencia': empleado.dias_ausencia,
                 'valores_headers': valores_headers,
@@ -3599,7 +3600,7 @@ def obtener_movimientos_mes(request, cierre_id):
                     'cargo': movimiento.nomina_consolidada.cargo,
                     'centro_costo': movimiento.nomina_consolidada.centro_costo,
                     'estado': movimiento.nomina_consolidada.estado_empleado,
-                    'liquido_pagar': str(movimiento.nomina_consolidada.liquido_pagar) if movimiento.nomina_consolidada.liquido_pagar else '0',
+                    'liquido_pagar': str(((movimiento.nomina_consolidada.haberes_imponibles or 0) + (movimiento.nomina_consolidada.haberes_no_imponibles or 0)) - ((movimiento.nomina_consolidada.dctos_legales or 0) + (movimiento.nomina_consolidada.otros_dctos or 0) + (movimiento.nomina_consolidada.impuestos or 0))) if movimiento.nomina_consolidada else '0',
                 },
                 'motivo': movimiento.motivo,
                 'dias_ausencia': movimiento.dias_ausencia,

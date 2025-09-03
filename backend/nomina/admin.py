@@ -1330,20 +1330,24 @@ class MovimientoPersonalInline(admin.TabularInline):
 class NominaConsolidadaAdmin(admin.ModelAdmin):
     """Administración de nóminas consolidadas"""
     list_display = (
-        'nombre_empleado',
-        'rut_empleado', 
         'cierre_info',
+        'nombre_empleado',
+        'rut_empleado',
         'estado_empleado_display',
-        'liquido_pagar_formatted',
-        'total_haberes_formatted',
+        'haberes_imponibles_formatted',
+        'haberes_no_imponibles_formatted',
+        'dctos_legales_formatted',
+        'otros_dctos_formatted',
+        'impuestos_formatted',
+        'horas_extras_cantidad',
+        'aportes_patronales_formatted',
         'dias_trabajados',
-        'fecha_consolidacion'
     )
     list_filter = (
-        'estado_empleado',
+        'cierre',
         'cierre__cliente',
+        'estado_empleado',
         'cierre__periodo',
-        'fecha_consolidacion'
     )
     search_fields = (
         'nombre_empleado',
@@ -1370,9 +1374,13 @@ class NominaConsolidadaAdmin(admin.ModelAdmin):
         }),
         ('Totales Consolidados', {
             'fields': (
-                'total_haberes',
-                'total_descuentos',
-                'liquido_pagar',
+                'haberes_imponibles',
+                'haberes_no_imponibles',
+                'dctos_legales',
+                'otros_dctos',
+                'impuestos',
+                'horas_extras_cantidad',
+                'aportes_patronales',
                 'dias_trabajados',
                 'dias_ausencia'
             )
@@ -1411,16 +1419,50 @@ class NominaConsolidadaAdmin(admin.ModelAdmin):
             obj.get_estado_empleado_display()
         )
     estado_empleado_display.short_description = 'Estado'
+
+    # ------------------ Formateadores de totales por categoría ------------------
+    def haberes_imponibles_formatted(self, obj):
+        try:
+            return f"${obj.haberes_imponibles:,.0f}"
+        except Exception:
+            return "0"
+    haberes_imponibles_formatted.short_description = 'Haberes Imponibles'
+
+    def haberes_no_imponibles_formatted(self, obj):
+        try:
+            return f"${obj.haberes_no_imponibles:,.0f}"
+        except Exception:
+            return "0"
+    haberes_no_imponibles_formatted.short_description = 'Haberes No Imponibles'
+
+    def dctos_legales_formatted(self, obj):
+        try:
+            return f"${obj.dctos_legales:,.0f}"
+        except Exception:
+            return "0"
+    dctos_legales_formatted.short_description = 'Descuentos Legales'
+
+    def otros_dctos_formatted(self, obj):
+        try:
+            return f"${obj.otros_dctos:,.0f}"
+        except Exception:
+            return "0"
+    otros_dctos_formatted.short_description = 'Otros Descuentos'
+
+    def impuestos_formatted(self, obj):
+        try:
+            return f"${obj.impuestos:,.0f}"
+        except Exception:
+            return "0"
+    impuestos_formatted.short_description = 'Impuestos'
+
+    def aportes_patronales_formatted(self, obj):
+        try:
+            return f"${obj.aportes_patronales:,.0f}"
+        except Exception:
+            return "0"
+    aportes_patronales_formatted.short_description = 'Aportes Patronales'
     
-    def liquido_pagar_formatted(self, obj):
-        """Formato de moneda para líquido"""
-        return f"${obj.liquido_pagar:,.0f}"
-    liquido_pagar_formatted.short_description = 'Líquido a Pagar'
-    
-    def total_haberes_formatted(self, obj):
-        """Formato de moneda para haberes"""
-        return f"${obj.total_haberes:,.0f}"
-    total_haberes_formatted.short_description = 'Total Haberes'
     
     def fuente_datos_formatted(self, obj):
         """Mostrar fuentes de datos formateadas"""

@@ -731,10 +731,11 @@ def crear_incidencia_empleado_nuevo(empleado):
         tipo_comparacion='individual',
         prioridad='baja',
         descripcion=f'Empleado nuevo sin período anterior',
-        impacto_monetario=empleado.total_haberes or Decimal('0'),
+        impacto_monetario=(empleado.haberes_imponibles or 0) + (empleado.haberes_no_imponibles or 0),
         datos_adicionales={
-            'total_haberes': float(empleado.total_haberes or 0),
-            'total_descuentos': float(empleado.total_descuentos or 0),
+            # Mantener keys antiguas por compatibilidad, pero llenar desde nuevas categorías
+            'total_haberes': float(((empleado.haberes_imponibles or 0) + (empleado.haberes_no_imponibles or 0)) or 0),
+            'total_descuentos': float(((empleado.dctos_legales or 0) + (empleado.otros_dctos or 0) + (empleado.impuestos or 0)) or 0),
             'tipo_comparacion': 'individual'
         }
     )
@@ -949,15 +950,24 @@ def calcular_estadisticas_primer_cierre(empleados_consolidados, clasificaciones_
         'promedio_liquido': 0,
         'conceptos_por_clasificacion': {}
     }
-    
-    # Calcular totales
+
+    # Calcular totales usando las nuevas categorías
     totales = empleados_consolidados.aggregate(
-        total_haberes=Sum('total_haberes'),
-        total_descuentos=Sum('total_descuentos'),
-        promedio_liquido=Avg('liquido_pagar')
+        total_haberes_imponibles=Sum('haberes_imponibles'),
+        total_haberes_no_imponibles=Sum('haberes_no_imponibles'),
+        total_dctos_legales=Sum('dctos_legales'),
+        total_otros_dctos=Sum('otros_dctos'),
+        total_impuestos=Sum('impuestos')
     )
-    
-    stats.update(totales)
+
+    # Mapear a formato histórico
+    total_haberes = (totales.get('total_haberes_imponibles') or 0) + (totales.get('total_haberes_no_imponibles') or 0)
+    total_descuentos = (totales.get('total_dctos_legales') or 0) + (totales.get('total_otros_dctos') or 0) + (totales.get('total_impuestos') or 0)
+
+    stats['total_haberes'] = total_haberes
+    stats['total_descuentos'] = total_descuentos
+    # promedio liquido aproximado
+    stats['promedio_liquido'] = (total_haberes - total_descuentos) / empleados_consolidados.count() if empleados_consolidados.count() > 0 else 0
     
     # Estadísticas por clasificación seleccionada
     for clasificacion in clasificaciones_seleccionadas:

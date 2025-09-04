@@ -36,6 +36,14 @@ import json
 from decimal import Decimal
 
 logger = logging.getLogger(__name__)
+
+# Registrar tareas definidas fuera de tasks.py (autodiscovery de Celery)
+try:
+    # Import por efecto colateral: registra @shared_task en nomina.utils.DetectarIncidenciasConsolidadas
+    from .utils import DetectarIncidenciasConsolidadas as _incidencias_tasks  # noqa: F401
+    logger.debug("✅ Módulo de incidencias V2 importado para registro de Celery")
+except Exception as _e:
+    logger.warning(f"⚠️ No se pudo importar incidencias V2 para registro de Celery: {_e}")
 def _json_safe(value):
     """Convierte estructuras anidadas a tipos serializables por JSON (psycopg2 json).
     - Decimal -> float
@@ -3182,8 +3190,29 @@ def generar_incidencias_cierre_paralelo(cierre_id, clasificaciones_seleccionadas
     2. Completo: Todas las clasificaciones
     3. Comparación: Validación cruzada de resultados
     """
-    logger.info(f"🚀 Iniciando procesamiento paralelo dual para cierre {cierre_id}")
-    logger.info(f"📋 Clasificaciones seleccionadas: {len(clasificaciones_seleccionadas)}")
+    logger.info(f"🚀 Iniciando procesamiento paralelo dual (legacy) para cierre {cierre_id}")
+    try:
+        sel_len = len(clasificaciones_seleccionadas)
+    except Exception:
+        sel_len = 0
+    logger.info(f"📋 Clasificaciones seleccionadas: {sel_len}")
+
+    # 🔁 Redirección automática a V2 si no hay clasificaciones seleccionadas
+    if not clasificaciones_seleccionadas:
+        try:
+            from .utils.DetectarIncidenciasConsolidadas import generar_incidencias_consolidados_v2
+            logger.info("🔁 Sin clasificaciones seleccionadas → redirigiendo a sistema dual V2 (configuración automática, umbral 30%)")
+            job = generar_incidencias_consolidados_v2.delay(cierre_id)
+            return {
+                'success': True,
+                'cierre_id': str(cierre_id),
+                'redirigido_a': 'dual_v2',
+                'task_id_v2': job.id,
+                'mensaje': 'Legacy redirigido a V2 por falta de clasificaciones seleccionadas'
+            }
+        except Exception as e:
+            logger.error(f"❌ Error redirigiendo a V2: {e}")
+            # Si falla la redirección, seguir con el flujo legacy para no romper
     
     try:
         from .models import CierreNomina

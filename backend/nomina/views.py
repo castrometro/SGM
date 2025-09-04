@@ -1979,33 +1979,22 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
                 "estados_validos": estados_validos
             }, status=400)
         
-        # 🆕 NUEVO: Obtener clasificaciones seleccionadas del request
-        clasificaciones_seleccionadas = request.data.get('clasificaciones_seleccionadas', [])
-        
-        # Log para debugging
+        # 🆕 NUEVO: Usar el orquestador V2 (configuración automática de Pablo) SIEMPRE
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"🎯 Generando incidencias para cierre {cierre_id}")
-        logger.info(f"📋 Clasificaciones seleccionadas: {clasificaciones_seleccionadas}")
-        
-        # 🆕 NUEVO: Usar la nueva tarea paralela
-        from .tasks import generar_incidencias_cierre_paralelo
-        task = generar_incidencias_cierre_paralelo.delay(cierre_id, clasificaciones_seleccionadas)
-        
+        logger.info(f"🎯 Generando incidencias (V2) para cierre {cierre_id} - configuración automática")
+
+        from .utils.DetectarIncidenciasConsolidadas import generar_incidencias_consolidados_v2
+        task = generar_incidencias_consolidados_v2.delay(cierre_id)
+
         return Response({
-            "message": "� Generación de incidencias paralela iniciada",
-            "descripcion": "Sistema dual: procesamiento filtrado + completo con comparación cruzada",
+            "message": "Generación de incidencias V2 iniciada",
+            "descripcion": "Sistema dual: comparaciones individual (conceptos críticos) + suma total (todos) con umbral fijo 30%",
             "task_id": task.id,
             "cierre_id": cierre_id,
             "estado_cierre": cierre.estado,
-            "clasificaciones_seleccionadas": len(clasificaciones_seleccionadas),
-            "modo_procesamiento": "paralelo_dual",
-            "reglas_aplicadas": [
-                "Variaciones de conceptos >±30%",
-                "Ausentismos continuos del mes anterior", 
-                "Ingresos del mes anterior faltantes",
-                "Finiquitos del mes anterior aún presentes"
-            ]
+            "modo_procesamiento": "dual_v2",
+            "logger": "nomina.incidencias"
         }, status=202)
     
     @action(detail=False, methods=['delete'], url_path='limpiar/(?P<cierre_id>[^/.]+)')

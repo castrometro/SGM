@@ -250,6 +250,11 @@ LOGGING = {
             'handlers': ['console'],
             'level': 'DEBUG',
         },
+        'nomina.incidencias': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
         'contabilidad': {  # Logger for tu app
             'handlers': ['console'],
             'level': 'DEBUG',

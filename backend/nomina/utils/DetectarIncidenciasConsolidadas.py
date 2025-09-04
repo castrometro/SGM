@@ -7,6 +7,7 @@ VERSIÓN 2.0: Sistema Dual con Celery Chord
 """
 
 import logging
+import json
 import time
 from decimal import Decimal
 from django.db.models import Q, Sum, Count
@@ -30,10 +31,29 @@ logger = logging.getLogger('nomina.incidencias')
 
 # Conceptos que Pablo quiere analizar en DETALLE (empleado por empleado)
 CONCEPTOS_ANALISIS_DETALLADO = [
-    'haberes_imponibles',     # 💰 Sueldos - Cambios requieren autorización
-    'haberes_no_imponibles',  # 🎁 Bonos - Decisiones de gestión  
-    'otros_descuentos'        # 📋 Descuentos discrecionales
+    # Preferir códigos internos reales; si llegan alias, se normalizarán abajo
+    'haber_imponible',        # 💰 Sueldos
+    'haber_no_imponible',     # 🎁 Bonos no imponibles
+    'otro_descuento'          # 📋 Descuentos discrecionales
 ]
+
+# Alias amigables → códigos internos (tolerancia a configuraciones antiguas)
+ALIAS_TIPO_CONCEPTO = {
+    'haberes_imponibles': 'haber_imponible',
+    'haberes_no_imponibles': 'haber_no_imponible',
+    'otros_descuentos': 'otro_descuento',
+}
+
+def normalizar_tipos_concepto(tipos):
+    """Mapea alias amigables a códigos internos y deduplica conservando orden."""
+    vistos = set()
+    normalizados = []
+    for t in tipos or []:
+        norm = ALIAS_TIPO_CONCEPTO.get(t, t)
+        if norm not in vistos:
+            vistos.add(norm)
+            normalizados.append(norm)
+    return normalizados
 
 # Conceptos que Pablo quiere SOLO como resumen (totales)
 CONCEPTOS_SOLO_RESUMEN = [
@@ -65,7 +85,7 @@ def generar_incidencias_consolidados_v2(cierre_id, clasificaciones_seleccionadas
         dict: Resultado de la coordinación con estadísticas del Chord
     """
     # 🎯 USAR CONFIGURACIÓN AUTOMÁTICA DE PABLO (ignorar parámetro)
-    clasificaciones_pablo = CONCEPTOS_ANALISIS_DETALLADO
+    clasificaciones_pablo = normalizar_tipos_concepto(CONCEPTOS_ANALISIS_DETALLADO)
     
     logger.info(f"🚀 Iniciando sistema dual para cierre {cierre_id}")
     logger.info(f"🔍 Conceptos para análisis detallado (Pablo): {clasificaciones_pablo}")
@@ -183,6 +203,13 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
     """
     start_time = time.time()
     incidencias_detectadas = []
+    # Métricas de diagnóstico
+    empleados_con_match = 0
+    empleados_sin_match = 0
+    conceptos_comparados = 0
+    comparaciones_superan_umbral = 0
+    DEBUG_MAX_SAMPLES = 10
+    debug_samples = []
     
     logger.info(f"🔍 {chunk_id}: Iniciando comparación individual")
     logger.info(f"   👥 Empleados: {len(empleados_ids)}")
@@ -200,65 +227,98 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
                 rut_empleado=empleado_actual.rut_empleado
             ).first()
             
-            if empleado_anterior:
-                # FILTRAR: Solo conceptos seleccionados para análisis detallado
-                conceptos_actuales = ConceptoConsolidado.objects.filter(
-                    nomina_consolidada=empleado_actual,
-                    tipo_concepto__in=clasificaciones_seleccionadas  # ⭐ FILTRO CLAVE
-                ).select_related('nomina_consolidada')
-                
-                for concepto_actual in conceptos_actuales:
-                    concepto_anterior = ConceptoConsolidado.objects.filter(
-                        nomina_consolidada=empleado_anterior,
-                        nombre_concepto=concepto_actual.nombre_concepto,
-                        tipo_concepto=concepto_actual.tipo_concepto
-                    ).first()
-                    
-                    if concepto_anterior:
-                        # Calcular variación individual
-                        variacion_pct = calcular_variacion_porcentual(
-                            concepto_actual.monto_total, 
-                            concepto_anterior.monto_total
+            # Para nuestra lógica: si no hay empleado anterior, trataremos todos los conceptos como vs 0
+            empleados_con_match += 1 if empleado_anterior else 0
+            empleados_sin_match += 1 if not empleado_anterior else 0
+
+            # Cargar conceptos actuales y anteriores, solo de las clasificaciones seleccionadas
+            conceptos_actuales_qs = ConceptoConsolidado.objects.filter(
+                nomina_consolidada=empleado_actual,
+                tipo_concepto__in=clasificaciones_seleccionadas
+            ).values('nombre_concepto', 'tipo_concepto', 'monto_total')
+
+            anteriores_qs = ConceptoConsolidado.objects.filter(
+                nomina_consolidada=empleado_anterior
+            ).values('nombre_concepto', 'tipo_concepto', 'monto_total') if empleado_anterior else []
+
+            mapa_actual = { (c['nombre_concepto'], c['tipo_concepto']): c['monto_total'] for c in conceptos_actuales_qs }
+            mapa_anterior = { (c['nombre_concepto'], c['tipo_concepto']): c['monto_total'] for c in anteriores_qs if c['tipo_concepto'] in clasificaciones_seleccionadas }
+
+            # Unión de conceptos
+            todas_claves = set(mapa_actual.keys()) | set(mapa_anterior.keys())
+
+            if not todas_claves and len(debug_samples) < DEBUG_MAX_SAMPLES:
+                # Muestreo cuando no hay claves que comparar para este empleado
+                try:
+                    logger.debug(
+                        f"🔎 {chunk_id}: Sin claves a comparar para empleado {empleado_actual.rut_empleado}. "
+                        f"Actual={list(mapa_actual.keys())[:5]} Anterior={list(mapa_anterior.keys())[:5]}"
+                    )
+                except Exception:
+                    pass
+
+            for (nombre_concepto, tipo_concepto) in todas_claves:
+                monto_act = mapa_actual.get((nombre_concepto, tipo_concepto), Decimal('0'))
+                monto_ant = mapa_anterior.get((nombre_concepto, tipo_concepto), Decimal('0'))
+
+                variacion_pct = calcular_variacion_porcentual(monto_act, monto_ant)
+                try:
+                    variacion_pct_f = float(variacion_pct)
+                except Exception:
+                    variacion_pct_f = 0.0
+                umbral = obtener_umbral_individual(tipo_concepto)
+                conceptos_comparados += 1
+
+                if abs(variacion_pct_f) >= umbral:
+                    comparaciones_superan_umbral += 1
+                    # Crear una incidencia sintética con valores actuales/anterior
+                    # Creamos objetos ligeros para usar el factory existente
+                    class _Obj:
+                        pass
+                    obj_actual = _Obj(); obj_anterior = _Obj()
+                    obj_actual.nombre_concepto = nombre_concepto
+                    obj_actual.tipo_concepto = tipo_concepto
+                    obj_actual.monto_total = Decimal(monto_act)
+                    obj_anterior.nombre_concepto = nombre_concepto
+                    obj_anterior.tipo_concepto = tipo_concepto
+                    obj_anterior.monto_total = Decimal(monto_ant)
+
+                    incidencias_detectadas.append(
+                        IncidenciaCierre(
+                            cierre_id=cierre_actual_id,
+                            rut_empleado=empleado_actual.rut_empleado,
+                            empleado_nombre=empleado_actual.nombre_empleado,
+                            tipo_incidencia='variacion_concepto_individual',
+                            tipo_comparacion='individual',
+                            prioridad=determinar_prioridad_individual(variacion_pct_f),
+                            descripcion=f'Variación {variacion_pct_f:.1f}% en {nombre_concepto}',
+                            impacto_monetario=abs(Decimal(monto_act) - Decimal(monto_ant)),
+                            datos_adicionales={
+                                'concepto': nombre_concepto,
+                                'tipo_concepto': tipo_concepto,
+                                'monto_actual': float(monto_act),
+                                'monto_anterior': float(monto_ant),
+                                'variacion_porcentual': round(variacion_pct_f, 2),
+                                'variacion_absoluta': float(abs(Decimal(monto_act) - Decimal(monto_ant))),
+                                'tipo_comparacion': 'individual'
+                            }
                         )
-                        
-                        # Umbral diferenciado por tipo de concepto
-                        umbral = obtener_umbral_individual(concepto_actual.tipo_concepto)
-                        
-                        if abs(variacion_pct) >= umbral:
-                            incidencias_detectadas.append(
-                                crear_incidencia_variacion_individual(
-                                    empleado_actual, concepto_actual, concepto_anterior, variacion_pct
-                                )
-                            )
-                    else:
-                        # Concepto nuevo para este empleado
-                        incidencias_detectadas.append(
-                            crear_incidencia_concepto_nuevo_empleado(empleado_actual, concepto_actual)
-                        )
-                        
-                # Buscar conceptos eliminados (estaban en anterior pero no en actual)
-                conceptos_anteriores = ConceptoConsolidado.objects.filter(
-                    nomina_consolidada=empleado_anterior,
-                    tipo_concepto__in=clasificaciones_seleccionadas
-                )
-                
-                for concepto_anterior in conceptos_anteriores:
-                    concepto_actual = ConceptoConsolidado.objects.filter(
-                        nomina_consolidada=empleado_actual,
-                        nombre_concepto=concepto_anterior.nombre_concepto,
-                        tipo_concepto=concepto_anterior.tipo_concepto
-                    ).first()
-                    
-                    if not concepto_actual:
-                        # Concepto eliminado para este empleado
-                        incidencias_detectadas.append(
-                            crear_incidencia_concepto_eliminado_empleado(empleado_anterior, concepto_anterior)
-                        )
-            else:
-                # Empleado nuevo - crear incidencia informativa
-                incidencias_detectadas.append(
-                    crear_incidencia_empleado_nuevo(empleado_actual)
-                )
+                    )
+
+                if len(debug_samples) < DEBUG_MAX_SAMPLES:
+                    try:
+                        debug_samples.append({
+                            'empleado': empleado_actual.rut_empleado,
+                            'concepto': nombre_concepto,
+                            'tipo_concepto': tipo_concepto,
+                            'monto_actual': float(monto_act),
+                            'monto_anterior': float(monto_ant),
+                            'variacion_pct': round(float(variacion_pct), 4) if monto_ant != 0 or monto_act != 0 else 0.0,
+                            'umbral_usado': umbral,
+                            'dispara_incidencia': abs(variacion_pct_f) >= umbral
+                        })
+                    except Exception:
+                        pass
         
         # Batch insert optimizado
         if incidencias_detectadas:
@@ -270,6 +330,16 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
         
         tiempo_procesamiento = time.time() - start_time
         
+        # Logs de diagnóstico
+        if debug_samples:
+            try:
+                logger.debug(
+                    f"🔎 {chunk_id}: Muestras de comparaciones (máx {DEBUG_MAX_SAMPLES}):\n"
+                    + json.dumps(debug_samples, ensure_ascii=False, indent=2, default=str)
+                )
+            except Exception:
+                logger.debug(f"🔎 {chunk_id}: Muestras de comparaciones no serializables")
+
         resultado = {
             'chunk_id': chunk_id,
             'tipo_comparacion': 'individual',
@@ -277,11 +347,22 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
             'incidencias_detectadas': len(incidencias_detectadas),
             'tiempo_procesamiento': round(tiempo_procesamiento, 2),
             'throughput': round(len(empleados_ids) / tiempo_procesamiento, 2) if tiempo_procesamiento > 0 else 0,
-            'clasificaciones_analizadas': clasificaciones_seleccionadas
+            'clasificaciones_analizadas': clasificaciones_seleccionadas,
+            'diag': {
+                'empleados_con_match': empleados_con_match,
+                'empleados_sin_match': empleados_sin_match,
+                'conceptos_comparados': conceptos_comparados,
+                'comparaciones_superan_umbral': comparaciones_superan_umbral,
+                'umbral_individual': obtener_umbral_individual('cualquiera')
+            }
         }
         
-        logger.info(f"✅ {chunk_id}: {len(incidencias_detectadas)} incidencias individuales detectadas "
-                   f"en {tiempo_procesamiento:.2f}s ({resultado['throughput']} emp/s)")
+        logger.info(
+            f"✅ {chunk_id}: {len(incidencias_detectadas)} incs individuales | "
+            f"empleados match: {empleados_con_match}, sin_match: {empleados_sin_match}, "
+            f"comparaciones: {conceptos_comparados}, sobre_umbral: {comparaciones_superan_umbral} | "
+            f"t={tiempo_procesamiento:.2f}s ({resultado['throughput']} emp/s), umbral={resultado['diag']['umbral_individual']}%"
+        )
         
         return resultado
         
@@ -304,102 +385,110 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
     """
     📊 COMPARACIÓN SUMA TOTAL
     
-    Procesa comparación de sumas agregadas por concepto
-    TODOS los conceptos (con y sin checkbox marcado)
-    
-    Args:
-        cierre_actual_id: ID del cierre actual
-        cierre_anterior_id: ID del cierre anterior  
-        task_id: Identificador de la tarea
-        
-    Returns:
-        dict: Estadísticas del procesamiento agregado
+    Compara las sumas totales por concepto entre dos cierres. Solo genera
+    incidencias por variación porcentual que supere el umbral. No se generan
+    incidencias por "concepto nuevo" o "concepto eliminado" a este nivel.
     """
     start_time = time.time()
     incidencias_detectadas = []
-    
+    conceptos_analizados = 0
+    variaciones_sobre_umbral = 0
+    DEBUG_TOP_N = 10
+    variaciones_detalle = []
+
     logger.info(f"📊 {task_id}: Iniciando comparación suma total")
-    
+
     try:
-        # 1. OBTENER TODOS LOS CONCEPTOS ÚNICOS (SIN FILTRO)
+        # 1) Conceptos únicos en ambos cierres
         conceptos_actuales = ConceptoConsolidado.objects.filter(
             nomina_consolidada__cierre_id=cierre_actual_id
         ).values('nombre_concepto', 'tipo_concepto').distinct()
-        
+
         conceptos_anteriores = ConceptoConsolidado.objects.filter(
             nomina_consolidada__cierre_id=cierre_anterior_id
         ).values('nombre_concepto', 'tipo_concepto').distinct()
-        
-        # Crear conjunto único de conceptos (TODOS)
+
         conceptos_unicos = set()
-        for concepto in conceptos_actuales:
-            conceptos_unicos.add((concepto['nombre_concepto'], concepto['tipo_concepto']))
-        for concepto in conceptos_anteriores:
-            conceptos_unicos.add((concepto['nombre_concepto'], concepto['tipo_concepto']))
-        
-        logger.info(f"📊 Analizando {len(conceptos_unicos)} conceptos únicos para suma total")
-        
-        # 2. COMPARAR SUMA TOTAL POR CONCEPTO
+        for c in conceptos_actuales:
+            conceptos_unicos.add((c['nombre_concepto'], c['tipo_concepto']))
+        for c in conceptos_anteriores:
+            conceptos_unicos.add((c['nombre_concepto'], c['tipo_concepto']))
+
+        logger.info(
+            f"📊 Analizando {len(conceptos_unicos)} conceptos únicos para suma total (umbral={obtener_umbral_suma_total('cualquiera')}%)"
+        )
+
+        # 2) Comparar sumas por concepto
         for nombre_concepto, tipo_concepto in conceptos_unicos:
-            # Suma actual
             suma_actual = ConceptoConsolidado.objects.filter(
                 nomina_consolidada__cierre_id=cierre_actual_id,
                 nombre_concepto=nombre_concepto,
                 tipo_concepto=tipo_concepto
             ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
-            
-            # Suma anterior
+
             suma_anterior = ConceptoConsolidado.objects.filter(
                 nomina_consolidada__cierre_id=cierre_anterior_id,
                 nombre_concepto=nombre_concepto,
                 tipo_concepto=tipo_concepto
             ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
-            
-            # Calcular variación de la suma total
+
             variacion_pct = calcular_variacion_porcentual(suma_actual, suma_anterior)
-            
-            # Umbral diferenciado para sumas totales (más sensible)
             umbral_suma = obtener_umbral_suma_total(tipo_concepto)
-            
+            conceptos_analizados += 1
+
             if abs(variacion_pct) >= umbral_suma:
+                variaciones_sobre_umbral += 1
                 incidencias_detectadas.append(
                     crear_incidencia_suma_total(
-                        cierre_actual_id, nombre_concepto, tipo_concepto, 
-                        suma_actual, suma_anterior, variacion_pct
+                        cierre_actual_id,
+                        nombre_concepto,
+                        tipo_concepto,
+                        suma_actual,
+                        suma_anterior,
+                        variacion_pct,
                     )
                 )
-        
-        # Detectar conceptos completamente nuevos o eliminados
-        conceptos_solo_actual = set(c['nombre_concepto'] + '|' + c['tipo_concepto'] for c in conceptos_actuales) - \
-                              set(c['nombre_concepto'] + '|' + c['tipo_concepto'] for c in conceptos_anteriores)
-        
-        conceptos_solo_anterior = set(c['nombre_concepto'] + '|' + c['tipo_concepto'] for c in conceptos_anteriores) - \
-                                 set(c['nombre_concepto'] + '|' + c['tipo_concepto'] for c in conceptos_actuales)
-        
-        # Incidencias por conceptos nuevos
-        for concepto_key in conceptos_solo_actual:
-            nombre_concepto, tipo_concepto = concepto_key.split('|')
-            incidencias_detectadas.append(
-                crear_incidencia_concepto_nuevo_periodo(cierre_actual_id, nombre_concepto, tipo_concepto)
-            )
-        
-        # Incidencias por conceptos eliminados
-        for concepto_key in conceptos_solo_anterior:
-            nombre_concepto, tipo_concepto = concepto_key.split('|')
-            incidencias_detectadas.append(
-                crear_incidencia_concepto_eliminado_periodo(cierre_actual_id, nombre_concepto, tipo_concepto)
-            )
-        
-        # Batch insert
+
+            # Mantener detalle para top-N debug
+            try:
+                variaciones_detalle.append({
+                    'concepto': nombre_concepto,
+                    'tipo_concepto': tipo_concepto,
+                    'suma_actual': float(suma_actual),
+                    'suma_anterior': float(suma_anterior),
+                    'variacion_pct': round(float(variacion_pct), 4),
+                    'umbral_usado': umbral_suma,
+                    'dispara_incidencia': abs(variacion_pct) >= umbral_suma,
+                })
+            except Exception:
+                pass
+
+        # 3) No se consideran conceptos nuevos/eliminados a este nivel
+        conceptos_solo_actual = set()
+        conceptos_solo_anterior = set()
+
         if incidencias_detectadas:
             IncidenciaCierre.objects.bulk_create(
-                incidencias_detectadas, 
-                batch_size=100,
-                ignore_conflicts=True
+                incidencias_detectadas, batch_size=100, ignore_conflicts=True
             )
-        
+
         tiempo_procesamiento = time.time() - start_time
-        
+
+        # Top-N variaciones por |variacion_pct|
+        if variaciones_detalle:
+            try:
+                top_variaciones = sorted(
+                    variaciones_detalle,
+                    key=lambda x: abs(x.get('variacion_pct', 0)),
+                    reverse=True,
+                )[:DEBUG_TOP_N]
+                logger.debug(
+                    "🔎 Top variaciones (suma total):\n"
+                    + json.dumps(top_variaciones, ensure_ascii=False, indent=2, default=str)
+                )
+            except Exception:
+                logger.debug("🔎 Top variaciones (suma total): no serializables")
+
         resultado = {
             'task_id': task_id,
             'tipo_comparacion': 'suma_total',
@@ -407,17 +496,26 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
             'incidencias_detectadas': len(incidencias_detectadas),
             'conceptos_nuevos': len(conceptos_solo_actual),
             'conceptos_eliminados': len(conceptos_solo_anterior),
-            'tiempo_procesamiento': round(tiempo_procesamiento, 2)
+            'tiempo_procesamiento': round(tiempo_procesamiento, 2),
+            'diag': {
+                'comparaciones_realizadas': conceptos_analizados,
+                'variaciones_sobre_umbral': variaciones_sobre_umbral,
+                'umbral_suma_total': obtener_umbral_suma_total('cualquiera'),
+            },
         }
-        
-        logger.info(f"✅ {task_id}: {len(incidencias_detectadas)} incidencias agregadas detectadas "
-                   f"en {tiempo_procesamiento:.2f}s")
+
+        logger.info(
+            f"✅ {task_id}: {len(incidencias_detectadas)} incs suma_total | "
+            f"comparaciones: {conceptos_analizados}, sobre_umbral: {variaciones_sobre_umbral}, "
+            f"nuevos: {len(conceptos_solo_actual)}, eliminados: {len(conceptos_solo_anterior)} | "
+            f"t={tiempo_procesamiento:.2f}s, umbral={resultado['diag']['umbral_suma_total']}%"
+        )
         logger.info(f"   📊 {len(conceptos_unicos)} conceptos analizados")
-        logger.info(f"   🆕 {len(conceptos_solo_actual)} conceptos nuevos")  
+        logger.info(f"   🆕 {len(conceptos_solo_actual)} conceptos nuevos")
         logger.info(f"   ❌ {len(conceptos_solo_anterior)} conceptos eliminados")
-        
+
         return resultado
-        
+
     except Exception as e:
         logger.error(f"❌ Error en comparación suma total: {str(e)}")
         return {
@@ -425,7 +523,7 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
             'error': str(e),
             'tipo_comparacion': 'suma_total',
             'conceptos_analizados': 0,
-            'incidencias_detectadas': 0
+            'incidencias_detectadas': 0,
         }
 
 # ================================
@@ -608,32 +706,12 @@ def calcular_variacion_porcentual(valor_actual, valor_anterior):
     return ((valor_actual - valor_anterior) / valor_anterior) * 100
 
 def obtener_umbral_individual(tipo_concepto):
-    """Umbrales diferenciados por tipo de concepto para comparación individual"""
-    umbrales = {
-        'haberes_imponibles': 15.0,      # Sueldo base más estable
-        'haberes_no_imponibles': 30.0,   # Bonos más variables
-        'horas_extras': 50.0,            # Muy variable
-        'descuentos_legales': 10.0,      # Debe ser estable
-        'otros_descuentos': 25.0,        # Variable
-        'aportes_patronales': 15.0,      # Relacionado con haberes
-        'informacion_adicional': 40.0,   # Informativo
-        'impuestos': 20.0                # Moderadamente variable
-    }
-    return umbrales.get(tipo_concepto, 30.0)  # 30% por defecto
+    """Umbral fijo para comparación individual (solicitud: 30%)."""
+    return 30.0
 
 def obtener_umbral_suma_total(tipo_concepto):
-    """Umbrales para sumas totales (más sensibles que individuales)"""
-    umbrales = {
-        'haberes_imponibles': 10.0,      # Masa salarial estable
-        'haberes_no_imponibles': 20.0,   # Bonos agregados
-        'horas_extras': 30.0,            # Variable por temporada
-        'descuentos_legales': 5.0,       # Muy estable en suma
-        'otros_descuentos': 15.0,        # Algo variable
-        'aportes_patronales': 10.0,      # Sigue masa salarial
-        'informacion_adicional': 25.0,   # Informativo
-        'impuestos': 12.0                # Moderadamente estable
-    }
-    return umbrales.get(tipo_concepto, 20.0)  # 20% por defecto
+    """Umbral fijo para sumas totales (solicitud: 30%)."""
+    return 30.0
 
 def crear_chunks_empleados_dinamicos(empleados_consolidados):
     """Crea chunks dinámicos optimizados para comparación"""
@@ -701,10 +779,12 @@ def crear_incidencia_concepto_nuevo_empleado(empleado, concepto):
         }
     )
 
-def crear_incidencia_concepto_eliminado_empleado(empleado_anterior, concepto_anterior):
-    """Crea incidencia para concepto eliminado de empleado existente"""
+def crear_incidencia_concepto_eliminado_empleado(empleado_anterior, concepto_anterior, cierre_actual_id=None):
+    """Crea incidencia para concepto eliminado de empleado existente
+    Nota: cierre_actual_id debe ser el cierre en curso; si no se entrega, se usa el del empleado_anterior (fallback)
+    """
     return IncidenciaCierre(
-        cierre_id=empleado_anterior.cierre.id + 1,  # Se asigna al cierre actual
+        cierre_id=cierre_actual_id or empleado_anterior.cierre.id,
         empleado_rut=empleado_anterior.rut_empleado,
         empleado_nombre=empleado_anterior.nombre_empleado,
         tipo_incidencia='concepto_eliminado_empleado',
@@ -741,21 +821,23 @@ def crear_incidencia_empleado_nuevo(empleado):
     )
 
 def crear_incidencia_suma_total(cierre_id, nombre_concepto, tipo_concepto, suma_actual, suma_anterior, variacion_pct):
-    """Crea incidencia para variación en suma total"""
+    """Crea incidencia para variación en suma total (valores JSON-serializables)."""
+    variacion_pct_float = float(variacion_pct)
+    variacion_abs_float = float(abs(suma_actual - suma_anterior))
     return IncidenciaCierre(
         cierre_id=cierre_id,
         tipo_incidencia='variacion_suma_total',
         tipo_comparacion='suma_total',
-        prioridad=determinar_prioridad_suma_total(variacion_pct, abs(suma_actual - suma_anterior)),
-        descripcion=f'Variación {variacion_pct:.1f}% en suma total de {nombre_concepto}',
+        prioridad=determinar_prioridad_suma_total(variacion_pct_float, variacion_abs_float),
+        descripcion=f'Variación {variacion_pct_float:.1f}% en suma total de {nombre_concepto}',
         impacto_monetario=abs(suma_actual - suma_anterior),
         datos_adicionales={
             'concepto': nombre_concepto,
             'tipo_concepto': tipo_concepto,
             'suma_actual': float(suma_actual),
             'suma_anterior': float(suma_anterior),
-            'variacion_porcentual': round(variacion_pct, 2),
-            'variacion_absoluta': float(abs(suma_actual - suma_anterior)),
+            'variacion_porcentual': round(variacion_pct_float, 2),
+            'variacion_absoluta': variacion_abs_float,
             'tipo_comparacion': 'suma_total'
         }
     )

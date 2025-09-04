@@ -5,8 +5,23 @@ from data.loader import cargar_datos
 from data.loader_nomina import cargar_datos_redis, obtener_info_redis_completa, cargar_informe_local
 from views import dashboard_general
 from views import dashboard_informe_compacto
+from views import comparacion_historica
 
 st.set_page_config(layout="wide", page_title="SGM - Dashboard Nómina", page_icon="💼")
+
+# Query params como defaults (API moderna)
+try:
+    qp_map = dict(st.query_params)
+except Exception:
+    qp_map = {}
+
+qp_cliente_id = None
+try:
+    if qp_map.get('cliente_id') is not None:
+        qp_cliente_id = int(qp_map.get('cliente_id'))
+except Exception:
+    qp_cliente_id = None
+qp_periodo = qp_map.get('periodo') if qp_map else None
 
 if st.session_state.get('scroll_to_top', False):
     st.session_state.scroll_to_top = False
@@ -19,8 +34,8 @@ selected_tab, selected_config = mostrar_sidebar()
 # Determinar qué datos cargar según la configuración
 if selected_config and selected_config.get('fuente') == 'redis':
     # Cargar desde Redis
-    cliente_id = selected_config.get('cliente_id', 6)
-    periodo = selected_config.get('periodo', '2025-03')
+    cliente_id = selected_config.get('cliente_id', qp_cliente_id or 6)
+    periodo = selected_config.get('periodo', qp_periodo or '2025-03')
     
     # Mostrar información de Redis
     col1, col2 = st.columns([2, 1])
@@ -74,31 +89,10 @@ if selected_tab == "📊 Dashboard General":
         dashboard_informe_compacto.mostrar(data)
     else:
         dashboard_general.mostrar(data)
-elif selected_tab == "📈 Análisis Financiero":
-    st.header("📈 Análisis Financiero")
-    st.info("🚧 Esta sección está en desarrollo. Mostrará análisis financiero detallado del período seleccionado.")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Análisis de Costos")
-        st.write("Aquí se mostrará el análisis detallado de costos por categoría")
-    
-    with col2:
-        st.subheader("Tendencias Financieras")
-        st.write("Aquí se mostrarán las tendencias financieras del período")
-        
 elif selected_tab == "📋 Comparación Histórica":
     st.header("📋 Comparación Histórica")
-    st.info("🚧 Esta sección está en desarrollo. Mostrará comparaciones entre períodos históricos.")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Comparación de Períodos")
-        st.write("Aquí se mostrará la comparación entre períodos")
-    
-    with col2:
-        st.subheader("Evolución de Indicadores")
-        st.write("Aquí se mostrará la evolución de indicadores clave")
+    cliente_para_comp = (selected_config.get('cliente_id') if selected_config else None) or qp_cliente_id
+    comparacion_historica.mostrar(cliente_para_comp)
 else:
     st.info(f"Pestaña seleccionada: {selected_tab}")
     

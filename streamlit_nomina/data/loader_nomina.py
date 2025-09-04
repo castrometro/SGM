@@ -5,6 +5,7 @@ import os
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 from functools import lru_cache
+from datetime import datetime
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -115,8 +116,27 @@ def obtener_informes_disponibles_redis(cliente_id: Optional[int] = None) -> Dict
             except Exception as e:
                 logger.warning(f"⚠️ Error procesando clave {clave}: {e}")
         
+        # Ordenar de forma robusta: primero por fecha_generacion (ISO) si existe, luego por periodo (YYYY-MM)
+        def _parse_iso(dt_str: Optional[str]) -> datetime:
+            if not dt_str or not isinstance(dt_str, str):
+                return datetime.min
+            try:
+                # Soportar sufijo 'Z'
+                if dt_str.endswith('Z'):
+                    dt_str = dt_str.replace('Z', '+00:00')
+                return datetime.fromisoformat(dt_str)
+            except Exception:
+                return datetime.min
+
+        def _sort_key(item: Dict[str, Any]):
+            dt = _parse_iso(item.get('fecha_generacion'))
+            periodo = item.get('periodo') or ''  # 'YYYY-MM' esperado
+            return (dt, periodo)
+
+        informes_ordenados = sorted(informes, key=_sort_key, reverse=True)
+
         return {
-            'informes': sorted(informes, key=lambda x: x['fecha_generacion'], reverse=True),
+            'informes': informes_ordenados,
             'total': len(informes),
             'ruta_redis': f'{redis_client.connection_pool.connection_kwargs["host"]}:{redis_client.connection_pool.connection_kwargs["port"]}/DB{redis_client.connection_pool.connection_kwargs["db"]}'
         }

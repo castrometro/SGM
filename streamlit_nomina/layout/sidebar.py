@@ -5,6 +5,18 @@ import os
 
 
 def mostrar_sidebar():
+    # Leer query params para defaults
+    try:
+        qp_map = dict(st.query_params)
+    except Exception:
+        qp_map = {}
+    qp_cliente_id = None
+    try:
+        if qp_map.get('cliente_id') is not None:
+            qp_cliente_id = int(qp_map.get('cliente_id'))
+    except Exception:
+        qp_cliente_id = None
+    qp_periodo = qp_map.get('periodo') if qp_map else None
     if st.sidebar.button("🏠 **Home**", use_container_width=True):
         st.session_state.selected_tab = "📊 Dashboard General"
         if 'scroll_to_top' not in st.session_state:
@@ -14,12 +26,15 @@ def mostrar_sidebar():
     st.sidebar.markdown("---")
     
     # 🚀 NUEVA SECCIÓN: Selección de fuente de datos
-    st.sidebar.markdown("� **Fuente de Datos:**")
-    
+    # Si viene cliente_id por URL, forzar Redis como fuente por defecto
+    if qp_cliente_id and st.session_state.get('fuente_datos') != "📡 Redis (Tiempo Real)":
+        st.session_state['fuente_datos'] = "📡 Redis (Tiempo Real)"
+    st.sidebar.markdown("📡 **Fuente de Datos:**")
+    default_index = 1 if qp_cliente_id else 0
     fuente_datos = st.sidebar.radio(
         "Seleccionar fuente:",
-        ["�📁 Archivos Locales", "📡 Redis (Tiempo Real)"],
-        index=0,
+        ["📁 Archivos Locales", "📡 Redis (Tiempo Real)"],
+        index=default_index,
         key="fuente_datos"
     )
     
@@ -33,7 +48,7 @@ def mostrar_sidebar():
         # Obtener información de Redis
         try:
             from data.loader_nomina import obtener_info_redis_completa
-            info_redis = obtener_info_redis_completa()
+            info_redis = obtener_info_redis_completa(qp_cliente_id)
             
             st.sidebar.info(f"🔗 **Ruta Redis:**\n{info_redis.get('ruta_redis', 'N/A')}")
             
@@ -42,27 +57,33 @@ def mostrar_sidebar():
                 "ID Cliente:",
                 min_value=1,
                 max_value=999,
-                value=6,
+                value=qp_cliente_id or 6,
                 key="cliente_id_redis"
             )
             
             # Selector de período
-            periodo = st.sidebar.text_input(
+            # Periodos disponibles
+            cierres = info_redis.get('cierres_disponibles', []) or []
+            periodos = sorted({c.get('periodo') for c in cierres if c.get('periodo')})
+            # Default: último período disponible (no usar periodo de la URL para evitar confusión)
+            default_periodo = (periodos[-1] if periodos else "2025-03")
+            periodo = st.sidebar.selectbox(
                 "Período (YYYY-MM):",
-                value="2025-03",
+                periodos or [default_periodo],
+                index=(periodos.index(default_periodo) if periodos and default_periodo in periodos else 0),
                 key="periodo_redis"
             )
             
             # Mostrar cierres disponibles si hay información
-            cierres = info_redis.get('cierres_disponibles', [])
             if cierres:
                 st.sidebar.success(f"✅ {len(cierres)} informes en Redis")
                 
                 # Mostrar lista de períodos disponibles
                 with st.sidebar.expander("📋 Informes Disponibles"):
-                    for cierre in cierres[:5]:  # Mostrar máximo 5
+                    # Mostrar últimos 8
+                    for cierre in sorted(cierres, key=lambda x: x.get('periodo',''))[-8:]:
                         st.write(f"• **{cierre['periodo']}** - {cierre['cliente_nombre']}")
-                        if cierre['ttl_segundos'] > 0:
+                        if (cierre.get('ttl_segundos') or -1) > 0:
                             st.write(f"  TTL: {cierre['ttl_segundos']//3600}h {(cierre['ttl_segundos']%3600)//60}m")
             else:
                 error_info = info_redis.get('error', None)
@@ -76,6 +97,13 @@ def mostrar_sidebar():
                 'cliente_id': cliente_id,
                 'periodo': periodo
             }
+            # Actualizar query params para navegación directa
+            try:
+                # Mantener solo cliente_id en la URL al cambiar selección
+                st.query_params.clear()
+                st.query_params["cliente_id"] = str(int(cliente_id))
+            except Exception:
+                pass
             
         except Exception as e:
             st.sidebar.error(f"❌ Error conectando a Redis: {e}")
@@ -136,7 +164,6 @@ def mostrar_sidebar():
     
     opciones_reportes = [
         "📊 Dashboard General",
-        "📈 Análisis Financiero", 
         "📋 Comparación Histórica"
     ]
     

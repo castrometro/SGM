@@ -1,0 +1,178 @@
+{
+  "kpis": {
+    "tasa_ingreso": 0.0221,
+    "tasa_rotacion": 0.0147,
+    "tasa_ausentismo": 0.3529
+  },
+  "periodo": "202504",
+  "cierre_id": 4,
+  "keys_order": [
+    "cierre_id",
+    "cliente_nombre",
+    "cliente_rut",
+    "periodo",
+    "totales_libro",
+    "totales_movimientos",
+    "desglose_libro",
+    "kpis"
+  ],
+  "cliente_rut": "96.540.690-5",
+  "totales_libro": {
+    "empleados": 136,
+    "impuestos": 12845997.0,
+    "otros_descuentos": 2040702.0,
+    "aportes_patronales": 16884244.0,
+    "descuentos_legales": 81603429.0,
+    "haberes_imponibles": 418147717.0,
+    "haberes_no_imponibles": 0.0,
+    "horas_extras_cantidad": 8.0
+  },
+  "cliente_nombre": "GRUPO BIOS S.A.",
+  "desglose_libro": {
+    "impuestos": [
+      {
+        "concepto": "Impuestos.1",
+        "monto_total": 12845997.0
+      }
+    ],
+    "horas_extras": [],
+    "otros_descuentos": [
+      {
+        "concepto": "Descuento Metlife",
+        "monto_total": 1417702.0
+      },
+      {
+        "concepto": "Retención Judicial",
+        "monto_total": 623000.0
+      }
+    ],
+    "aportes_patronales": [
+      {
+        "concepto": "Seguro Invalidez y Supervivencia (SIS)",
+        "monto_total": 5801386.0
+      },
+      {
+        "concepto": "Seguro Cesantia Empleador",
+        "monto_total": 5183364.0
+      },
+      {
+        "concepto": "Seguro accidentes del Trabajo",
+        "monto_total": 3183102.0
+      },
+      {
+        "concepto": "Seguro Cesantia (Fondo Solidario)",
+        "monto_total": 2716392.0
+      }
+    ],
+    "descuentos_legales": [
+      {
+        "concepto": "AFP",
+        "monto_total": 36046453.0
+      },
+      {
+        "concepto": "Isapre",
+        "monto_total": 17457772.0
+      },
+      {
+        "concepto": "Descuento Crédito Personal CCAF",
+        "monto_total": 8739419.0
+      },
+      {
+        "concepto": "Salud 7% (Fonasa)",
+        "monto_total": 6493146.0
+      },
+      {
+        "concepto": "Isapre sobre 7%",
+        "monto_total": 5304604.0
+      },
+      {
+        "concepto": "Descuento Anticipo",
+        "monto_total": 4960000.0
+      },
+      {
+        "concepto": "Seguro Cesantia Trabajador",
+        "monto_total": 1582633.0
+      },
+      {
+        "concepto": "APV",
+        "monto_total": 610389.0
+      },
+      {
+        "concepto": "Descuento Cuenta Dos AFP",
+        "monto_total": 250000.0
+      },
+      {
+        "concepto": "Descuento por Leasing o Ahorro CCAF",
+        "monto_total": 94313.0
+      },
+      {
+        "concepto": "APV (Régimen A)",
+        "monto_total": 50000.0
+      },
+      {
+        "concepto": "Descuento Entel",
+        "monto_total": 14700.0
+      }
+    ],
+    "haberes_imponibles": [
+      {
+        "concepto": "Sueldo Base",
+        "monto_total": 273651133.0
+      },
+      {
+        "concepto": "Bono Mensual por cumplimiento de meta",
+        "monto_total": 76248454.0
+      },
+      {
+        "concepto": "Gratificación Mensual",
+        "monto_total": 27041726.0
+      },
+      {
+        "concepto": "Viáticos",
+        "monto_total": 14190000.0
+      },
+      {
+        "concepto": "Impuestos",
+        "monto_total": 12845997.0
+      },
+      {
+        "concepto": "Bono",
+        "monto_total": 5775000.0
+      },
+      {
+        "concepto": "Anticipos",
+        "monto_total": 4960000.0
+      },
+      {
+        "concepto": "Bono Cobranza",
+        "monto_total": 1574751.0
+      },
+      {
+        "concepto": "Bono Compensatorio Sala Cuna",
+        "monto_total": 700000.0
+      },
+      {
+        "concepto": "Movilización",
+        "monto_total": 600000.0
+      },
+      {
+        "concepto": "Bono Telefono",
+        "monto_total": 431823.0
+      },
+      {
+        "concepto": "Bono por Inventario",
+        "monto_total": 100000.0
+      },
+      {
+        "concepto": "Asignación familiar y Maternal",
+        "monto_total": 28833.0
+      }
+    ],
+    "haberes_no_imponibles": []
+  },
+  "totales_movimientos": {
+    "ingresos": 3,
+    "finiquitos": 2,
+    "ausentismos": 48
+  }
+}

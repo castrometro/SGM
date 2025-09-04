@@ -2084,22 +2084,21 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='finalizar/(?P<cierre_id>[^/.]+)')
     def finalizar_cierre(self, request, cierre_id=None):
         """
-        🎯 ENDPOINT: Finalizar cierre y generar informes
-        
-        Solo disponible cuando el cierre está en estado 'incidencias_resueltas'
-        (es decir, cuando no hay incidencias o todas están resueltas)
+        🎯 ENDPOINT: Finalizar cierre y generar informes (vía Celery chord)
+
+        - Valida estado y ausencia de incidencias pendientes
+        - Dispara chord: [build_informe_libro, build_informe_movimientos] -> unir_y_guardar_informe -> finalizar_cierre_post_informe
+        - Devuelve 202 con task_id para seguimiento
         """
-        from django.utils import timezone
-        
         try:
             cierre = CierreNomina.objects.get(id=cierre_id)
         except CierreNomina.DoesNotExist:
             return Response({"error": "Cierre no encontrado"}, status=404)
-        
+
         # Verificar permisos
         if not request.user.is_authenticated:
             return Response({"error": "Usuario no autenticado"}, status=401)
-        
+
         # Verificar que el cierre esté listo para finalizar
         if cierre.estado != 'incidencias_resueltas':
             return Response({
@@ -2110,12 +2109,12 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
                 "estado_incidencias": getattr(cierre, 'estado_incidencias', 'no_definido'),
                 "total_incidencias": getattr(cierre, 'total_incidencias', 0)
             }, status=400)
-        
+
         # Verificar que no hay incidencias pendientes
         incidencias_pendientes = cierre.incidencias.filter(
             estado__in=['pendiente', 'en_revision']
         ).count()
-        
+
         if incidencias_pendientes > 0:
             return Response({
                 "error": "Incidencias pendientes",
@@ -2123,38 +2122,53 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
                 "incidencias_pendientes": incidencias_pendientes,
                 "accion_requerida": "Resolver todas las incidencias antes de finalizar"
             }, status=400)
-        
-        # Proceder con la finalización
+
+        # Validar precondición: consolidación existente
+        if not cierre.nomina_consolidada.exists():
+            return Response(
+                {
+                    'error': 'No hay datos consolidados para este cierre. Ejecute consolidación antes de finalizar.'
+                },
+                status=409
+            )
+
+        # Disparar chord de generación de informe y finalización
         try:
-            # 🎯 USAR EL MÉTODO DEL MODELO QUE GENERA EL INFORME AUTOMÁTICAMENTE
-            resultado = cierre.finalizar_cierre(request.user)
-            
-            return Response({
-                "success": True,
-                "message": "🎉 Cierre finalizado exitosamente",
-                "cierre_id": cierre_id,
-                "estado_final": cierre.estado,
-                "fecha_finalizacion": cierre.fecha_finalizacion,
-                "usuario_finalizacion": request.user.correo_bdo,
-                "informe": {
-                    "informe_id": resultado['informe_id'],
-                    "datos_cierre": resultado.get('datos_cierre', {})
+            from celery import chord
+            from .tasks import (
+                build_informe_libro,
+                build_informe_movimientos,
+                unir_y_guardar_informe,
+                calcular_kpis_cierre,
+                enviar_informe_redis_task,
+                finalizar_cierre_post_informe,
+            )
+
+            tasks = [
+                build_informe_libro.s(cierre_id),
+                build_informe_movimientos.s(cierre_id),
+            ]
+            callback_guardar = unir_y_guardar_informe.s(cierre_id)
+            callback_kpis = calcular_kpis_cierre.s(cierre_id)
+            callback_en_redis = enviar_informe_redis_task.s(cierre_id)
+            callback_final = finalizar_cierre_post_informe.s(cierre_id, getattr(request.user, 'id', None))
+
+            # Encadenar: chord(tasks)(unir -> kpis -> enviar a redis -> finalizar)
+            result = chord(tasks)(callback_guardar | callback_kpis | callback_en_redis | callback_final)
+
+            return Response(
+                {
+                    'success': True,
+                    'message': 'Finalización iniciada. Generando informe y cerrando.',
+                    'cierre_id': cierre_id,
+                    'task_id': getattr(result, 'id', None)
                 },
-                "resumen": {
-                    "empleados_consolidados": cierre.nomina_consolidada.count(),
-                    "total_incidencias_resueltas": cierre.incidencias.count(),
-                    "periodo": str(cierre.periodo),
-                    "cliente": cierre.cliente.nombre,
-                    "dotacion_total": resultado.get('datos_cierre', {}).get('metricas_basicas', {}).get('dotacion_total', 0),
-                    "costo_empresa_total": resultado.get('datos_cierre', {}).get('metricas_basicas', {}).get('costo_empresa_total', 0)
-                },
-                "siguiente_paso": "Cierre completado. Informes disponibles en el sistema."
-            }, status=200)
-            
+                status=202
+            )
         except Exception as e:
             return Response({
                 "error": "Error interno",
-                "message": f"Error al finalizar cierre: {str(e)}"
+                "message": f"Error al iniciar finalización: {str(e)}"
             }, status=500)
     
     @action(detail=False, methods=['get'], url_path='informe/(?P<cierre_id>[^/.]+)')

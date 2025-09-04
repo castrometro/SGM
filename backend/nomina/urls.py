@@ -64,6 +64,7 @@ from .views_informes import (
     obtener_informe_cierre,
     obtener_resumen_informe,
     listar_informes_cliente,
+    generar_informe_cierre,
 )
 
 # Importar views de Redis
@@ -233,6 +234,7 @@ urlpatterns = router.urls + [
     
     # === URLs para Informes de Cierre ===
     path('cierres/<int:cierre_id>/informe/', obtener_informe_cierre, name='obtener_informe_cierre'),
+    path('cierres/<int:cierre_id>/informe/generar/', generar_informe_cierre, name='generar_informe_cierre'),
     path('cierres/<int:cierre_id>/informe/resumen/', obtener_resumen_informe, name='obtener_resumen_informe'),
     path('clientes/<int:cliente_id>/informes/', listar_informes_cliente, name='listar_informes_cliente'),
     

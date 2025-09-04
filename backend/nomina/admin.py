@@ -1,4 +1,7 @@
 from django.contrib import admin
+from django.contrib import messages
+from django.http import HttpResponse
+import json
 from django.utils.html import format_html
 from .models import (
     CierreNomina, EmpleadoCierre, ConceptoRemuneracion, RegistroConceptoEmpleado,
@@ -24,8 +27,7 @@ from .models_informe import InformeNomina
 # Importar modelos de logging
 from .models_logging import UploadLogNomina, TarjetaActivityLogNomina
 
-# Importar modelo de informe
-from .models_informe import InformeNomina
+# (Import ya realizado arriba)
 
 
 @admin.register(CierreNomina)
@@ -105,6 +107,32 @@ class CierreNominaAdmin(admin.ModelAdmin):
         - Bajas: {por_prioridad['baja']}
         """
     resumen_incidencias.short_description = 'Resumen de Incidencias'
+
+    @admin.action(description='⬇️ Descargar informe JSON (v2 si es posible)')
+    def descargar_informe_json(self, request, queryset):
+        """Descarga el informe del cierre como JSON (intenta v2; si no, v1)."""
+        if queryset.count() != 1:
+            self.message_user(request, 'Selecciona exactamente un cierre para descargar el informe.', level=messages.WARNING)
+            return None
+        cierre = queryset.first()
+
+        try:
+            # Intentar usar informe existente; si no, generar v2
+            informe = InformeNomina.objects.filter(cierre=cierre).first()
+            if not informe or not informe.datos_cierre:
+                self.message_user(request, 'No existe informe JSON para este cierre.', level=messages.WARNING)
+                return None
+
+            data = informe.datos_cierre or {}
+            filename = f"informe_nomina_{cierre.cliente.id}_{cierre.periodo}.json"
+
+            payload = json.dumps(data, ensure_ascii=False, indent=2)
+            response = HttpResponse(payload, content_type='application/json; charset=utf-8')
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return response
+        except Exception as e:
+            self.message_user(request, f'Error al generar/descargar informe: {e}', level=messages.ERROR)
+            return None
 
 
 # ========== ACCIONES PERSONALIZADAS PARA CIERRE NOMINA ==========
@@ -242,8 +270,12 @@ def generar_consolidacion_inicial(modeladmin, request, queryset):
 # Asignar acciones al admin de CierreNomina
 CierreNominaAdmin.actions = [
     actualizar_consolidacion_cierre,
-    generar_consolidacion_inicial
+    generar_consolidacion_inicial,
+    'descargar_informe_json'
 ]
+
+
+## Eliminado: registro duplicado de InformeNominaAdmin (se usa el de abajo)
 
 
 @admin.register(EmpleadoCierre)
@@ -2294,7 +2326,29 @@ class InformeNominaAdmin(admin.ModelAdmin):
         })
     )
     
-    actions = ['enviar_a_redis_action']
+    @admin.action(description='⬇️ Descargar JSON del informe (v2 si es posible)')
+    def descargar_json(self, request, queryset):
+        if queryset.count() != 1:
+            from django.contrib import messages
+            self.message_user(request, 'Selecciona exactamente un informe.', level=messages.WARNING)
+            return None
+        informe = queryset.first()
+        try:
+            data = informe.datos_cierre or {}
+            if not data:
+                self.message_user(request, 'El informe no tiene datos JSON para descargar.', level=messages.WARNING)
+                return None
+            filename = f"informe_nomina_{informe.cierre.cliente.id}_{informe.cierre.periodo}.json"
+            payload = json.dumps(data, ensure_ascii=False, indent=2)
+            response = HttpResponse(payload, content_type='application/json; charset=utf-8')
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return response
+        except Exception as e:
+            from django.contrib import messages
+            self.message_user(request, f'Error al descargar informe: {e}', level=messages.ERROR)
+            return None
+
+    actions = ['enviar_a_redis_action', 'descargar_json']
     date_hierarchy = 'fecha_generacion'
     list_per_page = 50
     
@@ -2389,48 +2443,26 @@ class InformeNominaAdmin(admin.ModelAdmin):
     datos_cierre_display.short_description = 'Datos del Cierre (JSON)'
     
     def enviar_a_redis_action(self, request, queryset):
-        """Acción para enviar informes seleccionados a Redis"""
+        """Acción para encolar el envío de informes seleccionados a Redis (TTL infinito)."""
         from django.contrib import messages
-        
-        enviados = 0
-        errores = 0
-        
+        from .tasks import enviar_informe_redis_task
+
+        encolados = 0
         for informe in queryset:
             try:
-                resultado = informe.enviar_a_redis(ttl_hours=24)
-                if resultado['success']:
-                    enviados += 1
-                    messages.success(
-                        request,
-                        f"✅ {informe.cierre.cliente.nombre} - {informe.cierre.periodo}: "
-                        f"Enviado a Redis ({resultado['size_kb']:.1f} KB)"
-                    )
-                else:
-                    errores += 1
-                    messages.error(
-                        request,
-                        f"❌ {informe.cierre.cliente.nombre} - {informe.cierre.periodo}: "
-                        f"Error: {resultado['error']}"
-                    )
+                # Encolar con TTL infinito (None) usando la task
+                enviar_informe_redis_task.delay(prev_result=None, cierre_id=informe.cierre.id, ttl_hours=None)
+                encolados += 1
             except Exception as e:
-                errores += 1
                 messages.error(
                     request,
-                    f"❌ {informe.cierre.cliente.nombre} - {informe.cierre.periodo}: "
-                    f"Excepción: {str(e)}"
+                    f"❌ No se pudo encolar envío a Redis para {informe.cierre.cliente.nombre} - {informe.cierre.periodo}: {e}"
                 )
-        
-        # Mensaje resumen
-        if enviados > 0:
+
+        if encolados:
             messages.success(
                 request,
-                f"🎯 Resumen: {enviados} informes enviados a Redis exitosamente"
-            )
-        
-        if errores > 0:
-            messages.warning(
-                request,
-                f"⚠️ {errores} informes tuvieron errores al enviar a Redis"
+                f"🚀 {encolados} envío(s) a Redis encolado(s). Se procesarán en segundo plano."
             )
     
     enviar_a_redis_action.short_description = "🚀 Enviar a Redis (DB 2)"

@@ -27,8 +27,8 @@ echo "📊 Iniciando Worker Contabilidad (concurrencia: 2)..."
 celery -A sgm_backend worker -Q contabilidad_queue -c 2 --loglevel=info --hostname=contabilidad@%h &
 CONTABILIDAD_PID=$!
 
-echo "⚙️ Iniciando Worker General (concurrencia: 1)..."
-celery -A sgm_backend worker -Q default -c 1 --loglevel=info --hostname=general@%h &
+echo "⚙️ Iniciando Worker General (concurrencia: 1, colas: default,celery)..."
+celery -A sgm_backend worker -Q default,celery -c 1 --loglevel=info --hostname=general@%h &
 GENERAL_PID=$!
 
 echo ""

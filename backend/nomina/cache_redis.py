@@ -98,7 +98,8 @@ class SGMCacheSystemNomina:
             bool: True si se guardó exitosamente
         """
         key = self._get_key(cliente_id, periodo, "informe")
-        ttl = ttl or self.long_ttl  # Informes con TTL largo (24 horas)
+        # TTL: None o <=0 implica sin expiración
+        ttl_effective = None if (ttl is None or ttl <= 0) else ttl
         
         try:
             # Agregar metadata
@@ -108,14 +109,19 @@ class SGMCacheSystemNomina:
                     'cliente_id': cliente_id,
                     'periodo': periodo,
                     'cached_at': datetime.now().isoformat(),
-                    'ttl': ttl,
+                    'ttl': ttl_effective,
+                    'infinite': ttl_effective is None,
                     'tipo': 'informe_nomina',
                     'version': '1.0'
                 }
             }
             
             serialized_data = self._serialize_data(informe_with_meta)
-            self.redis_client.setex(key, ttl, serialized_data)
+            if ttl_effective is None:
+                # Sin expiración
+                self.redis_client.set(key, serialized_data)
+            else:
+                self.redis_client.setex(key, ttl_effective, serialized_data)
             
             self._increment_stat("informes_cached")
             self._increment_stat("cache_writes")

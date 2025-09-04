@@ -10,6 +10,7 @@ import {
   obtenerEstadoIncidenciasCierre,
   previewIncidenciasCierre,
   finalizarCierre,
+  consultarEstadoTarea,
   obtenerAnalisisCompletoTemporal,
   limpiarIncidenciasCierre
 } from "../../api/nomina";
@@ -343,20 +344,59 @@ const IncidenciasEncontradasSection = ({
     
     try {
       const resultado = await finalizarCierre(cierre.id);
-      
-      if (resultado.success) {
-        alert(`🎉 ${resultado.message}\n\n` + 
-              `El cierre ha sido finalizado exitosamente.\n` +
-              `Estado: ${resultado.estado_final || 'Finalizado'}\n` +
-              `Empleados consolidados: ${resultado.resumen?.empleados_consolidados || 'N/A'}`);
-        
-        // Refrescar el estado del cierre en lugar de recargar toda la página
+
+      // Feedback inmediato
+      if (resultado?.message) {
+        alert(`▶️ ${resultado.message}`);
+      }
+
+      const taskId = resultado?.task_id || resultado?.taskId || resultado?.task || resultado?.id;
+
+      // Si hay task_id, hacer polling hasta que termine la finalización
+      if (taskId) {
+        const inicio = Date.now();
+        const timeoutMs = 10 * 60 * 1000; // 10 minutos
+        const intervaloMs = 2000;
+
+        while (Date.now() - inicio < timeoutMs) {
+          try {
+            const estado = await consultarEstadoTarea(cierre.id, taskId);
+            const state = estado?.state || estado?.status;
+
+            if (state === 'SUCCESS') {
+              // Actualizar datos del cierre al completar
+              if (onCierreActualizado) {
+                await onCierreActualizado();
+              }
+              alert('🎉 Cierre finalizado correctamente.');
+              break;
+            }
+            if (state === 'FAILURE') {
+              const detalle = (estado?.result && (estado.result.detail || estado.result.message)) || '';
+              const msg = `Error al finalizar cierre${detalle ? `: ${detalle}` : ''}`;
+              setError(msg);
+              alert(`❌ ${msg}`);
+              break;
+            }
+          } catch (pollErr) {
+            // Continuar reintentando a menos que sea un 4xx persistente
+            // eslint-disable-next-line no-console
+            console.warn('Polling estado tarea falló, reintentando...', pollErr?.message || pollErr);
+          }
+          // Esperar siguiente intento
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((r) => setTimeout(r, intervaloMs));
+        }
+      } else if (resultado?.success) {
+        // Sin task_id, pero éxito inmediato (fallback)
         if (onCierreActualizado) {
           await onCierreActualizado();
         }
+        alert('🎉 Cierre finalizado.');
       } else {
-        setError(resultado.message || 'Error al finalizar cierre');
-        alert(`Error: ${resultado.message || 'Error al finalizar cierre'}`);
+        const msg = resultado?.message || 'Error al finalizar cierre';
+        setError(msg);
+        alert(`❌ ${msg}`);
       }
     } catch (err) {
       console.error("Error finalizando cierre:", err);

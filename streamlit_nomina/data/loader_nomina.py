@@ -2,7 +2,8 @@ import json
 import redis
 import logging
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+from pathlib import Path
 from functools import lru_cache
 
 # Configurar logging
@@ -160,51 +161,86 @@ def cargar_datos_redis(cliente_id: int = 6, periodo: str = "2025-03") -> Optiona
         logger.info(f"✅ Informe encontrado en Redis: {data.get('cliente_nombre')} - {periodo}")
         logger.info(f"📏 Tamaño: {len(data_raw)/1024:.1f} KB")
         
-        # Verificar que tiene la estructura esperada
-        if 'datos_cierre' not in data:
-            logger.warning(f"⚠️ Estructura de datos incompleta en Redis")
+        # El backend guarda el informe compacto en raíz. Limpiar y enriquecer.
+        if isinstance(data, dict):
+            data.pop('keys_order', None)
+            data['fuente'] = 'redis'
+            meta = data.get('_metadata') or {}
+            meta.update({
+                'cliente_id': cliente_id,
+                'periodo': periodo,
+                'ttl': redis_client.ttl(clave_redis),
+                'tipo': 'informe_nomina',
+                'clave_redis': clave_redis,
+                'size_kb': len(data_raw) / 1024
+            })
+            data['_metadata'] = meta
+            return data
+        else:
+            logger.error("❌ Estructura de informe en Redis inválida (no es dict)")
             return None
-        
-        # Estructurar datos para Streamlit (compatibilidad con data_real.json)
-        datos_streamlit = {
-            "fuente": "redis",
-            "informe_id": data.get('informe_id'),
-            "cliente_id": data.get('cliente_id'),
-            "cliente_nombre": data.get('cliente_nombre'),
-            "periodo": data.get('periodo'),
-            "estado_cierre": data.get('estado_cierre'),
-            "fecha_generacion": data.get('fecha_generacion'),
-            "fecha_finalizacion": data.get('fecha_finalizacion'),
-            "usuario_finalizacion": data.get('usuario_finalizacion'),
-            "version_calculo": data.get('version_calculo'),
-            "tiempo_calculo_segundos": data.get('tiempo_calculo_segundos'),
-            
-            # Datos del cierre completos
-            "datos_cierre": data.get('datos_cierre', {}),
-            
-            # KPIs principales
-            "kpis_principales": data.get('kpis_principales', {}),
-            
-            # Metadatos adicionales
-            "_metadata": {
-                "cliente_id": cliente_id,
-                "periodo": periodo,
-                "cached_at": data.get('fecha_generacion'),
-                "ttl": redis_client.ttl(clave_redis),
-                "tipo": "informe_nomina",
-                "version": data.get('version_calculo', '1.0'),
-                "clave_redis": clave_redis,
-                "size_kb": len(data_raw) / 1024
-            }
-        }
-        
-        return datos_streamlit
         
     except json.JSONDecodeError as e:
         logger.error(f"❌ Error parsing JSON desde Redis: {e}")
         return None
     except Exception as e:
         logger.error(f"❌ Error cargando datos desde Redis: {e}")
+        return None
+
+
+def _buscar_informes_locales(dir_path: Path) -> List[Path]:
+    """Encuentra archivos JSON de informe en el directorio dado (prioriza prefijo 'informe_nomina')."""
+    if not dir_path.exists():
+        return []
+    archivos = sorted(dir_path.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    # Priorizar los que incluyen 'informe_nomina'
+    informes = [p for p in archivos if 'informe_nomina' in p.name.lower()] + [p for p in archivos if 'informe_nomina' not in p.name.lower()]
+    # Quitar duplicados manteniendo orden
+    vistos = set()
+    unicos = []
+    for p in informes:
+        if p.name not in vistos:
+            vistos.add(p.name)
+            unicos.append(p)
+    return unicos
+
+
+def cargar_informe_local(nombre: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Carga un informe compacto de nómina desde /streamlit_nomina/data.
+    - Si nombre es None, toma el último archivo que matchea 'informe_nomina*.json'.
+    - Normaliza removiendo claves no deseadas (p.ej., keys_order) y añade metadatos mínimos.
+    """
+    base_dir = Path(__file__).parent
+    if nombre:
+        ruta = (base_dir / nombre)
+    else:
+        candidatos = _buscar_informes_locales(base_dir)
+        ruta = candidatos[0] if candidatos else None
+
+    if not ruta or not ruta.exists():
+        logger.warning("⚠️ No se encontró archivo local de informe")
+        return None
+
+    try:
+        with ruta.open('r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.error(f"❌ Error leyendo informe local {ruta.name}: {e}")
+        return None
+
+    # Normalizar y limpiar
+    if isinstance(data, dict):
+        data.pop('keys_order', None)
+        data.setdefault('fuente', 'archivo')
+        data.setdefault('_metadata', {})
+        data['_metadata'].update({
+            'archivo': ruta.name,
+            'ruta': str(ruta),
+        })
+        return data
+    else:
+        logger.error("❌ Estructura de informe local inválida (no es dict)")
         return None
 
 

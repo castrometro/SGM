@@ -16,6 +16,8 @@ import logging
 
 from .models import CierreNomina
 from .models_informe import InformeNomina
+from celery import chord
+from .tasks import build_informe_libro, build_informe_movimientos, unir_y_guardar_informe
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +44,14 @@ def obtener_informe_cierre(request, cierre_id):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Obtener o crear el informe
+        # Obtener el informe si existe
         try:
             informe = InformeNomina.objects.get(cierre=cierre)
         except InformeNomina.DoesNotExist:
-            # Si no existe, generarlo
-            informe = InformeNomina.generar_informe_completo(cierre)
+            return Response(
+                {'error': 'No existe informe para este cierre'},
+                status=status.HTTP_404_NOT_FOUND
+            )
         
         # Preparar respuesta
         response_data = {
@@ -85,14 +89,14 @@ def obtener_resumen_informe(request, cierre_id):
     """
     try:
         cierre = get_object_or_404(CierreNomina, id=cierre_id)
-        
+
         # Verificar que el cierre esté finalizado
         if cierre.estado_actual != 'finalizado':
             return Response(
                 {'error': 'El cierre debe estar finalizado para consultar el informe'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         # Obtener el informe
         try:
             informe = InformeNomina.objects.get(cierre=cierre)
@@ -101,16 +105,17 @@ def obtener_resumen_informe(request, cierre_id):
                 {'error': 'No existe informe para este cierre'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
-        # Extraer datos clave del informe
-        datos = informe.datos_cierre
-        
+
+        # Extraer datos clave del informe (estructura simple)
+        datos = informe.datos_cierre or {}
+
         resumen = {
             'cierre_id': cierre.id,
             'cliente': cierre.cliente.nombre if cierre.cliente else None,
             'periodo': cierre.periodo.strftime('%Y-%m'),
             'fecha_generacion': informe.fecha_generacion.isoformat(),
             'metricas_clave': {
+                # Mantener claves si existen en el JSON, en caso contrario 0
                 'costo_empresa_total': datos.get('costo_empresa_total', 0),
                 'dotacion_total': datos.get('dotacion_total', 0),
                 'dotacion_activa': datos.get('dotacion_activa', 0),
@@ -124,7 +129,7 @@ def obtener_resumen_informe(request, cierre_id):
                 'ausencias': datos.get('movimientos_ausencias', 0),
             }
         }
-        
+
         logger.info(f"Resumen de informe del cierre {cierre_id} obtenido exitosamente")
         return Response(resumen, status=status.HTTP_200_OK)
         
@@ -132,6 +137,51 @@ def obtener_resumen_informe(request, cierre_id):
         logger.error(f"Error al obtener resumen del informe del cierre {cierre_id}: {str(e)}")
         return Response(
             {'error': f'Error al obtener el resumen: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def generar_informe_cierre(request, cierre_id):
+    """
+    Dispara un Celery chord para generar el informe del cierre en paralelo:
+    - Task A: Libro (detalle + resumen)
+    - Task B: Movimientos del mes
+    Luego une y guarda en InformeNomina.
+    Responde 202 con el task_id del chord.
+    """
+    try:
+        cierre = get_object_or_404(CierreNomina, id=cierre_id)
+
+        # Validar precondición: consolidación existente
+        if not cierre.nomina_consolidada.exists():
+            return Response(
+                {
+                    'error': 'No hay datos consolidados para este cierre. Ejecute consolidación antes de generar el informe.'
+                },
+                status=status.HTTP_409_CONFLICT
+            )
+
+        tasks = [
+            build_informe_libro.s(cierre_id),
+            build_informe_movimientos.s(cierre_id),
+        ]
+        callback = unir_y_guardar_informe.s(cierre_id)
+        result = chord(tasks)(callback)
+
+        return Response(
+            {
+                'message': 'Generación de informe iniciada',
+                'cierre_id': cierre_id,
+                'task_id': getattr(result, 'id', None)
+            },
+            status=status.HTTP_202_ACCEPTED
+        )
+    except Exception as e:
+        logger.error(f"Error al disparar generación de informe para cierre {cierre_id}: {e}")
+        return Response(
+            {'error': f'Error al iniciar generación: {str(e)}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 

@@ -87,31 +87,29 @@ def mostrar_sidebar():
         
         current_dir = pathlib.Path(__file__).parent.parent.resolve() / "data"
         archivos_disponibles = []
-        
         try:
             for archivo in current_dir.glob("*.json"):
-                if archivo.name.startswith("payroll_") and archivo.exists():
+                if archivo.exists():
                     archivos_disponibles.append(archivo.name)
-        except:
-            archivos_disponibles = ["payroll_prueba.json"]
-        
-        archivos_disponibles = [archivo for archivo in archivos_disponibles if (current_dir / archivo).exists()]
-        
+        except Exception:
+            pass
+        # Priorizar informes de nómina si existen
+        archivos_disponibles = sorted(archivos_disponibles, key=lambda n: (0 if 'informe_nomina' in n.lower() else 1, n))
         if not archivos_disponibles:
-            archivos_disponibles = ["payroll_prueba.json"]
+            archivos_disponibles = ["informe_nomina.json"]
         
         archivo_seleccionado = st.sidebar.selectbox(
             "Período Actual:",
             sorted(archivos_disponibles),
             index=0,
-            format_func=lambda x: x.replace("payroll_", "").replace(".json", "").replace("_", " ").title()
+            format_func=lambda x: x
         )
         
         archivo_comparar = st.sidebar.selectbox(
             "Período a Comparar:",
             sorted(archivos_disponibles),
             index=1 if len(archivos_disponibles) > 1 else 0,
-            format_func=lambda x: x.replace("payroll_", "").replace(".json", "").replace("_", " ").title()
+            format_func=lambda x: x
         )
         
         if st.sidebar.button("🔄 **Actualizar**", use_container_width=True, help="Recargar datos manteniendo selecciones"):

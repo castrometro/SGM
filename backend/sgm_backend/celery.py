@@ -8,17 +8,25 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 
 # Configuración de colas y routing
 app.conf.update(
+    # Asegurar que la cola por defecto sea 'default' (no 'celery')
+    task_default_queue='default',
+
     task_routes={
-        # Tareas de nómina
+        # Tareas de nómina (cubrir nombres con y sin ".tasks.")
         'nomina.tasks.*': {'queue': 'nomina_queue'},
         'nomina.utils.*': {'queue': 'nomina_queue'},
+        'nomina.*': {'queue': 'nomina_queue'},
         
-        # Tareas de contabilidad  
+        # Tareas de contabilidad (cubrir nombres con y sin ".tasks.")
         'contabilidad.tasks.*': {'queue': 'contabilidad_queue'},
         'contabilidad.utils.*': {'queue': 'contabilidad_queue'},
+        'contabilidad.*': {'queue': 'contabilidad_queue'},
         
         # Tareas generales
         'api.tasks.*': {'queue': 'default'},
+        'api.*': {'queue': 'default'},
+        # Catch-all para cualquier otra tarea
+        '*': {'queue': 'default'},
     },
     
     task_serializer='json',

@@ -33,8 +33,46 @@ import logging
 import pandas as pd
 from django.utils import timezone
 import json
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
+def _json_safe(value):
+    """Convierte estructuras anidadas a tipos serializables por JSON (psycopg2 json).
+    - Decimal -> float
+    - pandas.Timestamp -> ISO string
+    - dict/list/tuple -> procesa recursivamente
+    """
+    # Tipos primitivos
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    # Decimales
+    if isinstance(value, Decimal):
+        try:
+            return float(value)
+        except Exception:
+            return str(value)
+    # pandas Timestamp o similares con isoformat
+    try:
+        import pandas as _pd  # local para evitar dependencias en import-time
+        if isinstance(value, _pd.Timestamp):
+            return value.isoformat()
+    except Exception:
+        pass
+    if hasattr(value, 'isoformat'):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    # Estructuras
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [ _json_safe(v) for v in list(value) ]
+    # Fallback
+    try:
+        return json.loads(json.dumps(value))
+    except Exception:
+        return str(value)
 
 
 def calcular_chunk_size_dinamico(empleados_count):
@@ -3060,7 +3098,9 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
                     'haberes_imponibles': 'haber_imponible',
                     'haberes_no_imponibles': 'haber_no_imponible',
                     'descuentos_legales': 'descuento_legal',
-                    'otros_descuentos': 'otro_descuento'
+                    'otros_descuentos': 'otro_descuento',
+                    'impuestos': 'impuesto',
+                    'aportes_patronales': 'aporte_patronal',
                 }
                 
                 tipo_concepto = clasificacion_mapping.get(datos['clasificacion'], 'informativo')
@@ -4234,3 +4274,357 @@ def guardar_registros_nomina_optimizado(result, usar_chord=True):
             'cierre_id': cierre_id,
             'timestamp': timezone.now().isoformat()
         }
+
+# ==========================================================
+# 📦 Tasks para generar Informe de Cierre (Libro + Movimientos)
+# ==========================================================
+from django.db.models import Sum, Count, F, DecimalField, IntegerField, ExpressionWrapper, Value, Q
+from django.db.models.functions import Coalesce
+
+
+@shared_task(name='nomina.build_informe_libro')
+def build_informe_libro(cierre_id: int) -> dict:
+    """
+    Construye payload del Libro de Remuneraciones desde NominaConsolidada,
+    equivalente a la data que consumen las páginas (detalle + resumen).
+    """
+    from .models import CierreNomina, NominaConsolidada, HeaderValorEmpleado, ConceptoConsolidado
+    cierre = CierreNomina.objects.get(id=cierre_id)
+
+    if not cierre.nomina_consolidada.exists():
+        return {
+            'error': 'No hay datos consolidados para este cierre',
+            'detalle': None,
+            'resumen': None,
+        }
+
+    qs = NominaConsolidada.objects.filter(cierre=cierre)
+
+    # Resumen general (totales por campo principal)
+    liquido_expr = ExpressionWrapper(
+        F('haberes_imponibles') + F('haberes_no_imponibles') - F('dctos_legales') - F('otros_dctos') - F('impuestos'),
+        output_field=DecimalField(max_digits=20, decimal_places=2),
+    )
+    zero_dec_2 = Value(0, output_field=DecimalField(max_digits=20, decimal_places=2))
+    zero_dec_4 = Value(0, output_field=DecimalField(max_digits=20, decimal_places=4))
+    zero_int = Value(0, output_field=IntegerField())
+    resumen_agg = qs.aggregate(
+        total_empleados=Count('id'),
+        total_haberes_imponibles=Coalesce(Sum('haberes_imponibles'), zero_dec_2),
+        total_haberes_no_imponibles=Coalesce(Sum('haberes_no_imponibles'), zero_dec_2),
+        total_dctos_legales=Coalesce(Sum('dctos_legales'), zero_dec_2),
+        total_otros_dctos=Coalesce(Sum('otros_dctos'), zero_dec_2),
+        total_impuestos=Coalesce(Sum('impuestos'), zero_dec_2),
+        total_aportes_patronales=Coalesce(Sum('aportes_patronales'), zero_dec_2),
+        horas_extras_cantidad_total=Coalesce(Sum('horas_extras_cantidad'), zero_dec_4),
+    )
+
+    # Desglose por concepto (por tipo_concepto)
+    conceptos_base = (
+        ConceptoConsolidado.objects
+        .filter(nomina_consolidada__cierre=cierre)
+        .values('tipo_concepto', 'nombre_concepto')
+        .annotate(
+            total_monto=Coalesce(Sum('monto_total'), zero_dec_2),
+            total_cantidad=Coalesce(Sum('cantidad'), zero_dec_4),
+        )
+        .order_by('tipo_concepto', '-total_monto')
+    )
+
+    def _lista_categoria(tipo):
+        return [
+            {
+                'concepto': it['nombre_concepto'],
+                'monto_total': it['total_monto'],
+            }
+            for it in conceptos_base if it['tipo_concepto'] == tipo
+        ]
+
+    # Intentar detectar horas extras por nombre de concepto
+    horas_extras_det = (
+        ConceptoConsolidado.objects
+        .filter(
+            Q(nomina_consolidada__cierre=cierre)
+            & Q(nombre_concepto__icontains='hora')
+            & Q(nombre_concepto__icontains='extra')
+        )
+        .values('nombre_concepto')
+        .annotate(total_cantidad=Coalesce(Sum('cantidad'), zero_dec_4))
+        .order_by('-total_cantidad')
+    )
+
+    resumen_payload = {
+        'cierre': {
+            'id': cierre.id,
+            'cliente_id': cierre.cliente.id,
+            'cliente': getattr(cierre.cliente, 'nombre', str(cierre.cliente)),
+            'periodo': cierre.periodo,
+        },
+    # Mantener compatibilidad: 'resumen' conserva los totales con claves previas
+    'resumen': resumen_agg,
+    'totales': {
+            'empleados': resumen_agg['total_empleados'],
+            'haberes_imponibles': resumen_agg['total_haberes_imponibles'],
+            'haberes_no_imponibles': resumen_agg['total_haberes_no_imponibles'],
+            'descuentos_legales': resumen_agg['total_dctos_legales'],
+            'otros_descuentos': resumen_agg['total_otros_dctos'],
+            'impuestos': resumen_agg['total_impuestos'],
+            'aportes_patronales': resumen_agg['total_aportes_patronales'],
+            'horas_extras_cantidad': resumen_agg['horas_extras_cantidad_total'],
+        },
+        'desglose_por_concepto': {
+            'haberes_imponibles': _lista_categoria('haber_imponible'),
+            'haberes_no_imponibles': _lista_categoria('haber_no_imponible'),
+            'descuentos_legales': _lista_categoria('descuento_legal'),
+            'otros_descuentos': _lista_categoria('otro_descuento'),
+            'impuestos': _lista_categoria('impuesto'),
+            'aportes_patronales': _lista_categoria('aporte_patronal'),
+            'horas_extras': [
+                {'concepto': it['nombre_concepto'], 'cantidad': it['total_cantidad']} for it in horas_extras_det
+            ],
+        },
+    }
+
+    # No incluimos detalle por empleado para mantener JSON liviano
+    return {'detalle': None, 'resumen': resumen_payload}
+
+
+@shared_task(name='nomina.build_informe_movimientos')
+def build_informe_movimientos(cierre_id: int) -> dict:
+    """
+    Construye un resumen compacto de Movimientos del Mes:
+    - Total de ingresos
+    - Total de finiquitos
+    - Total de ausentismos y desglose por tipo (motivo)
+    """
+    from .models import CierreNomina, MovimientoPersonal
+    cierre = CierreNomina.objects.get(id=cierre_id)
+
+    if not cierre.nomina_consolidada.exists():
+        return {'error': 'No hay datos consolidados para este cierre', 'movimientos': None}
+
+    movimientos = MovimientoPersonal.objects.filter(nomina_consolidada__cierre=cierre)
+
+    # Totales principales
+    total_ingresos = movimientos.filter(tipo_movimiento='ingreso').count()
+    total_finiquitos = movimientos.filter(tipo_movimiento='finiquito').count()
+    ausentismos_qs = movimientos.filter(tipo_movimiento='ausentismo')
+    total_ausentismos = ausentismos_qs.count()
+
+    # Desglose de ausentismos por "tipo" usando el campo motivo
+    ausentismos_por_motivo = (
+        ausentismos_qs
+        .values('motivo')
+        .annotate(c=Count('id'))
+        .order_by('-c')
+    )
+    ausentismos_por_tipo = {}
+    for row in ausentismos_por_motivo:
+        key = row['motivo'] or 'Sin especificar'
+        ausentismos_por_tipo[key] = row['c']
+
+    # Conteo por tipo general (compatibilidad mínima)
+    por_tipo = {}
+    for tipo, display in MovimientoPersonal.TIPO_MOVIMIENTO_CHOICES:
+        por_tipo[tipo] = {
+            'count': movimientos.filter(tipo_movimiento=tipo).count(),
+            'display': display,
+        }
+
+    payload = {
+        'cierre': {
+            'id': cierre.id,
+            'cliente': getattr(cierre.cliente, 'nombre', str(cierre.cliente)),
+            'periodo': cierre.periodo,
+            'estado': cierre.estado,
+        },
+        'resumen': {
+            'total_movimientos': movimientos.count(),
+            'por_tipo': por_tipo,
+            'totales': {
+                'ingresos': total_ingresos,
+                'finiquitos': total_finiquitos,
+                'ausentismos': total_ausentismos,
+            },
+            'ausentismos_por_tipo': ausentismos_por_tipo,
+        },
+        # Mantener clave por compatibilidad pero vacía para JSON liviano
+        'movimientos': [],
+    }
+    return payload
+
+
+@shared_task(name='nomina.unir_y_guardar_informe')
+def unir_y_guardar_informe(resultados: list, cierre_id: int, version: str = 'v2-compact') -> dict:
+    """
+    Callback del chord: une resultados de libro y movimientos, guarda InformeNomina
+    con una estructura compacta en la raíz.
+    """
+    from .models import CierreNomina
+    from .models_informe import InformeNomina
+
+    cierre = CierreNomina.objects.get(id=cierre_id)
+    libro, movimientos = resultados
+    # Sanitizar versión para cumplir con max_length=10 del modelo
+    raw_version = str(version) if version is not None else '1.0'
+    safe_version = raw_version[:10]
+    if raw_version != safe_version:
+        logger.warning(f"version_calculo '{raw_version}' truncada a '{safe_version}' (max 10)")
+
+    # Extraer totales desde subtareas (manteniendo robustez ante None)
+    resumen_libro = (libro or {}).get('resumen') or {}
+    totales_libro = resumen_libro.get('totales') or {}
+
+    resumen_mov = (movimientos or {}).get('resumen') or {}
+    totales_mov = resumen_mov.get('totales') or {}
+    desglose_libro = resumen_libro.get('desglose_por_concepto') or {}
+
+    # Formato de periodo AAAAMM a partir de 'YYYY-MM'
+    periodo_aaaamm = (cierre.periodo or '').replace('-', '')
+
+    # Estructura compacta solicitada
+    payload = {
+        'cierre_id': cierre.id,
+        'cliente_nombre': getattr(cierre.cliente, 'nombre', None),
+        'cliente_rut': getattr(cierre.cliente, 'rut', None),
+        'periodo': periodo_aaaamm,
+        'totales_libro': totales_libro,
+        'totales_movimientos': totales_mov,
+        'desglose_libro': desglose_libro,
+        # Los KPIs se agregan en la task siguiente (calcular_kpis_cierre)
+        'kpis': {},
+    }
+
+    # Asegurar que el JSON no contenga tipos no serializables (Decimal, Timestamp, etc.)
+    payload = _json_safe(payload)
+
+    informe, _ = InformeNomina.objects.get_or_create(
+        cierre=cierre,
+        defaults={'datos_cierre': payload, 'version_calculo': safe_version}
+    )
+    # actualizar siempre con la última versión
+    inicio = timezone.now()
+    informe.datos_cierre = payload
+    informe.version_calculo = safe_version
+    informe.fecha_generacion = inicio
+    informe.tiempo_calculo = timezone.now() - inicio
+    informe.save(update_fields=['datos_cierre', 'version_calculo', 'fecha_generacion', 'tiempo_calculo'])
+
+    return {'informe_id': informe.id, 'cierre_id': cierre_id, 'saved': True}
+
+
+@shared_task(name='nomina.finalizar_cierre_post_informe')
+def finalizar_cierre_post_informe(prev_result: dict, cierre_id: int, usuario_id: int | None = None) -> dict:
+    """
+    Task posterior a la generación del informe: marca el cierre como 'finalizado',
+    setea fecha y usuario de finalización. NO envía a Redis.
+
+    Args:
+        prev_result: resultado de la task anterior (unir_y_guardar_informe)
+        cierre_id: ID del cierre a finalizar
+        usuario_id: ID del usuario que inició la finalización (opcional)
+
+    Returns:
+        dict con estado de finalización y metadata básica.
+    """
+    from django.utils import timezone
+    from django.contrib.auth import get_user_model
+    from .models import CierreNomina
+
+    cierre = CierreNomina.objects.get(id=cierre_id)
+
+    user = None
+    if usuario_id:
+        User = get_user_model()
+        try:
+            user = User.objects.get(id=usuario_id)
+        except User.DoesNotExist:
+            user = None
+
+    # Actualizar estado y metadatos sin empujar a Redis
+    cierre.estado = 'finalizado'
+    cierre.fecha_finalizacion = timezone.now()
+    if user:
+        cierre.usuario_finalizacion = user
+        cierre.save(update_fields=['estado', 'fecha_finalizacion', 'usuario_finalizacion'])
+    else:
+        cierre.save(update_fields=['estado', 'fecha_finalizacion'])
+
+    return {
+        'success': True,
+        'cierre_id': cierre_id,
+        'finalizado': True,
+        'informe_id': (prev_result or {}).get('informe_id')
+    }
+
+
+@shared_task(name='nomina.calcular_kpis_cierre')
+def calcular_kpis_cierre(prev_result: dict, cierre_id: int) -> dict:
+    """Calcula y guarda solo las tasas: rotación, ingreso y ausentismo (sobre dotación)."""
+    from .models import CierreNomina, NominaConsolidada, MovimientoPersonal
+    from .models_informe import InformeNomina
+
+    cierre = CierreNomina.objects.get(id=cierre_id)
+
+    # Base dotación
+    nc_qs = NominaConsolidada.objects.filter(cierre=cierre)
+    dotacion_total = nc_qs.count()
+
+    # Ingresos / Finiquitos / Ausentismos
+    mov_qs = MovimientoPersonal.objects.filter(nomina_consolidada__cierre=cierre)
+    ingresos_total = mov_qs.filter(tipo_movimiento='ingreso').count()
+    finiquitos_total = mov_qs.filter(tipo_movimiento='finiquito').count()
+    ausentismos_total = mov_qs.filter(tipo_movimiento='ausentismo').count()
+
+    # Tasas
+    denom = float(dotacion_total) if dotacion_total else 1.0
+    tasa_rotacion = round(float(finiquitos_total) / denom, 4)
+    tasa_ingreso = round(float(ingresos_total) / denom, 4)
+    tasa_ausentismo = round(float(ausentismos_total) / denom, 4)
+
+    kpis = {
+        'tasa_rotacion': tasa_rotacion,
+        'tasa_ingreso': tasa_ingreso,
+        'tasa_ausentismo': tasa_ausentismo,
+    }
+
+    # Guardar en InformeNomina
+    informe = InformeNomina.objects.get(cierre=cierre)
+    datos = informe.datos_cierre or {}
+    # Actualizar KPIs
+    datos['kpis'] = _json_safe(kpis)
+    # Remover keys_order si existe (no se debe incluir en el JSON final)
+    datos.pop('keys_order', None)
+    informe.datos_cierre = datos
+    informe.save(update_fields=['datos_cierre'])
+
+    return {'informe_id': informe.id, 'cierre_id': cierre_id, 'kpis': datos['kpis']}
+
+
+@shared_task(name='nomina.enviar_informe_redis')
+def enviar_informe_redis_task(prev_result: dict, cierre_id: int, ttl_hours: int | None = None) -> dict:
+    """Envía el informe compacto a Redis DB2 en la ruta sgm:nomina:{cliente_id}:{periodo}:informe."""
+    from .models import CierreNomina
+    from .models_informe import InformeNomina
+    from .cache_redis import get_cache_system_nomina
+
+    cierre = CierreNomina.objects.get(id=cierre_id)
+    informe = InformeNomina.objects.get(cierre=cierre)
+
+    # Copia defensiva y purga de keys no deseadas
+    payload = dict(informe.datos_cierre or {})
+    payload.pop('keys_order', None)
+    cliente_id = cierre.cliente.id
+    periodo_key = cierre.periodo  # Formato esperado 'YYYY-MM'
+
+    cache_system = get_cache_system_nomina()
+    ttl_seconds = None if (ttl_hours is None or ttl_hours <= 0) else int(ttl_hours) * 3600
+    ok = cache_system.set_informe_nomina(cliente_id, periodo_key, payload, ttl=ttl_seconds)
+
+    redis_key = f"sgm:nomina:{cliente_id}:{periodo_key}:informe"
+    return {
+        'informe_id': informe.id,
+        'cierre_id': cierre_id,
+        'sent_to_redis': bool(ok),
+        'redis_key': redis_key,
+    }

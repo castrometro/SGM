@@ -286,7 +286,7 @@ class CierreNomina(models.Model):
         Esta función:
         1. Verifica que se puede finalizar
         2. Cambia el estado a 'finalizado'
-        3. Genera el informe completo de nómina
+    3. (Opcional) Enviar el informe a Redis si ya existe
         4. Registra metadatos de finalización
         """
         from django.utils import timezone
@@ -304,31 +304,27 @@ class CierreNomina(models.Model):
             self.usuario_finalizacion = usuario
             self.save(update_fields=['estado', 'fecha_finalizacion', 'usuario_finalizacion'])
             
-            # Generar informe comprehensivo
-            print(f"🎯 Generando informe para cierre {self.cliente.nombre} - {self.periodo}")
-            informe = InformeNomina.generar_informe_completo(self)
-            
-            # 🚀 ENVIAR AUTOMÁTICAMENTE A REDIS
-            print(f"🚀 Enviando informe a Redis...")
-            try:
-                resultado_redis = informe.enviar_a_redis(ttl_hours=24)
-                if resultado_redis['success']:
-                    print(f"✅ Informe enviado a Redis: {resultado_redis['clave_redis']}")
-                    print(f"📏 Tamaño en Redis: {resultado_redis['size_kb']:.1f} KB")
-                else:
-                    print(f"⚠️ Error enviando a Redis: {resultado_redis['error']}")
-            except Exception as e:
-                print(f"⚠️ Error al enviar a Redis: {e}")
-            
+            # 🚀 ENVIAR A REDIS si existe informe relacionado
+            informe = getattr(self, 'informe', None)
+            if informe:
+                print(f"🚀 Enviando informe a Redis...")
+                try:
+                    resultado_redis = informe.enviar_a_redis(ttl_hours=24)
+                    if resultado_redis['success']:
+                        print(f"✅ Informe enviado a Redis: {resultado_redis['clave_redis']}")
+                        print(f"📏 Tamaño en Redis: {resultado_redis['size_kb']:.1f} KB")
+                    else:
+                        print(f"⚠️ Error enviando a Redis: {resultado_redis['error']}")
+                except Exception as e:
+                    print(f"⚠️ Error al enviar a Redis: {e}")
+
             print(f"✅ Cierre finalizado exitosamente")
-            print(f"📊 Informe generado con {informe.get_kpi_principal('dotacion_total')} empleados")
-            print(f"💰 Costo empresa total: ${informe.get_kpi_principal('costo_empresa_total'):,.0f}")
             
             return {
                 'success': True,
-                'informe_id': informe.id,
-                'mensaje': 'Cierre finalizado e informe generado exitosamente',
-                'datos_cierre': informe.datos_cierre
+                'informe_id': getattr(informe, 'id', None),
+                'mensaje': 'Cierre finalizado',
+                'datos_cierre': getattr(informe, 'datos_cierre', {})
             }
             
         except Exception as e:

@@ -2,8 +2,9 @@ import streamlit as st
 from layout.sidebar import mostrar_sidebar
 from layout.header import mostrar_header
 from data.loader import cargar_datos
-from data.loader_nomina import cargar_datos_redis, obtener_info_redis_completa
+from data.loader_nomina import cargar_datos_redis, obtener_info_redis_completa, cargar_informe_local
 from views import dashboard_general
+from views import dashboard_informe_compacto
 
 st.set_page_config(layout="wide", page_title="SGM - Dashboard Nómina", page_icon="💼")
 
@@ -45,11 +46,21 @@ if selected_config and selected_config.get('fuente') == 'redis':
     else:
         data = st.session_state.data
 else:
-    # Cargar desde archivos locales (comportamiento original)
-    if 'data' in st.session_state:
+    # Cargar desde archivos locales. Intentar informe compacto primero.
+    if 'data' in st.session_state and st.session_state.get('last_config') == selected_config:
         data = st.session_state.data
     else:
-        data = cargar_datos()
+        archivo_actual = None
+        if selected_config and selected_config.get('fuente') == 'archivos':
+            archivo_actual = selected_config.get('archivo_actual')
+        datos_informe = cargar_informe_local(nombre=archivo_actual)
+        if datos_informe:
+            data = datos_informe
+        else:
+            # fallback legacy a loader original
+            data = cargar_datos(archivo_actual)
+        st.session_state.data = data
+        st.session_state.last_config = selected_config
 
 if not data:
     st.error("🚨 No se pudieron cargar los datos")
@@ -58,7 +69,11 @@ if not data:
 mostrar_header(data)
 
 if selected_tab == "📊 Dashboard General":
-    dashboard_general.mostrar(data)
+    # Si la estructura es la compacta (nueva), usar el nuevo dashboard
+    if isinstance(data, dict) and ('totales_libro' in data or 'totales_movimientos' in data):
+        dashboard_informe_compacto.mostrar(data)
+    else:
+        dashboard_general.mostrar(data)
 elif selected_tab == "📈 Análisis Financiero":
     st.header("📈 Análisis Financiero")
     st.info("🚧 Esta sección está en desarrollo. Mostrará análisis financiero detallado del período seleccionado.")

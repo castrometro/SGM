@@ -1835,25 +1835,28 @@ def consolidar_datos_nomina_task_optimizado(cierre_id):
         chunk_size = calcular_chunk_size_dinamico(empleados_count)
         logger.info(f"📊 Procesando {empleados_count} empleados con chunk size dinámico: {chunk_size}")
         
-        # 4. INICIAR PROCESAMIENTO PARALELO CON CHORD
-        logger.info("🎯 Iniciando procesamiento paralelo con Celery Chord...")
-        
-        # Definir el chord con tareas que pueden ejecutarse realmente en paralelo
-        # NOTA: procesar_conceptos_consolidados_paralelo se ejecutará en consolidar_resultados_finales
-        chord_procesamiento = chord([
+        # 4. INICIAR ORQUESTACIÓN: EMPLEADOS (paralelo interno) → MOVIMIENTOS (secuencial) → CONCEPTOS (final)
+        logger.info("🎯 Iniciando orquestación: empleados en paralelo interno; movimientos luego de forma secuencial; conceptos al final")
+
+        flujo = chain(
+            # Empleados del libro (usa su propio procesamiento batch interno)
             procesar_empleados_libro_paralelo.s(cierre_id, chunk_size),
-            procesar_movimientos_personal_paralelo.s(cierre_id)
-        ])(consolidar_resultados_finales.s(cierre_id))
-        
-        logger.info(f"📊 Chord de consolidación iniciado para cierre {cierre_id}")
-        logger.info(f"🔗 Chord ID: {chord_procesamiento}")
-        logger.info("📝 Nota: Conceptos consolidados se procesarán después de empleados")
-        
+            # Movimientos deben correr después de que existan las nóminas consolidadas
+            procesar_movimientos_personal_paralelo.si(cierre_id),
+            # Finalización: conceptos y cambio de estado
+            finalizar_consolidacion_post_movimientos.si(cierre_id)
+        )
+
+        resultado_flujo = flujo.apply_async()
+
+        logger.info(f"🔗 Cadena de consolidación iniciada para cierre {cierre_id}")
+        logger.info("📝 Nota: Movimientos se ejecutan secuencialmente tras empleados; conceptos en la etapa final")
+
         return {
             'success': True,
             'cierre_id': cierre_id,
-            'chord_id': str(chord_procesamiento),
-            'modo': 'optimizado_paralelo',
+            'chain_id': getattr(resultado_flujo, 'id', None),
+            'modo': 'optimizado_empleados_paralelo_movs_secuencial',
             'timestamp': timezone.now().isoformat()
         }
         
@@ -2451,6 +2454,49 @@ def procesar_conceptos_consolidados_paralelo(cierre_id):
         return {
             'success': False,
             'task': 'procesar_conceptos_consolidados',
+            'error': str(e),
+            'cierre_id': cierre_id
+        }
+
+
+@shared_task
+def finalizar_consolidacion_post_movimientos(cierre_id):
+    """
+    🎯 TAREA FINAL: Ejecuta el procesamiento de conceptos y cierra la consolidación
+    Debe correrse después de empleados y movimientos.
+    """
+    from django.utils import timezone
+    logger = logging.getLogger(__name__)
+    logger.info(f"🎯 [FINAL] Ejecutando conceptos y finalizando consolidación para cierre {cierre_id}")
+
+    try:
+        from .models import CierreNomina
+
+        # Procesar conceptos
+        resultado_conceptos = procesar_conceptos_consolidados_paralelo(cierre_id)
+        conceptos_consolidados = 0
+        if resultado_conceptos.get('success', False):
+            conceptos_consolidados = resultado_conceptos.get('conceptos_consolidados', 0)
+            logger.info(f"✅ [FINAL] Conceptos consolidados: {conceptos_consolidados}")
+        else:
+            logger.error(f"❌ [FINAL] Error procesando conceptos: {resultado_conceptos.get('error', 'Error desconocido')}")
+
+        # Poner estado final del cierre
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        cierre.estado = 'datos_consolidados'
+        cierre.fecha_consolidacion = timezone.now()
+        cierre.save(update_fields=['estado', 'fecha_consolidacion'])
+
+        return {
+            'success': True,
+            'cierre_id': cierre_id,
+            'conceptos_consolidados': conceptos_consolidados,
+            'nuevo_estado': cierre.estado
+        }
+    except Exception as e:
+        logger.error(f"❌ [FINAL] Error finalizando consolidación para cierre {cierre_id}: {e}")
+        return {
+            'success': False,
             'error': str(e),
             'cierre_id': cierre_id
         }

@@ -1624,6 +1624,7 @@ class ConceptoConsolidado(models.Model):
         ('descuento_legal', 'Descuento Legal'),
         ('otro_descuento', 'Otro Descuento'),
         ('aporte_patronal', 'Aporte Patronal'),
+        ('impuesto', 'Impuesto'),
         ('informativo', 'Solo Informativo'),
     ]
     tipo_concepto = models.CharField(max_length=20, choices=TIPO_CONCEPTO_CHOICES, null=True, blank=True)

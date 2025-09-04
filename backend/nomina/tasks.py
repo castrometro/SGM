@@ -2404,7 +2404,9 @@ def procesar_conceptos_consolidados_paralelo(cierre_id):
                     'haberes_imponibles': 'haber_imponible',
                     'haberes_no_imponibles': 'haber_no_imponible',
                     'descuentos_legales': 'descuento_legal',
-                    'otros_descuentos': 'otro_descuento'
+                    'otros_descuentos': 'otro_descuento',
+                    'aportes_patronales': 'aporte_patronal',
+                    'impuestos': 'impuesto'
                 }
                 
                 tipo_concepto = clasificacion_mapping.get(datos['clasificacion'], 'informativo')

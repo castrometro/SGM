@@ -238,6 +238,7 @@ class IncidenciaCierreSerializer(serializers.ModelSerializer):
     empleado_libro_nombre = serializers.SerializerMethodField()
     empleado_novedades_nombre = serializers.SerializerMethodField()
     tipo_incidencia_display = serializers.CharField(source='get_tipo_incidencia_display', read_only=True)
+    tipo_comparacion_display = serializers.CharField(source='get_tipo_comparacion_display', read_only=True)
     estado_display = serializers.CharField(source='get_estado_display', read_only=True)
     prioridad_display = serializers.CharField(source='get_prioridad_display', read_only=True)
     resoluciones = ResolucionIncidenciaSerializer(many=True, read_only=True)
@@ -254,7 +255,9 @@ class IncidenciaCierreSerializer(serializers.ModelSerializer):
             'impacto_monetario', 'asignado_a', 'asignado_a_nombre',
             'fecha_primera_resolucion', 'fecha_ultima_accion',
             'empleado_libro', 'empleado_novedades', 'empleado_libro_nombre',
-            'empleado_novedades_nombre', 'resoluciones', 'tiempo_sin_resolver'
+            'empleado_novedades_nombre', 'resoluciones', 'tiempo_sin_resolver',
+            # Sistema dual
+            'tipo_comparacion', 'tipo_comparacion_display', 'datos_adicionales', 'empleado_nombre'
         ]
         read_only_fields = [
             'fecha_detectada', 'fecha_primera_resolucion', 'fecha_ultima_accion',

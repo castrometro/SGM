@@ -51,6 +51,39 @@ def obtener_resumen_nomina_consolidada(request, cierre_id: int):
         liquido_total=Coalesce(Sum(liquido_expr), zero_dec_2),
     )
 
+    # Traer resumen del período anterior si existe para comparación
+    resumen_anterior = None
+    periodo_anterior = None
+    try:
+        cierre_anterior = (
+            CierreNomina.objects
+            .filter(
+                cliente=cierre.cliente,
+                periodo__lt=cierre.periodo,
+                estado__in=["datos_consolidados", "finalizado"],
+            )
+            .order_by("-periodo")
+            .first()
+        )
+        if cierre_anterior:
+            periodo_anterior = cierre_anterior.periodo
+            qs_prev = NominaConsolidada.objects.filter(cierre_id=cierre_anterior.id)
+            resumen_anterior = qs_prev.aggregate(
+                total_empleados=Count("id"),
+                total_haberes_imponibles=Coalesce(Sum("haberes_imponibles"), zero_dec_2),
+                total_haberes_no_imponibles=Coalesce(Sum("haberes_no_imponibles"), zero_dec_2),
+                total_dctos_legales=Coalesce(Sum("dctos_legales"), zero_dec_2),
+                total_otros_dctos=Coalesce(Sum("otros_dctos"), zero_dec_2),
+                total_impuestos=Coalesce(Sum("impuestos"), zero_dec_2),
+                total_aportes_patronales=Coalesce(Sum("aportes_patronales"), zero_dec_2),
+                horas_extras_cantidad_total=Coalesce(Sum("horas_extras_cantidad"), zero_dec_4),
+                dias_trabajados_total=Coalesce(Sum("dias_trabajados"), zero_int),
+                dias_ausencia_total=Coalesce(Sum("dias_ausencia"), zero_int),
+                liquido_total=Coalesce(Sum(liquido_expr), zero_dec_2),
+            )
+    except Exception:
+        resumen_anterior = None
+
     # Conteos por estado de empleado
     por_estado = {
         item["estado_empleado"]: item["c"]
@@ -66,6 +99,8 @@ def obtener_resumen_nomina_consolidada(request, cierre_id: int):
             "estado_consolidacion": cierre.estado_consolidacion,
         },
         "resumen": agg,
+    "periodo_anterior": periodo_anterior,
+    "resumen_anterior": resumen_anterior,
         "por_estado": por_estado,
     }
 

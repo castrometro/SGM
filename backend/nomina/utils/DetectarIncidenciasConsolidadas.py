@@ -29,6 +29,10 @@ logger = logging.getLogger('nomina.incidencias')
 # 🎯 CONFIGURACIÓN PABLO - CONCEPTOS A ANALIZAR
 # ================================
 
+# Controla si se generan incidencias de suma total por item (concepto específico).
+# Requisito actual: SOLO CATEGORÍAS en la primera tabla → dejar en False.
+GENERAR_INCIDENCIAS_SUMA_TOTAL_POR_CONCEPTO = False
+
 # Conceptos que Pablo quiere analizar en DETALLE (empleado por empleado)
 CONCEPTOS_ANALISIS_DETALLADO = [
     # Preferir códigos internos reales; si llegan alias, se normalizarán abajo
@@ -392,78 +396,151 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
     start_time = time.time()
     incidencias_detectadas = []
     conceptos_analizados = 0
+    categorias_analizadas = 0
     variaciones_sobre_umbral = 0
+    variaciones_categoria_sobre_umbral = 0
     DEBUG_TOP_N = 10
     variaciones_detalle = []
 
-    logger.info(f"📊 {task_id}: Iniciando comparación suma total")
+    logger.info(f"📊 {task_id}: Iniciando comparación suma total (solo categorías)")
 
     try:
-        # 1) Conceptos únicos en ambos cierres
-        conceptos_actuales = ConceptoConsolidado.objects.filter(
-            nomina_consolidada__cierre_id=cierre_actual_id
-        ).values('nombre_concepto', 'tipo_concepto').distinct()
+        # 1) Comparación por concepto (item específico) — desactivada por requisito
+        if GENERAR_INCIDENCIAS_SUMA_TOTAL_POR_CONCEPTO:
+            conceptos_actuales = ConceptoConsolidado.objects.filter(
+                nomina_consolidada__cierre_id=cierre_actual_id
+            ).values('nombre_concepto', 'tipo_concepto').distinct()
 
-        conceptos_anteriores = ConceptoConsolidado.objects.filter(
-            nomina_consolidada__cierre_id=cierre_anterior_id
-        ).values('nombre_concepto', 'tipo_concepto').distinct()
+            conceptos_anteriores = ConceptoConsolidado.objects.filter(
+                nomina_consolidada__cierre_id=cierre_anterior_id
+            ).values('nombre_concepto', 'tipo_concepto').distinct()
 
-        conceptos_unicos = set()
-        for c in conceptos_actuales:
-            conceptos_unicos.add((c['nombre_concepto'], c['tipo_concepto']))
-        for c in conceptos_anteriores:
-            conceptos_unicos.add((c['nombre_concepto'], c['tipo_concepto']))
+            conceptos_unicos = set()
+            for c in conceptos_actuales:
+                conceptos_unicos.add((c['nombre_concepto'], c['tipo_concepto']))
+            for c in conceptos_anteriores:
+                conceptos_unicos.add((c['nombre_concepto'], c['tipo_concepto']))
 
-        logger.info(
-            f"📊 Analizando {len(conceptos_unicos)} conceptos únicos para suma total (umbral={obtener_umbral_suma_total('cualquiera')}%)"
-        )
+            logger.info(
+                f"📊 Analizando {len(conceptos_unicos)} conceptos únicos para suma total (umbral={obtener_umbral_suma_total('cualquiera')}%)"
+            )
 
-        # 2) Comparar sumas por concepto
-        for nombre_concepto, tipo_concepto in conceptos_unicos:
-            suma_actual = ConceptoConsolidado.objects.filter(
+            for nombre_concepto, tipo_concepto in conceptos_unicos:
+                suma_actual = ConceptoConsolidado.objects.filter(
+                    nomina_consolidada__cierre_id=cierre_actual_id,
+                    nombre_concepto=nombre_concepto,
+                    tipo_concepto=tipo_concepto
+                ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
+
+                suma_anterior = ConceptoConsolidado.objects.filter(
+                    nomina_consolidada__cierre_id=cierre_anterior_id,
+                    nombre_concepto=nombre_concepto,
+                    tipo_concepto=tipo_concepto
+                ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
+
+                variacion_pct = calcular_variacion_porcentual(suma_actual, suma_anterior)
+                umbral_suma = obtener_umbral_suma_total(tipo_concepto)
+                conceptos_analizados += 1
+
+                if abs(variacion_pct) >= umbral_suma:
+                    variaciones_sobre_umbral += 1
+                    incidencias_detectadas.append(
+                        crear_incidencia_suma_total(
+                            cierre_actual_id,
+                            nombre_concepto,
+                            tipo_concepto,
+                            suma_actual,
+                            suma_anterior,
+                            variacion_pct,
+                        )
+                    )
+
+                # Mantener detalle para top-N debug
+                try:
+                    variaciones_detalle.append({
+                        'concepto': nombre_concepto,
+                        'tipo_concepto': tipo_concepto,
+                        'suma_actual': float(suma_actual),
+                        'suma_anterior': float(suma_anterior),
+                        'variacion_pct': round(float(variacion_pct), 4),
+                        'umbral_usado': umbral_suma,
+                        'dispara_incidencia': abs(variacion_pct) >= umbral_suma,
+                    })
+                except Exception:
+                    pass
+
+    # 2) Comparar sumas por CATEGORÍA (ej: total haberes imponibles)
+        CATEGORIAS = [
+            'haber_imponible',
+            'haber_no_imponible',
+            'descuento_legal',
+            'otro_descuento',
+            'impuesto',
+            'aporte_patronal',
+        ]
+        cat_tot_act = {}
+        cat_tot_ant = {}
+        for categoria in CATEGORIAS:
+            suma_cat_actual = ConceptoConsolidado.objects.filter(
                 nomina_consolidada__cierre_id=cierre_actual_id,
-                nombre_concepto=nombre_concepto,
-                tipo_concepto=tipo_concepto
+                tipo_concepto=categoria,
             ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
 
-            suma_anterior = ConceptoConsolidado.objects.filter(
+            suma_cat_anterior = ConceptoConsolidado.objects.filter(
                 nomina_consolidada__cierre_id=cierre_anterior_id,
-                nombre_concepto=nombre_concepto,
-                tipo_concepto=tipo_concepto
+                tipo_concepto=categoria,
             ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
 
-            variacion_pct = calcular_variacion_porcentual(suma_actual, suma_anterior)
-            umbral_suma = obtener_umbral_suma_total(tipo_concepto)
-            conceptos_analizados += 1
+            cat_tot_act[categoria] = suma_cat_actual
+            cat_tot_ant[categoria] = suma_cat_anterior
 
-            if abs(variacion_pct) >= umbral_suma:
-                variaciones_sobre_umbral += 1
+            variacion_pct_cat = calcular_variacion_porcentual(suma_cat_actual, suma_cat_anterior)
+            umbral_cat = obtener_umbral_suma_total(categoria)
+            categorias_analizadas += 1
+
+            if abs(variacion_pct_cat) >= umbral_cat:
+                variaciones_categoria_sobre_umbral += 1
                 incidencias_detectadas.append(
-                    crear_incidencia_suma_total(
+                    crear_incidencia_suma_total_categoria(
                         cierre_actual_id,
-                        nombre_concepto,
-                        tipo_concepto,
-                        suma_actual,
-                        suma_anterior,
-                        variacion_pct,
+                        categoria,
+                        suma_cat_actual,
+                        suma_cat_anterior,
+                        variacion_pct_cat,
                     )
                 )
 
-            # Mantener detalle para top-N debug
-            try:
-                variaciones_detalle.append({
-                    'concepto': nombre_concepto,
-                    'tipo_concepto': tipo_concepto,
-                    'suma_actual': float(suma_actual),
-                    'suma_anterior': float(suma_anterior),
-                    'variacion_pct': round(float(variacion_pct), 4),
-                    'umbral_usado': umbral_suma,
-                    'dispara_incidencia': abs(variacion_pct) >= umbral_suma,
-                })
-            except Exception:
-                pass
+        # Variación del TOTAL (Total Líquido = Haberes - Descuentos - Impuestos)
+        hab_imp_act = cat_tot_act.get('haber_imponible', Decimal('0'))
+        hab_no_imp_act = cat_tot_act.get('haber_no_imponible', Decimal('0'))
+        dcto_legal_act = cat_tot_act.get('descuento_legal', Decimal('0'))
+        otro_dcto_act = cat_tot_act.get('otro_descuento', Decimal('0'))
+        impuesto_act = cat_tot_act.get('impuesto', Decimal('0'))
 
-        # 3) No se consideran conceptos nuevos/eliminados a este nivel
+        hab_imp_ant = cat_tot_ant.get('haber_imponible', Decimal('0'))
+        hab_no_imp_ant = cat_tot_ant.get('haber_no_imponible', Decimal('0'))
+        dcto_legal_ant = cat_tot_ant.get('descuento_legal', Decimal('0'))
+        otro_dcto_ant = cat_tot_ant.get('otro_descuento', Decimal('0'))
+        impuesto_ant = cat_tot_ant.get('impuesto', Decimal('0'))
+
+        total_liquido_act = (hab_imp_act + hab_no_imp_act) - (dcto_legal_act + otro_dcto_act + impuesto_act)
+        total_liquido_ant = (hab_imp_ant + hab_no_imp_ant) - (dcto_legal_ant + otro_dcto_ant + impuesto_ant)
+
+        variacion_pct_total = calcular_variacion_porcentual(total_liquido_act, total_liquido_ant)
+        umbral_total = obtener_umbral_suma_total('total_liquido')
+        if abs(variacion_pct_total) >= umbral_total:
+            variaciones_categoria_sobre_umbral += 1
+            incidencias_detectadas.append(
+                crear_incidencia_suma_total_categoria(
+                    cierre_actual_id,
+                    'total_liquido',
+                    total_liquido_act,
+                    total_liquido_ant,
+                    variacion_pct_total,
+                )
+            )
+
+    # 3) No se consideran conceptos nuevos/eliminados a este nivel
         conceptos_solo_actual = set()
         conceptos_solo_anterior = set()
 
@@ -492,7 +569,7 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
         resultado = {
             'task_id': task_id,
             'tipo_comparacion': 'suma_total',
-            'conceptos_analizados': len(conceptos_unicos),
+            'conceptos_analizados': conceptos_analizados,
             'incidencias_detectadas': len(incidencias_detectadas),
             'conceptos_nuevos': len(conceptos_solo_actual),
             'conceptos_eliminados': len(conceptos_solo_anterior),
@@ -500,6 +577,8 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
             'diag': {
                 'comparaciones_realizadas': conceptos_analizados,
                 'variaciones_sobre_umbral': variaciones_sobre_umbral,
+                'categorias_analizadas': categorias_analizadas,
+                'variaciones_categoria_sobre_umbral': variaciones_categoria_sobre_umbral,
                 'umbral_suma_total': obtener_umbral_suma_total('cualquiera'),
             },
         }
@@ -507,6 +586,7 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
         logger.info(
             f"✅ {task_id}: {len(incidencias_detectadas)} incs suma_total | "
             f"comparaciones: {conceptos_analizados}, sobre_umbral: {variaciones_sobre_umbral}, "
+            f"categorias: {categorias_analizadas}, cat_sobre_umbral: {variaciones_categoria_sobre_umbral}, "
             f"nuevos: {len(conceptos_solo_actual)}, eliminados: {len(conceptos_solo_anterior)} | "
             f"t={tiempo_procesamiento:.2f}s, umbral={resultado['diag']['umbral_suma_total']}%"
         )
@@ -834,6 +914,39 @@ def crear_incidencia_suma_total(cierre_id, nombre_concepto, tipo_concepto, suma_
         datos_adicionales={
             'concepto': nombre_concepto,
             'tipo_concepto': tipo_concepto,
+            'suma_actual': float(suma_actual),
+            'suma_anterior': float(suma_anterior),
+            'variacion_porcentual': round(variacion_pct_float, 2),
+            'variacion_absoluta': variacion_abs_float,
+            'tipo_comparacion': 'suma_total'
+        }
+    )
+
+def crear_incidencia_suma_total_categoria(cierre_id, categoria, suma_actual, suma_anterior, variacion_pct):
+    """Crea incidencia para variación en suma total por CATEGORÍA (e.g., total haberes imponibles)."""
+    variacion_pct_float = float(variacion_pct)
+    variacion_abs_float = float(abs(suma_actual - suma_anterior))
+    etiquetas = {
+        'haber_imponible': 'Haberes Imponibles',
+        'haber_no_imponible': 'Haberes No Imponibles',
+        'descuento_legal': 'Descuentos Legales',
+        'otro_descuento': 'Otros Descuentos',
+        'impuesto': 'Impuestos',
+        'aporte_patronal': 'Aportes Patronales',
+    'total_liquido': 'Total Líquido',
+    }
+    nombre_legible = etiquetas.get(categoria, categoria)
+    return IncidenciaCierre(
+        cierre_id=cierre_id,
+        tipo_incidencia='variacion_suma_total_categoria',
+        tipo_comparacion='suma_total',
+        prioridad=determinar_prioridad_suma_total(variacion_pct_float, variacion_abs_float),
+        descripcion=f'Variación {variacion_pct_float:.1f}% en total de {nombre_legible}',
+        impacto_monetario=abs(suma_actual - suma_anterior),
+        datos_adicionales={
+            'categoria': categoria,
+            'concepto': f'Total {nombre_legible}',
+            'tipo_concepto': categoria,
             'suma_actual': float(suma_actual),
             'suma_anterior': float(suma_anterior),
             'variacion_porcentual': round(variacion_pct_float, 2),

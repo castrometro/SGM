@@ -623,42 +623,7 @@ const IncidenciasEncontradasSection = ({
             )}
           </div>
 
-          {/* Información sobre configuración automática de Pablo */}
-          {puedeGenerarIncidencias() && (
-            <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
-                <h3 className="text-lg font-medium text-blue-300">Configuración Automática de Análisis</h3>
-              </div>
-              
-              <div className="space-y-3">
-                <div>
-                  <h4 className="text-sm font-medium text-blue-200 mb-1">Análisis Detallado (Individual + Agregado):</h4>
-                  <div className="text-sm text-blue-100 pl-4">
-                    • Haberes Imponibles<br/>
-                    • Haberes No Imponibles<br/>
-                    • Otros Descuentos
-                  </div>
-                </div>
-                
-                <div>
-                  <h4 className="text-sm font-medium text-blue-200 mb-1">Solo Resumen Agregado:</h4>
-                  <div className="text-sm text-blue-100 pl-4">
-                    • Descuentos Legales<br/>
-                    • Aportes Patronales<br/>
-                    • Información Adicional<br/>
-                    • Impuestos<br/>
-                    • Horas Extras
-                  </div>
-                </div>
-                
-                <div className="text-xs text-blue-300 bg-blue-900/30 p-2 rounded border-l-2 border-blue-400">
-                  <strong>Nota:</strong> Esta configuración fue definida por Pablo para optimizar el análisis 
-                  de incidencias enfocándose en los conceptos más relevantes para el negocio.
-                </div>
-              </div>
-            </div>
-          )}
+          
 
           {/* Vista previa */}
           {mostrandoPreview && vistaPrevia && (
@@ -1112,6 +1077,17 @@ const IncidenciasEncontradasSection = ({
                   <Filter className="w-4 h-4 text-gray-400" />
                   <span className="text-sm text-gray-400">Filtros:</span>
                 </div>
+
+                <select
+                  value={filtros.tipo_comparacion || ''}
+                  onChange={(e) => manejarFiltroChange({ tipo_comparacion: e.target.value })}
+                  className="bg-gray-700 border border-gray-600 rounded px-3 py-1 text-sm text-white"
+                >
+                  <option value="">Todos los análisis</option>
+                  <option value="individual">Individual</option>
+                  <option value="suma_total">Suma Total</option>
+                  <option value="legacy">Legacy</option>
+                </select>
                 
                 <select
                   value={filtros.estado || ''}
@@ -1199,6 +1175,7 @@ const IncidenciasEncontradasSection = ({
               <div className="p-4">
                 <IncidenciasTable
                   cierreId={cierre?.id}
+                  cierre={cierre}
                   filtros={filtros}
                   onIncidenciaSeleccionada={manejarIncidenciaSeleccionada}
                 />

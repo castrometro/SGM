@@ -304,6 +304,8 @@ export const obtenerCierresCliente = async (clienteId) => {
   return res.data;
 }
 
+// === Resumen Nómina Consolidada ===
+
 export const subirLibroRemuneraciones = async (cierreId, archivo) => {
   console.log('🌐 API subirLibroRemuneraciones LLAMADA:', {
     timestamp: new Date().toISOString(),

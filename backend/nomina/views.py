@@ -1926,12 +1926,14 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
             estado = self.request.query_params.get('estado')
             prioridad = self.request.query_params.get('prioridad')
             asignado_a = self.request.query_params.get('asignado_a')
+            tipo_comparacion = self.request.query_params.get('tipo_comparacion')
         else:
             # WSGIRequest de Django
             cierre_id = self.request.GET.get('cierre')
             estado = self.request.GET.get('estado')
             prioridad = self.request.GET.get('prioridad')
             asignado_a = self.request.GET.get('asignado_a')
+            tipo_comparacion = self.request.GET.get('tipo_comparacion')
         
         if cierre_id:
             queryset = queryset.filter(cierre_id=cierre_id)
@@ -1941,6 +1943,8 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(prioridad=prioridad)
         if asignado_a:
             queryset = queryset.filter(asignado_a_id=asignado_a)
+        if tipo_comparacion:
+            queryset = queryset.filter(tipo_comparacion=tipo_comparacion)
             
         return queryset.select_related('cierre', 'empleado_libro', 'empleado_novedades', 'asignado_a')
     

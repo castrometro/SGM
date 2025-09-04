@@ -6,11 +6,10 @@ import Footer from './Footer';
 const Layout = () => {
     const location = useLocation();
     // Rutas que requieren layout a pantalla completa (sin container centrado)
-    const isLibroRemuneraciones = (
-        location.pathname.startsWith('/menu/cierres-nomina/') &&
-        location.pathname.endsWith('/libro-remuneraciones')
-    );
-    const mainClass = isLibroRemuneraciones
+    const fullWidthRe = /\/menu\/cierres-nomina\/[^/]+\/(libro-remuneraciones|movimientos)(\/)??$/;
+    const isLibroRemuneraciones = fullWidthRe.test(location.pathname) && location.pathname.includes('libro-remuneraciones');
+    const isMovimientosMes = fullWidthRe.test(location.pathname) && location.pathname.includes('movimientos');
+    const mainClass = (isLibroRemuneraciones || isMovimientosMes)
         ? 'flex-grow w-full p-0'
         : 'flex-grow container mx-auto p-6';
     return (

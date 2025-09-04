@@ -33,8 +33,8 @@ import LogsActividadNomina from "./components/Gerente/LogsActividadNomina";
 import CacheRedisNomina from "./components/Gerente/CacheRedisNomina";
 
 // Importar nuevos componentes de Nómina
-import LibroRemuneraciones from "./components/LibroRemuneraciones/LibroRemuneraciones";
-import MovimientosMes from "./components/MovimientosMes/MovimientosMes";
+import LibroRemuneracionesPage from "./pages/LibroRemuneraciones";
+import MovimientosMesPage from "./pages/MovimientosMes";
 
 // Importar componentes de Captura Masiva de Gastos
 import CapturaMasivaGastos from "./pages/CapturaMasivaGastos";
@@ -81,8 +81,8 @@ function App() {
           {/* ----------- ÁREA: NÓMINA ------------- */}
           <Route path="nomina/cierres/:cierreId" element={<CierreDetalleNomina />} />
           <Route path="nomina/cierres-v2/:cierreId" element={<CierreDetalleNomina_v2 />} />
-          <Route path="cierres-nomina/:id/libro-remuneraciones" element={<LibroRemuneraciones />} />
-          <Route path="cierres-nomina/:id/movimientos" element={<MovimientosMes />} />          {/* ----------- ÁREA: GESTIÓN DE ANALISTAS ------------- */}
+          <Route path="cierres-nomina/:id/libro-remuneraciones" element={<LibroRemuneracionesPage />} />
+          <Route path="cierres-nomina/:id/movimientos" element={<MovimientosMesPage />} />          {/* ----------- ÁREA: GESTIÓN DE ANALISTAS ------------- */}
           <Route path="analistas" element={<GestionAnalistas />} />
           
           {/* ----------- ÁREA: MIS ANALISTAS (SUPERVISOR) ------------- */}

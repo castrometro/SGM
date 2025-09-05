@@ -5,6 +5,20 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Portal SGM BDO</title>
+     <style>
+       /* Evita resaltado de selección que blanquea el área al pasar el mouse por gráficos */
+    .recharts-wrapper, .recharts-surface, .recharts-tooltip-wrapper, .recharts-layer, .recharts-cartesian-grid, .recharts-text, .recharts-rectangle {
+         -webkit-touch-callout: none;
+         -webkit-user-select: none;
+         -khtml-user-select: none;
+         -moz-user-select: none;
+         -ms-user-select: none;
+         user-select: none;
+       }
+    .recharts-rectangle, .recharts-text { pointer-events: auto; }
+  /* Oculta cualquier rectángulo de fondo que Recharts dibuje detrás de las barras */
+  .recharts-background-rectangle { fill: transparent !important; }
+     </style>
   </head>
   <body>
     <div id="root"></div>

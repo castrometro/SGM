@@ -9,7 +9,8 @@ const Layout = () => {
     const fullWidthRe = /\/menu\/cierres-nomina\/[^/]+\/(libro-remuneraciones|movimientos)(\/)??$/;
     const isLibroRemuneraciones = fullWidthRe.test(location.pathname) && location.pathname.includes('libro-remuneraciones');
     const isMovimientosMes = fullWidthRe.test(location.pathname) && location.pathname.includes('movimientos');
-    const mainClass = (isLibroRemuneraciones || isMovimientosMes)
+    const isGestionCobranza = location.pathname.startsWith('/menu/gestion-cobranza');
+    const mainClass = (isLibroRemuneraciones || isMovimientosMes || isGestionCobranza)
         ? 'flex-grow w-full p-0'
         : 'flex-grow container mx-auto p-6';
     return (

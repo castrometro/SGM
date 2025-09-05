@@ -8,7 +8,6 @@ from collections import defaultdict
 from contabilidad.models import (
     MovimientoContable,
     TipoDocumento,
-    NombreIngles,
     AccountClassification,
     UploadLog,
 )

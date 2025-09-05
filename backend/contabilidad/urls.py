@@ -71,6 +71,7 @@ from .views.incidencias import (
     estadisticas_globales_incidencias,
     estado_cache_incidencias,
     limpiar_cache_incidencias,
+     reconstruir_snapshot_incidencias,
 )
 from .views.excepciones import (
     marcar_cuenta_no_aplica,
@@ -93,6 +94,7 @@ from .views import (
     LibroMayorArchivoViewSet,  # ✅ Nuevo ViewSet
     TipoDocumentoViewSet,
     NombreInglesViewSet,
+     exportar_cuentas_sin_nombre_ingles,
     # ClasificacionCuentaArchivoViewSet,  # OBSOLETO - ELIMINADO EN REDISEÑO
     CuentaContableViewSet,
     AperturaCuentaViewSet,
@@ -153,24 +155,25 @@ from .views import (
 # Ya no necesitamos importar desde views_legacy
 
 router = DefaultRouter()
-router.register(r"cuentas", CuentaContableViewSet)
-router.register(r"tipos-documento", TipoDocumentoViewSet)
-router.register(r"nombres-ingles", NombreInglesViewSet)
+router.register(r"cuentas", CuentaContableViewSet, basename="cuentas")
+router.register(r"tipos-documento", TipoDocumentoViewSet, basename="tipos-documento")
+# Forzamos basename único para evitar colisión con 'cuentacontable'
+router.register(r"nombres-ingles", NombreInglesViewSet, basename="nombres-ingles")
 router.register(r"cierres", CierreContabilidadViewSet, basename="cierres")
 router.register(r"libromayor-archivo", LibroMayorArchivoViewSet, basename="libromayor-archivo")  # ✅ Nuevo endpoint
-router.register(r"aperturas", AperturaCuentaViewSet)
-router.register(r"movimientos", MovimientoContableViewSet)
+router.register(r"aperturas", AperturaCuentaViewSet, basename="aperturas")
+router.register(r"movimientos", MovimientoContableViewSet, basename="movimientos")
 # router.register(r"clasificacion-archivo", ClasificacionCuentaArchivoViewSet, basename="clasificacion-archivo")  # OBSOLETO - ELIMINADO
 router.register(r"activity-logs", TarjetaActivityLogViewSet, basename="activity-logs")
 # ViewSets del archivo original
-router.register(r"clasificaciones-set", ClasificacionSetViewSet)
-router.register(r"clasificaciones-opcion", ClasificacionOptionViewSet)
-router.register(r"clasificaciones", AccountClassificationViewSet)
+router.register(r"clasificaciones-set", ClasificacionSetViewSet, basename="clasificaciones-set")
+router.register(r"clasificaciones-opcion", ClasificacionOptionViewSet, basename="clasificaciones-opcion")
+router.register(r"clasificaciones", AccountClassificationViewSet, basename="clasificaciones")
 router.register(r"clasificacion", ClasificacionViewSet, basename="clasificacion")
-router.register(r"incidencias", IncidenciaViewSet)
-router.register(r"centros-costo", CentroCostoViewSet)
-router.register(r"auxiliares", AuxiliarViewSet)
-router.register(r"analisis-cuentas", AnalisisCuentaCierreViewSet)
+router.register(r"incidencias", IncidenciaViewSet, basename="incidencias")
+router.register(r"centros-costo", CentroCostoViewSet, basename="centros-costo")
+router.register(r"auxiliares", AuxiliarViewSet, basename="auxiliares")
+router.register(r"analisis-cuentas", AnalisisCuentaCierreViewSet, basename="analisis-cuentas")
 router.register(r"nombres-ingles-upload", NombresEnInglesUploadViewSet, basename="nombres-ingles-upload")
 
 urlpatterns = [
@@ -228,6 +231,9 @@ urlpatterns = [
     path("libro-mayor/<int:cierre_id>/historial-incidencias/", 
          obtener_historial_incidencias, 
          name="historial_incidencias"),
+     path("libro-mayor/<int:cierre_id>/incidencias/reconstruir-snapshot/",
+           reconstruir_snapshot_incidencias,
+           name="reconstruir_snapshot_incidencias"),
     
     # Excepciones de validación
     path("libro-mayor/marcar-no-aplica/", marcar_cuenta_no_aplica, name="marcar_cuenta_no_aplica"),
@@ -269,6 +275,7 @@ urlpatterns = [
     path("nombre-ingles/<int:cliente_id>/list/", nombres_ingles_cliente),
     path("nombre-ingles/<int:cliente_id>/registrar-vista/", registrar_vista_nombres_ingles),
     path("nombre-ingles/<int:cliente_id>/eliminar-todos/", eliminar_nombres_ingles),
+     path("nombre-ingles/<int:cliente_id>/exportar-sin-nombre/", exportar_cuentas_sin_nombre_ingles),
     path("nombres-ingles-upload/eliminar-todos/", eliminar_todos_nombres_ingles_upload),
     path("nombres-ingles/", NombresEnInglesView.as_view(), name="nombres_ingles"),
     

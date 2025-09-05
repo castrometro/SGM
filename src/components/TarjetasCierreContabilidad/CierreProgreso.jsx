@@ -35,23 +35,20 @@ const CierreProgreso = ({ cierre, cliente }) => {
       // 3. Nombres en inglés (solo si clasificación está ok y cliente es bilingüe)
       let nombresOk = false;
       if (clasificacionReady && cliente.bilingue) {
-        const nombresIngles = await obtenerEstadoNombresIngles(
-          cliente.id,
-          cierre.id,
-        );
-        // Verificar que tenga cuentas y que todas tengan nombres en inglés
-        nombresOk =
-          nombresIngles &&
-          nombresIngles.estado === "subido" &&
-          nombresIngles.total > 0; // Asegurar que hay cuentas para traducir
+        const estadoNI = await obtenerEstadoNombresIngles(cliente.id);
+        // El backend expone un objeto; considerar ready true si indica listo o si total_pendientes == 0
+        if (estadoNI) {
+          const readyFlag = estadoNI.ready ?? (estadoNI.pendientes === 0);
+          nombresOk = Boolean(readyFlag);
+        }
         setNombresInglesReady(nombresOk);
       } else {
-        setNombresInglesReady(!cliente.bilingue ? true : false); // Si no es bilingüe, este paso se "salta"
+        // Si no es bilingüe, este paso no aplica y se considera listo
+        setNombresInglesReady(!cliente.bilingue);
       }
 
       // 4. Libro Mayor (solo si pasos anteriores están ok)
-      const prerequisitosLibro =
-        clasificacionReady && (cliente.bilingue ? nombresOk : true);
+  const prerequisitosLibro = clasificacionReady && (cliente.bilingue ? nombresOk : true);
       if (prerequisitosLibro) {
         const libros = await obtenerLibrosMayor(cierre.id);
         const libroActual =

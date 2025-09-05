@@ -6,6 +6,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
+from ..models import CuentaContable
 
 from api.models import Cliente
 from ..models import (
@@ -13,8 +14,6 @@ from ..models import (
     TipoDocumento, 
     TipoDocumentoArchivo, 
     UploadLog,
-    NombreIngles,
-    NombreInglesArchivo,
     NombresEnInglesUpload,
     # ClasificacionCuentaArchivo,  # OBSOLETO - ELIMINADO EN REDISEÑO
     AccountClassification,  # NUEVO: Fuente única de verdad para clasificaciones
@@ -412,8 +411,8 @@ def eliminar_nombres_ingles(request, cliente_id):
     except Cliente.DoesNotExist:
         return Response({"error": "Cliente no encontrado"}, status=status.HTTP_404_NOT_FOUND)
 
-    # Contar registros antes de eliminar
-    count = NombreIngles.objects.filter(cliente=cliente).count()
+    # Contar registros antes de eliminar (cuentas con nombre_en)
+    count = CuentaContable.objects.filter(cliente=cliente).exclude(nombre_en__isnull=True).exclude(nombre_en="").count()
     upload_logs_count = UploadLog.objects.filter(
         cliente=cliente, tipo_upload="nombres_ingles"
     ).count()
@@ -422,27 +421,7 @@ def eliminar_nombres_ingles(request, cliente_id):
     archivos_eliminados = []
 
     try:
-        # 1. Buscar y eliminar archivo asociado si existe
-        try:
-            archivo_nombres = NombreInglesArchivo.objects.get(cliente=cliente)
-            archivo_path = (
-                archivo_nombres.archivo.path if archivo_nombres.archivo else None
-            )
-            archivo_name = (
-                archivo_nombres.archivo.name if archivo_nombres.archivo else None
-            )
-
-            # Eliminar archivo físico del sistema
-            if archivo_path and os.path.exists(archivo_path):
-                os.remove(archivo_path)
-                archivos_eliminados.append(archivo_name)
-
-            # Eliminar registro del archivo
-            archivo_nombres.delete()
-
-        except NombreInglesArchivo.DoesNotExist:
-            # No hay archivo que eliminar, continuar normalmente
-            pass
+        # 1. No hay modelo de archivo: solo limpiar archivos temporales registrados en UploadLog
 
         # 2. Limpiar archivos temporales de UploadLogs pero conservar registros para auditoría
         upload_logs = UploadLog.objects.filter(
@@ -467,8 +446,8 @@ def eliminar_nombres_ingles(request, cliente_id):
                 upload_log.resumen = f"Datos procesados eliminados el {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}"
                 upload_log.save()
 
-        # 3. Eliminar registros de NombreIngles
-        NombreIngles.objects.filter(cliente=cliente).delete()
+        # 3. Limpiar nombre_en de todas las cuentas del cliente
+        CuentaContable.objects.filter(cliente=cliente).update(nombre_en=None)
 
         # 4. Buscar cierre para actividad
         periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
@@ -550,7 +529,7 @@ def eliminar_todos_nombres_ingles_upload(request):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
-def estado_nombres_ingles(request, cliente_id):
+def estado_nombres_ingles(request, cliente_id): 
     """
     Obtiene el estado de los nombres en inglés para un cliente
     """
@@ -560,23 +539,22 @@ def estado_nombres_ingles(request, cliente_id):
         return Response({"error": "Cliente no encontrado"}, status=status.HTTP_404_NOT_FOUND)
 
     try:
-        # Contar nombres en inglés
-        nombres_count = NombreIngles.objects.filter(cliente=cliente).count()
-        
-        # Intentar obtener archivo de nombres, pero de forma segura
-        archivo = None
-        archivo_nombre = None
-        try:
-            archivo = NombreInglesArchivo.objects.filter(cliente=cliente).first()
-            archivo_nombre = archivo.archivo.name if archivo and hasattr(archivo, 'archivo') and archivo.archivo else None
-        except Exception:
-            # Si el modelo NombreInglesArchivo no existe o hay error, continuar sin él
-            pass
-        
+        # Contar cuentas con nombre_en asignado
+        nombres_count = (
+            CuentaContable.objects
+            .filter(cliente=cliente)
+            .exclude(nombre_en__isnull=True)
+            .exclude(nombre_en="")
+            .count()
+        )
+
         # Obtener último upload log
-        ultimo_upload = UploadLog.objects.filter(
-            cliente=cliente, tipo_upload="nombres_ingles"
-        ).order_by("-fecha_subida").first()
+        ultimo_upload = (
+            UploadLog.objects
+            .filter(cliente=cliente, tipo_upload="nombres_ingles")
+            .order_by("-fecha_subida")
+            .first()
+        )
 
         # Determinar estado basado en datos disponibles
         if nombres_count > 0:
@@ -586,22 +564,20 @@ def estado_nombres_ingles(request, cliente_id):
         else:
             estado = "pendiente"
 
-        return Response(
-            {
-                "cliente_id": cliente.id,
-                "cliente": cliente.nombre,
-                "estado": estado,
-                "total_nombres": nombres_count,
-                "archivo_activo": bool(archivo),
-                "archivo_nombre": archivo_nombre,
-                "ultimo_upload": {
-                    "id": ultimo_upload.id if ultimo_upload else None,
-                    "fecha": ultimo_upload.fecha_subida if ultimo_upload else None,
-                    "estado": ultimo_upload.estado if ultimo_upload else None,
-                    "registros_procesados": getattr(ultimo_upload, 'registros_procesados', 0) if ultimo_upload else 0,
-                } if ultimo_upload else None,
-            }
-        )
+        return Response({
+            "cliente_id": cliente.id,
+            "cliente": cliente.nombre,
+            "estado": estado,
+            "total_nombres": nombres_count,
+            "archivo_activo": bool(ultimo_upload and ultimo_upload.ruta_archivo),
+            "archivo_nombre": (ultimo_upload.nombre_archivo_original if ultimo_upload else None),
+            "ultimo_upload": {
+                "id": ultimo_upload.id if ultimo_upload else None,
+                "fecha": ultimo_upload.fecha_subida if ultimo_upload else None,
+                "estado": ultimo_upload.estado if ultimo_upload else None,
+                "registros_procesados": getattr(ultimo_upload, 'registros_procesados', 0) if ultimo_upload else 0,
+            } if ultimo_upload else None,
+        })
 
     except Exception as e:
         import logging
@@ -615,7 +591,7 @@ def estado_nombres_ingles(request, cliente_id):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
-def nombres_ingles_cliente(request, cliente_id):
+def nombres_ingles_cliente(request, cliente_id): 
     """
     Lista los nombres en inglés de un cliente específico
     """
@@ -624,16 +600,12 @@ def nombres_ingles_cliente(request, cliente_id):
     except Cliente.DoesNotExist:
         return Response({"error": "Cliente no encontrado"}, status=status.HTTP_404_NOT_FOUND)
 
-    nombres = NombreIngles.objects.filter(cliente=cliente).order_by("cuenta_codigo")
-    
-    data = []
-    for nombre in nombres:
-        data.append({
-            "id": nombre.id,
-            "cuenta_codigo": nombre.cuenta_codigo,
-            "nombre_ingles": nombre.nombre_ingles,
-            "fecha_creacion": nombre.fecha_creacion,
-        })
+    cuentas = CuentaContable.objects.filter(cliente=cliente).order_by("codigo")
+    data = [{
+        "id": c.id,
+        "cuenta_codigo": c.codigo,
+        "nombre_ingles": c.nombre_en or "",
+    } for c in cuentas]
 
     # Solo registrar actividad si es una consulta manual (con parámetro)
     # Las consultas automáticas para conteo no deberían registrar actividad
@@ -666,13 +638,19 @@ def nombres_ingles_cliente(request, cliente_id):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-def registrar_vista_nombres_ingles(request, cliente_id):
+def registrar_vista_nombres_ingles(request, cliente_id): 
     """
     Registra la visualización del modal de nombres en inglés
     """
     try:
         cliente = Cliente.objects.get(id=cliente_id)
-        nombres = NombreIngles.objects.filter(cliente=cliente)
+        total_registros = (
+            CuentaContable.objects
+            .filter(cliente=cliente)
+            .exclude(nombre_en__isnull=True)
+            .exclude(nombre_en="")
+            .count()
+        )
         
         # Obtener cierre_id del query parameter si se proporciona
         cierre_id = request.GET.get('cierre_id')
@@ -704,10 +682,10 @@ def registrar_vista_nombres_ingles(request, cliente_id):
             periodo=periodo_actividad,
             tarjeta="nombres_ingles",
             accion="view_data",
-            descripcion=f"Abrió modal de nombres en inglés ({nombres.count()} registros)",
+            descripcion=f"Abrió modal de nombres en inglés ({total_registros} registros)",
             usuario=request.user,
             detalles={
-                "total_registros": nombres.count(),
+                "total_registros": total_registros,
                 "accion_origen": "modal_manual",
                 "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
                 "cierre_especifico": bool(cierre_id),

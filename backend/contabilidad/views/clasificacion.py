@@ -853,7 +853,7 @@ def obtener_clasificaciones_persistentes_detalladas(request, cliente_id):
         cliente=cliente
     ).select_related(
         'cuenta', 'set_clas', 'opcion'
-    ).order_by('cuenta_codigo')  # Ordenar por código de cuenta
+    ).order_by('cuenta__codigo')  # Ordenar por código de cuenta
     
     data = []
     for clasificacion in clasificaciones:
@@ -877,23 +877,9 @@ def obtener_clasificaciones_persistentes_detalladas(request, cliente_id):
                 'origen': clasificacion.origen,
             })
         else:
-            # Clasificación temporal (sin FK a cuenta)
-            data.append({
-                'id': clasificacion.id,
-                'cuenta_id': None,
-                'cuenta_codigo': clasificacion.cuenta_codigo,
-                'cuenta_nombre': f"[TEMPORAL] Cuenta {clasificacion.cuenta_codigo}",
-                'cuenta_nombre_en': None,
-                'set_clas_id': clasificacion.set_clas.id,
-                'set_nombre': clasificacion.set_clas.nombre,
-                'opcion_id': clasificacion.opcion.id,
-                'opcion_valor': clasificacion.opcion.valor,
-                'opcion_valor_en': clasificacion.opcion.valor_en,
-                'fecha_creacion': clasificacion.fecha_creacion,
-                'fecha_actualizacion': clasificacion.fecha_actualizacion,
-                'es_temporal': True,
-                'origen': clasificacion.origen,
-            })
+            # Desde el rediseño no deberían existir clasificaciones sin cuenta
+            # Omitimos estos registros para evitar errores
+            continue
     
     return Response(data)
 
@@ -1115,6 +1101,15 @@ def crear_registro_clasificacion_completo(request):
         clasificaciones_creadas = []
         errores = []
         
+        # Asegurar cuenta existente (FK obligatoria)
+        if not cuenta_existente:
+            # Crear cuenta mínima si no existe
+            cuenta_existente = CuentaContable.objects.create(
+                cliente=cliente,
+                codigo=numero_cuenta,
+                nombre=cuenta_nombre or numero_cuenta,
+            )
+
         # Procesar cada clasificación
         for set_nombre, opcion_valor in clasificaciones.items():
             try:
@@ -1139,29 +1134,16 @@ def crear_registro_clasificacion_completo(request):
                     continue
                 
                 # Crear la clasificación
-                if cuenta_existente:
-                    # Clasificación con FK a cuenta existente
-                    clasificacion, created = AccountClassification.objects.update_or_create(
-                        cuenta=cuenta_existente,
-                        set_clas=set_clas,
-                        defaults={
-                            'opcion': opcion,
-                            'origen': 'modal_manual',
-                            'cliente': cliente,
-                            'cuenta_codigo': numero_cuenta  # Mantener código para compatibilidad con modal
-                        }
-                    )
-                else:
-                    # Clasificación temporal (sin FK a cuenta)
-                    clasificacion, created = AccountClassification.objects.update_or_create(
-                        cuenta_codigo=numero_cuenta,
-                        set_clas=set_clas,
-                        cliente=cliente,
-                        defaults={
-                            'opcion': opcion,
-                            'origen': 'modal_manual'
-                        }
-                    )
+                # Clasificación con FK a cuenta existente (única vía)
+                clasificacion, created = AccountClassification.objects.update_or_create(
+                    cuenta=cuenta_existente,
+                    set_clas=set_clas,
+                    defaults={
+                        'opcion': opcion,
+                        'origen': 'manual',
+                        'cliente': cliente,
+                    }
+                )
                 
                 clasificaciones_creadas.append({
                     'id': clasificacion.id,
@@ -1263,37 +1245,31 @@ def actualizar_registro_clasificacion_completo(request, cuenta_codigo):
         # Buscar clasificaciones existentes para esta cuenta
         # Buscar tanto por FK como por código temporal
         clasificaciones_existentes = AccountClassification.objects.filter(
-            cliente=cliente
-        ).filter(
-            # Buscar por FK a cuenta O por código temporal
-            Q(cuenta__codigo=cuenta_codigo) | 
-            Q(cuenta_codigo=cuenta_codigo, cuenta__isnull=True)
+            cliente=cliente,
+            cuenta__codigo=cuenta_codigo
         )
         
-        if not clasificaciones_existentes.exists():
-            return Response({
-                "error": f"No se encontraron clasificaciones para la cuenta {cuenta_codigo}"
-            }, status=404)
+    # Si no hay clasificaciones previas, no es error: procederemos a crearlas
         
         # Eliminar clasificaciones existentes
         clasificaciones_eliminadas = clasificaciones_existentes.count()
-        sets_eliminados = list(set(clasificaciones_existentes.values_list('set_clas__nombre', flat=True)))
-        clasificaciones_existentes.delete()
+        sets_eliminados = list(set(clasificaciones_existentes.values_list('set_clas__nombre', flat=True))) if clasificaciones_eliminadas else []
+        if clasificaciones_eliminadas:
+            clasificaciones_existentes.delete()
         
-        # Verificar si la cuenta existe en la BD
+        # Verificar/asegurar cuenta en la BD
         cuenta_existente = None
-        if nuevo_numero_cuenta != cuenta_codigo:
-            # Si cambió el código, buscar la nueva cuenta
-            cuenta_existente = CuentaContable.objects.filter(
-                cliente=cliente, 
-                codigo=nuevo_numero_cuenta
-            ).first()
-        else:
-            # Buscar la cuenta original
-            cuenta_existente = CuentaContable.objects.filter(
-                cliente=cliente, 
-                codigo=cuenta_codigo
-            ).first()
+        codigo_busqueda = nuevo_numero_cuenta or cuenta_codigo
+        cuenta_existente = CuentaContable.objects.filter(
+            cliente=cliente,
+            codigo=codigo_busqueda
+        ).first()
+        if not cuenta_existente:
+            cuenta_existente = CuentaContable.objects.create(
+                cliente=cliente,
+                codigo=codigo_busqueda,
+                nombre=cuenta_nombre or codigo_busqueda,
+            )
         
         # Crear las nuevas clasificaciones
         clasificaciones_creadas = []
@@ -1322,25 +1298,14 @@ def actualizar_registro_clasificacion_completo(request, cuenta_codigo):
                     continue
                 
                 # Crear la nueva clasificación
-                if cuenta_existente:
-                    # Clasificación con FK a cuenta existente
-                    clasificacion = AccountClassification.objects.create(
-                        cuenta=cuenta_existente,
-                        set_clas=set_clas,
-                        opcion=opcion,
-                        origen='modal_edit',
-                        cliente=cliente,
-                        cuenta_codigo=nuevo_numero_cuenta  # Mantener código para compatibilidad con modal
-                    )
-                else:
-                    # Clasificación temporal (sin FK a cuenta)
-                    clasificacion = AccountClassification.objects.create(
-                        cuenta_codigo=nuevo_numero_cuenta,
-                        set_clas=set_clas,
-                        opcion=opcion,
-                        origen='modal_edit',
-                        cliente=cliente
-                    )
+                # Clasificación con FK a cuenta existente (única vía)
+                clasificacion = AccountClassification.objects.create(
+                    cuenta=cuenta_existente,
+                    set_clas=set_clas,
+                    opcion=opcion,
+                    origen='actualizacion',
+                    cliente=cliente,
+                )
                 
                 clasificaciones_creadas.append({
                     'id': clasificacion.id,
@@ -1432,11 +1397,8 @@ def eliminar_registro_clasificacion_completo(request, cuenta_codigo):
         # Buscar clasificaciones existentes para esta cuenta
         # Buscar tanto por FK como por código temporal
         clasificaciones_existentes = AccountClassification.objects.filter(
-            cliente=cliente
-        ).filter(
-            # Buscar por FK a cuenta O por código temporal
-            Q(cuenta__codigo=cuenta_codigo) | 
-            Q(cuenta_codigo=cuenta_codigo, cuenta__isnull=True)
+            cliente=cliente,
+            cuenta__codigo=cuenta_codigo
         )
         
         if not clasificaciones_existentes.exists():

@@ -21,8 +21,6 @@ from .models import (
     CuentaContable,
     LibroMayorArchivo,  # Nuevo modelo para manejar archivos de libro mayor
     MovimientoContable,
-    NombreIngles,
-    NombreInglesArchivo,
     NombresEnInglesUpload,
     ReporteFinanciero,  # ✨ NUEVO: Modelo de reportes financieros
     TarjetaActivityLog,
@@ -478,25 +476,13 @@ class AccountClassificationStatusFilter(admin.SimpleListFilter):
 
     def lookups(self, request, model_admin):
         return [
-            ("con_fk", "Con FK (Sincronizadas)"),
-            ("temporales", "Temporales (Sin FK)"),
-            ("inconsistentes", "Inconsistentes (FK ≠ código)"),
+            ("con_fk", "Con FK"),
         ]
 
     def queryset(self, request, queryset):
         val = self.value()
         if val == "con_fk":
             return queryset.filter(cuenta__isnull=False)
-        elif val == "temporales":
-            return queryset.filter(cuenta__isnull=True)
-        elif val == "inconsistentes":
-            # Clasificaciones donde el FK existe pero el código no coincide
-            from django.db.models import Q, F
-            return queryset.filter(
-                cuenta__isnull=False
-            ).exclude(
-                cuenta__codigo=F('cuenta_codigo')
-            )
         return queryset
 
 
@@ -537,16 +523,14 @@ class AccountClassificationAdmin(admin.ModelAdmin):
         "fecha"
     )
     list_filter = (
-        AccountClassificationStatusFilter,  # Filtro personalizado por estado
-        AccountClassificationClienteFilter,  # Filtro personalizado por cliente
+    AccountClassificationStatusFilter,
+    AccountClassificationClienteFilter,
         "set_clas",  # Filtro por set de clasificación
         "opcion",    # Filtro por opción de clasificación
         "asignado_por",     # Filtro por quien asignó
         "fecha",            # Filtro por fecha
-        ("cuenta", admin.EmptyFieldListFilter),  # Filtro para FK vacío/lleno
     )
     search_fields = (
-        "cuenta_codigo",     # Búsqueda por código temporal
         "cuenta__codigo",    # Búsqueda por código FK
         "cuenta__nombre",    # Búsqueda por nombre FK
         "set_clas__nombre", 
@@ -581,19 +565,10 @@ class AccountClassificationAdmin(admin.ModelAdmin):
     def codigo_cuenta_display(self, obj):
         """Muestra el código de cuenta (FK o temporal)"""
         if obj.cuenta:
-            # Si hay FK, mostrar el código del FK
-            return format_html(
-                '<strong style="color: green;">{}</strong>',
-                obj.cuenta.codigo
-            )
-        else:
-            # Si no hay FK, mostrar el código temporal
-            return format_html(
-                '<span style="color: orange; font-style: italic;">{}</span>',
-                obj.cuenta_codigo or "Sin código"
-            )
+            return format_html('<strong style="color: green;">{}</strong>', obj.cuenta.codigo)
+        return format_html('<span style="color: #888; font-style: italic;">Sin cuenta</span>')
     codigo_cuenta_display.short_description = "Código Cuenta"
-    codigo_cuenta_display.admin_order_field = "cuenta_codigo"
+    codigo_cuenta_display.admin_order_field = "cuenta__codigo"
     
     def nombre_cuenta_display(self, obj):
         """Muestra el nombre de la cuenta si existe FK"""
@@ -628,8 +603,8 @@ class AccountClassificationAdmin(admin.ModelAdmin):
             "description": "Estado actual de la relación con la cuenta contable"
         }),
         ("Clasificación Principal", {
-            "fields": ("cuenta", "cuenta_codigo", "cliente", "set_clas", "opcion"),
-            "description": "Configuración de la clasificación. Use 'cuenta' para FK directo o 'cuenta_codigo' para referencia temporal."
+            "fields": ("cuenta", "cliente", "set_clas", "opcion"),
+            "description": "Configuración de la clasificación."
         }),
         ("Metadatos", {
             "fields": ("asignado_por", "fecha"),
@@ -649,38 +624,12 @@ class AccountClassificationAdmin(admin.ModelAdmin):
         if not obj.asignado_por:
             obj.asignado_por = request.user
         
-        # Si hay cuenta FK pero no hay código temporal, sincronizar
-        if obj.cuenta and not obj.cuenta_codigo:
-            obj.cuenta_codigo = obj.cuenta.codigo
-        
         # Si no hay cliente pero hay cuenta FK, tomar cliente de la cuenta
         if obj.cuenta and not obj.cliente:
             obj.cliente = obj.cuenta.cliente
             
         super().save_model(request, obj, form, change)
-    
-    actions = ['sincronizar_fk_temporal', 'limpiar_temporales_huerfanas']
-    
-    def sincronizar_fk_temporal(self, request, queryset):
-        """Acción para sincronizar FK con códigos temporales"""
-        sincronizadas = 0
-        for clasif in queryset:
-            if clasif.cuenta and clasif.cuenta.codigo != clasif.cuenta_codigo:
-                clasif.cuenta_codigo = clasif.cuenta.codigo
-                clasif.save(update_fields=['cuenta_codigo'])
-                sincronizadas += 1
-        
-        self.message_user(request, f'Sincronizadas {sincronizadas} clasificaciones FK → temporal')
-    sincronizar_fk_temporal.short_description = "Sincronizar FK → código temporal"
-    
-    def limpiar_temporales_huerfanas(self, request, queryset):
-        """Acción para limpiar clasificaciones temporales huérfanas"""
-        temporales = queryset.filter(cuenta__isnull=True)
-        count = temporales.count()
-        temporales.delete()
-        
-        self.message_user(request, f'Eliminadas {count} clasificaciones temporales huérfanas')
-    limpiar_temporales_huerfanas.short_description = "Limpiar temporales huérfanas"
+    actions = []
 
 
 @admin.register(Incidencia)
@@ -867,67 +816,7 @@ class TarjetaActivityLogAdmin(admin.ModelAdmin):
         return request.user.is_superuser  # Solo superusuarios pueden eliminar logs
 
 
-@admin.register(NombreIngles)
-class NombreInglesAdmin(admin.ModelAdmin):
-    list_display = (
-        "cliente",
-        "cuenta_codigo",
-        "nombre_ingles",
-        "cierre_info",
-        "fecha_creacion",
-        "fecha_actualizacion",
-    )
-    list_filter = ("cliente", "cierre", "fecha_creacion")
-    search_fields = ("cuenta_codigo", "nombre_ingles", "cliente__nombre")
-    readonly_fields = ("fecha_creacion", "fecha_actualizacion")
-    ordering = ("cliente", "cuenta_codigo")
-
-    def cierre_info(self, obj):
-        """Información del cierre asociado"""
-        if obj.cierre:
-            return f"{obj.cierre.periodo}"
-        return "General (sin cierre específico)"
-
-    cierre_info.short_description = "Período/Cierre"
-    cierre_info.admin_order_field = "cierre__periodo"
-
-    def get_queryset(self, request):
-        """Optimiza las consultas incluyendo relaciones"""
-        queryset = super().get_queryset(request)
-        return queryset.select_related("cliente", "cierre")
-
-
-@admin.register(NombreInglesArchivo)
-class NombreInglesArchivoAdmin(admin.ModelAdmin):
-    list_display = ("cliente", "archivo_nombre", "fecha_subida", "tamaño_archivo")
-    list_filter = ("cliente", "fecha_subida")
-    search_fields = ("cliente__nombre", "archivo")
-    readonly_fields = ("fecha_subida",)
-    ordering = ("-fecha_subida",)
-
-    def archivo_nombre(self, obj):
-        """Muestra solo el nombre del archivo, no la ruta completa"""
-        import os
-
-        return os.path.basename(obj.archivo.name) if obj.archivo else "-"
-
-    archivo_nombre.short_description = "Archivo"
-
-    def tamaño_archivo(self, obj):
-        """Muestra el tamaño del archivo en formato legible"""
-        if obj.archivo:
-            try:
-                size = obj.archivo.size
-                for unit in ["B", "KB", "MB", "GB"]:
-                    if size < 1024.0:
-                        return f"{size:.1f} {unit}"
-                    size /= 1024.0
-                return f"{size:.1f} TB"
-            except:
-                return "N/A"
-        return "-"
-
-    tamaño_archivo.short_description = "Tamaño"
+    # Eliminado: admins de staging NombreIngles/NombreInglesArchivo
 
     def get_queryset(self, request):
         """Optimiza las consultas incluyendo relaciones"""

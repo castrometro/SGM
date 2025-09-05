@@ -245,9 +245,13 @@ def validar_contenido_clasificacion_excel_task(upload_log_id):
 @shared_task(name='contabilidad.procesar_datos_clasificacion_task')
 def procesar_datos_clasificacion_task(upload_log_id):
     """
-    REDISEÑADO: Procesa Excel y crea directamente AccountClassification.
-    No usa modelo intermedio - es la fuente única de verdad.
-    Soporta tanto clasificaciones con FK (cuentas existentes) como temporales (por código).
+    Procesa el Excel de clasificación y aplica clasificaciones directamente
+    sobre AccountClassification usando siempre FK a CuentaContable.
+
+    Comportamiento:
+    - Si la cuenta existe (cliente+codigo), se clasifica en el set indicado.
+    - Si no existe, se crea CuentaContable mínima (nombre="") y se clasifica.
+    - Crea automáticamente los ClasificacionSet y ClasificacionOption faltantes.
     """
     logger.info(f"Procesando clasificación Excel directamente para upload_log_id: {upload_log_id}")
     
@@ -266,7 +270,7 @@ def procesar_datos_clasificacion_task(upload_log_id):
     try:
         ruta_completa = default_storage.path(upload_log.ruta_archivo)
         
-        # Leer el Excel
+    # Leer el Excel
         df = pd.read_excel(ruta_completa)
         if len(df.columns) < 2:
             raise ValueError("El archivo debe tener al menos 2 columnas")
@@ -274,9 +278,7 @@ def procesar_datos_clasificacion_task(upload_log_id):
         columna_cuentas = df.columns[0]
         sets = list(df.columns[1:])
 
-        # Eliminar clasificaciones anteriores del mismo upload_log
-        AccountClassification.objects.filter(upload_log=upload_log).delete()
-        logger.info(f"Eliminadas clasificaciones anteriores del upload_log {upload_log.id}")
+        # Nota: no eliminamos clasificaciones globales; solo reescribimos por (cuenta,set)
 
         errores = []
         clasificaciones_creadas = 0
@@ -285,7 +287,7 @@ def procesar_datos_clasificacion_task(upload_log_id):
         opciones_creadas = 0
         filas_vacias = 0
 
-        # Procesar cada fila - CREAR DIRECTAMENTE AccountClassification
+        # Procesar cada fila - CREAR/ACTUALIZAR CUENTA Y CLASIFICACIÓN
         for index, row in df.iterrows():
             numero_cuenta = (
                 str(row[columna_cuentas]).strip()
@@ -296,16 +298,14 @@ def procesar_datos_clasificacion_task(upload_log_id):
                 filas_vacias += 1
                 continue
                 
-            # Verificar si la cuenta existe (para FK) o usar código temporal
-            cuenta_obj = None
-            try:
-                cuenta_obj = CuentaContable.objects.get(
-                    cliente=upload_log.cliente, 
-                    codigo=numero_cuenta
-                )
-            except CuentaContable.DoesNotExist:
-                # La cuenta no existe aún, se creará clasificación temporal
-                pass
+            # Verificar o crear la cuenta (FK obligatoria)
+            cuenta_obj, creada_cuenta = CuentaContable.objects.get_or_create(
+                cliente=upload_log.cliente,
+                codigo=numero_cuenta,
+                defaults={
+                    'nombre': ''  # Crear sin nombre si no existe
+                }
+            )
                 
             # Procesar cada clasificación de la fila
             for set_name in sets:
@@ -343,59 +343,20 @@ def procesar_datos_clasificacion_task(upload_log_id):
                         opciones_creadas += 1
                         logger.debug(f"Opción creada: {valor_limpio} en set {set_name}")
                     
-                    # Crear o actualizar AccountClassification
-                    if cuenta_obj:
-                        # Usar FK a cuenta existente
-                        clasificacion_existente = AccountClassification.objects.filter(
-                            cuenta=cuenta_obj,
-                            set_clas=set_clas
-                        ).first()
-                        
-                        if clasificacion_existente:
-                            # Actualizar existente
-                            clasificacion_existente.opcion = opcion
-                            clasificacion_existente.upload_log = upload_log
-                            clasificacion_existente.origen = 'actualizacion'
-                            clasificacion_existente.save()
-                            clasificaciones_actualizadas += 1
-                        else:
-                            # Crear nueva con FK
-                            AccountClassification.objects.create(
-                                cuenta=cuenta_obj,
-                                cliente=upload_log.cliente,
-                                set_clas=set_clas,
-                                opcion=opcion,
-                                upload_log=upload_log,
-                                origen='excel',
-                                cuenta_codigo=numero_cuenta  # Mantener código para compatibilidad con modal
-                            )
-                            clasificaciones_creadas += 1
+                    # Crear o actualizar AccountClassification (FK-only)
+                    obj, creado = AccountClassification.objects.update_or_create(
+                        cuenta=cuenta_obj,
+                        set_clas=set_clas,
+                        defaults={
+                            'opcion': opcion,
+                            'upload_log': upload_log,
+                            'origen': 'excel' if creada_cuenta else 'actualizacion'
+                        }
+                    )
+                    if creado:
+                        clasificaciones_creadas += 1
                     else:
-                        # Crear clasificación temporal (por código)
-                        clasificacion_existente = AccountClassification.objects.filter(
-                            cliente=upload_log.cliente,
-                            cuenta_codigo=numero_cuenta,
-                            set_clas=set_clas
-                        ).first()
-                        
-                        if clasificacion_existente:
-                            # Actualizar temporal existente
-                            clasificacion_existente.opcion = opcion
-                            clasificacion_existente.upload_log = upload_log
-                            clasificacion_existente.origen = 'actualizacion'
-                            clasificacion_existente.save()
-                            clasificaciones_actualizadas += 1
-                        else:
-                            # Crear nueva temporal
-                            AccountClassification.objects.create(
-                                cuenta_codigo=numero_cuenta,
-                                cliente=upload_log.cliente,
-                                set_clas=set_clas,
-                                opcion=opcion,
-                                upload_log=upload_log,
-                                origen='excel'
-                            )
-                            clasificaciones_creadas += 1
+                        clasificaciones_actualizadas += 1
                             
                 except Exception as e:
                     error_msg = f"Fila {index+2}, Set '{set_name}': {str(e)}"
@@ -411,6 +372,7 @@ def procesar_datos_clasificacion_task(upload_log_id):
             "opciones_creadas": opciones_creadas,
             "clasificaciones_creadas": clasificaciones_creadas,
             "clasificaciones_actualizadas": clasificaciones_actualizadas,
+            "registros_guardados": clasificaciones_creadas + clasificaciones_actualizadas,
             "errores_count": len(errores),
             "errores": errores[:10],  # Solo los primeros 10 errores
             "procesamiento_directo": True,  # Indicador del nuevo flujo

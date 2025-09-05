@@ -66,7 +66,7 @@ const ClasificacionBulkCard = ({
 
   // NUEVO: Estados para sincronización de cuentas nuevas
   const [sincronizandoCuentas, setSincronizandoCuentas] = useState(false);
-  const [cuentasNuevasDisponibles, setCuentasNuevasDisponibles] = useState(0);
+  // Eliminado: indicador de cuentas nuevas (las cuentas se crean automáticamente en el libro mayor)
 
   const mostrarNotificacion = (tipo, mensaje) => {
     setNotificacion({ visible: true, tipo, mensaje });
@@ -331,7 +331,7 @@ const ClasificacionBulkCard = ({
     // Solo verificar si hay un cierre activo
     if (!cierreId) {
       console.log('ℹ️ No hay cierre activo, no se verificarán cuentas nuevas');
-      setCuentasNuevasDisponibles(0);
+  // Eliminado: actualización de cuentas nuevas
       return;
     }
     
@@ -381,12 +381,12 @@ const ClasificacionBulkCard = ({
         });
       }
       
-      setCuentasNuevasDisponibles(cuentasSinClasificar.length);
+  // Eliminado: cálculo de cuentas nuevas
       console.log(`🔍 RESULTADO FINAL: ${cuentasSinClasificar.length} cuentas nuevas detectadas`);
       console.log('─'.repeat(80));
     } catch (error) {
       console.error('❌ Error verificando cuentas nuevas:', error);
-      setCuentasNuevasDisponibles(0);
+  // Eliminado: reset de cuentas nuevas
     }
   };
 
@@ -478,7 +478,7 @@ const ClasificacionBulkCard = ({
         );
         
         // Actualizar estado
-        setCuentasNuevasDisponibles(0);
+  // Eliminado: set cuentas nuevas
         
         // Recargar datos
         await cargar();
@@ -605,40 +605,11 @@ const ClasificacionBulkCard = ({
           Gestionar clasificaciones
         </button>
         
-        {/* NUEVO: Botón para sincronizar cuentas nuevas - Solo si hay cierre activo */}
-        {cuentasNuevasDisponibles > 0 && cierreId && (
-          <button
-            onClick={sincronizarCuentasNuevas}
-            disabled={sincronizandoCuentas}
-            className={`px-3 py-1 rounded text-sm font-medium transition flex items-center gap-2 ${
-              sincronizandoCuentas 
-                ? 'bg-gray-600 cursor-not-allowed' 
-                : 'bg-green-600 hover:bg-green-500'
-            } text-white`}
-            title={`Añadir ${cuentasNuevasDisponibles} cuentas nuevas del libro mayor al sistema de clasificaciones`}
-          >
-            <RefreshCw size={16} className={sincronizandoCuentas ? 'animate-spin' : ''} />
-            {sincronizandoCuentas 
-              ? 'Sincronizando...' 
-              : `Añadir ${cuentasNuevasDisponibles} cuentas nuevas`
-            }
-          </button>
-        )}
+        {/* Botón de sincronización eliminado: las cuentas ya se crean automáticamente en el procesamiento */}
       </div>            {/* Información del estado y resumen */}
             <div className="text-xs text-gray-400 italic mt-2">
-              {/* NUEVO: Mostrar información de cuentas nuevas - Solo si hay cierre activo */}
-              {cuentasNuevasDisponibles > 0 && cierreId && (
-                <div className="bg-yellow-900/20 border border-yellow-500/30 rounded p-2 mb-2">
-                  <div className="text-yellow-300 font-medium mb-1">
-                    🆕 {cuentasNuevasDisponibles} cuentas nuevas detectadas
-                  </div>
-                  <div className="text-xs space-y-1">
-                    <div>• Estas cuentas aparecieron en el último procesamiento del libro mayor</div>
-                    <div>• Use el botón "Añadir cuentas nuevas" para incluirlas en el sistema de clasificaciones</div>
-                    <div>• Podrá clasificarlas después usando el botón "Gestionar clasificaciones"</div>
-                  </div>
-                </div>
-              )}
+              {/* Mensaje simplificado: solo informar creación automática */}
+              {/* Eliminado: mensaje de cuentas nuevas (ya innecesario) */}
               
               {estado === "subido" ? (
                 <div className="space-y-2">

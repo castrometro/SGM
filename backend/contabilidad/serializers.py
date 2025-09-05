@@ -15,8 +15,6 @@ from .models import (
     Incidencia,
     LibroMayorArchivo,  # ✅ Nuevo modelo
     MovimientoContable,
-    NombreIngles,
-    NombreInglesArchivo,
     NombresEnInglesUpload,
     TarjetaActivityLog,
     TipoDocumento,
@@ -48,33 +46,6 @@ class TipoDocumentoSerializer(serializers.ModelSerializer):
 
         return data
 
-
-class NombreInglesSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = NombreIngles
-        fields = "__all__"
-
-    def validate(self, data):
-        # Validar que no exista un nombre en inglés con el mismo código de cuenta para el mismo cliente
-        cliente = data.get("cliente")
-        cuenta_codigo = data.get("cuenta_codigo")
-
-        if cliente and cuenta_codigo:
-            # En caso de actualización, excluir el registro actual
-            queryset = NombreIngles.objects.filter(
-                cliente=cliente, cuenta_codigo=cuenta_codigo
-            )
-            if self.instance:
-                queryset = queryset.exclude(pk=self.instance.pk)
-
-            if queryset.exists():
-                raise serializers.ValidationError(
-                    {
-                        "cuenta_codigo": f'Ya existe un nombre en inglés para la cuenta "{cuenta_codigo}" de este cliente.'
-                    }
-                )
-
-        return data
 
 
 class CuentaContableSerializer(serializers.ModelSerializer):

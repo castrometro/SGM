@@ -224,7 +224,7 @@ const ModalClasificacionRegistrosRaw = ({
     });
 
     // Convertir a array y agregar información de cuentas
-    const registrosAdaptados = Object.entries(clasificacionesPorCuenta).map(([codigoCuenta, datos], index) => {
+  const registrosAdaptados = Object.entries(clasificacionesPorCuenta).map(([codigoCuenta, datos], index) => {
       const cuenta = cuentasMap[codigoCuenta];
       
       const registro = {
@@ -247,10 +247,34 @@ const ModalClasificacionRegistrosRaw = ({
       return registro;
     });
 
+    // ➕ Incluir cuentas sin ninguna clasificación (para edición futura)
+    const codigosConClasificaciones = new Set(Object.keys(clasificacionesPorCuenta));
+    let agregadosSinClasificar = 0;
+    cuentasCliente.forEach((cuenta, idx) => {
+      if (!codigosConClasificaciones.has(cuenta.codigo)) {
+        registrosAdaptados.push({
+          id: `account_${cuenta.codigo}_no_class_${idx}`,
+            numero_cuenta: cuenta.codigo,
+            cuenta_nombre: cuenta.nombre || '',
+            cuenta_nombre_en: cuenta.nombre_en || '',
+            clasificaciones: {},
+            cuenta_existe: true,
+            es_temporal: false,
+            upload_log: null,
+            fecha_creacion: null,
+            origen: 'sin_clasificacion',
+            source_type: 'account'
+        });
+        agregadosSinClasificar++;
+      }
+    });
+
     console.log('✅ ADAPTACIÓN COMPLETADA:');
     console.log(`   Input: ${clasificaciones.length} clasificaciones individuales`);
-    console.log(`   Output: ${registrosAdaptados.length} registros agrupados por cuenta`);
-    console.log('🔍 Primer registro final:', registrosAdaptados[0]);
+    console.log(`   Output: ${registrosAdaptados.length} registros (incluye ${agregadosSinClasificar} cuentas sin clasificar)`);
+    if (registrosAdaptados.length>0) {
+      console.log('🔍 Primer registro final:', registrosAdaptados[0]);
+    }
     
     return registrosAdaptados;
   };

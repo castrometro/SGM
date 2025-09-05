@@ -11,8 +11,10 @@ import {
   subirNombresIngles,
   eliminarTodosNombresIngles,
   obtenerEstadoUploadLog,
-  registrarActividadTarjeta
+  registrarActividadTarjeta,
+  descargarCuentasSinNombreInglesFile
 } from "../../api/contabilidad";
+// api config ya no se usa directamente aquí
 
 const NombresEnInglesCard = ({
   clienteId,
@@ -37,6 +39,7 @@ const NombresEnInglesCard = ({
   const [uploadLogId, setUploadLogId] = useState(null);
   const [uploadEstado, setUploadEstado] = useState(null);
   const [uploadProgreso, setUploadProgreso] = useState("");
+  const [descargando, setDescargando] = useState(false);
 
   // Función para mostrar notificaciones
   const mostrarNotificacion = (tipo, mensaje) => {
@@ -292,6 +295,21 @@ const NombresEnInglesCard = ({
     }
   };
 
+  // Descarga autenticada de cuentas sin nombre en inglés
+  const handleDescargarCuentasSinNombre = async () => {
+    if (!clienteId) return;
+    setDescargando(true);
+    try {
+      await descargarCuentasSinNombreInglesFile(clienteId, `cuentas_sin_nombre_ingles_cliente_${clienteId}.xlsx`);
+      mostrarNotificacion('success', '📁 Archivo generado');
+    } catch (err) {
+      console.error('Error descargando cuentas sin nombre en inglés:', err);
+      mostrarNotificacion('error', '❌ Error descargando cuentas sin nombre');
+    } finally {
+      setDescargando(false);
+    }
+  };
+
   return (
     <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${disabled ? "opacity-60 pointer-events-none" : ""}`}>
       <h3 className="text-lg font-semibold mb-3">{numeroPaso}. Nombres en inglés de cuentas</h3>
@@ -312,6 +330,17 @@ const NombresEnInglesCard = ({
         <Download size={16} />
         Descargar Plantilla
       </a>
+
+      {/* Botón para descargar cuentas sin nombre en inglés (autenticado) */}
+      <button
+        type="button"
+        onClick={handleDescargarCuentasSinNombre}
+        disabled={disabled || !clienteId || descargando}
+        className={`flex items-center gap-2 bg-gray-700 hover:bg-indigo-600 px-3 py-1 rounded text-white text-sm font-medium transition shadow w-fit mb-2 ${disabled || !clienteId ? 'opacity-40 cursor-not-allowed' : ''}`}
+      >
+        <Download size={16} />
+        {descargando ? 'Generando…' : 'Cuentas sin nombre (xlsx)'}
+      </button>
 
       {/* Información del formato requerido */}
       <div className="text-xs text-gray-400 bg-gray-900/50 border border-gray-600 rounded p-2 mb-2">

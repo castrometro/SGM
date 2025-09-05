@@ -7,7 +7,6 @@ from django.db import transaction, models
 from contabilidad.models import (
     MovimientoContable, 
     TipoDocumento, 
-    NombreIngles, 
     AccountClassification,
     CuentaContable,
     ExcepcionValidacion

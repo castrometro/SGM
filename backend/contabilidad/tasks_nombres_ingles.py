@@ -22,7 +22,7 @@ from django.core.files.storage import default_storage
 from celery import shared_task, chain
 from celery.utils.log import get_task_logger
 
-from .models import UploadLog, NombreIngles
+from .models import UploadLog, CuentaContable
 
 logger = get_task_logger(__name__)
 
@@ -298,52 +298,60 @@ def procesar_nombres_ingles_raw(self, upload_log_id):
             (df['nombre_ingles'] != '') & 
             (df['nombre_ingles'] != 'nan')
         ]
-        
-        # Eliminar nombres en inglés previos del cliente
-        eliminados = NombreIngles.objects.filter(cliente=upload_log.cliente).count()
-        NombreIngles.objects.filter(cliente=upload_log.cliente).delete()
-        logger.info(f"Eliminados {eliminados} nombres en inglés previos del cliente")
-        
+        # Procesamiento incremental: no se limpian nombres previos globalmente
+        eliminados = 0  # Mantener clave en el resumen por compatibilidad
+        logger.info("Procesamiento incremental: no se limpian nombres previos globalmente")
+
         # Eliminar duplicados manteniendo el último registro de cada código
         df = df.drop_duplicates(subset=['cuenta_codigo'], keep='last')
-        
-        # Procesar cada fila
+
+        # Inicializar contadores
         creados = 0
+        actualizados = 0
         errores = []
-        
+
         for idx, row in df.iterrows():
             try:
-                NombreIngles.objects.update_or_create(
+                cuenta, _ = CuentaContable.objects.get_or_create(
                     cliente=upload_log.cliente,
-                    cuenta_codigo=row['cuenta_codigo'],
-                    defaults={'nombre_ingles': row['nombre_ingles']}
+                    codigo=row['cuenta_codigo'],
+                    defaults={"nombre": ""}
                 )
-                creados += 1
+                prev = (cuenta.nombre_en or "").strip()
+                nuevo = row['nombre_ingles']
+                if prev and prev != nuevo:
+                    cuenta.nombre_en = nuevo
+                    cuenta.save(update_fields=["nombre_en"])
+                    actualizados += 1
+                elif not prev:
+                    cuenta.nombre_en = nuevo
+                    cuenta.save(update_fields=["nombre_en"])
+                    creados += 1
             except Exception as e:
                 error_msg = f"Fila {idx + 3}: {str(e)}"
                 errores.append(error_msg)
                 logger.warning(error_msg)
-        
-        # Actualizar resumen con resultados del procesamiento
+
         resumen_actual = upload_log.resumen or {}
         resumen_actual.update({
             'procesamiento': {
                 'total_filas': len(df),
+                'cuentas_actualizadas': actualizados,
                 'nombres_creados': creados,
                 'nombres_eliminados_previos': eliminados,
                 'errores_count': len(errores),
-                'errores': errores[:10] if errores else []  # Solo primeros 10 errores
+                'errores': errores[:10] if errores else []
             }
         })
-        
+
         upload_log.resumen = resumen_actual
         upload_log.tiempo_procesamiento = timezone.now() - inicio_procesamiento
         upload_log.save(update_fields=["resumen", "tiempo_procesamiento"])
-        
+
         if errores:
             upload_log.errores = "\n".join(errores[:10])
             upload_log.save(update_fields=["errores"])
-        
+
         logger.info(f"Procesamiento completado: {creados} nombres creados, {len(errores)} errores")
         return upload_log_id
         
@@ -396,11 +404,11 @@ def finalizar_procesamiento_nombres_ingles(self, upload_log_id):
         procesamiento = resumen.get('procesamiento', {})
         nombres_creados = procesamiento.get('nombres_creados', 0)
         errores_count = procesamiento.get('errores_count', 0)
-        
-        mensaje_final = f"Procesamiento de nombres en inglés completado: {nombres_creados} nombres procesados"
+
+        mensaje_final = f"Procesamiento de nombres en inglés completado: {nombres_creados} nombres creados"
         if errores_count > 0:
             mensaje_final += f", {errores_count} errores"
-        
+
         logger.info(mensaje_final)
         return mensaje_final
         

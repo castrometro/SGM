@@ -18,6 +18,33 @@ export const descargarPlantillaNombresEnIngles = () => {
   return `${api.defaults.baseURL}/contabilidad/plantilla-nombres-en-ingles/`;
 };
 
+// Nueva: descarga Excel con cuentas sin nombre en inglés para un cliente
+export const descargarCuentasSinNombreIngles = (clienteId) => {
+  return `${api.defaults.baseURL}/contabilidad/nombre-ingles/${clienteId}/exportar-sin-nombre/`;
+};
+
+// Descarga autenticada (XHR) del Excel de cuentas sin nombre en inglés y dispara descarga en el navegador
+export const descargarCuentasSinNombreInglesFile = async (clienteId, nombreArchivo = null) => {
+  const url = `/contabilidad/nombre-ingles/${clienteId}/exportar-sin-nombre/`;
+  const res = await api.get(url, { responseType: 'blob' });
+  const blob = res.data;
+  const contentDisposition = res.headers['content-disposition'];
+  let filename = nombreArchivo || 'cuentas_sin_nombre_ingles.xlsx';
+  if (!nombreArchivo && contentDisposition) {
+    const match = contentDisposition.match(/filename="?([^";]+)"?/i);
+    if (match) filename = match[1];
+  }
+  const blobUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = blobUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(blobUrl);
+  return { filename };
+};
+
 export const descargarPlantillaClasificacionBulk = () => {
   return `${api.defaults.baseURL}/contabilidad/plantilla-clasificacion-bulk/`;
 };
@@ -155,7 +182,8 @@ export const obtenerMovimientosIncompletos = async (cierreId) => {
 };
 
 export const eliminarLibroMayor = async (libroId) => {
-  const res = await api.delete(`/contabilidad/libromayor/${libroId}/`);
+  // Ajuste: endpoint correcto del ViewSet es libromayor-archivo
+  const res = await api.delete(`/contabilidad/libromayor-archivo/${libroId}/`);
   return res.data;
 };
 
@@ -433,10 +461,9 @@ export const obtenerMovimientosCuenta = async (cierreId, cuentaId, params = {}) 
 
 // ==================== NOMBRES EN INGLÉS ====================
 export const obtenerEstadoNombresIngles = async (clienteId) => {
-  const res = await api.get(
-    `/contabilidad/nombre-ingles/${clienteId}/estado/`,
-  );
-  return typeof res.data === "string" ? res.data : res.data.estado;
+  const res = await api.get(`/contabilidad/nombre-ingles/${clienteId}/estado/`);
+  // Devolver siempre el objeto completo para que el caller evalúe ready/estado/total
+  return res.data;
 };
 
 export const obtenerNombresEnIngles = async (clienteId) => {

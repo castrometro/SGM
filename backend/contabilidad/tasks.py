@@ -30,8 +30,6 @@ from contabilidad.models import (
     MovimientoContable,
     AperturaCuenta,
     Incidencia,
-    NombreIngles,
-    NombreInglesArchivo,
     NombresEnInglesUpload,
     TipoDocumento,
     UploadLog,
@@ -183,8 +181,8 @@ def procesar_libro_mayor(upload_log_id):
         }
 
         nombres_ingles_map = {
-            ni.cuenta_codigo: ni.nombre_ingles
-            for ni in NombreIngles.objects.filter(cliente=upload_log.cliente)
+            c.codigo: (c.nombre_en or "")
+            for c in CuentaContable.objects.filter(cliente=upload_log.cliente).exclude(nombre_en__isnull=True)
         }
 
         # Obtener clasificaciones existentes desde AccountClassification (fuente única de verdad)
@@ -621,21 +619,11 @@ def procesar_libro_mayor(upload_log_id):
             ip_address=None,
         )
 
-        # ✨ NUEVO: Mapear clasificaciones RAW después de crear las cuentas
+        # FK-only: Ya no hay clasificaciones temporales por código, se omite mapeo
         try:
-            logger.info(f"Iniciando mapeo de clasificaciones RAW para cliente {upload_log.cliente.id}")
-            from .tasks_cuentas_bulk import mapear_clasificaciones_con_cuentas
-            
-            resultado_mapeo = mapear_clasificaciones_con_cuentas.delay(
-                upload_log.cliente.id, 
-                upload_log.cierre.id if upload_log.cierre else None
-            )
-            
-            logger.info(f"Mapeo de clasificaciones iniciado con task ID: {resultado_mapeo.id}")
-            
-        except Exception as e:
-            logger.warning(f"Error iniciando mapeo de clasificaciones: {str(e)}")
-            # No fallar el procesamiento del libro mayor por esto
+            logger.info("FK-only activo: se omite mapeo de clasificaciones temporales a FK")
+        except Exception:
+            pass
 
         return f"Completado: {movimientos_creados} movimientos"
 

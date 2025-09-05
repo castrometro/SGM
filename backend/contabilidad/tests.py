@@ -11,7 +11,6 @@ from contabilidad.models import (
     AccountClassification,
     UploadLog,
     # ClasificacionCuentaArchivo,  # OBSOLETO - ELIMINADO EN REDISEÑO
-    NombreIngles,
     Incidencia,
     TarjetaActivityLog,
 )
@@ -166,16 +165,16 @@ class ReprocesarIncompletosTests(TestCase):
         # Crear clasificación temporal por código (sin FK a cuenta)
         AccountClassification.objects.create(
             cliente=self.cliente,
-            cuenta_codigo="2001",  # Código temporal
+            cuenta=self.c1,
             set_clas=set1,
             opcion=opt1,
             upload_log=log,
             origen='excel',
         )
 
-        NombreIngles.objects.create(
-            cliente=self.cliente, cuenta_codigo="2001", nombre_ingles="Sales"
-        )
+        # Asignar nombre en inglés directamente en la cuenta (nuevo diseño)
+        self.c1.nombre_en = "Sales"
+        self.c1.save(update_fields=["nombre_en"])
 
         Incidencia.objects.create(
             cierre=self.cierre,

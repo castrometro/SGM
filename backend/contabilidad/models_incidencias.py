@@ -21,6 +21,14 @@ class Incidencia(models.Model):
 
     cierre                 = models.ForeignKey("CierreContabilidad", on_delete=models.CASCADE)
     tipo                   = models.CharField(max_length=20, choices=TIPO_CHOICES)
+    # FK a CuentaContable (nuevo). Se mantiene cuenta_codigo por compatibilidad temporal.
+    cuenta                 = models.ForeignKey(
+        "CuentaContable",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Referencia directa a la cuenta contable",
+    )
     cuenta_codigo          = models.CharField("Código Cuenta", max_length=50, null=True, blank=True)
     tipo_doc_codigo        = models.CharField("Código Doc.",    max_length=20, null=True, blank=True)
     # Campos específicos para incidencias de clasificación

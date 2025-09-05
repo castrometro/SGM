@@ -13,15 +13,23 @@ import logging
 import os
 from django.core.files.storage import default_storage
 
-from ..models import NombreIngles, CuentaContable, MovimientoContable, NombresEnInglesUpload, UploadLog, CierreContabilidad
-from ..serializers import NombreInglesSerializer, NombresEnInglesUploadSerializer
+from ..models import CuentaContable, MovimientoContable, NombresEnInglesUpload, UploadLog, CierreContabilidad
+from ..serializers import NombresEnInglesUploadSerializer, CuentaContableSerializer
 from ..utils.activity_logger import registrar_actividad_tarjeta
 from api.models import Cliente
 
 
 class NombreInglesViewSet(viewsets.ModelViewSet):
-    queryset = NombreIngles.objects.all()
-    serializer_class = NombreInglesSerializer
+    """
+    Reimplementación: opera sobre CuentaContable para gestionar nombre_en.
+    - list: filtra por cliente (opcional)
+    - create (POST): payload {cliente, cuenta_codigo, nombre_ingles}
+      crea/actualiza CuentaContable(nombre_en) y retorna la cuenta
+    - partial_update (PATCH): permite actualizar nombre_en y opcionalmente código
+    - destroy (DELETE): limpia nombre_en (no elimina la cuenta)
+    """
+    queryset = CuentaContable.objects.all()
+    serializer_class = CuentaContableSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
@@ -31,111 +39,126 @@ class NombreInglesViewSet(viewsets.ModelViewSet):
             qs = qs.filter(cliente_id=cliente)
         return qs
 
-    def perform_create(self, serializer):
-        """Registrar actividad al crear nombre en inglés manualmente"""
-        instance = serializer.save()
-        
-        # Registrar actividad
+    def create(self, request, *args, **kwargs):
+        from api.models import Cliente
+        from .helpers import obtener_periodo_actividad_para_cliente
+        from ..utils.activity_logger import registrar_actividad_tarjeta
+
+        cliente_id = request.data.get("cliente")
+        cuenta_codigo = request.data.get("cuenta_codigo")
+        nombre_ingles = request.data.get("nombre_ingles")
+        if not (cliente_id and cuenta_codigo and nombre_ingles):
+            return Response({"error": "cliente, cuenta_codigo y nombre_ingles son requeridos"}, status=400)
+
         try:
-            from api.models import Cliente
-            from ..utils.activity_logger import registrar_actividad_tarjeta
-            from .helpers import obtener_periodo_actividad_para_cliente
-            
-            cliente = Cliente.objects.get(id=instance.cliente_id)
-            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
-            
+            cliente = Cliente.objects.get(id=cliente_id)
+        except Cliente.DoesNotExist:
+            return Response({"error": "Cliente no encontrado"}, status=404)
+
+        cuenta, _ = CuentaContable.objects.get_or_create(
+            cliente=cliente, codigo=cuenta_codigo, defaults={"nombre": ""}
+        )
+        cuenta.nombre_en = nombre_ingles
+        cuenta.save(update_fields=["nombre_en"])
+
+        # Log de actividad (best-effort)
+        try:
+            periodo = obtener_periodo_actividad_para_cliente(cliente)
             registrar_actividad_tarjeta(
-                cliente_id=instance.cliente_id,
-                periodo=periodo_actividad,
+                cliente_id=cliente.id,
+                periodo=periodo,
                 tarjeta="nombres_ingles",
                 accion="manual_create",
-                descripcion=f"Creó nombre en inglés manual: {instance.cuenta_codigo} - {instance.nombre_ingles}",
-                usuario=self.request.user,
-                detalles={
-                    "nombre_ingles_id": instance.id,
-                    "cuenta_codigo": instance.cuenta_codigo,
-                    "nombre_ingles": instance.nombre_ingles,
-                    "accion_origen": "crud_manual",
-                },
+                descripcion=f"Set nombre_en: {cuenta_codigo} -> {nombre_ingles}",
+                usuario=request.user,
+                detalles={"cuenta_id": cuenta.id, "cuenta_codigo": cuenta_codigo, "nombre_ingles": nombre_ingles},
                 resultado="exito",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
+                ip_address=request.META.get("REMOTE_ADDR"),
             )
-        except Exception as e:
-            # No fallar la creación si hay error en el logging
+        except Exception:
             pass
 
-    def perform_update(self, serializer):
-        """Registrar actividad al actualizar nombre en inglés"""
-        instance = serializer.save()
-        
-        # Registrar actividad
-        try:
-            from api.models import Cliente
-            from ..utils.activity_logger import registrar_actividad_tarjeta
-            from .helpers import obtener_periodo_actividad_para_cliente
-            
-            cliente = Cliente.objects.get(id=instance.cliente_id)
-            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
-            
-            registrar_actividad_tarjeta(
-                cliente_id=instance.cliente_id,
-                periodo=periodo_actividad,
-                tarjeta="nombres_ingles",
-                accion="manual_edit",
-                descripcion=f"Editó nombre en inglés: {instance.cuenta_codigo} - {instance.nombre_ingles}",
-                usuario=self.request.user,
-                detalles={
-                    "nombre_ingles_id": instance.id,
-                    "cuenta_codigo": instance.cuenta_codigo,
-                    "nombre_ingles": instance.nombre_ingles,
-                    "accion_origen": "crud_manual",
-                },
-                resultado="exito",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
-            )
-        except Exception as e:
-            # No fallar la actualización si hay error en el logging
-            pass
+        serializer = self.get_serializer(cuenta)
+        return Response(serializer.data, status=201)
 
-    def perform_destroy(self, instance):
-        """Registrar actividad al eliminar nombre en inglés"""
-        # Capturar datos antes de eliminar
-        cliente_id = instance.cliente_id
-        cuenta_codigo = instance.cuenta_codigo
-        nombre_ingles = instance.nombre_ingles
-        nombre_ingles_id = instance.id
-        
-        # Eliminar el registro
-        instance.delete()
-        
-        # Registrar actividad
-        try:
-            from api.models import Cliente
-            from ..utils.activity_logger import registrar_actividad_tarjeta
-            from .helpers import obtener_periodo_actividad_para_cliente
-            
-            cliente = Cliente.objects.get(id=cliente_id)
-            periodo_actividad = obtener_periodo_actividad_para_cliente(cliente)
-            
-            registrar_actividad_tarjeta(
-                cliente_id=cliente_id,
-                periodo=periodo_actividad,
-                tarjeta="nombres_ingles",
-                accion="manual_delete",
-                descripcion=f"Eliminó nombre en inglés: {cuenta_codigo} - {nombre_ingles}",
-                usuario=self.request.user,
-                detalles={
-                    "nombre_ingles_id": nombre_ingles_id,
-                    "cuenta_codigo": cuenta_codigo,
-                    "nombre_ingles": nombre_ingles,
-                    "accion_origen": "crud_manual",
-                },
-                resultado="exito",
-                ip_address=self.request.META.get("REMOTE_ADDR"),
+    def partial_update(self, request, *args, **kwargs):
+        instancia = self.get_object()  # CuentaContable
+        cuenta_codigo = request.data.get("cuenta_codigo")
+        nombre_ingles = request.data.get("nombre_ingles")
+
+        # Actualizar nombre_en
+        if nombre_ingles is not None:
+            instancia.nombre_en = nombre_ingles
+
+        # Si cambia el código, buscar/crear otra cuenta y actualizar allí
+        if cuenta_codigo and cuenta_codigo != instancia.codigo:
+            # mover el nombre a otra cuenta (crear si no existe)
+            otra, _ = CuentaContable.objects.get_or_create(
+                cliente=instancia.cliente, codigo=cuenta_codigo, defaults={"nombre": instancia.nombre}
             )
-        except Exception as e:
-            # Ya se eliminó, no se puede deshacer
-            pass
+            otra.nombre_en = instancia.nombre_en
+            otra.save(update_fields=["nombre_en"])
+            instancia = otra
+        else:
+            instancia.save(update_fields=["nombre_en"])  # persistir cambios
+
+        serializer = self.get_serializer(instancia)
+        return Response(serializer.data)
+
+    def destroy(self, request, *args, **kwargs):
+        instancia = self.get_object()  # CuentaContable
+        instancia.nombre_en = ""
+        instancia.save(update_fields=["nombre_en"])
+        return Response(status=204)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def exportar_cuentas_sin_nombre_ingles(request, cliente_id):
+    """
+    Exporta un Excel con las cuentas del cliente que no tienen nombre en inglés.
+    Formato requerido por el frontend:
+    Columnas:
+      - "Numero de cuenta"
+      - "Nombre en ingles"
+    Sólo se incluye el código de cuenta en la primera columna; la segunda queda vacía
+    para que el usuario la complete y pueda re-subirla por el flujo estándar.
+    """
+    try:
+        cliente = Cliente.objects.get(id=cliente_id)
+    except Cliente.DoesNotExist:
+        return Response({"error": "Cliente no encontrado"}, status=404)
+
+    cuentas = (
+        CuentaContable.objects
+        .filter(cliente=cliente)
+        .filter(Q(nombre_en__isnull=True) | Q(nombre_en=""))
+        .order_by("codigo")
+    )
+
+    # Crear workbook
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Cuentas"
+    ws.append(["Numero de cuenta", "Nombre en ingles"])  # Encabezados EXACTOS
+
+    for c in cuentas:
+        ws.append([c.codigo, ""])  # Segunda columna vacía para completar
+
+    # Ajuste mínimo de ancho (opcional, no crítico)
+    try:
+        ws.column_dimensions['A'].width = 25
+        ws.column_dimensions['B'].width = 50
+    except Exception:
+        pass
+
+    nombre_archivo = f"cuentas_sin_nombre_ingles_cliente_{cliente_id}.xlsx"
+    response = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response["Content-Disposition"] = f'attachment; filename="{nombre_archivo}"'
+    wb.save(response)
+    return response
 
 
 @api_view(["POST"])
@@ -155,7 +178,7 @@ def cargar_nombres_ingles(request):
     import logging
     from django.core.files.storage import default_storage
     from api.models import Cliente
-    from ..models import UploadLog, CierreContabilidad, NombreIngles
+    from ..models import UploadLog, CierreContabilidad
     from ..tasks_nombres_ingles import crear_chain_nombres_ingles
     from ..utils.activity_logger import registrar_actividad_tarjeta
     from datetime import date
@@ -181,48 +204,10 @@ def cargar_nombres_ingles(request):
     except Cliente.DoesNotExist:
         return Response({"error": "Cliente no encontrado"}, status=404)
 
-    # Verificar si ya existen datos para este cliente
-    nombres_existentes = NombreIngles.objects.filter(cliente=cliente).count()
-    if nombres_existentes > 0:
-        # Buscar cierre para actividad
-        cierre_para_actividad = None
-        try:
-            cierre_para_actividad = CierreContabilidad.objects.filter(
-                cliente=cliente,
-                estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
-            ).order_by('-fecha_creacion').first()
-        except Exception:
-            pass
-        
-        periodo_actividad = cierre_para_actividad.periodo if cierre_para_actividad else date.today().strftime("%Y-%m")
-        
-        # Registrar intento de upload con datos existentes
-        registrar_actividad_tarjeta(
-            cliente_id=cliente_id,
-            periodo=periodo_actividad,
-            tarjeta="nombres_ingles",
-            accion="upload_excel",
-            descripcion=f"Upload rechazado: ya existen {nombres_existentes} nombres en inglés",
-            usuario=request.user,
-            detalles={
-                "nombre_archivo": archivo.name,
-                "nombres_existentes": nombres_existentes,
-                "razon_rechazo": "datos_existentes",
-                "cierre_id": cierre_para_actividad.id if cierre_para_actividad else None,
-            },
-            resultado="error",
-            ip_address=request.META.get("REMOTE_ADDR"),
-        )
-
-        return Response(
-            {
-                "error": "Ya existen nombres en inglés para este cliente",
-                "mensaje": "Debe eliminar todos los registros existentes antes de subir un nuevo archivo",
-                "nombres_existentes": nombres_existentes,
-                "accion_requerida": "Usar 'Eliminar todos' primero",
-            },
-            status=409,
-        )
+    # Ya no bloqueamos subidas si existen nombres previos: procesamiento incremental
+    nombres_existentes = CuentaContable.objects.filter(
+        cliente=cliente
+    ).exclude(Q(nombre_en__isnull=True) | Q(nombre_en="")).count()
 
     # Validar nombre de archivo utilizando UploadLog
     es_valido, msg = UploadLog.validar_nombre_archivo(

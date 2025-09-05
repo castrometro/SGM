@@ -383,10 +383,10 @@ def _obtener_incidencias_consolidadas_libro_mayor_logic(request, cierre_id):
         # Agrupar incidencias por tipo y consolidar
         from collections import defaultdict
         incidencias_agrupadas = defaultdict(list)
-        
+
         total_incidencias_en_tabla = incidencias_query.count()
         logger.info(f"📊 Encontradas {total_incidencias_en_tabla} incidencias en tabla Incidencia para cierre {cierre_id}")
-        
+
         for inc in incidencias_query:
             incidencias_agrupadas[inc.tipo].append(inc)
         
@@ -404,6 +404,25 @@ def _obtener_incidencias_consolidadas_libro_mayor_logic(request, cierre_id):
         logger.info(f"📊 Excepciones activas para cliente {cierre.cliente.id}: "
                    f"{excepciones_validacion_count} validación, {excepciones_clasificacion_count} clasificación")
         
+        # Preparar mapa de nombres de cuentas para enriquecer salida (evitar N+1)
+        from ..models import CuentaContable
+        codigos_unicos = list(
+            incidencias_query.exclude(cuenta_codigo__isnull=True)
+            .exclude(cuenta_codigo="")
+            .values_list('cuenta_codigo', flat=True)
+            .distinct()
+        )
+        nombres_por_codigo = {}
+        if codigos_unicos:
+            for codigo, nombre, nombre_en in CuentaContable.objects.filter(
+                cliente=cierre.cliente,
+                codigo__in=codigos_unicos
+            ).values_list('codigo', 'nombre', 'nombre_en'):
+                nombres_por_codigo[codigo] = {
+                    'nombre': nombre or '',
+                    'nombre_en': nombre_en or ''
+                }
+
         # Transformar a formato consolidado
         incidencias_consolidadas = []
         
@@ -472,9 +491,12 @@ def _obtener_incidencias_consolidadas_libro_mayor_logic(request, cierre_id):
                     tiene_excepcion_general = inc.cuenta_codigo in excepciones_validacion
                     tiene_excepcion_clasificacion = inc.cuenta_codigo in excepciones_clasificacion
                     
+                    info_nombre = nombres_por_codigo.get(inc.cuenta_codigo, {'nombre': '', 'nombre_en': ''})
                     elemento = {
                         'tipo': 'cuenta',
                         'codigo': inc.cuenta_codigo,
+                        'nombre': info_nombre['nombre'],
+                        'nombre_en': info_nombre['nombre_en'],
                         'descripcion': inc.descripcion or '',
                         'tiene_excepcion': tiene_excepcion_general or tiene_excepcion_clasificacion
                     }
@@ -501,6 +523,8 @@ def _obtener_incidencias_consolidadas_libro_mayor_logic(request, cierre_id):
                         'tipo': 'documento',
                         'codigo': inc.tipo_doc_codigo,
                         'descripcion': inc.descripcion or '',
+                        'nombre': '',
+                        'nombre_en': '',
                         'tiene_excepcion': False  # Los documentos no tienen excepciones por ahora
                     })
             
@@ -529,6 +553,14 @@ def _obtener_incidencias_consolidadas_libro_mayor_logic(request, cierre_id):
                     'primeros_ejemplos': [
                         {
                             'cuenta_codigo': inc.cuenta_codigo,
+                                'cuenta_nombre': (
+                                    nombres_por_codigo.get(inc.cuenta_codigo, {}).get('nombre', '')
+                                    if inc.cuenta_codigo else ''
+                                ),
+                                'cuenta_nombre_en': (
+                                    nombres_por_codigo.get(inc.cuenta_codigo, {}).get('nombre_en', '')
+                                    if inc.cuenta_codigo else ''
+                                ),
                             'tipo_doc_codigo': inc.tipo_doc_codigo,
                             'descripcion': inc.descripcion
                         } for inc in incidencias_list[:5]
@@ -622,11 +654,33 @@ def obtener_cuentas_detalle_incidencia_libro_mayor(request, cierre_id, tipo_inci
             })
         
         # Preparar lista de cuentas afectadas
+        # Construir mapa de nombres para los códigos involucrados
+        from ..models import CuentaContable
+        codigos_unicos = list(
+            incidencias_query.exclude(cuenta_codigo__isnull=True)
+            .exclude(cuenta_codigo="")
+            .values_list('cuenta_codigo', flat=True)
+            .distinct()
+        )
+        nombres_por_codigo = {}
+        if codigos_unicos:
+            for codigo, nombre, nombre_en in CuentaContable.objects.filter(
+                cliente=cierre.cliente,
+                codigo__in=codigos_unicos
+            ).values_list('codigo', 'nombre', 'nombre_en'):
+                nombres_por_codigo[codigo] = {
+                    'nombre': nombre or '',
+                    'nombre_en': nombre_en or ''
+                }
+
         cuentas_detalle = []
         
         for inc in incidencias_query:
+            info_nombre = nombres_por_codigo.get(inc.cuenta_codigo, {'nombre': '', 'nombre_en': ''})
             cuenta_info = {
                 'codigo': inc.cuenta_codigo or inc.tipo_doc_codigo or 'N/A',
+                'nombre': info_nombre['nombre'],
+                'nombre_en': info_nombre['nombre_en'],
                 'descripcion': inc.descripcion or '',
                 'fecha_deteccion': inc.fecha_creacion,
                 'tiene_excepcion': False,  # Por ahora siempre False
@@ -656,6 +710,38 @@ def obtener_cuentas_detalle_incidencia_libro_mayor(request, cierre_id, tipo_inci
         return Response({
             'error': f'Error obteniendo detalle de cuentas: {str(e)}'
         }, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def reconstruir_snapshot_incidencias(request, cierre_id):
+    """
+    Regenera el snapshot de incidencias (UploadLog.resumen['incidencias_snapshot'])
+    para la última iteración de libro mayor del cierre dado y retorna los datos optimizados.
+    """
+    try:
+        # Validar que el cierre existe
+        cierre = get_object_or_404(CierreContabilidad, id=cierre_id)
+
+        # Encontrar último upload de libro mayor completado
+        ultimo_upload = UploadLog.objects.filter(
+            cierre_id=cierre_id,
+            tipo_upload='libro_mayor',
+            estado='completado'
+        ).order_by('-iteracion').first()
+
+        if not ultimo_upload:
+            return Response({'detail': 'No hay uploads de libro mayor completados para este cierre.'}, status=404)
+
+        # Regenerar snapshot en caliente
+        from .tasks_libro_mayor import crear_snapshot_incidencias_consolidadas
+        crear_snapshot_incidencias_consolidadas(ultimo_upload.id)
+
+        # Responder con los datos optimizados usando el snapshot actualizado
+        return obtener_incidencias_consolidadas_optimizado(request, cierre_id)
+
+    except Exception as e:
+        return Response({'error': f'Error reconstruyendo snapshot: {str(e)}'}, status=500)
 
 
 @api_view(['GET'])

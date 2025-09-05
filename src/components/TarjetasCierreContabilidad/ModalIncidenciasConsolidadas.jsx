@@ -150,16 +150,26 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
     // Siempre recargar datos del servidor al expandir para obtener estado actual de excepciones
     const incidencia = incidenciasActuales[index];
     if (incidencia && incidencia.elementos_afectados) {
-      // Transform elementos_afectados to match the expected structure
+      // Transform elementos_afectados aprovechando nombres entregados por backend
       const cuentasFromSnapshot = incidencia.elementos_afectados.map(elemento => {
+        const nombreCuenta = elemento.nombre || elemento.cuenta_nombre || elemento.descripcion || `Cuenta ${elemento.codigo}`;
+        const nombreIngles = elemento.nombre_en || elemento.cuenta_nombre_en || '';
         return {
           codigo: elemento.codigo,
-          nombre: elemento.descripcion || `Cuenta ${elemento.codigo}`,
+            // Preferir nombre explícito, luego descripción, luego fallback sintético
+          nombre: nombreCuenta,
+          nombre_en: nombreIngles,
           descripcion: elemento.descripcion,
-          set_nombre: elemento.set_nombre || null, // Nombre del set específico faltante
-          set_id: elemento.set_id || null, // ID del set específico faltante
-          tiene_excepcion: elemento.tiene_excepcion || false // Usar valor del servidor si está disponible
+          set_nombre: elemento.set_nombre || null,
+          set_id: elemento.set_id || null,
+          tiene_excepcion: elemento.tiene_excepcion || false
         };
+      }).sort((a,b) => {
+        // Ordenar por nombre (o código si no hay nombre) para mejor UX
+        const an = (a.nombre || '').toLowerCase();
+        const bn = (b.nombre || '').toLowerCase();
+        if (an && bn && an !== bn) return an.localeCompare(bn);
+        return (a.codigo || '').localeCompare(b.codigo || '');
       });
       
       setCuentasDetalle(prev => ({
@@ -582,8 +592,11 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
                               >
                                 <div className="flex-1">
                                   <div className="flex items-center gap-2">
-                                    <div className="text-white font-medium">
-                                      {cuenta.codigo} - {cuenta.nombre}
+                                    <div className="text-white font-medium flex items-center gap-2 flex-wrap">
+                                      <span>{cuenta.codigo} - {cuenta.nombre}</span>
+                                      {cuenta.nombre_en && (
+                                        <span className="text-xs text-gray-400 italic">({cuenta.nombre_en})</span>
+                                      )}
                                     </div>
                                     {tieneExcepcionLocal && (
                                       <span className="bg-orange-600 text-white text-xs px-2 py-1 rounded">

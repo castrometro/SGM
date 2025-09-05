@@ -4,7 +4,8 @@ import {
   subirNombresInglesUpload,
   obtenerNombresInglesUploads,
   obtenerNombresInglesRegistros,
-  descargarPlantillaNombresEnIngles
+  descargarPlantillaNombresEnIngles,
+  descargarCuentasSinNombreInglesFile
 } from "../../api/contabilidad";
 import EstadoBadge from "../EstadoBadge";
 import HistorialCambios from '../HistorialCambios';
@@ -164,6 +165,24 @@ const NombresEnInglesCard = ({
         <Download size={16} />
         Descargar Plantilla
       </a>
+
+      {/* Botón para descargar cuentas sin nombre en inglés (autenticado) */}
+      <button
+        type="button"
+        onClick={async () => {
+          if (!clienteId) return;
+          try {
+            await descargarCuentasSinNombreInglesFile(clienteId, `cuentas_sin_nombre_ingles_cliente_${clienteId}.xlsx`);
+          } catch (e) {
+            console.error('Error descargando cuentas sin nombre:', e);
+          }
+        }}
+        className={`flex items-center gap-2 bg-gray-700 hover:bg-indigo-600 px-3 py-1 rounded text-white text-sm font-medium transition shadow w-fit mb-2 ${disabled || !clienteId ? 'opacity-40 cursor-not-allowed' : ''}`}
+        disabled={disabled || !clienteId}
+      >
+        <Download size={16} />
+        Cuentas sin nombre (xlsx)
+      </button>
 
       {/* Subida de archivo */}
       <div className="flex gap-3 items-center">

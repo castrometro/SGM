@@ -474,9 +474,10 @@ const LibroMayorCard = ({
                     ⚠ {incidenciasDetectadas} incidencias detectadas
                   </div>
                 )}
-                {uploadEstado.resumen?.procesamiento?.cuentas_nuevas > 0 && (
+                {/* Mostrar cuentas nuevas desde el modelo de cierre (persistido), no desde el log de procesamiento */}
+                {uploadEstado?.cierre?.cuentas_nuevas > 0 && (
                   <div className="text-blue-300">
-                    🆕 {uploadEstado.resumen.procesamiento.cuentas_nuevas} cuentas nuevas creadas
+                    🆕 Se crearon {uploadEstado.cierre.cuentas_nuevas} cuentas nuevas
                   </div>
                 )}
               </div>

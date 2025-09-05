@@ -76,7 +76,8 @@ class CuentaContable(models.Model):
         unique_together = ("cliente", "codigo")
 
     def __str__(self):
-        return f"{self.codigo} - {self.nombre} - {self.nombre_en}"
+        nombre_en_display = self.nombre_en or ""
+        return f"{self.codigo} - {self.nombre} - {nombre_en_display}"
 
 
 class TipoDocumentoArchivo(models.Model):
@@ -118,32 +119,9 @@ class ClasificacionArchivo(models.Model):
 # ======================================
 
 
-class NombreIngles(models.Model):
-    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
-    cierre = models.ForeignKey(
-        "CierreContabilidad", on_delete=models.CASCADE, null=True, blank=True
-    )
-    cuenta_codigo = models.CharField(max_length=20)
-    nombre_ingles = models.CharField(max_length=255)
-    fecha_creacion = models.DateTimeField(auto_now_add=True)
-    fecha_actualizacion = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        unique_together = [("cliente", "cuenta_codigo")]
-        db_table = "contabilidad_nombreingles"
-        ordering = ["cuenta_codigo"]
-
-    def __str__(self):
-        return f"{self.cuenta_codigo} - {self.nombre_ingles}"
-
-
-class NombreInglesArchivo(models.Model):
-    cliente = models.OneToOneField(Cliente, on_delete=models.CASCADE)
-    archivo = models.FileField(upload_to="nombres_ingles/")
-    fecha_subida = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"Archivo Nombres en Inglés - {self.cliente.nombre}"
+# Eliminado: Modelo de staging de nombres en inglés
+## Anteriormente existían `NombreIngles` y `NombreInglesArchivo`.
+## Los nombres en inglés ahora se guardan directamente en CuentaContable.nombre_en.
 
 
 # ======================================
@@ -517,46 +495,39 @@ class ClasificacionOption(models.Model):
         return bool(self.valor_en and self.descripcion_en)
 
     def __str__(self):
-        return f"{self.valor} - {self.descripcion}"
+        # Mostrar solo el valor para evitar repeticiones cuando la descripción
+        # es autogenerada (p.ej. "Opción creada automáticamente: <valor>")
+        return f"{self.valor}"
 
 
 class AccountClassification(models.Model):
     """
-    Fuente única de verdad para clasificaciones de cuentas.
-    Soporta tanto cuentas existentes (FK) como temporales (código).
+    Clasificación de cuentas basada exclusivamente en FK a CuentaContable.
+    Sin modo temporal por código; la cuenta es la única fuente de verdad.
     """
     id = models.BigAutoField(primary_key=True)
-    
-    # FK a cuenta existente (preferido para performance)
+
+    # FK obligatoria a la cuenta
     cuenta = models.ForeignKey(
-        CuentaContable, 
-        on_delete=models.CASCADE, 
-        related_name="clasificaciones",
-        null=True,
-        blank=True,
-        help_text="Cuenta existente (preferido). Si es NULL, usar cuenta_codigo"
-    )
-    
-    # Código de cuenta temporal (para cuentas que aún no existen)
-    cuenta_codigo = models.CharField(
-        max_length=50,
-        blank=True,
-        help_text="Código de cuenta temporal cuando la cuenta no existe aún"
-    )
-    
-    # Cliente (necesario para búsquedas cuando no hay FK a cuenta)
-    cliente = models.ForeignKey(
-        Cliente, 
+        CuentaContable,
         on_delete=models.CASCADE,
-        help_text="Cliente de la clasificación (extraído de cuenta o explícito)"
+        related_name="clasificaciones",
+        help_text="Cuenta a la que pertenece esta clasificación (obligatoria)"
     )
-    
+
+    # Cliente (redundante, se sincroniza desde cuenta para facilitar filtros rápidos)
+    cliente = models.ForeignKey(
+        Cliente,
+        on_delete=models.CASCADE,
+        help_text="Se sincroniza automáticamente con cuenta.cliente"
+    )
+
     set_clas = models.ForeignKey(ClasificacionSet, on_delete=models.CASCADE)
     opcion = models.ForeignKey(ClasificacionOption, on_delete=models.CASCADE)
     asignado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True)
     fecha = models.DateTimeField(auto_now_add=True)
-    
-    # NUEVOS CAMPOS DE LOGGING Y AUDITORÍA
+
+    # Logging y auditoría
     upload_log = models.ForeignKey(
         "UploadLog",
         on_delete=models.SET_NULL,
@@ -567,105 +538,56 @@ class AccountClassification(models.Model):
     origen = models.CharField(
         max_length=20,
         choices=[
-            ('excel', 'Archivo Excel'),
-            ('manual', 'Creación Manual'),
-            ('migracion', 'Migración de Temporal a FK'),
-            ('actualizacion', 'Actualización desde Excel')
+            ("excel", "Archivo Excel"),
+            ("manual", "Creación Manual"),
+            ("actualizacion", "Actualización desde Excel"),
         ],
-        default='manual'
+        default="manual",
     )
     fecha_creacion = models.DateTimeField(
-        auto_now_add=True,
-        help_text="Fecha de creación del registro"
+        auto_now_add=True, help_text="Fecha de creación del registro"
     )
     fecha_actualizacion = models.DateTimeField(
-        auto_now=True,
-        help_text="Última actualización del registro"
+        auto_now=True, help_text="Última actualización del registro"
     )
 
     class Meta:
-        # Constraints únicos considerando tanto FK como código
         constraints = [
             models.UniqueConstraint(
-                fields=['cuenta', 'set_clas'],
-                condition=models.Q(cuenta__isnull=False),
-                name='unique_cuenta_set_when_cuenta_exists'
-            ),
-            models.UniqueConstraint(
-                fields=['cliente', 'cuenta_codigo', 'set_clas'], 
-                condition=models.Q(cuenta__isnull=True),
-                name='unique_cliente_codigo_set_when_cuenta_null'
-            ),
-            models.CheckConstraint(
-                check=(
-                    # CORREGIDO: Permitir cuenta_codigo en clasificaciones con FK para compatibilidad con modal
-                    models.Q(cuenta__isnull=False) |  # Con FK puede tener cualquier cuenta_codigo
-                    models.Q(cuenta__isnull=True, cuenta_codigo__isnull=False)  # Sin FK debe tener cuenta_codigo
-                ),
-                name='cuenta_or_codigo_required'
+                fields=["cuenta", "set_clas"],
+                name="unique_cuenta_set",
             )
         ]
         indexes = [
-            models.Index(fields=['cliente', 'cuenta_codigo']),
-            models.Index(fields=['cuenta']),
-            models.Index(fields=['upload_log']),
-            models.Index(fields=['origen', 'fecha_creacion']),
+            models.Index(fields=["cliente", "set_clas"]),
+            models.Index(fields=["cuenta"]),
+            models.Index(fields=["upload_log"]),
+            models.Index(fields=["origen", "fecha_creacion"]),
         ]
 
     def __str__(self):
-        if self.cuenta:
-            return f"{self.cuenta.codigo} - {self.set_clas.nombre} - {self.opcion.valor}"
-        else:
-            return f"[TEMP] {self.cuenta_codigo} - {self.set_clas.nombre} - {self.opcion.valor}"
+        return f"{self.cuenta.codigo} - {self.set_clas.nombre} - {self.opcion.valor}"
 
+    # Compatibilidad mínima con código existente
     @property
     def es_temporal(self):
-        """True si es una clasificación temporal (sin FK a cuenta)"""
-        return self.cuenta is None
+        """Siempre False: ya no existen clasificaciones temporales."""
+        return False
 
     @property
     def codigo_cuenta_display(self):
-        """Devuelve el código de cuenta, ya sea de FK o temporal"""
-        if self.cuenta:
-            return self.cuenta.codigo
-        return self.cuenta_codigo
+        """Siempre devuelve el código de la cuenta asociada."""
+        return self.cuenta.codigo
 
     def migrar_a_cuenta_definitiva(self, cuenta_nueva):
-        """
-        Migra una clasificación temporal a una cuenta definitiva.
-        
-        Args:
-            cuenta_nueva (CuentaContable): La cuenta recién creada
-            
-        Returns:
-            bool: True si se migró correctamente
-        """
-        if not self.es_temporal:
-            return False  # Ya no es temporal
-            
-        if cuenta_nueva.codigo != self.cuenta_codigo:
-            return False  # Códigos no coinciden
-            
-        # Verificar si ya existe una clasificación definitiva para este set
-        existe_definitiva = AccountClassification.objects.filter(
-            cuenta=cuenta_nueva,
-            set_clas=self.set_clas
-        ).exists()
-        
-        if existe_definitiva:
-            # Ya existe una definitiva, eliminar la temporal
-            self.delete()
-            return True
-            
-        # Migrar de temporal a definitiva
-        self.cuenta = cuenta_nueva
-        # CORREGIDO: MANTENER cuenta_codigo para compatibilidad con modal CRUD
-        # self.cuenta_codigo = ''  # NO limpiar código temporal
-        self.cliente = cuenta_nueva.cliente
-        self.origen = 'migracion'
-        self.save()
-        
-        return True
+        """Sin efecto: no hay temporales; se conserva por compatibilidad."""
+        return False
+
+    def save(self, *args, **kwargs):
+        # Sincronizar cliente desde la cuenta para mantener consistencia
+        if self.cuenta_id:
+            self.cliente_id = self.cuenta.cliente_id
+        super().save(*args, **kwargs)
 
 class AnalisisCuentaCierre(models.Model):
     cierre = models.ForeignKey(

@@ -5,6 +5,20 @@ import re
 import hashlib
 import datetime
 from decimal import Decimal
+from .models import (
+    UploadLog,
+    LibroMayorArchivo,
+    CuentaContable,
+    AperturaCuenta,
+    MovimientoContable,
+    TipoDocumento,
+    ClasificacionSet,
+    ClasificacionOption,
+    AccountClassification,
+    Incidencia,
+    ExcepcionValidacion,
+    ExcepcionClasificacionSet,
+)
 
 from django.utils import timezone
 from django.core.cache import cache
@@ -23,7 +37,6 @@ from .models import (
     AperturaCuenta,
     MovimientoContable,
     TipoDocumento,
-    NombreIngles,
     # ClasificacionCuentaArchivo,  # OBSOLETO - ELIMINADO EN REDISEÑO
     ClasificacionSet,
     ClasificacionOption,
@@ -209,19 +222,15 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
     
     # Mapas de datos principales
     nombres_ingles_map = {
-        ni.cuenta_codigo: ni.nombre_ingles
-        for ni in NombreIngles.objects.filter(cliente=cliente)
+        c.codigo: c.nombre_en
+        for c in CuentaContable.objects.filter(cliente=cliente).exclude(Q(nombre_en__isnull=True) | Q(nombre_en=""))
     }
     # Mapeo de clasificaciones existentes (fuente única de verdad)
     # Usamos AccountClassification en lugar del modelo obsoleto
     clasif_existentes = {}
     for ac in AccountClassification.objects.filter(cliente=cliente).select_related('set_clas', 'opcion', 'cuenta'):
-        codigo_cuenta = ac.codigo_cuenta_display  # Usa el property que maneja tanto FK como código temporal
-        # Log si es temporal o tiene FK
-        if ac.cuenta:
-            logger.debug(f"Clasificación con FK: cuenta {ac.cuenta.codigo} - set {ac.set_clas.nombre}")
-        else:
-            logger.debug(f"Clasificación temporal: cuenta_codigo {ac.cuenta_codigo} - set {ac.set_clas.nombre}")
+        codigo_cuenta = ac.codigo_cuenta_display  # Ahora siempre proviene de la FK cuenta
+        logger.debug(f"Clasificación: cuenta {ac.cuenta.codigo} - set {ac.set_clas.nombre}")
         if codigo_cuenta not in clasif_existentes:
             clasif_existentes[codigo_cuenta] = {}
         clasif_existentes[codigo_cuenta][ac.set_clas.nombre] = ac.opcion.valor
@@ -587,18 +596,6 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                         cuenta.save(update_fields=["nombre_en"])
                         logger.debug(f"Aplicado nombre en inglés a cuenta {cuenta.codigo}: {ing}")
                     
-                    # NUEVO: Sincronizar clasificaciones temporales con la cuenta real
-                    if created:
-                        clasificaciones_temporales = AccountClassification.objects.filter(
-                            cliente=cliente,
-                            cuenta_codigo=code,
-                            cuenta__isnull=True  # Solo las temporales
-                        )
-                        
-                        if clasificaciones_temporales.exists():
-                            num_actualizadas = clasificaciones_temporales.update(cuenta=cuenta)
-                            logger.info(f"✅ Sincronizadas {num_actualizadas} clasificaciones temporales con FK para cuenta {code}")
-                    
                     # Aplicar clasificaciones existentes (si las hay)
                     clasificaciones_cuenta = clasif_existentes.get(cuenta.codigo)
                     if clasificaciones_cuenta:
@@ -617,10 +614,9 @@ def procesar_libro_mayor_raw(upload_log_id, user_correo_bdo):
                                 logger.debug(f"Cuenta {cuenta.codigo} tiene excepción para set {set_clas.nombre} - NO se validará clasificación")
                                 continue  # Esta cuenta está excenta de clasificación en este set
                             
-                            # CORREGIDO: Verificar clasificación usando TANTO FK como código temporal
-                            # Esto incluye clasificaciones que pueden estar guardadas solo con cuenta_codigo (temporales)
+                            # Verificar clasificación usando únicamente FK (nuevo diseño sin temporales)
                             tiene_clasificacion = AccountClassification.objects.filter(
-                                Q(cuenta=cuenta) | Q(cuenta_codigo=cuenta.codigo, cuenta__isnull=True),
+                                cuenta=cuenta,
                                 cliente=cliente,
                                 set_clas=set_clas
                             ).exists()
@@ -932,12 +928,24 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
     incidencias_pendientes = upload_log.resumen.get("incidencias_pendientes", [])
     logger.info(f"Creando {len(incidencias_pendientes)} incidencias detectadas durante el procesamiento")
     
+    # Pre-resolver cuentas por código para el cliente de este cierre
+    codigos_incidencias = {
+        inc.get('cuenta_codigo')
+        for inc in incidencias_pendientes
+        if inc.get('cuenta_codigo')
+    }
+    cuentas_map = {}
+    if codigos_incidencias:
+        for c in CuentaContable.objects.filter(cliente=cierre.cliente, codigo__in=codigos_incidencias).only('id', 'codigo'):
+            cuentas_map[c.codigo] = c.id
+
     incidencias_a_crear = []
     for inc_data in incidencias_pendientes:
         if inc_data['tipo'] == 'cuenta_no_clasificada':
             incidencias_a_crear.append(Incidencia(
                 cierre=cierre,
                 tipo=Incidencia.CUENTA_NO_CLASIFICADA,
+                cuenta_id=cuentas_map.get(inc_data['cuenta_codigo']),
                 cuenta_codigo=inc_data['cuenta_codigo'],
                 set_clasificacion_id=inc_data.get('set_clasificacion_id'),
                 set_clasificacion_nombre=inc_data.get('set_clasificacion_nombre'),
@@ -948,6 +956,7 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
             incidencias_a_crear.append(Incidencia(
                 cierre=cierre,
                 tipo=Incidencia.CUENTA_SIN_INGLES,
+                cuenta_id=cuentas_map.get(inc_data['cuenta_codigo']),
                 cuenta_codigo=inc_data['cuenta_codigo'],
                 descripcion=inc_data['descripcion'],
                 creada_por=creador
@@ -956,6 +965,7 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
             incidencias_a_crear.append(Incidencia(
                 cierre=cierre,
                 tipo=Incidencia.DOC_NULL,
+                cuenta_id=cuentas_map.get(inc_data['cuenta_codigo']),
                 cuenta_codigo=inc_data['cuenta_codigo'],
                 descripcion=inc_data['descripcion'],
                 creada_por=creador
@@ -964,6 +974,7 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
             incidencias_a_crear.append(Incidencia(
                 cierre=cierre,
                 tipo=Incidencia.DOC_NO_RECONOCIDO,
+                cuenta_id=cuentas_map.get(inc_data['cuenta_codigo']),
                 cuenta_codigo=inc_data['cuenta_codigo'],
                 tipo_doc_codigo=inc_data.get('tipo_doc_codigo'),
                 descripcion=inc_data['descripcion'],
@@ -977,50 +988,7 @@ def generar_incidencias_libro_mayor(upload_log_id, user_correo_bdo):
         logger.info(f"Creadas {len(incidencias_a_crear)} incidencias desde procesamiento en línea")
 
     # 2. SINCRONIZACIÓN FINAL DE CLASIFICACIONES TEMPORALES
-    try:
-        # Verificar si hay clasificaciones temporales (sin FK a cuenta) para el cliente
-        clasificaciones_temporales = AccountClassification.objects.filter(
-            cliente=upload_log.cliente,
-            cuenta__isnull=True  # Solo las temporales sin FK
-        )
-        
-        temporales_count = clasificaciones_temporales.count()
-        logger.info(f"Clasificaciones temporales disponibles para sincronización: {temporales_count} para cliente {upload_log.cliente.id}")
-        
-        if temporales_count > 0:
-            # Sincronizar clasificaciones temporales con cuentas reales creadas
-            sincronizadas = 0
-            for clasif_temp in clasificaciones_temporales:
-                try:
-                    cuenta_real = CuentaContable.objects.get(
-                        cliente=upload_log.cliente,
-                        codigo=clasif_temp.cuenta_codigo
-                    )
-                    clasif_temp.cuenta = cuenta_real
-                    clasif_temp.save(update_fields=['cuenta'])
-                    sincronizadas += 1
-                except CuentaContable.DoesNotExist:
-                    logger.debug(f"Cuenta {clasif_temp.cuenta_codigo} no existe aún para sincronizar clasificación temporal")
-                    continue
-            
-            logger.info(f"Sincronizadas {sincronizadas} clasificaciones temporales con cuentas reales")
-        
-        # Verificar estado final de clasificaciones
-        total_clasificaciones = AccountClassification.objects.filter(
-            cliente=upload_log.cliente
-        ).count()
-        clasificaciones_con_fk = AccountClassification.objects.filter(
-            cliente=upload_log.cliente,
-            cuenta__isnull=False
-        ).count()
-        clasificaciones_temporales_restantes = total_clasificaciones - clasificaciones_con_fk
-        
-        logger.info(f"Estado final de clasificaciones - Total: {total_clasificaciones}, Con FK: {clasificaciones_con_fk}, Temporales: {clasificaciones_temporales_restantes}")
-        
-    except Exception as e:
-        logger.error(f"Error en sincronización final de clasificaciones: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
+    # Eliminado en nuevo diseño: ya no existen clasificaciones temporales por código
 
     # 3. VALIDAR BALANCE ESF/ERI - Usar totales ya calculados
     try:
@@ -1261,36 +1229,17 @@ def finalizar_procesamiento_libro_mayor(upload_log_id, user_correo_bdo):
 
 def aplicar_nombres_ingles_pendientes(upload_log_id):
     """
-    Aplica nombres en inglés pendientes a las cuentas que no los tienen
+    Ya no se usa staging de nombres; los nombres en inglés se escriben
+    directamente en CuentaContable.nombre_en durante el procesamiento del Excel.
+    Esta función queda como no-op por compatibilidad.
     """
     try:
         upload_log = UploadLog.objects.get(id=upload_log_id)
-        cliente = upload_log.cliente
-        
-        # Obtener mapeo de nombres en inglés
-        nombres_ingles_map = {
-            ni.cuenta_codigo: ni.nombre_ingles
-            for ni in NombreIngles.objects.filter(cliente=cliente)
-        }
-        
-        # Aplicar a cuentas que no tienen nombre en inglés
-        cuentas_sin_nombre = CuentaContable.objects.filter(
-            cliente=cliente,
-            nombre_en__isnull=True,
-            codigo__in=nombres_ingles_map.keys()
+        logger.info(
+            f"aplicar_nombres_ingles_pendientes: no-op (cliente {upload_log.cliente_id})"
         )
-        
-        aplicados = 0
-        for cuenta in cuentas_sin_nombre:
-            if cuenta.codigo in nombres_ingles_map:
-                cuenta.nombre_en = nombres_ingles_map[cuenta.codigo]
-                cuenta.save(update_fields=['nombre_en'])
-                aplicados += 1
-        
-        logger.info(f"Aplicados {aplicados} nombres en inglés pendientes para cliente {cliente.id}")
-        
     except Exception as e:
-        logger.error(f"Error en aplicar_nombres_ingles_pendientes: {e}")
+        logger.error(f"Error en aplicar_nombres_ingles_pendientes (no-op): {e}")
 
 @shared_task
 def mapear_clasificaciones_desde_sets_existentes(cliente_id, cierre_id=None):
@@ -1440,6 +1389,25 @@ def crear_snapshot_incidencias_consolidadas(upload_log_id):
             
             # Transformar a formato consolidado
             incidencias_consolidadas = []
+
+            # Preparar mapa de nombres de cuentas para enriquecer salida
+            from .models import CuentaContable
+            codigos_unicos = list(
+                incidencias_query.exclude(cuenta_codigo__isnull=True)
+                .exclude(cuenta_codigo="")
+                .values_list('cuenta_codigo', flat=True)
+                .distinct()
+            )
+            nombres_por_codigo = {}
+            if codigos_unicos:
+                for codigo, nombre, nombre_en in CuentaContable.objects.filter(
+                    cliente=upload_log.cliente,
+                    codigo__in=codigos_unicos
+                ).values_list('codigo', 'nombre', 'nombre_en'):
+                    nombres_por_codigo[codigo] = {
+                        'nombre': nombre or '',
+                        'nombre_en': nombre_en or ''
+                    }
             
             for tipo, incidencias_list in incidencias_agrupadas.items():
                 cantidad_total = len(incidencias_list)
@@ -1477,9 +1445,12 @@ def crear_snapshot_incidencias_consolidadas(upload_log_id):
                 elementos_afectados = []
                 for inc in incidencias_list:  # Incluir TODOS los elementos
                     if inc.cuenta_codigo:
+                        info_nombre = nombres_por_codigo.get(inc.cuenta_codigo, {'nombre': '', 'nombre_en': ''})
                         elemento = {
                             'tipo': 'cuenta',
                             'codigo': inc.cuenta_codigo,
+                            'nombre': info_nombre['nombre'],
+                            'nombre_en': info_nombre['nombre_en'],
                             'descripcion': inc.descripcion or ''
                         }
                         # Para incidencias de clasificación, incluir información del set específico
@@ -1492,7 +1463,9 @@ def crear_snapshot_incidencias_consolidadas(upload_log_id):
                         elementos_afectados.append({
                             'tipo': 'documento',
                             'codigo': inc.tipo_doc_codigo,
-                            'descripcion': inc.descripcion or ''
+                            'descripcion': inc.descripcion or '',
+                            'nombre': '',  # documentos no tienen nombre de cuenta
+                            'nombre_en': ''
                         })
                 
                 incidencias_consolidadas.append({
@@ -1512,6 +1485,14 @@ def crear_snapshot_incidencias_consolidadas(upload_log_id):
                         'primeros_ejemplos': [
                             {
                                 'cuenta_codigo': inc.cuenta_codigo,
+                                'cuenta_nombre': (
+                                    nombres_por_codigo.get(inc.cuenta_codigo, {}).get('nombre', '')
+                                    if inc.cuenta_codigo else ''
+                                ),
+                                'cuenta_nombre_en': (
+                                    nombres_por_codigo.get(inc.cuenta_codigo, {}).get('nombre_en', '')
+                                    if inc.cuenta_codigo else ''
+                                ),
                                 'tipo_doc_codigo': inc.tipo_doc_codigo,
                                 'descripcion': inc.descripcion
                             } for inc in incidencias_list[:5]

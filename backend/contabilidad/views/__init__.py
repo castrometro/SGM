@@ -3,7 +3,13 @@ from .libro_mayor import (
     cargar_libro_mayor,
 )
 from .tipo_documento import TipoDocumentoViewSet, cargar_tipo_documento
-from .nombres_ingles import NombreInglesViewSet, cargar_nombres_ingles, NombresEnInglesView, NombresEnInglesUploadViewSet
+from .nombres_ingles import (
+    NombreInglesViewSet,
+    cargar_nombres_ingles,
+    NombresEnInglesView,
+    NombresEnInglesUploadViewSet,
+    exportar_cuentas_sin_nombre_ingles,
+)
 from .clasificacion import (
     # ClasificacionCuentaArchivoViewSet,  # OBSOLETO - ELIMINADO EN REDISEÑO
     cargar_clasificacion_bulk,
@@ -85,6 +91,7 @@ __all__ = [
     "cargar_nombres_ingles",
     "NombresEnInglesView",
     "NombresEnInglesUploadViewSet",
+    "exportar_cuentas_sin_nombre_ingles",
     # "ClasificacionCuentaArchivoViewSet",  # OBSOLETO - ELIMINADO EN REDISEÑO
     "cargar_clasificacion_bulk",
     "ClasificacionViewSet",

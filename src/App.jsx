@@ -41,6 +41,7 @@ import CapturaMasivaGastos from "./pages/CapturaMasivaGastos";
 
 // Importar componente V2 de Nómina
 import CierreDetalleNomina_v2 from "./components/CierreNomina_v2/pages/CierreDetalleNomina_v2";
+import GestionCobranza from "./pages/GestionCobranza";
 
 function App() {
   return (
@@ -110,6 +111,9 @@ function App() {
           
           {/* ----------- ÁREA: HERRAMIENTAS ------------- */}
           <Route path="tools" element={<Tools />} />
+          
+          {/* ----------- ÁREA: COBRANZA ------------- */}
+          <Route path="gestion-cobranza" element={<GestionCobranza />} />
           
           {/* ----------- ÁREA: CAPTURA MASIVA DE GASTOS ------------- */}
           <Route path="captura-gastos" element={<CapturaMasivaGastos />} />

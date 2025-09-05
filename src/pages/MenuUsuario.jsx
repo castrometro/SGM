@@ -10,7 +10,8 @@ import {
   Users,
   Settings,
   Database,
-  Monitor
+  Monitor,
+  CreditCard
 } from "lucide-react";
 
 const MenuUsuario = () => {
@@ -75,6 +76,7 @@ const MenuUsuario = () => {
     // Funcionalidades específicas de Contabilidad para Gerentes
     if (tieneContabilidad) {
       opciones.push(
+        { label: "Gestión de Cobranza", descripcion: "Seguimiento y gestión de cobros a clientes", icon: CreditCard, color: "#059669", path: "/menu/gestion-cobranza" },
         { label: "Logs y Actividad", descripcion: "Auditoría y logs de actividades de usuarios", icon: FileText, color: "#F97316", path: "/menu/gerente/logs-actividad" },
         { label: "Estados de Cierres", descripcion: "Monitoreo en tiempo real de estados de cierres", icon: Monitor, color: "#06B6D4", path: "/menu/gerente/estados-cierres" },
         { label: "Cache Redis", descripcion: "Estado y gestión del cache Redis de cierres", icon: Database, color: "#10B981", path: "/menu/gerente/cache-redis" }
@@ -105,6 +107,20 @@ const MenuUsuario = () => {
         path: "/menu/gerente/admin-sistema"
       });
     }
+  }
+
+  // Funcionalidades específicas para usuarios de contabilidad (todos los tipos de usuario)
+  const areas = usuario.areas || [];
+  const tieneContabilidad = areas.some(area => area.nombre === "Contabilidad");
+  
+  if (tieneContabilidad && usuario.tipo_usuario !== "gerente") {
+    opciones.push({
+      label: "Gestión de Cobranza", 
+      descripcion: "Seguimiento y gestión de cobros a clientes", 
+      icon: CreditCard, 
+      color: "#059669", 
+      path: "/menu/gestion-cobranza"
+    });
   }
 
   // Variable para controlar la transparencia de las tarjetas

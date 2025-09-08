@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { X, Check, AlertTriangle, Clock, FileText, Plus, Edit2, Trash2, Save, XCircle, Settings, Database, FolderPlus, Globe, CheckSquare } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { X, Check, AlertTriangle, Clock, FileText, Plus, Edit2, Trash2, Save, XCircle, Settings, Database, FolderPlus, Globe, CheckSquare, ChevronDown, ChevronUp } from 'lucide-react';
 import { 
   obtenerSetsCliente,
   crearSet,
@@ -226,14 +226,15 @@ const ModalClasificacionRegistrosRaw = ({
     // Convertir a array y agregar información de cuentas
   const registrosAdaptados = Object.entries(clasificacionesPorCuenta).map(([codigoCuenta, datos], index) => {
       const cuenta = cuentasMap[codigoCuenta];
-      
+      const nombreES = cuenta?.nombre || datos.nombre_cuenta || '';
+      // Intentar obtener nombre en inglés desde varias posibles claves (backend puede variar)
+      const nombreEN = cuenta?.nombre_en || cuenta?.nombreIngles || cuenta?.nombre_ingles || datos.nombre_cuenta_en || '';
       const registro = {
-        id: `account_${codigoCuenta}_${index}`, // ID único para el frontend
+        id: `account_${codigoCuenta}_${index}`,
         numero_cuenta: codigoCuenta,
-        cuenta_nombre: cuenta?.nombre || datos.nombre_cuenta || '',
-        cuenta_nombre_en: cuenta?.nombre_en || '',
+        cuenta_nombre: nombreES,
+        cuenta_nombre_en: nombreEN,
         clasificaciones: datos.clasificaciones,
-        // Campos adicionales del nuevo flujo
         cuenta_existe: datos.cuenta_existe,
         es_temporal: datos.es_temporal,
         upload_log: datos.upload_log,
@@ -241,9 +242,7 @@ const ModalClasificacionRegistrosRaw = ({
         origen: datos.origen,
         source_type: 'account_classification'
       };
-      
-      console.log(`📋 Registro adaptado ${index + 1}: ${codigoCuenta} con ${Object.keys(datos.clasificaciones).length} clasificaciones`);
-      
+      console.log(`📋 Registro adaptado ${index + 1}: ${codigoCuenta} (ES='${nombreES}' EN='${nombreEN}') con ${Object.keys(datos.clasificaciones).length} clasificaciones`);
       return registro;
     });
 
@@ -303,13 +302,21 @@ const ModalClasificacionRegistrosRaw = ({
   // Estados para selección de sets y opciones en creación/edición
   const [setSeleccionado, setSetSeleccionado] = useState('');
   const [opcionSeleccionada, setOpcionSeleccionada] = useState('');
+  // Panel de filtro de opciones
+  const [mostrarFiltroOpciones, setMostrarFiltroOpciones] = useState(false);
+  // Expansión de opciones por set dentro del bloque de sets
+  const [setFiltroExpandido, setSetFiltroExpandido] = useState(null); // nombre del set expandido
+  const [busquedaOpcionSet, setBusquedaOpcionSet] = useState('');
 
   // Estados para filtros de búsqueda
   const [filtros, setFiltros] = useState({
     busquedaCuenta: '',
     setsSeleccionados: [],
+    opcionesSeleccionadas: [], // [{setNombre, opcionValor}]
+    busquedaOpcion: '',
     soloSinClasificar: false,
-    soloClasificados: false
+  soloClasificados: false,
+  faltaEnSet: '' // nombre de un set para mostrar cuentas que no lo tienen clasificado
   });
 
   // Estados para gestión de sets y opciones
@@ -676,9 +683,12 @@ const ModalClasificacionRegistrosRaw = ({
     // Filtro por búsqueda de cuenta
     if (filtros.busquedaCuenta.trim()) {
       const busqueda = filtros.busquedaCuenta.toLowerCase();
-      registrosFiltrados = registrosFiltrados.filter(registro =>
-        registro.numero_cuenta.toLowerCase().includes(busqueda)
-      );
+      registrosFiltrados = registrosFiltrados.filter(registro => {
+        const num = registro.numero_cuenta?.toLowerCase() || '';
+        const nombreES = registro.cuenta_nombre?.toLowerCase() || '';
+        const nombreEN = registro.cuenta_nombre_en?.toLowerCase() || '';
+        return num.includes(busqueda) || nombreES.includes(busqueda) || nombreEN.includes(busqueda);
+      });
     }
 
     // Filtro por sets seleccionados
@@ -686,9 +696,21 @@ const ModalClasificacionRegistrosRaw = ({
       registrosFiltrados = registrosFiltrados.filter(registro => {
         if (!registro.clasificaciones) return false;
         const setsDelRegistro = Object.keys(registro.clasificaciones);
-        return filtros.setsSeleccionados.some(setFiltro => 
-          setsDelRegistro.includes(setFiltro)
-        );
+        return filtros.setsSeleccionados.some(setFiltro => setsDelRegistro.includes(setFiltro));
+      });
+    }
+
+    // Filtro por opciones seleccionadas (OR)
+    if (filtros.opcionesSeleccionadas && filtros.opcionesSeleccionadas.length > 0) {
+      registrosFiltrados = registrosFiltrados.filter(registro => {
+        if (!registro.clasificaciones) return false;
+        return filtros.opcionesSeleccionadas.some(sel => {
+          const valor = registro.clasificaciones[sel.setNombre];
+          if (!valor) return false;
+            // Futuro: si valor fuera array
+          if (Array.isArray(valor)) return valor.includes(sel.opcionValor);
+          return valor === sel.opcionValor;
+        });
       });
     }
 
@@ -703,6 +725,17 @@ const ModalClasificacionRegistrosRaw = ({
       );
     }
 
+    // Filtro por falta en un set específico
+    if (filtros.faltaEnSet) {
+      const setObjetivo = filtros.faltaEnSet;
+      registrosFiltrados = registrosFiltrados.filter(registro => {
+        // Si no tiene clasificaciones, cuenta como faltante
+        if (!registro.clasificaciones) return true;
+        // Si tiene clasificaciones pero no incluye la clave del set, también
+        return !(setObjetivo in registro.clasificaciones);
+      });
+    }
+
     return registrosFiltrados;
   };
 
@@ -710,8 +743,53 @@ const ModalClasificacionRegistrosRaw = ({
     setFiltros({
       busquedaCuenta: '',
       setsSeleccionados: [],
+      opcionesSeleccionadas: [],
+      busquedaOpcion: '',
       soloSinClasificar: false,
-      soloClasificados: false
+  soloClasificados: false,
+  faltaEnSet: ''
+    });
+  };
+
+  // ==================== OPCIONES PARA FILTRO (memo) ====================
+  const opcionesParaFiltro = useMemo(() => {
+    if (!sets || sets.length === 0) return [];
+    const lista = [];
+    for (const set of sets) {
+      const bilingues = opcionesBilinguesPorSet[set.id];
+      if (!bilingues) continue;
+      let opcionesIdioma = [];
+      if (idiomaMostrado && bilingues[idiomaMostrado] && bilingues[idiomaMostrado].length > 0) {
+        opcionesIdioma = bilingues[idiomaMostrado];
+      } else {
+        // fallback unir
+        opcionesIdioma = [...(bilingues.es || []), ...(bilingues.en || [])];
+      }
+      for (const op of opcionesIdioma) {
+        if (!op?.valor) continue;
+        lista.push({
+          setId: set.id,
+            setNombre: set.nombre,
+          valor: op.valor,
+          descripcion: op.descripcion || ''
+        });
+      }
+    }
+    const termino = filtros.busquedaOpcion?.trim().toLowerCase();
+    return termino
+      ? lista.filter(o => o.valor.toLowerCase().includes(termino) || o.setNombre.toLowerCase().includes(termino))
+      : lista;
+  }, [sets, opcionesBilinguesPorSet, idiomaMostrado, filtros.busquedaOpcion]);
+
+  const toggleOpcionFiltro = (setNombre, opcionValor) => {
+    setFiltros(prev => {
+      const existe = prev.opcionesSeleccionadas.some(o => o.setNombre === setNombre && o.opcionValor === opcionValor);
+      return {
+        ...prev,
+        opcionesSeleccionadas: existe
+          ? prev.opcionesSeleccionadas.filter(o => !(o.setNombre === setNombre && o.opcionValor === opcionValor))
+          : [...prev.opcionesSeleccionadas, { setNombre, opcionValor }]
+      };
     });
   };
 
@@ -780,7 +858,8 @@ const ModalClasificacionRegistrosRaw = ({
           await actualizarClasificacionPersistente(registroActual.numero_cuenta, {
             cliente: clienteId,
             nuevo_numero_cuenta: nuevoRegistroEditado.numero_cuenta.trim(),
-            cuenta_nombre: nuevoRegistroEditado.numero_cuenta.trim(),
+            cuenta_nombre: (nuevoRegistroEditado.cuenta_nombre || nuevoRegistroEditado.numero_cuenta).trim(),
+            cuenta_nombre_en: nuevoRegistroEditado.cuenta_nombre_en?.trim() || '',
             clasificaciones: nuevoRegistroEditado.clasificaciones
           });
           // Actualizar lista sin cerrar edición para que el usuario vea reflejado
@@ -1125,21 +1204,11 @@ const ModalClasificacionRegistrosRaw = ({
   };
 
   const handleEditarOpcion = async (opcionId, setId = null) => {
-    // Determinar qué idioma estamos editando basado en el switch del set
-    const idiomaActual = cliente?.bilingue ? (idiomaPorSet[setId] || 'es') : 'es';
-    
-    let valorAEditar;
-    if (idiomaActual === 'es') {
-      valorAEditar = opcionEditandoBilingue.es.trim();
-    } else {
-      valorAEditar = opcionEditandoBilingue.en.trim();
-    }
-    
-    if (!valorAEditar) {
-      alert(`El valor de la opción en ${idiomaActual.toUpperCase()} es requerido`);
+    // Validaciones básicas
+    if (!opcionEditandoBilingue.es.trim() && (!cliente?.bilingue || !opcionEditandoBilingue.en.trim())) {
+      alert('Debe existir al menos el valor en ES (y EN si corresponde).');
       return;
     }
-    
     try {
       // Si no se proporciona setId, intentar obtenerlo desde la opción
       let setClasId = setId;
@@ -1155,18 +1224,13 @@ const ModalClasificacionRegistrosRaw = ({
         }
       }
       
-      // Preparar datos según el idioma que se está editando
+      // Preparar datos (ambos idiomas si aplica)
       const datos = {};
-      if (idiomaActual === 'es') {
-        datos.valor = valorAEditar;
-        if (opcionEditandoBilingue.descripcion_es.trim()) {
-          datos.descripcion = opcionEditandoBilingue.descripcion_es.trim();
-        }
-      } else {
-        datos.valor_en = valorAEditar;
-        if (opcionEditandoBilingue.descripcion_en.trim()) {
-          datos.descripcion_en = opcionEditandoBilingue.descripcion_en.trim();
-        }
+      if (opcionEditandoBilingue.es.trim()) datos.valor = opcionEditandoBilingue.es.trim();
+      if (opcionEditandoBilingue.descripcion_es.trim()) datos.descripcion = opcionEditandoBilingue.descripcion_es.trim();
+      if (cliente?.bilingue) {
+        if (opcionEditandoBilingue.en.trim()) datos.valor_en = opcionEditandoBilingue.en.trim();
+        if (opcionEditandoBilingue.descripcion_en.trim()) datos.descripcion_en = opcionEditandoBilingue.descripcion_en.trim();
       }
       
       // Obtener datos actuales de la opción para el log
@@ -1185,16 +1249,15 @@ const ModalClasificacionRegistrosRaw = ({
         await registrarActividad(
           "clasificacion",
           "option_edit",
-          `Editó opción en ${idiomaActual.toUpperCase()} desde modal: ${valorAEditar}`,
+          `Editó opción(es) desde modal: ${opcionEditandoBilingue.es.trim()}${cliente?.bilingue && opcionEditandoBilingue.en.trim() ? ' / ' + opcionEditandoBilingue.en.trim() : ''}`,
           {
             opcion_id: opcionId,
             set_id: setClasId,
             set_nombre: setActual?.nombre,
-            idioma_editado: idiomaActual,
-            valor_nuevo: valorAEditar,
-            descripcion_nueva: idiomaActual === 'es' ? 
-              opcionEditandoBilingue.descripcion_es.trim() : 
-              opcionEditandoBilingue.descripcion_en.trim(),
+            valor_es_nuevo: opcionEditandoBilingue.es.trim() || null,
+            valor_en_nuevo: cliente?.bilingue ? (opcionEditandoBilingue.en.trim() || null) : null,
+            descripcion_es_nueva: opcionEditandoBilingue.descripcion_es.trim() || null,
+            descripcion_en_nueva: cliente?.bilingue ? (opcionEditandoBilingue.descripcion_en.trim() || null) : null,
             ...datosAnteriores
           }
         );
@@ -1460,7 +1523,8 @@ const ModalClasificacionRegistrosRaw = ({
           const datosAEnviar = {
             cliente: clienteId,
             numero_cuenta: cuenta.numero_cuenta.trim(),
-            cuenta_nombre: cuenta.numero_cuenta.trim(),
+            cuenta_nombre: (cuenta.cuenta_nombre || cuenta.numero_cuenta).trim(),
+            cuenta_nombre_en: cuenta.cuenta_nombre_en?.trim() || '',
             clasificaciones: cuenta.clasificaciones
           };
 
@@ -1560,7 +1624,8 @@ const ModalClasificacionRegistrosRaw = ({
       const datosAEnviar = {
         cliente: clienteId,
         numero_cuenta: nuevoRegistro.numero_cuenta.trim(),
-        cuenta_nombre: nuevoRegistro.numero_cuenta.trim(), // Por defecto usar el código como nombre
+        cuenta_nombre: (nuevoRegistro.cuenta_nombre || nuevoRegistro.numero_cuenta).trim(),
+        cuenta_nombre_en: nuevoRegistro.cuenta_nombre_en?.trim() || '',
         clasificaciones: nuevoRegistro.clasificaciones
       };
       
@@ -1629,6 +1694,8 @@ const ModalClasificacionRegistrosRaw = ({
     setEditandoId(registro.id);
     setRegistroEditando({
       numero_cuenta: registro.numero_cuenta,
+  cuenta_nombre: registro.cuenta_nombre || '',
+  cuenta_nombre_en: registro.cuenta_nombre_en || '',
       clasificaciones: { ...registro.clasificaciones }
     });
     // Limpiar selecciones
@@ -1662,12 +1729,19 @@ const ModalClasificacionRegistrosRaw = ({
         throw new Error('No se encontró el registro a editar');
       }
       
-      await actualizarClasificacionPersistente(registroActual.numero_cuenta, {
+      const payloadEdicion = {
         cliente: clienteId,
         nuevo_numero_cuenta: registroEditando.numero_cuenta.trim(),
-        cuenta_nombre: registroEditando.numero_cuenta.trim(),
+        cuenta_nombre: (registroEditando.cuenta_nombre || registroEditando.numero_cuenta).trim(),
         clasificaciones: registroEditando.clasificaciones
-      });
+      };
+      const nombreEnNuevo = registroEditando.cuenta_nombre_en?.trim() || '';
+      const nombreEnAnterior = registroActual.cuenta_nombre_en || '';
+      if (nombreEnNuevo !== nombreEnAnterior) {
+        payloadEdicion.cuenta_nombre_en = nombreEnNuevo;
+      }
+      console.debug('🔄 Enviando PATCH registro-completo:', payloadEdicion);
+      await actualizarClasificacionPersistente(registroActual.numero_cuenta, payloadEdicion);
       
       // Registrar actividad detallada de edición de registro
       try {
@@ -1678,6 +1752,8 @@ const ModalClasificacionRegistrosRaw = ({
           {
             registro_id: editandoId,
             numero_cuenta_nuevo: registroEditando.numero_cuenta.trim(),
+            cuenta_nombre_nuevo: (registroEditando.cuenta_nombre || registroEditando.numero_cuenta).trim(),
+            cuenta_nombre_en_nuevo: nombreEnNuevo !== nombreEnAnterior ? nombreEnNuevo : undefined,
             cantidad_clasificaciones_nueva: Object.keys(registroEditando.clasificaciones).length,
             clasificaciones_nuevas: registroEditando.clasificaciones,
             ...datosAnteriores
@@ -2052,22 +2128,105 @@ const ModalClasificacionRegistrosRaw = ({
   };
 
   const registrosFiltrados = aplicarFiltros(registros || []);
+
+  // ==================== MÉTRICAS RESUMEN (sutiles) ====================
+  const métricasResumen = useMemo(() => {
+    if (!registros || registros.length === 0) {
+      return { sinNombreES: 0, sinNombreEN: 0, sinClasificacion: 0 };
+    }
+    let sinNombreES = 0;
+    let sinNombreEN = 0;
+    let sinClasificacion = 0;
+    for (const r of registros) {
+      const nombreES = (r.cuenta_nombre || r.nombre || '').trim();
+      const nombreEN = (r.cuenta_nombre_en || r.nombre_en || '').trim();
+      if (!nombreES) sinNombreES++;
+      if (cliente?.bilingue && !nombreEN) sinNombreEN++;
+      if (!r.clasificaciones || Object.keys(r.clasificaciones).length === 0) sinClasificacion++;
+    }
+    return { sinNombreES, sinNombreEN, sinClasificacion };
+  }, [registros, cliente?.bilingue]);
+
+  // Handler de click en tarjetas de métricas
+  // Ref a la tabla para hacer scroll
+  const tablaRef = useRef(null);
+
+  const scrollATabla = () => {
+    if (tablaRef.current) {
+      tablaRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const aplicarFiltroMetrica = (tipo) => {
+    // Toggle: si ya está activo, limpiar
+    if (tipo === 'sinClasificacion') {
+      const desactivar = filtros.soloSinClasificar && !filtroMetricaEspecial;
+      setFiltros(prev => ({
+        ...prev,
+        soloSinClasificar: desactivar ? false : true,
+        soloClasificados: false
+      }));
+      if (!desactivar) setFiltroMetricaEspecial(null); // aseguramos que no haya filtro especial
+      scrollATabla();
+      return;
+    }
+    if (tipo === 'sinNombreES') {
+      const activo = filtroMetricaEspecial?.tipo === 'sinNombreES';
+      if (activo) {
+        setFiltroMetricaEspecial(null);
+      } else {
+        setFiltros(prev => ({ ...prev, soloSinClasificar: false, soloClasificados: false }));
+        setFiltroMetricaEspecial({ tipo: 'sinNombreES', timestamp: Date.now() });
+      }
+      scrollATabla();
+      return;
+    }
+    if (tipo === 'sinNombreEN') {
+      const activo = filtroMetricaEspecial?.tipo === 'sinNombreEN';
+      if (activo) {
+        setFiltroMetricaEspecial(null);
+      } else {
+        setFiltros(prev => ({ ...prev, soloSinClasificar: false, soloClasificados: false }));
+        setFiltroMetricaEspecial({ tipo: 'sinNombreEN', timestamp: Date.now() });
+      }
+      scrollATabla();
+      return;
+    }
+  };
+
+  // Estado para filtrado especial por nombres faltantes
+  const [filtroMetricaEspecial, setFiltroMetricaEspecial] = useState(null);
+
+  // Aplicar filtrado especial (sin nombre ES/EN) encima de registrosFiltrados
+  const registrosFiltradosFinal = useMemo(() => {
+    if (!filtroMetricaEspecial) return registrosFiltrados;
+    if (filtroMetricaEspecial.tipo === 'sinNombreES') {
+      return registrosFiltrados.filter(r => !(r.cuenta_nombre || r.nombre || '').trim());
+    }
+    if (filtroMetricaEspecial.tipo === 'sinNombreEN') {
+      return registrosFiltrados.filter(r => !(r.cuenta_nombre_en || r.nombre_en || '').trim());
+    }
+    return registrosFiltrados;
+  }, [registrosFiltrados, filtroMetricaEspecial]);
+
+  // Función para limpiar filtro métrica especial
+  const limpiarFiltroMetricaEspecial = () => setFiltroMetricaEspecial(null);
   // Mostrar todos los sets definidos por el cliente, no solo los presentes en los registros
   const setsUnicos = sets.map(s => s.nombre).sort();
 
   // --- Paginación ---
   const PAGE_SIZE = 20;
   const [paginaActual, setPaginaActual] = useState(1);
-  const totalPaginas = Math.max(1, Math.ceil(registrosFiltrados.length / PAGE_SIZE));
+  const totalPaginas = Math.max(1, Math.ceil(registrosFiltradosFinal.length / PAGE_SIZE));
   const paginaSegura = Math.min(paginaActual, totalPaginas);
   const inicio = (paginaSegura - 1) * PAGE_SIZE;
   const fin = inicio + PAGE_SIZE;
-  const registrosPagina = registrosFiltrados.slice(inicio, fin);
+  const registrosPagina = registrosFiltradosFinal.slice(inicio, fin);
 
   // Reset de página cuando cambian filtros o cantidad
   useEffect(() => {
     setPaginaActual(1);
-  }, [filtros, registrosFiltrados.length]);
+  }, [filtros, registrosFiltradosFinal.length]);
 
   if (!isOpen) {
     console.log("🚫 Modal no se abre - isOpen:", isOpen);
@@ -2184,43 +2343,93 @@ const ModalClasificacionRegistrosRaw = ({
               <div className="bg-gray-800 p-4 rounded-lg mb-4 border border-gray-700">
                 {/* Header con estadísticas y botón crear */}
                 <div className="flex justify-between items-center mb-4">
-                  <div className="flex items-center gap-4 text-sm text-gray-300">
-                    <span>Total: <strong className="text-white">{registros.length}</strong></span>
-                    <span>Filtrados: <strong className="text-blue-400">{registrosFiltrados.length}</strong></span>
+                  <div className="flex flex-wrap items-stretch gap-4 text-sm">
+                    {/* Tarjeta Total */}
+                    <div className="flex flex-col justify-center px-4 py-2 rounded-lg bg-gray-700/40 border border-gray-600 min-w-[130px] shadow-sm">
+                      <span className="text-[11px] tracking-wide uppercase text-gray-400 font-semibold">Total</span>
+                      <span className="text-2xl font-bold text-white leading-snug">{registros.length}</span>
+                      <span className="text-[10px] text-gray-400/70">registros</span>
+                    </div>
+                    {/* Tarjeta Filtrados */}
+                    <div className="flex flex-col justify-center px-4 py-2 rounded-lg bg-blue-900/25 border border-blue-600/50 min-w-[130px] shadow-sm">
+                      <span className="text-[11px] tracking-wide uppercase text-blue-300 font-semibold">Filtrados</span>
+                      <span className="text-2xl font-bold text-blue-300 leading-snug">{registrosFiltradosFinal.length}</span>
+                      <span className="text-[10px] text-blue-300/60">visibles</span>
+                    </div>
+                    {/* Tarjeta Seleccionados (solo modo masivo) */}
                     {modoClasificacionMasiva && (
-                      <span>Seleccionados: <strong className="text-green-400">{registrosSeleccionados.size}</strong></span>
+                      <div className="flex flex-col justify-center px-4 py-2 rounded-lg bg-green-900/25 border border-green-600/50 min-w-[150px] shadow-sm">
+                        <span className="text-[11px] tracking-wide uppercase text-green-300 font-semibold">Seleccionados</span>
+                        <span className="text-2xl font-bold text-green-300 leading-snug">{registrosSeleccionados.size}</span>
+                        <span className="text-[10px] text-green-300/60">para acción masiva</span>
+                      </div>
                     )}
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={alternarModoClasificacionMasiva}
-                      className={`px-4 py-2 rounded font-medium transition flex items-center gap-2 ${
-                        modoClasificacionMasiva 
-                          ? 'bg-red-600 hover:bg-red-500 text-white' 
-                          : 'bg-green-600 hover:bg-green-500 text-white'
-                      }`}
-                    >
-                      {modoClasificacionMasiva ? (
-                        <>
-                          <X size={16} />
-                          Cancelar Masiva
-                        </>
-                      ) : (
-                        <>
-                          <CheckSquare size={16} />
-                          Clasificación Masiva
-                        </>
+
+                    {/* Tarjeta: Sin nombre ES */}
+                    <button onClick={() => aplicarFiltroMetrica('sinNombreES')} className="flex flex-col justify-center px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-600/50 min-w-[190px] shadow-sm text-left hover:ring-2 hover:ring-amber-400/40 focus:outline-none focus:ring-2 focus:ring-amber-400/60 transition">
+                      <span className="text-amber-300 font-semibold tracking-wide text-xs uppercase">Sin nombre Español</span>
+                      <div className="flex items-end gap-2 mt-1">
+                        <span className="text-2xl font-bold text-amber-200">{métricasResumen.sinNombreES}</span>
+                        <span className="text-[10px] text-amber-300/70 mb-1">cuentas</span>
+                      </div>
+                      {filtroMetricaEspecial?.tipo === 'sinNombreES' && (
+                        <span className="mt-2 inline-block text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-200">Filtro activo (click para refinar)</span>
                       )}
                     </button>
+
+                    {/* Tarjeta: Sin nombre EN (solo si bilingüe) */}
+                    {cliente?.bilingue && (
+                      <button onClick={() => aplicarFiltroMetrica('sinNombreEN')} className="flex flex-col justify-center px-4 py-2 rounded-lg bg-purple-900/30 border border-purple-600/50 min-w-[190px] shadow-sm text-left hover:ring-2 hover:ring-purple-400/40 focus:outline-none focus:ring-2 focus:ring-purple-400/60 transition">
+                        <span className="text-purple-300 font-semibold tracking-wide text-xs uppercase">Sin nombre Inglés</span>
+                        <div className="flex items-end gap-2 mt-1">
+                          <span className="text-2xl font-bold text-purple-200">{métricasResumen.sinNombreEN}</span>
+                          <span className="text-[10px] text-purple-300/70 mb-1">cuentas</span>
+                        </div>
+                        {filtroMetricaEspecial?.tipo === 'sinNombreEN' && (
+                          <span className="mt-2 inline-block text-[10px] px-2 py-0.5 rounded bg-purple-500/20 text-purple-200">Filtro activo</span>
+                        )}
+                      </button>
+                    )}
+
+                    {/* Tarjeta: Sin clasificaciones */}
+                    <button onClick={() => aplicarFiltroMetrica('sinClasificacion')} className="flex flex-col justify-center px-4 py-2 rounded-lg bg-red-900/30 border border-red-600/50 min-w-[190px] shadow-sm text-left hover:ring-2 hover:ring-red-400/40 focus:outline-none focus:ring-2 focus:ring-red-400/60 transition">
+                      <span className="text-red-300 font-semibold tracking-wide text-xs uppercase">Sin clasificaciones</span>
+                      <div className="flex items-end gap-2 mt-1">
+                        <span className="text-2xl font-bold text-red-200">{métricasResumen.sinClasificacion}</span>
+                        <span className="text-[10px] text-red-300/70 mb-1">cuentas</span>
+                      </div>
+                      {(filtros.soloSinClasificar || filtroMetricaEspecial?.tipo === 'sinClasificacion') && (
+                        <span className="mt-2 inline-block text-[10px] px-2 py-0.5 rounded bg-red-500/20 text-red-200">Filtro activo</span>
+                      )}
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    {/* Botón Clasificación Masiva (sutil) */}
+                    <button
+                      onClick={alternarModoClasificacionMasiva}
+                      className={`px-4 py-2 rounded-md text-sm font-medium flex items-center gap-2 border transition shadow-sm focus:outline-none focus:ring-2 ${
+                        modoClasificacionMasiva
+                          ? 'bg-red-500/80 hover:bg-red-500 text-white border-red-500 focus:ring-red-400/50'
+                          : 'bg-gray-700/60 hover:bg-gray-600 text-gray-100 border-gray-500 focus:ring-gray-400/40'
+                      }`}
+                      title={modoClasificacionMasiva ? 'Salir de clasificación masiva' : 'Activar clasificación masiva'}
+                    >
+                      {modoClasificacionMasiva ? <X size={16} /> : <CheckSquare size={16} />}
+                      <span>{modoClasificacionMasiva ? 'Cancelar Masiva' : 'Masiva'}</span>
+                    </button>
+                    {/* Botón Nuevo Registro (sutil) */}
                     <button
                       onClick={handleIniciarCreacion}
-                      className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-medium transition flex items-center gap-2"
                       disabled={modoClasificacionMasiva}
-                      title="Crear nuevo registro individual o pegar múltiples cuentas desde Excel"
+                      title="Crear nuevo registro o pegar desde Excel"
+                      className={`px-4 py-2 rounded-md text-sm font-medium flex items-center gap-2 border transition shadow-sm focus:outline-none focus:ring-2 ${
+                        modoClasificacionMasiva
+                          ? 'bg-gray-600 text-gray-300 border-gray-500 cursor-not-allowed focus:ring-transparent'
+                          : 'bg-blue-600/80 hover:bg-blue-600 text-white border-blue-500 focus:ring-blue-400/50'
+                      }`}
                     >
                       <Plus size={16} />
-                      Nuevo Registro
-                      <span className="text-xs text-blue-200 ml-1">(o pegar Excel)</span>
+                      <span>Nuevo Registro</span>
                     </button>
                   </div>
                 </div>
@@ -2255,54 +2464,43 @@ const ModalClasificacionRegistrosRaw = ({
                       </div>
                     </div>
 
-                    {/* Filtros por estado */}
-                    <div>
-                      <label className="block text-xs text-gray-400 mb-1">Estado:</label>
-                      <div className="flex gap-2">
-                        <label className="flex items-center text-sm text-gray-300 hover:bg-gray-700 px-2 py-1 rounded cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={filtros.soloClasificados}
-                            onChange={(e) => setFiltros(prev => ({ 
-                              ...prev, 
-                              soloClasificados: e.target.checked,
-                              soloSinClasificar: e.target.checked ? false : prev.soloSinClasificar
-                            }))}
-                            className="mr-1 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
-                          />
-                          Con clasificaciones
-                        </label>
-                        <label className="flex items-center text-sm text-gray-300 hover:bg-gray-700 px-2 py-1 rounded cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={filtros.soloSinClasificar}
-                            onChange={(e) => setFiltros(prev => ({ 
-                              ...prev, 
-                              soloSinClasificar: e.target.checked,
-                              soloClasificados: e.target.checked ? false : prev.soloClasificados
-                            }))}
-                            className="mr-1 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
-                          />
-                          Sin clasificar
-                        </label>
-                      </div>
-                    </div>
+                    {/* Columna vacía sustituye filtros de estado (removidos) */}
+                    <div className="hidden lg:block" />
 
-                    {/* Botón limpiar filtros y contador activos */}
-                    <div className="flex items-end gap-2">
-                      {(filtros.busquedaCuenta || filtros.setsSeleccionados.length > 0 || filtros.soloClasificados || filtros.soloSinClasificar) && (
-                        <div className="text-xs text-blue-400 bg-blue-900/30 px-2 py-1 rounded">
-                          {[
+                    {/* Botones limpiar filtros y filtro métrica especial */}
+                    <div className="flex items-end gap-2 flex-wrap">
+                      {(filtros.busquedaCuenta || filtros.setsSeleccionados.length > 0 || filtros.opcionesSeleccionadas.length > 0 || filtros.soloClasificados || filtros.soloSinClasificar || filtroMetricaEspecial || filtros.faltaEnSet) && (
+                        <div className="text-xs text-blue-300 bg-blue-900/40 px-2 py-1 rounded flex items-center gap-2">
+                          <span>{[
                             filtros.busquedaCuenta ? 'cuenta' : null,
                             filtros.setsSeleccionados.length > 0 ? `${filtros.setsSeleccionados.length} sets` : null,
+                            filtros.opcionesSeleccionadas.length > 0 ? `${filtros.opcionesSeleccionadas.length} opciones` : null,
                             filtros.soloClasificados ? 'clasificados' : null,
-                            filtros.soloSinClasificar ? 'sin clasificar' : null
-                          ].filter(Boolean).length} filtros activos
+                            filtros.soloSinClasificar ? 'sin clasificar' : null,
+                            filtroMetricaEspecial ? filtroMetricaEspecial.tipo : null,
+                            filtros.faltaEnSet ? `falta ${filtros.faltaEnSet}` : null
+                          ].filter(Boolean).length} filtros activos</span>
+                          {filtroMetricaEspecial && (
+                            <button
+                              onClick={limpiarFiltroMetricaEspecial}
+                              className="text-[10px] px-2 py-0.5 bg-blue-700/40 hover:bg-blue-600/50 rounded text-blue-200"
+                            >
+                              Quitar métrica
+                            </button>
+                          )}
+                          {filtros.faltaEnSet && (
+                            <button
+                              onClick={() => setFiltros(prev => ({ ...prev, faltaEnSet: '' }))}
+                              className="text-[10px] px-2 py-0.5 bg-blue-700/40 hover:bg-blue-600/50 rounded text-blue-200"
+                            >
+                              Quitar falta en set
+                            </button>
+                          )}
                         </div>
                       )}
                       <button
-                        onClick={limpiarFiltros}
-                        disabled={!filtros.busquedaCuenta && filtros.setsSeleccionados.length === 0 && !filtros.soloClasificados && !filtros.soloSinClasificar}
+                        onClick={() => { limpiarFiltros(); limpiarFiltroMetricaEspecial(); }}
+                        disabled={!filtros.busquedaCuenta && filtros.setsSeleccionados.length === 0 && filtros.opcionesSeleccionadas.length === 0 && !filtros.soloClasificados && !filtros.soloSinClasificar && !filtroMetricaEspecial && !filtros.faltaEnSet}
                         className="bg-gray-600 hover:bg-gray-500 disabled:bg-gray-700 disabled:text-gray-500 text-white px-3 py-1 rounded text-sm transition flex items-center gap-1"
                       >
                         <XCircle size={14} />
@@ -2310,6 +2508,8 @@ const ModalClasificacionRegistrosRaw = ({
                       </button>
                     </div>
                   </div>
+
+                  {/* Eliminado botón/panel global de opciones: se usa expansión por set */}
 
                   {/* Filtros por sets */}
                   {setsUnicos.length > 0 && (
@@ -2336,32 +2536,136 @@ const ModalClasificacionRegistrosRaw = ({
                       <div className="flex flex-wrap gap-2 max-h-40 overflow-auto pr-1 custom-scrollbar">
                         {setsUnicos.map(setNombre => {
                           const activo = filtros.setsSeleccionados.includes(setNombre);
+                          const expandido = setFiltroExpandido === setNombre;
                           return (
-                            <button
-                              type="button"
-                              key={setNombre}
-                              onClick={() => {
-                                setFiltros(prev => ({
-                                  ...prev,
-                                  setsSeleccionados: activo 
-                                    ? prev.setsSeleccionados.filter(s => s !== setNombre)
-                                    : [...prev.setsSeleccionados, setNombre]
-                                }));
-                              }}
-                              className={`group relative flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-medium transition
-                                ${activo
-                                  ? 'bg-blue-600/20 text-blue-300 border border-blue-500/40 shadow-inner'
-                                  : 'bg-gray-700/70 text-gray-300 border border-gray-600 hover:bg-gray-600/60'}
-                              `}
-                            >
-                              <span className="font-semibold tracking-wide">{setNombre}</span>
-                              {activo && (
-                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 shadow shadow-blue-400/40" />
-                              )}
-                            </button>
+                            <div key={setNombre} className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFiltros(prev => ({
+                                    ...prev,
+                                    setsSeleccionados: activo 
+                                      ? prev.setsSeleccionados.filter(s => s !== setNombre)
+                                      : [...prev.setsSeleccionados, setNombre]
+                                  }));
+                                }}
+                                className={`group relative flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-medium transition
+                                  ${activo
+                                    ? 'bg-blue-600/20 text-blue-300 border border-blue-500/40 shadow-inner'
+                                    : 'bg-gray-700/70 text-gray-300 border border-gray-600 hover:bg-gray-600/60'}
+                                `}
+                              >
+                                <span className="font-semibold tracking-wide">{setNombre}</span>
+                                {activo && (
+                                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 shadow shadow-blue-400/40" />
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSetFiltroExpandido(prev => prev === setNombre ? null : setNombre)}
+                                className={`p-1 rounded-full border text-gray-400 hover:text-white text-[10px] transition ${expandido ? 'border-blue-500/50 bg-blue-600/20' : 'border-gray-600 bg-gray-700/60 hover:bg-gray-600'}`}
+                                title={expandido ? 'Ocultar opciones' : 'Mostrar opciones'}
+                              >
+                                {expandido ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}
+                              </button>
+                            </div>
                           );
                         })}
                       </div>
+                      {/* Selector de 'falta en set' */}
+                      {setsUnicos.length > 0 && (
+                        <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-2">
+                          <label className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">Faltan clasificaciones en:</label>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <select
+                              value={filtros.faltaEnSet}
+                              onChange={e => {
+                                setFiltros(prev => ({ ...prev, faltaEnSet: e.target.value }));
+                                if (e.target.value) {
+                                  setTimeout(() => scrollATabla && scrollATabla(), 50);
+                                }
+                              }}
+                              className="bg-gray-700 border border-gray-600 text-white text-xs rounded px-2 py-1 focus:outline-none focus:border-blue-500"
+                            >
+                              <option value="">-- Seleccionar set --</option>
+                              {setsUnicos.map(setNombre => (
+                                <option key={setNombre} value={setNombre}>{setNombre}</option>
+                              ))}
+                            </select>
+                            {filtros.faltaEnSet && (
+                              <button
+                                onClick={() => setFiltros(prev => ({ ...prev, faltaEnSet: '' }))}
+                                className="text-[10px] px-2 py-1 rounded bg-gray-700 border border-gray-600 hover:bg-gray-600 text-gray-200 flex items-center gap-1"
+                              >
+                                <XCircle size={12} /> Limpiar
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {setFiltroExpandido && (
+                        <div className="mt-3 bg-gray-900/40 border border-gray-700 rounded-lg p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">Opciones de {setFiltroExpandido}</span>
+                              <span className="text-[10px] text-gray-500">{(() => {
+                                const setObj = sets.find(s => s.nombre === setFiltroExpandido);
+                                const bilingues = setObj ? opcionesBilinguesPorSet[setObj.id] : null;
+                                const lista = bilingues ? (bilingues[idiomaMostrado] && bilingues[idiomaMostrado].length > 0 ? bilingues[idiomaMostrado] : [...(bilingues.es||[]), ...(bilingues.en||[])]) : [];
+                                return lista.length;
+                              })()} opciones</span>
+                            </div>
+                            <div className="flex gap-2 items-center">
+                              <input
+                                type="text"
+                                value={busquedaOpcionSet}
+                                onChange={e => setBusquedaOpcionSet(e.target.value)}
+                                placeholder="Buscar..."
+                                className="bg-gray-700 text-white px-2 py-0.5 rounded text-[10px] border border-gray-600 focus:outline-none focus:border-blue-500"
+                              />
+                              {filtros.opcionesSeleccionadas.some(o => o.setNombre === setFiltroExpandido) && (
+                                <button
+                                  onClick={() => setFiltros(prev => ({
+                                    ...prev,
+                                    opcionesSeleccionadas: prev.opcionesSeleccionadas.filter(o => o.setNombre !== setFiltroExpandido)
+                                  }))}
+                                  className="text-[10px] text-blue-300 hover:text-blue-100 underline decoration-dotted"
+                                >Limpiar</button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="max-h-40 overflow-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1 pr-1 custom-scrollbar">
+                            {(() => {
+                              const setObj = sets.find(s => s.nombre === setFiltroExpandido);
+                              if (!setObj) return <div className="col-span-full text-xs text-gray-500 py-3">Sin datos</div>;
+                              const bilingues = opcionesBilinguesPorSet[setObj.id];
+                              if (!bilingues) return <div className="col-span-full text-xs text-gray-500 py-3">Cargando...</div>;
+                              let lista = bilingues[idiomaMostrado] && bilingues[idiomaMostrado].length > 0
+                                ? bilingues[idiomaMostrado]
+                                : [...(bilingues.es||[]), ...(bilingues.en||[])];
+                              if (busquedaOpcionSet.trim()) {
+                                const term = busquedaOpcionSet.toLowerCase();
+                                lista = lista.filter(o => o.valor.toLowerCase().includes(term));
+                              }
+                              if (lista.length === 0) return <div className="col-span-full text-xs text-gray-500 py-3">No hay opciones</div>;
+                              return lista.map(o => {
+                                const activa = filtros.opcionesSeleccionadas.some(sel => sel.setNombre === setFiltroExpandido && sel.opcionValor === o.valor);
+                                return (
+                                  <button
+                                    key={o.id + '_' + o.valor}
+                                    type="button"
+                                    onClick={() => toggleOpcionFiltro(setFiltroExpandido, o.valor)}
+                                    className={`text-left px-2 py-1 rounded border text-[10px] leading-tight transition ${activa ? 'bg-blue-600/40 border-blue-500 text-blue-100' : 'bg-gray-700/70 border-gray-600 text-gray-300 hover:bg-gray-600'}`}
+                                    title={o.descripcion || ''}
+                                  >
+                                    <span className="block truncate">{o.valor}</span>
+                                  </button>
+                                );
+                              });
+                            })()}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2455,7 +2759,7 @@ const ModalClasificacionRegistrosRaw = ({
                         <button
                           onClick={seleccionarTodosLosRegistros}
                           className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded text-sm transition"
-                          disabled={registrosFiltrados.length === 0}
+                          disabled={registrosFiltradosFinal.length === 0}
                           title="Seleccionar todos los registros visibles"
                         >
                           Todos
@@ -2498,7 +2802,7 @@ const ModalClasificacionRegistrosRaw = ({
                     <div className="mt-3 p-2 bg-blue-900/20 border border-blue-700/50 rounded text-xs">
                       <span className="text-blue-400">📋 Seleccionados:</span>{' '}
                       <span className="font-medium text-white">{registrosSeleccionados.size}</span> de{' '}
-                      <span className="text-gray-300">{registrosFiltrados.length}</span> registros visibles
+                      <span className="text-gray-300">{registrosFiltradosFinal.length}</span> registros visibles
                       {textoBusquedaMasiva && (
                         <span className="text-yellow-400 ml-2">
                           (búsqueda activa: "{textoBusquedaMasiva}")
@@ -2510,12 +2814,12 @@ const ModalClasificacionRegistrosRaw = ({
               )}
 
               {/* Tabla */}
-              <div className="bg-gray-800 rounded-lg border border-gray-700 flex flex-col overflow-hidden">
+              <div ref={tablaRef} className="bg-gray-800 rounded-lg border border-gray-700 flex flex-col overflow-hidden">
                 {loading ? (
                   <div className="flex justify-center items-center h-32">
                     <div className="animate-spin w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full"></div>
                   </div>
-                ) : registrosFiltrados.length === 0 ? (
+                ) : registrosFiltradosFinal.length === 0 ? (
                   <div className="text-center py-8 text-gray-400">
                     <FileText size={48} className="mx-auto mb-2 opacity-50" />
                     {registros.length === 0 ? (
@@ -2552,7 +2856,7 @@ const ModalClasificacionRegistrosRaw = ({
                           <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider border-b border-gray-700">
                             <input
                               type="checkbox"
-                              checked={registrosFiltrados.length > 0 && registrosFiltrados.every(r => registrosSeleccionados.has(r.id))}
+                              checked={registrosFiltradosFinal.length > 0 && registrosFiltradosFinal.every(r => registrosSeleccionados.has(r.id))}
                               onChange={(e) => {
                                 if (e.target.checked) {
                                   seleccionarTodosLosRegistros();
@@ -2886,19 +3190,43 @@ const ModalClasificacionRegistrosRaw = ({
                               </div>
                             )}
                           </td>
-                          <td className="px-3 py-2 align-top text-xs text-gray-300 max-w-[200px]">
-                            <div className="whitespace-pre-line leading-snug">
-                              {registro.cuenta_nombre || <span className="text-gray-600 italic">—</span>}
-                            </div>
+                          <td className="px-3 py-2 align-top text-xs text-gray-300 max-w-[220px]">
+                            {editandoId === registro.id ? (
+                              <input
+                                type="text"
+                                value={registroEditando.cuenta_nombre || ''}
+                                onChange={(e) => setRegistroEditando(prev => ({ ...prev, cuenta_nombre: e.target.value }))}
+                                placeholder="Nombre ES"
+                                className="w-full bg-gray-700 text-white px-2 py-1 rounded border border-gray-600 focus:border-blue-500 focus:outline-none text-xs"
+                              />
+                            ) : (
+                              <div className="whitespace-pre-line leading-snug">
+                                {registro.cuenta_nombre || <span className="text-gray-600 italic">—</span>}
+                              </div>
+                            )}
                           </td>
-                          <td className="px-3 py-2 align-top text-xs text-gray-300 max-w-[200px]">
-                            <div className="whitespace-pre-line leading-snug">
-                              {registro.cuenta_nombre_en ? (
-                                registro.cuenta_nombre_en
+                          <td className="px-3 py-2 align-top text-xs text-gray-300 max-w-[180px]">
+                            {editandoId === registro.id ? (
+                              cliente?.bilingue ? (
+                                <input
+                                  type="text"
+                                  value={registroEditando.cuenta_nombre_en || ''}
+                                  onChange={(e) => setRegistroEditando(prev => ({ ...prev, cuenta_nombre_en: e.target.value }))}
+                                  placeholder="Nombre EN"
+                                  className="w-full bg-gray-700 text-white px-2 py-1 rounded border border-gray-600 focus:border-green-500 focus:outline-none text-xs"
+                                />
                               ) : (
-                                <span className="text-gray-600 italic">{cliente?.bilingue ? 'sin inglés' : '—'}</span>
-                              )}
-                            </div>
+                                <div className="text-[10px] text-gray-500 italic">—</div>
+                              )
+                            ) : (
+                              <div className="whitespace-pre-line leading-snug">
+                                {registro.cuenta_nombre_en ? (
+                                  registro.cuenta_nombre_en
+                                ) : (
+                                  <span className="text-gray-600 italic">{cliente?.bilingue ? 'sin inglés' : '—'}</span>
+                                )}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-2">
                             {editandoId === registro.id ? (
@@ -3036,7 +3364,7 @@ const ModalClasificacionRegistrosRaw = ({
                     <div className="flex items-center justify-between gap-4 px-4 py-2 bg-gray-900/80 border-t border-gray-700 text-xs">
                       <div className="text-gray-400">
                         Página <span className="text-white font-medium">{paginaSegura}</span> de <span className="text-white font-medium">{totalPaginas}</span>
-                        <span className="ml-3 text-gray-500">Mostrando {registrosPagina.length} de {registrosFiltrados.length}</span>
+                        <span className="ml-3 text-gray-500">Mostrando {registrosPagina.length} de {registrosFiltradosFinal.length}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <button
@@ -3333,28 +3661,57 @@ const ModalClasificacionRegistrosRaw = ({
                                 <div key={opcion.id} className="flex items-center gap-1 bg-blue-900/30 px-2 py-1 rounded">
                                   {editandoOpcion === opcion.id ? (
                                     <div className="flex flex-col gap-1">
-                                      <input
-                                        type="text"
-                                        value={idiomaActual === 'es' ? opcionEditandoBilingue.es : opcionEditandoBilingue.en}
-                                        onChange={(e) => setOpcionEditandoBilingue(prev => ({
-                                          ...prev,
-                                          [idiomaActual]: e.target.value
-                                        }))}
-                                        placeholder={`Valor en ${idiomaActual.toUpperCase()}`}
-                                        className="bg-gray-700 text-white px-1 py-0.5 rounded border border-gray-600 text-sm w-24"
-                                        onKeyPress={(e) => e.key === 'Enter' && handleEditarOpcion(opcion.id, set.id)}
-                                      />
-                                      {cliente?.bilingue && (
+                                      {/* Campos ES */}
+                                      <div className="flex gap-1 items-start">
                                         <input
                                           type="text"
-                                          value={idiomaActual === 'es' ? opcionEditandoBilingue.descripcion_es : opcionEditandoBilingue.descripcion_en}
+                                          value={opcionEditandoBilingue.es}
                                           onChange={(e) => setOpcionEditandoBilingue(prev => ({
                                             ...prev,
-                                            [`descripcion_${idiomaActual}`]: e.target.value
+                                            es: e.target.value
                                           }))}
-                                          placeholder={`Descripción en ${idiomaActual.toUpperCase()}`}
-                                          className="bg-gray-700 text-white px-1 py-0.5 rounded border border-gray-600 text-xs w-24"
+                                          placeholder="Valor ES"
+                                          className="bg-gray-700 text-white px-1 py-0.5 rounded border border-gray-600 text-[11px] w-28"
+                                          onKeyPress={(e) => e.key === 'Enter' && handleEditarOpcion(opcion.id, set.id)}
                                         />
+                                        {cliente?.bilingue && (
+                                          <input
+                                            type="text"
+                                            value={opcionEditandoBilingue.descripcion_es}
+                                            onChange={(e) => setOpcionEditandoBilingue(prev => ({
+                                              ...prev,
+                                              descripcion_es: e.target.value
+                                            }))}
+                                            placeholder="Desc ES"
+                                            className="bg-gray-700 text-white px-1 py-0.5 rounded border border-gray-600 text-[10px] w-32"
+                                          />
+                                        )}
+                                      </div>
+                                      {/* Campos EN (si cliente bilingüe) */}
+                                      {cliente?.bilingue && (
+                                        <div className="flex gap-1 items-start">
+                                          <input
+                                            type="text"
+                                            value={opcionEditandoBilingue.en}
+                                            onChange={(e) => setOpcionEditandoBilingue(prev => ({
+                                              ...prev,
+                                              en: e.target.value
+                                            }))}
+                                            placeholder="Valor EN"
+                                            className="bg-gray-700 text-white px-1 py-0.5 rounded border border-gray-600 text-[11px] w-28"
+                                            onKeyPress={(e) => e.key === 'Enter' && handleEditarOpcion(opcion.id, set.id)}
+                                          />
+                                          <input
+                                            type="text"
+                                            value={opcionEditandoBilingue.descripcion_en}
+                                            onChange={(e) => setOpcionEditandoBilingue(prev => ({
+                                              ...prev,
+                                              descripcion_en: e.target.value
+                                            }))}
+                                            placeholder="Desc EN"
+                                            className="bg-gray-700 text-white px-1 py-0.5 rounded border border-gray-600 text-[10px] w-32"
+                                          />
+                                        </div>
                                       )}
                                     </div>
                                   ) : (

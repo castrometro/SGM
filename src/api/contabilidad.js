@@ -959,8 +959,16 @@ export const marcarCuentaNoAplica = async (cierreId, codigoCuenta, tipoExcepcion
     motivo: motivo
   };
   
-  // Agregar set_id para clasificaciones específicas
-  if (setId) {
+  const esClasificacion = tipoExcepcion === 'CUENTA_NO_CLAS' || tipoExcepcion === 'CUENTA_NO_CLASIFICADA';
+  if (esClasificacion) {
+    if (setId === null || setId === undefined || setId === '') {
+      throw new Error('set_clasificacion_id es requerido para excepciones de clasificación');
+    }
+    // Normalizar a número si es string numérico
+    const normalizado = isNaN(Number(setId)) ? setId : Number(setId);
+    payload.set_clasificacion_id = normalizado;
+  } else if (setId) {
+    // Para otros tipos, solo enviar si existe
     payload.set_clasificacion_id = setId;
   }
   

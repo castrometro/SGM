@@ -1219,6 +1219,7 @@ def actualizar_registro_clasificacion_completo(request, cuenta_codigo):
     {
         "nuevo_numero_cuenta": "1234", (opcional, para cambiar código de cuenta)
         "cuenta_nombre": "Nuevo nombre",
+        "cuenta_nombre_en": "English name" (opcional – también acepta alias nombre_en / nombre_ingles),
         "clasificaciones": {
             "AGRUPACION INFORME": "ACTIVOS",
             "Estado Situacion Financiera": "ACTIVOS CORRIENTES"
@@ -1240,6 +1241,12 @@ def actualizar_registro_clasificacion_completo(request, cuenta_codigo):
         
         nuevo_numero_cuenta = request.data.get('nuevo_numero_cuenta', cuenta_codigo)
         cuenta_nombre = request.data.get('cuenta_nombre', cuenta_codigo)
+        # Aceptar múltiples alias para el nombre en inglés enviados por el frontend
+        cuenta_nombre_en = (
+            request.data.get('cuenta_nombre_en')
+            or request.data.get('nombre_en')
+            or request.data.get('nombre_ingles')
+        )
         clasificaciones = request.data.get('clasificaciones', {})
         
         # Buscar clasificaciones existentes para esta cuenta
@@ -1269,7 +1276,24 @@ def actualizar_registro_clasificacion_completo(request, cuenta_codigo):
                 cliente=cliente,
                 codigo=codigo_busqueda,
                 nombre=cuenta_nombre or codigo_busqueda,
+                nombre_en=cuenta_nombre_en or '' if cuenta_nombre_en is not None else ''
             )
+        else:
+            # Actualizar nombres si cambiaron
+            campos_update = []
+            if cuenta_nombre and cuenta_nombre.strip() and cuenta_nombre != cuenta_existente.nombre:
+                cuenta_existente.nombre = cuenta_nombre.strip()
+                campos_update.append('nombre')
+            # Permitir limpiar nombre_en enviando cadena vacía (frontend decide)
+            if cuenta_nombre_en is not None and cuenta_nombre_en != cuenta_existente.nombre_en:
+                cuenta_existente.nombre_en = cuenta_nombre_en.strip() if isinstance(cuenta_nombre_en, str) else cuenta_nombre_en
+                campos_update.append('nombre_en')
+            if campos_update:
+                try:
+                    cuenta_existente.save(update_fields=campos_update)
+                except Exception:
+                    # No abortar flujo por fallo al actualizar nombres
+                    pass
         
         # Crear las nuevas clasificaciones
         clasificaciones_creadas = []
@@ -1322,9 +1346,9 @@ def actualizar_registro_clasificacion_completo(request, cuenta_codigo):
                 cliente=cliente,
                 estado__in=['pendiente', 'procesando', 'clasificacion', 'incidencias', 'en_revision']
             ).order_by('-fecha_creacion').first()
-            
+
             periodo = cierre.periodo if cierre else date.today().strftime("%Y-%m")
-            
+
             registrar_actividad_tarjeta(
                 cliente_id=cliente_id,
                 periodo=periodo,
@@ -1336,6 +1360,7 @@ def actualizar_registro_clasificacion_completo(request, cuenta_codigo):
                     "cuenta_codigo_anterior": cuenta_codigo,
                     "cuenta_codigo_nuevo": nuevo_numero_cuenta,
                     "cuenta_nombre": cuenta_nombre,
+                    "cuenta_nombre_en": cuenta_nombre_en,
                     "cuenta_existe": bool(cuenta_existente),
                     "clasificaciones_eliminadas": clasificaciones_eliminadas,
                     "sets_eliminados": sets_eliminados,
@@ -1347,7 +1372,7 @@ def actualizar_registro_clasificacion_completo(request, cuenta_codigo):
                 resultado="exito" if not errores else "parcial",
                 ip_address=request.META.get("REMOTE_ADDR"),
             )
-        except Exception as e:
+        except Exception:
             # No fallar la operación principal por error de logging
             pass
         
@@ -1362,11 +1387,14 @@ def actualizar_registro_clasificacion_completo(request, cuenta_codigo):
             "clasificaciones_solicitadas": len(clasificaciones),
             "detalles": clasificaciones_creadas
         }
-        
+        # Incluir nombres resultantes para feedback inmediato al frontend
+        response_data["cuenta_nombre"] = cuenta_existente.nombre
+        response_data["cuenta_nombre_en"] = cuenta_existente.nombre_en or ''
+
         if errores:
             response_data["errores"] = errores
             response_data["errores_count"] = len(errores)
-        
+
         return Response(response_data)
         
     except Exception as e:

@@ -1,6 +1,6 @@
 # Register your models here.
 
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.http import JsonResponse, HttpResponse
@@ -330,6 +330,33 @@ class MovimientoContableAdmin(admin.ModelAdmin):
     raw_id_fields = ("cuenta", "tipo_documento", "centro_costo", "auxiliar")
     readonly_fields = ("saldo_movimiento",)
     date_hierarchy = "fecha"
+    list_per_page = 200  # paginar para evitar formularios gigantes
+    show_full_result_count = False  # evita COUNT(*) costoso
+
+    actions = ["eliminar_movimientos_seleccionados"]
+
+    def eliminar_movimientos_seleccionados(self, request, queryset):
+        total = queryset.count()
+        if total == 0:
+            self.message_user(request, "No hay movimientos a eliminar", level=messages.WARNING)
+            return
+        # Borrado por lotes para evitar locks largos
+        batch_size = 5000
+        borrados = 0
+        pks = list(queryset.values_list('pk', flat=True))
+        for i in range(0, len(pks), batch_size):
+            sub = pks[i:i+batch_size]
+            MovimientoContable.objects.filter(pk__in=sub).delete()
+            borrados += len(sub)
+        self.message_user(request, f"Eliminados {borrados} movimientos contables", level=messages.SUCCESS)
+    eliminar_movimientos_seleccionados.short_description = "Eliminar movimientos seleccionados (batch)"
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        # Reemplazar delete_selected por nuestra versión para evitar confirm mass form gigante
+        if 'delete_selected' in actions:
+            del actions['delete_selected']
+        return actions
 
     def periodo(self, obj):
         """Muestra el periodo del cierre asociado"""

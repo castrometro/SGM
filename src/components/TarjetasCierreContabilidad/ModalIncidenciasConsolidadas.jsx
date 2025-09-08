@@ -63,6 +63,44 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
 
     console.log(`🔄 Sincronizando ${excepcionesLocales.length} excepciones locales con el servidor...`);
     console.log('📝 Excepciones a sincronizar:', excepcionesLocales);
+
+    // Paso de validación previo: asegurar setId para incidencias de clasificación
+    const excepcionesInvalidas = excepcionesLocales.filter(exc =>
+      (exc.tipoIncidencia === 'CUENTA_NO_CLAS' || exc.tipoIncidencia === 'CUENTA_NO_CLASIFICADA') && (exc.setId === null || exc.setId === undefined)
+    );
+
+    if (excepcionesInvalidas.length > 0) {
+      console.warn('⚠️ Excepciones inválidas (faltan setId) serán omitidas:', excepcionesInvalidas);
+      alert(`Se omitieron ${excepcionesInvalidas.length} excepciones de clasificación sin set_id. Revise las incidencias y vuelva a intentarlo.`);
+      // Filtrar lista para continuar sólo con válidas
+      const soloValidas = excepcionesLocales.filter(exc => !excepcionesInvalidas.includes(exc));
+      if (soloValidas.length === 0) {
+        return false; // nada para sincronizar
+      }
+      // Reemplazar estado local antes de sincronizar
+      // (No limpiamos aún, sólo usamos copia en esta ejecución)
+      console.log(`Continuando con ${soloValidas.length} excepciones válidas`);
+      // Usar variable temporal en lugar de modificar estado directamente
+      try {
+        for (const excepcion of soloValidas) {
+          const { codigoCuenta, tipoIncidencia, setId, motivo, accion } = excepcion;
+          if (accion === 'crear') {
+            console.log(`➕ Creando excepción: ${codigoCuenta} (${tipoIncidencia}) - Set: ${setId}`);
+            await marcarCuentaNoAplica(cierreId, codigoCuenta, tipoIncidencia, motivo || 'Marcado como no aplica', setId);
+          } else if (accion === 'eliminar') {
+            console.log(`➖ Eliminando excepción: ${codigoCuenta} (${tipoIncidencia}) - Set: ${setId}`);
+            await eliminarExcepcionNoAplica(cierreId, codigoCuenta, tipoIncidencia, setId);
+          }
+        }
+        console.log('🧹 Limpiando estado local de excepciones (post-validación)...');
+        setExcepcionesLocales([]);
+        console.log('✅ Excepciones válidas sincronizadas');
+        return true;
+      } catch (error) {
+        console.error('❌ Error sincronizando excepciones válidas:', error);
+        throw new Error(`Error sincronizando excepciones: ${error.response?.data?.error || error.message}`);
+      }
+    }
     
     try {
       for (const excepcion of excepcionesLocales) {
@@ -196,6 +234,13 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
 
   const handleMarcarNoAplica = async (codigoCuenta, tipoIncidencia, setId = null, motivo = '') => {
     try {
+      // Validación: para incidencias de clasificación se requiere setId
+      const requiereSet = tipoIncidencia === 'CUENTA_NO_CLAS' || tipoIncidencia === 'CUENTA_NO_CLASIFICADA';
+      if (requiereSet && !setId) {
+        console.warn(`⚠️ No se puede marcar 'No aplica' para ${codigoCuenta} (${tipoIncidencia}) sin setId.`);
+        alert('No se puede marcar "No aplica" porque falta el identificador del set de clasificación. Recargue incidencias o contacte soporte.');
+        return;
+      }
       // Actualizar estado local inmediatamente
       setCuentasDetalle(prev => ({
         ...prev,
@@ -296,8 +341,19 @@ const ModalIncidenciasConsolidadas = ({ abierto, onClose, incidencias: incidenci
 
     // Filtrar cuentas que no tienen excepción y que pueden ser marcadas como no aplica
     const cuentasSinExcepcion = cuentasDelTipo.cuentas.filter(cuenta => 
-      !cuenta.tiene_excepcion && puedeMarcarNoAplica(tipoIncidencia)
+      !cuenta.tiene_excepcion && puedeMarcarNoAplica(tipoIncidencia) && (
+        (tipoIncidencia === 'CUENTA_NO_CLAS' || tipoIncidencia === 'CUENTA_NO_CLASIFICADA')
+          ? !!cuenta.set_id // exigir set_id presente para clasificaciones
+          : true
+      )
     );
+
+    if ((tipoIncidencia === 'CUENTA_NO_CLAS' || tipoIncidencia === 'CUENTA_NO_CLASIFICADA')) {
+      const sinSet = cuentasDelTipo.cuentas.filter(c => !c.set_id).length;
+      if (sinSet > 0) {
+        console.warn(`⚠️ ${sinSet} cuentas omitidas en selección masiva por no tener set_id.`);
+      }
+    }
 
     if (cuentasSinExcepcion.length === 0) {
       alert('ℹ️ No hay cuentas disponibles para marcar como "No aplica" en este tipo de incidencia.');

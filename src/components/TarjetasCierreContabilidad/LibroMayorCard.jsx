@@ -73,12 +73,9 @@ const LibroMayorCard = ({
           setMovimientosProcesados(movimientos);
           setIncidenciasDetectadas(incidencias);
           
-          // Verificar snapshot de incidencias para determinar si hay incidencias
-          const snapshot = logData.resumen?.incidencias_snapshot;
-          if (snapshot) {
-            setSinIncidencias(snapshot.sin_incidencias || false);
-            setMensajeSinIncidencias(snapshot.mensaje_sin_incidencias || "");
-          }
+          // Derivar estado de incidencias sin usar snapshot (solo con contador creado)
+          setSinIncidencias((logData.resumen?.incidencias?.creadas || 0) === 0);
+          setMensajeSinIncidencias((logData.resumen?.incidencias?.creadas || 0) === 0 ? 'Sin incidencias detectadas' : '');
         }
 
         if (ultimo.estado === "procesando") {
@@ -117,12 +114,10 @@ const LibroMayorCard = ({
           setMovimientosProcesados(logData.resumen?.procesamiento?.movimientos || 0);
           setIncidenciasDetectadas(logData.resumen?.incidencias?.creadas || 0);
           
-          // Verificar snapshot de incidencias para determinar si hay incidencias
-          const snapshot = logData.resumen?.incidencias_snapshot;
-          if (snapshot) {
-            setSinIncidencias(snapshot.sin_incidencias || false);
-            setMensajeSinIncidencias(snapshot.mensaje_sin_incidencias || "");
-          }
+          // Derivar nuevamente (procesamiento terminado)
+          const incidenciasFin = logData.resumen?.incidencias?.creadas || 0;
+          setSinIncidencias(incidenciasFin === 0);
+          setMensajeSinIncidencias(incidenciasFin === 0 ? 'Sin incidencias detectadas' : '');
           
           // Mensaje específico con estadísticas como en otras tarjetas
           const movimientos = logData.resumen?.procesamiento?.movimientos || 0;
@@ -318,17 +313,17 @@ const LibroMayorCard = ({
           // Reprocesamiento completado
           setSubiendo(false);
           
-          // Verificar snapshot de incidencias para determinar mensaje
-          const snapshot = estadoUpload.resumen?.incidencias_snapshot;
+          // Construir mensaje sin snapshot
           let mensaje = "✅ Reprocesamiento completado";
-          
-          if (snapshot?.sin_incidencias) {
+          const incidenciasReproc = estadoUpload.resumen?.incidencias?.creadas || 0;
+          if (incidenciasReproc === 0) {
             mensaje += " - Sin incidencias detectadas";
+            setSinIncidencias(true);
+            setMensajeSinIncidencias('Sin incidencias detectadas');
           } else {
-            const incidencias = estadoUpload.resumen?.incidencias?.creadas || 0;
-            if (incidencias > 0) {
-              mensaje += ` - ${incidencias} incidencias detectadas`;
-            }
+            mensaje += ` - ${incidenciasReproc} incidencias detectadas`;
+            setSinIncidencias(false);
+            setMensajeSinIncidencias('');
           }
           
           mostrarNotificacion("success", mensaje);

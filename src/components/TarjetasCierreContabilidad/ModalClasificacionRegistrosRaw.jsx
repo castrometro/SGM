@@ -350,6 +350,7 @@ const ModalClasificacionRegistrosRaw = ({
   const [setMasivo, setSetMasivo] = useState('');
   const [opcionMasiva, setOpcionMasiva] = useState('');
   const [aplicandoClasificacionMasiva, setAplicandoClasificacionMasiva] = useState(false);
+  const [guardandoEdicionAuto, setGuardandoEdicionAuto] = useState(false); // para autosave al agregar clasificación en edición
   
   // Estados para pegado masivo en clasificación masiva
   const [textoBusquedaMasiva, setTextoBusquedaMasiva] = useState('');
@@ -740,7 +741,7 @@ const ModalClasificacionRegistrosRaw = ({
     return opciones;
   };
 
-  const agregarClasificacionARegistro = () => {
+  const agregarClasificacionARegistro = async () => {
     if (!setSeleccionado || !opcionSeleccionada) {
       alert("Debe seleccionar un set y una opción");
       return;
@@ -761,13 +762,44 @@ const ModalClasificacionRegistrosRaw = ({
         }
       }));
     } else if (editandoId) {
-      setRegistroEditando(prev => ({
-        ...prev,
+      // Construir nuevo objeto de edición con la clasificación añadida
+      const nuevoRegistroEditado = {
+        ...registroEditando,
         clasificaciones: {
-          ...prev.clasificaciones,
+          ...(registroEditando?.clasificaciones || {}),
           [setEncontrado.nombre]: opcionSeleccionada
         }
-      }));
+      };
+      setRegistroEditando(nuevoRegistroEditado);
+
+      // Persistir automáticamente la edición para evitar que se "pierda" al recargar
+      try {
+        setGuardandoEdicionAuto(true);
+        const registroActual = registros.find(r => r.id === editandoId);
+        if (registroActual) {
+          await actualizarClasificacionPersistente(registroActual.numero_cuenta, {
+            cliente: clienteId,
+            nuevo_numero_cuenta: nuevoRegistroEditado.numero_cuenta.trim(),
+            cuenta_nombre: nuevoRegistroEditado.numero_cuenta.trim(),
+            clasificaciones: nuevoRegistroEditado.clasificaciones
+          });
+          // Actualizar lista sin cerrar edición para que el usuario vea reflejado
+          await cargarRegistros();
+          // Mantener modo edición (buscamos de nuevo el registro por número de cuenta)
+          const recargado = registros.find(r => r.numero_cuenta === nuevoRegistroEditado.numero_cuenta);
+          if (recargado) {
+            setEditandoId(recargado.id);
+          }
+        }
+      } catch (e) {
+        console.error('Error guardando automáticamente la nueva clasificación:', e);
+        alert('No se pudo guardar automáticamente la nueva clasificación. Revisa la consola.');
+      } finally {
+        setGuardandoEdicionAuto(false);
+      }
+    } else {
+      // Usuario intentó agregar sin estar creando ni editando
+      alert('Para agregar clasificaciones a una cuenta existente primero haz clic en el ícono de edición.');
     }
 
     // Limpiar selección
@@ -2020,7 +2052,22 @@ const ModalClasificacionRegistrosRaw = ({
   };
 
   const registrosFiltrados = aplicarFiltros(registros || []);
-  const setsUnicos = obtenerSetsUnicos();
+  // Mostrar todos los sets definidos por el cliente, no solo los presentes en los registros
+  const setsUnicos = sets.map(s => s.nombre).sort();
+
+  // --- Paginación ---
+  const PAGE_SIZE = 20;
+  const [paginaActual, setPaginaActual] = useState(1);
+  const totalPaginas = Math.max(1, Math.ceil(registrosFiltrados.length / PAGE_SIZE));
+  const paginaSegura = Math.min(paginaActual, totalPaginas);
+  const inicio = (paginaSegura - 1) * PAGE_SIZE;
+  const fin = inicio + PAGE_SIZE;
+  const registrosPagina = registrosFiltrados.slice(inicio, fin);
+
+  // Reset de página cuando cambian filtros o cantidad
+  useEffect(() => {
+    setPaginaActual(1);
+  }, [filtros, registrosFiltrados.length]);
 
   if (!isOpen) {
     console.log("🚫 Modal no se abre - isOpen:", isOpen);
@@ -2031,15 +2078,12 @@ const ModalClasificacionRegistrosRaw = ({
   console.log("📋 Props recibidas:", { isOpen, uploadId, clienteId });
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
+    <div className="fixed inset-0 z-50 flex justify-center items-center p-4 backdrop-blur-sm bg-black/70">
       <div 
-        className="bg-gray-900 rounded-lg shadow-xl w-full overflow-hidden flex flex-col"
-        style={{ 
-          maxWidth: '95vw',
-          height: '90vh',
-          width: '1200px'
-        }}
+        className="relative w-full flex flex-col overflow-hidden rounded-xl border border-gray-700/70 shadow-2xl bg-gradient-to-br from-gray-900 via-gray-900/95 to-gray-950"
+        style={{ maxWidth: '95vw', height: '90vh', width: '1200px' }}
       >
+        <div className="absolute inset-0 pointer-events-none opacity-40 mix-blend-overlay" style={{backgroundImage:'radial-gradient(circle at 25% 15%, rgba(120,119,198,0.15), transparent 60%)'}} />
         {/* Header del modal */}
         <div className="flex justify-between items-center p-6 border-b border-gray-700 bg-gray-900">
           <div className="flex items-center gap-4">
@@ -2269,13 +2313,13 @@ const ModalClasificacionRegistrosRaw = ({
 
                   {/* Filtros por sets */}
                   {setsUnicos.length > 0 && (
-                    <div className="mt-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <label className="text-xs text-gray-400">Filtrar por sets:</label>
+                    <div className="mt-5 border-t border-gray-700/60 pt-4">
+                      <div className="flex items-center gap-3 mb-3">
+                        <label className="text-[11px] tracking-wide uppercase text-gray-400 font-semibold">Filtrar por sets</label>
                         {filtros.setsSeleccionados.length > 0 && (
                           <button
                             onClick={() => setFiltros(prev => ({ ...prev, setsSeleccionados: [] }))}
-                            className="text-xs text-blue-400 hover:text-blue-300 underline"
+                            className="text-xs text-blue-300 hover:text-blue-200 underline decoration-dotted"
                           >
                             Deseleccionar todos
                           </button>
@@ -2283,36 +2327,40 @@ const ModalClasificacionRegistrosRaw = ({
                         {filtros.setsSeleccionados.length !== setsUnicos.length && (
                           <button
                             onClick={() => setFiltros(prev => ({ ...prev, setsSeleccionados: [...setsUnicos] }))}
-                            className="text-xs text-blue-400 hover:text-blue-300 underline"
+                            className="text-xs text-blue-300 hover:text-blue-200 underline decoration-dotted"
                           >
                             Seleccionar todos
                           </button>
                         )}
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        {setsUnicos.map(setNombre => (
-                          <label key={setNombre} className="flex items-center text-sm text-gray-300 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded cursor-pointer transition">
-                            <input
-                              type="checkbox"
-                              checked={filtros.setsSeleccionados.includes(setNombre)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setFiltros(prev => ({
-                                    ...prev,
-                                    setsSeleccionados: [...prev.setsSeleccionados, setNombre]
-                                  }));
-                                } else {
-                                  setFiltros(prev => ({
-                                    ...prev,
-                                    setsSeleccionados: prev.setsSeleccionados.filter(s => s !== setNombre)
-                                  }));
-                                }
+                      <div className="flex flex-wrap gap-2 max-h-40 overflow-auto pr-1 custom-scrollbar">
+                        {setsUnicos.map(setNombre => {
+                          const activo = filtros.setsSeleccionados.includes(setNombre);
+                          return (
+                            <button
+                              type="button"
+                              key={setNombre}
+                              onClick={() => {
+                                setFiltros(prev => ({
+                                  ...prev,
+                                  setsSeleccionados: activo 
+                                    ? prev.setsSeleccionados.filter(s => s !== setNombre)
+                                    : [...prev.setsSeleccionados, setNombre]
+                                }));
                               }}
-                              className="mr-2 text-blue-600 bg-gray-600 border-gray-500 rounded focus:ring-blue-500"
-                            />
-                            {setNombre}
-                          </label>
-                        ))}
+                              className={`group relative flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-medium transition
+                                ${activo
+                                  ? 'bg-blue-600/20 text-blue-300 border border-blue-500/40 shadow-inner'
+                                  : 'bg-gray-700/70 text-gray-300 border border-gray-600 hover:bg-gray-600/60'}
+                              `}
+                            >
+                              <span className="font-semibold tracking-wide">{setNombre}</span>
+                              {activo && (
+                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 shadow shadow-blue-400/40" />
+                              )}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -2462,7 +2510,7 @@ const ModalClasificacionRegistrosRaw = ({
               )}
 
               {/* Tabla */}
-              <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+              <div className="bg-gray-800 rounded-lg border border-gray-700 flex flex-col overflow-hidden">
                 {loading ? (
                   <div className="flex justify-center items-center h-32">
                     <div className="animate-spin w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full"></div>
@@ -2495,7 +2543,9 @@ const ModalClasificacionRegistrosRaw = ({
                     )}
                   </div>
                 ) : (
-                  <table className="w-full">
+                  <div className="relative flex-1 flex flex-col">
+                    <div className="flex-1 overflow-auto custom-scrollbar" style={{maxHeight:'42vh'}}>
+                      <table className="w-full">
                     <thead className="bg-gray-800 sticky top-0 z-10">
                       <tr>
                         {modoClasificacionMasiva && (
@@ -2514,12 +2564,10 @@ const ModalClasificacionRegistrosRaw = ({
                             />
                           </th>
                         )}
-                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider border-b border-gray-700">
-                          Número Cuenta
-                        </th>
-                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider border-b border-gray-700">
-                          Clasificaciones
-                        </th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider border-b border-gray-700">Cuenta</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider border-b border-gray-700">Nombre (ES)</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider border-b border-gray-700">Nombre (EN)</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider border-b border-gray-700">Clasificaciones</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider border-b border-gray-700">
                           Acciones
                         </th>
@@ -2531,7 +2579,7 @@ const ModalClasificacionRegistrosRaw = ({
                         <>
                           {/* Encabezado de creación masiva */}
                           <tr className="bg-green-900/20 border-l-4 border-l-green-500">
-                            <td colSpan={modoClasificacionMasiva ? 4 : 3} className="px-3 py-4">
+                            <td colSpan={modoClasificacionMasiva ? 6 : 5} className="px-3 py-4">
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-3">
                                   <div className="flex items-center gap-2">
@@ -2616,19 +2664,19 @@ const ModalClasificacionRegistrosRaw = ({
                           </tr>
                           
                           {/* Lista de cuentas masivas */}
-                          {cuentasMasivas.map((cuenta, index) => (
+              {cuentasMasivas.map((cuenta, index) => (
                             <tr key={`masiva-${index}`} className="bg-green-900/10 hover:bg-green-900/20 transition">
                               {modoClasificacionMasiva && (
                                 <td className="px-3 py-2">
                                   {/* Sin checkbox para cuentas masivas */}
                                 </td>
                               )}
-                              <td className="px-3 py-2">
+                <td className="px-3 py-2" colSpan={2}>
                                 <div className="font-mono text-sm text-green-300">
                                   {cuenta.numero_cuenta}
                                 </div>
                               </td>
-                              <td className="px-3 py-2">
+                <td className="px-3 py-2" colSpan={2}>
                                 {/* Clasificaciones de la cuenta */}
                                 {Object.keys(cuenta.clasificaciones).length > 0 ? (
                                   <div className="flex flex-wrap gap-1">
@@ -2667,7 +2715,7 @@ const ModalClasificacionRegistrosRaw = ({
                         <>
                           {/* Fila informativa */}
                           <tr className="bg-blue-900/20">
-                            <td colSpan={modoClasificacionMasiva ? 4 : 3} className="px-3 py-2 text-center">
+                            <td colSpan={modoClasificacionMasiva ? 6 : 5} className="px-3 py-2 text-center">
                               <div className="text-xs text-blue-400 bg-blue-900/30 px-3 py-2 rounded border border-blue-700/50 inline-block">
                                 💡 <strong>Tip:</strong> Puedes pegar varias cuentas de Excel (una por línea) en el campo "Número de cuenta" para crearlas masivamente
                               </div>
@@ -2680,7 +2728,7 @@ const ModalClasificacionRegistrosRaw = ({
                               {/* Sin checkbox para fila de creación */}
                             </td>
                           )}
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2" colSpan={2}>
                             {(() => {
                               const cuentaExiste = nuevoRegistro.numero_cuenta.trim() && 
                                                  registros.some(r => r.numero_cuenta === nuevoRegistro.numero_cuenta.trim());
@@ -2711,7 +2759,7 @@ const ModalClasificacionRegistrosRaw = ({
                               );
                             })()}
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2" colSpan={2}>
                             {/* Clasificaciones agregadas */}
                             {Object.keys(nuevoRegistro.clasificaciones).length > 0 && (
                               <div className="mb-2">
@@ -2807,7 +2855,7 @@ const ModalClasificacionRegistrosRaw = ({
                       )}
                       
                       {/* Filas de registros existentes */}
-                      {registrosFiltrados.map((registro) => (
+                      {registrosPagina.map((registro) => (
                         <tr key={registro.id} className={`hover:bg-gray-800/50 transition-colors ${
                           modoClasificacionMasiva && registrosSeleccionados.has(registro.id) ? 'bg-green-900/20 border-l-4 border-l-green-500' : ''
                         }`}>
@@ -2821,17 +2869,36 @@ const ModalClasificacionRegistrosRaw = ({
                               />
                             </td>
                           )}
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 align-top">
                             {editandoId === registro.id ? (
                               <input
                                 type="text"
                                 value={registroEditando.numero_cuenta}
                                 onChange={(e) => setRegistroEditando(prev => ({ ...prev, numero_cuenta: e.target.value }))}
-                                className="w-full bg-gray-700 text-white px-2 py-1 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+                                className="w-full bg-gray-700 text-white px-2 py-1 rounded border border-gray-600 focus:border-blue-500 focus:outline-none font-mono"
                               />
                             ) : (
-                              <span className="text-white font-mono">{registro.numero_cuenta}</span>
+                              <div className="flex flex-col">
+                                <span className="text-white font-mono text-sm">{registro.numero_cuenta}</span>
+                                {!registro.cuenta_existe && (
+                                  <span className="text-[10px] text-yellow-400 mt-0.5">(temporal)</span>
+                                )}
+                              </div>
                             )}
+                          </td>
+                          <td className="px-3 py-2 align-top text-xs text-gray-300 max-w-[200px]">
+                            <div className="whitespace-pre-line leading-snug">
+                              {registro.cuenta_nombre || <span className="text-gray-600 italic">—</span>}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 align-top text-xs text-gray-300 max-w-[200px]">
+                            <div className="whitespace-pre-line leading-snug">
+                              {registro.cuenta_nombre_en ? (
+                                registro.cuenta_nombre_en
+                              ) : (
+                                <span className="text-gray-600 italic">{cliente?.bilingue ? 'sin inglés' : '—'}</span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-3 py-2">
                             {editandoId === registro.id ? (
@@ -2963,7 +3030,49 @@ const ModalClasificacionRegistrosRaw = ({
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                      </table>
+                    </div>
+                    {/* Footer paginación */}
+                    <div className="flex items-center justify-between gap-4 px-4 py-2 bg-gray-900/80 border-t border-gray-700 text-xs">
+                      <div className="text-gray-400">
+                        Página <span className="text-white font-medium">{paginaSegura}</span> de <span className="text-white font-medium">{totalPaginas}</span>
+                        <span className="ml-3 text-gray-500">Mostrando {registrosPagina.length} de {registrosFiltrados.length}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setPaginaActual(1)}
+                          disabled={paginaSegura === 1}
+                          className="px-2 py-1 rounded bg-gray-700 disabled:bg-gray-800 disabled:text-gray-600 hover:bg-gray-600 text-gray-200"
+                        >«</button>
+                        <button
+                          onClick={() => setPaginaActual(p => Math.max(1, p-1))}
+                          disabled={paginaSegura === 1}
+                          className="px-2 py-1 rounded bg-gray-700 disabled:bg-gray-800 disabled:text-gray-600 hover:bg-gray-600 text-gray-200"
+                        >‹</button>
+                        <input
+                          type="number"
+                          min={1}
+                          max={totalPaginas}
+                          value={paginaSegura}
+                          onChange={e => {
+                            const v = parseInt(e.target.value,10);
+                            if(!isNaN(v)) setPaginaActual(Math.min(Math.max(1,v), totalPaginas));
+                          }}
+                          className="w-14 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-center text-gray-200 focus:outline-none focus:border-blue-500"
+                        />
+                        <button
+                          onClick={() => setPaginaActual(p => Math.min(totalPaginas, p+1))}
+                          disabled={paginaSegura === totalPaginas}
+                          className="px-2 py-1 rounded bg-gray-700 disabled:bg-gray-800 disabled:text-gray-600 hover:bg-gray-600 text-gray-200"
+                        >›</button>
+                        <button
+                          onClick={() => setPaginaActual(totalPaginas)}
+                          disabled={paginaSegura === totalPaginas}
+                          className="px-2 py-1 rounded bg-gray-700 disabled:bg-gray-800 disabled:text-gray-600 hover:bg-gray-600 text-gray-200"
+                        >»</button>
+                      </div>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

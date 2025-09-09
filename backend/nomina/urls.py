@@ -81,6 +81,7 @@ from django.urls import path
 from django.conf import settings
 from django.views.static import serve
 from .views_nomina_consolidada import obtener_resumen_nomina_consolidada, obtener_detalle_nomina_consolidada
+from .views_libro_v2 import libro_resumen_v2
 
 router = routers.DefaultRouter()
 router.register(r'cierres', CierreNominaViewSet)
@@ -249,4 +250,6 @@ urlpatterns = router.urls + [
     # === Resumen Nómina Consolidada ===
     path('cierres/<int:cierre_id>/nomina-consolidada/resumen/', obtener_resumen_nomina_consolidada, name='resumen_nomina_consolidada'),
     path('cierres/<int:cierre_id>/nomina-consolidada/detalle/', obtener_detalle_nomina_consolidada, name='detalle_nomina_consolidada'),
+    # === Libro Remuneraciones V2 (simplificado) ===
+    path('cierres/<int:cierre_id>/libro/v2/resumen/', libro_resumen_v2, name='libro_resumen_v2'),
 ]

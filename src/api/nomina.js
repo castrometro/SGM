@@ -606,6 +606,7 @@ export const limpiarDiscrepanciasCierre = async (cierreId) => {
 // Detalle de nómina consolidada (empleados, headers, conceptos)
 export const obtenerDetalleNominaConsolidada = async (cierreId) => {
   const response = await api.get(`/nomina/cierres/${cierreId}/nomina-consolidada/detalle/`);
+  console.log("🔍 [API] obtenerDetalleNominaConsolidada - Respuesta completa:", response);
   return response.data;
 };
 
@@ -624,6 +625,13 @@ export const obtenerMovimientosMes = async (cierreId) => {
 // Resumen de nómina consolidada (NominaConsolidada)
 export const obtenerResumenNominaConsolidada = async (cierreId) => {
   const response = await api.get(`/nomina/cierres/${cierreId}/nomina-consolidada/resumen/`);
+  return response.data;
+};
+
+// ================== LIBRO REMUNERACIONES V2 (simplificado) ==================
+// Resumen compacto: totales por categoría + conceptos agregados
+export const obtenerLibroResumenV2 = async (cierreId) => {
+  const response = await api.get(`/nomina/cierres/${cierreId}/libro/v2/resumen/`);
   return response.data;
 };
 

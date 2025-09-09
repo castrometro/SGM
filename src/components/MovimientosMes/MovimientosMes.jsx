@@ -50,6 +50,7 @@ const MovimientosMes = () => {
   const [tipoEmpPage, setTipoEmpPage] = useState(1);
   const [tipoEmpPageSize, setTipoEmpPageSize] = useState(20);
   const [chartBasis, setChartBasis] = useState('deteccion'); // 'deteccion' | 'movimiento'
+  const [ausMotivoMetric, setAusMotivoMetric] = useState('dias'); // 'dias' | 'eventos'
   const tablaRef = useRef(null);
 
   const scrollToTabla = (tipo = null) => {
@@ -202,6 +203,65 @@ const MovimientosMes = () => {
       .sort((a, b) => b.dias - a.dias)
       .slice(0, 8)
       .map((o) => ({ name: o.name, dias: o.dias }));
+  }, [datos]);
+
+  // Ausentismo por motivo (tipo específico de ausencia)
+  const ausentismoPorMotivoData = React.useMemo(() => {
+    // Si backend V2 entregó motivos en resumen (ausentismo_metricas.motivos) los usamos directamente
+    const motivosBackend = datos?.resumen?.ausentismo_metricas?.motivos;
+    if (Array.isArray(motivosBackend) && motivosBackend.length) {
+      // Normalizamos claves a name para gráfico
+      return motivosBackend.map(m => ({ name: m.motivo, eventos: m.eventos, dias: m.dias }));
+    }
+    // Fallback cálculo local (V1)
+    const acc = new Map();
+    for (const m of datos?.movimientos || []) {
+      if (m.tipo_movimiento !== 'ausentismo') continue;
+      const rawMotivo = (m.motivo || '').trim();
+      const key = rawMotivo ? rawMotivo : 'Sin motivo';
+      const dias = Number(m.dias_ausencia || 0);
+      const item = acc.get(key) || { name: key, eventos: 0, dias: 0 };
+      item.eventos += 1;
+      item.dias += isNaN(dias) ? 0 : dias;
+      acc.set(key, item);
+    }
+    const arr = Array.from(acc.values());
+    arr.sort((a,b)=> (b.dias - a.dias) || (b.eventos - a.eventos));
+    if (arr.length > 12) {
+      const top = arr.slice(0,11);
+      const rest = arr.slice(11);
+      const otros = rest.reduce((o,c)=> { o.eventos += c.eventos; o.dias += c.dias; return o; }, { name: 'Otros', eventos:0, dias:0 });
+      top.push(otros);
+      return top;
+    }
+    return arr;
+  }, [datos]);
+
+  // Inasistencias por tipo (agregado backend V2: ausentismo_metricas.por_tipo)
+  const inasistenciasPorTipoData = React.useMemo(() => {
+    const tipos = datos?.resumen?.ausentismo_metricas?.por_tipo;
+    if (Array.isArray(tipos) && tipos.length) {
+      return tipos.map(t => ({ name: t.tipo, eventos: t.eventos, dias: t.dias }));
+    }
+    // Fallback: derivar del motivo (segmento antes de ' - ' o Vacaciones)
+    const acc = new Map();
+    for (const m of datos?.movimientos || []) {
+      if (m.tipo_movimiento !== 'ausentismo') continue;
+      const rawMotivo = (m.motivo || '').trim() || 'Sin motivo';
+      let tipoBase;
+      if (rawMotivo === 'Vacaciones') tipoBase = 'Vacaciones';
+      else {
+        const parts = rawMotivo.split(' - ', 1);
+        tipoBase = parts[0] ? parts[0].trim() : rawMotivo;
+      }
+      if (!tipoBase) tipoBase = 'Sin tipo';
+      const dias = Number(m.dias_ausencia || 0) || 0;
+      const obj = acc.get(tipoBase) || { name: tipoBase, eventos: 0, dias: 0 };
+      obj.eventos += 1;
+      obj.dias += dias;
+      acc.set(tipoBase, obj);
+    }
+    return Array.from(acc.values()).sort((a,b)=> b.eventos - a.eventos || b.dias - a.dias);
   }, [datos]);
 
   const formatearFecha = (fecha) => {
@@ -367,21 +427,27 @@ const MovimientosMes = () => {
 
       {/* Contenido principal */}
       <div className="w-full px-6 py-6">
-        {/* Resumen por tipo */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
-          {Object.entries(datos?.resumen?.por_tipo || {}).map(([tipo, info]) => (
-            <div
-              key={tipo}
-              onClick={() => scrollToTabla(tipo)}
-              className="bg-gray-900/60 rounded-xl p-4 border border-gray-800 hover:border-gray-700 transition-colors transition-transform duration-200 hover:scale-[1.02] cursor-pointer"
-            >
-              <div className="flex items-center justify-between mb-2">
-                {obtenerIconoTipo(tipo)}
-                <span className="text-2xl font-bold text-white">{info.count}</span>
+        {/* Resumen por tipo (solo tarjetas solicitadas) */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          {['ingreso','finiquito','ausentismo'].map((tipo) => {
+            const info = datos?.resumen?.por_tipo?.[tipo] || { count: 0 };
+            const emp = info.empleados_unicos ?? null;
+            const label = tipo === 'ingreso' ? 'Ingresos' : tipo === 'finiquito' ? 'Finiquitos' : 'Ausencias';
+            return (
+              <div
+                key={tipo}
+                onClick={() => scrollToTabla(tipo)}
+                className="bg-gray-900/60 rounded-xl p-4 border border-gray-800 hover:border-gray-700 transition-colors transition-transform duration-200 hover:scale-[1.02] cursor-pointer"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  {obtenerIconoTipo(tipo)}
+                  <span className="text-2xl font-bold text-white">{info.count}</span>
+                </div>
+                <p className="text-sm text-gray-300 mb-0.5">{label}</p>
+                {emp !== null && <p className="text-[11px] text-gray-400"><span className="text-teal-300 font-medium">{emp}</span> empleado{emp===1?'':'s'}</p>}
               </div>
-              <p className="text-sm text-gray-300">{info.display}</p>
-            </div>
-          ))}
+            );
+          })}
           <div
             onClick={() => scrollToTabla(null)}
             className="bg-gray-900/60 rounded-xl p-4 border border-gray-800 hover:border-gray-700 transition-colors transition-transform duration-200 hover:scale-[1.02] cursor-pointer"
@@ -390,12 +456,12 @@ const MovimientosMes = () => {
               <Users className="w-5 h-5 text-gray-400" />
               <span className="text-2xl font-bold text-white">{datos?.resumen?.total_movimientos || 0}</span>
             </div>
-            <p className="text-sm text-gray-300">Total Movimientos</p>
+            <p className="text-sm text-gray-300">Total de Movimientos</p>
           </div>
         </div>
 
     {/* Gráficos */}
-    <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mt-2 mb-10">
+  <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-5 gap-6 mt-2 mb-10">
           <div className="bg-gray-900/60 rounded-xl p-4 border border-gray-800 transition-transform duration-200 hover:scale-[1.005] hover:border-gray-700">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
@@ -473,6 +539,51 @@ const MovimientosMes = () => {
           <YAxis type="category" dataKey="name" stroke="#9ca3af" width={160} tick={{ fontSize: 12 }} />
                   <RTooltip formatter={(v) => [v, 'días']} cursor={{ fill: 'rgba(255,255,255,0.02)' }} />
                   <Bar dataKey="dias" fill="#fbbf24" radius={[0, 6, 6, 0]} name="Días" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          {/* Ausentismo por motivo */}
+          <div className="bg-gray-900/60 rounded-xl p-4 border border-gray-800 transition-transform duration-200 hover:scale-[1.005] hover:border-gray-700">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <BarChart3 size={16} className="text-gray-400" />
+                <h3 className="text-sm font-medium text-gray-300">Ausentismo por motivo</h3>
+              </div>
+              <div className="flex items-center gap-1 text-xs bg-gray-800/60 border border-gray-700 rounded-lg p-0.5">
+                <button onClick={()=>setAusMotivoMetric('dias')} className={`px-2 py-1 rounded ${ausMotivoMetric==='dias' ? 'bg-teal-600 text-white':'text-gray-300 hover:text-white'}`}>Días</button>
+                <button onClick={()=>setAusMotivoMetric('eventos')} className={`px-2 py-1 rounded ${ausMotivoMetric==='eventos' ? 'bg-teal-600 text-white':'text-gray-300 hover:text-white'}`}>Eventos</button>
+              </div>
+            </div>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={ausentismoPorMotivoData} margin={{ top: 12, right: 24, left: 32, bottom: 60 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                  <XAxis dataKey="name" stroke="#9ca3af" tick={{ fontSize: 11 }} interval={0} angle={-35} textAnchor="end" height={70} />
+                  <YAxis stroke="#9ca3af" width={50} tick={{ fontSize: 12 }} />
+                  <RTooltip cursor={{ fill: 'rgba(255,255,255,0.02)' }} formatter={(v)=> [v, ausMotivoMetric==='dias'? 'días':'eventos']} />
+                  <Bar dataKey={ausMotivoMetric} fill={ausMotivoMetric==='dias'? '#facc15':'#60a5fa'} radius={[6,6,0,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          {/* Inasistencias por tipo (eventos) */}
+          <div className="bg-gray-900/60 rounded-xl p-4 border border-gray-800 transition-transform duration-200 hover:scale-[1.005] hover:border-gray-700">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <BarChart3 size={16} className="text-gray-400" />
+                <h3 className="text-sm font-medium text-gray-300">Inasistencias por tipo</h3>
+              </div>
+              <span className="text-xs text-gray-500">(eventos)</span>
+            </div>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={inasistenciasPorTipoData} margin={{ top: 12, right: 24, left: 32, bottom: 60 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                  <XAxis dataKey="name" stroke="#9ca3af" tick={{ fontSize: 11 }} interval={0} angle={-35} textAnchor="end" height={70} />
+                  <YAxis stroke="#9ca3af" width={50} tick={{ fontSize: 12 }} />
+                  <RTooltip cursor={{ fill: 'rgba(255,255,255,0.02)' }} formatter={(v)=> [v, 'eventos']} />
+                  <Bar dataKey="eventos" fill="#14b8a6" radius={[6,6,0,0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

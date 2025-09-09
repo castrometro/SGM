@@ -2138,11 +2138,21 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                 nomina_consolidada.save(update_fields=['estado_empleado'])
                 
                 # Crear MovimientoPersonal
+                fecha_evt = movimiento.fecha_ingreso if movimiento.alta_o_baja == 'ALTA' else movimiento.fecha_retiro
+                categoria = 'ingreso' if movimiento.alta_o_baja == 'ALTA' else 'finiquito'
                 mov_personal = MovimientoPersonal(
                     nomina_consolidada=nomina_consolidada,
-                    tipo_movimiento='ingreso' if movimiento.alta_o_baja == 'ALTA' else 'finiquito',
+                    tipo_movimiento=categoria,
                     motivo=movimiento.motivo,
-                    fecha_movimiento=movimiento.fecha_ingreso if movimiento.alta_o_baja == 'ALTA' else movimiento.fecha_retiro,
+                    descripcion=movimiento.motivo,
+                    fecha_movimiento=fecha_evt,
+                    fecha_inicio=fecha_evt,
+                    fecha_fin=fecha_evt,
+                    dias_evento=1,
+                    dias_en_periodo=1,
+                    categoria=categoria,
+                    subtipo=None,
+                    multi_mes=False,
                     observaciones=f"Tipo contrato: {movimiento.tipo_contrato}, Sueldo base: ${movimiento.sueldo_base:,.0f}",
                     fecha_deteccion=timezone.now(),
                     detectado_por_sistema='consolidacion_paralela_v2'
@@ -2165,8 +2175,15 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                     mov_personal = MovimientoPersonal(
                         nomina_consolidada=nomina_consolidada,
                         tipo_movimiento='finiquito',
+                        categoria='finiquito',
                         motivo=movimiento.motivo,
+                        descripcion=movimiento.motivo,
                         fecha_movimiento=movimiento.fecha_retiro,
+                        fecha_inicio=movimiento.fecha_retiro,
+                        fecha_fin=movimiento.fecha_retiro,
+                        dias_evento=1,
+                        dias_en_periodo=1,
+                        multi_mes=False,
                         fecha_deteccion=timezone.now(),
                         detectado_por_sistema='consolidacion_paralela_v2'
                     )
@@ -2196,12 +2213,47 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                 
                 nomina_consolidada.save(update_fields=['estado_empleado', 'dias_ausencia'])
                 
+                # Normalización de ausentismo
+                descripcion = f"{ausentismo.tipo} - {ausentismo.motivo}".strip(' -')
+                subtipo = ausentismo.tipo.lower().replace(' ', '_') if ausentismo.tipo else 'sin_justificar'
+                fecha_inicio = ausentismo.fecha_inicio_ausencia
+                fecha_fin = ausentismo.fecha_fin_ausencia
+                dias_evento = (fecha_fin - fecha_inicio).days + 1 if fecha_inicio and fecha_fin else ausentismo.dias
+                # Clipping al periodo
+                try:
+                    year, month = map(int, cierre.periodo.split('-'))
+                    from datetime import date
+                    import calendar
+                    start_periodo = date(year, month, 1)
+                    last_day = calendar.monthrange(year, month)[1]
+                    end_periodo = date(year, month, last_day)
+                    clip_start = fecha_inicio if fecha_inicio > start_periodo else start_periodo
+                    clip_end = fecha_fin if fecha_fin < end_periodo else end_periodo
+                    dias_en_periodo = (clip_end - clip_start).days + 1 if clip_end >= clip_start else 0
+                    multi_mes_flag = (fecha_inicio < start_periodo) or (fecha_fin > end_periodo)
+                except Exception:
+                    dias_en_periodo = ausentismo.dias
+                    multi_mes_flag = False
+                from hashlib import sha1
+                base_hash = f"{nomina_consolidada.rut_empleado}:ausencia:{subtipo}:{fecha_inicio}:{fecha_fin}".lower()
+                hash_evento = sha1(base_hash.encode('utf-8')).hexdigest()
+                hash_registro_periodo = sha1(f"{hash_evento}:{cierre.periodo}".encode('utf-8')).hexdigest()
                 mov_personal = MovimientoPersonal(
                     nomina_consolidada=nomina_consolidada,
                     tipo_movimiento='ausentismo',
-                    motivo=f"{ausentismo.tipo} - {ausentismo.motivo}",
+                    categoria='ausencia',
+                    subtipo=subtipo or 'sin_justificar',
+                    motivo=descripcion,
+                    descripcion=descripcion,
                     dias_ausencia=ausentismo.dias,
-                    fecha_movimiento=ausentismo.fecha_inicio_ausencia,
+                    fecha_movimiento=fecha_inicio,
+                    fecha_inicio=fecha_inicio,
+                    fecha_fin=fecha_fin,
+                    dias_evento=dias_evento,
+                    dias_en_periodo=dias_en_periodo,
+                    multi_mes=multi_mes_flag,
+                    hash_evento=hash_evento,
+                    hash_registro_periodo=hash_registro_periodo,
                     observaciones=f"Desde: {ausentismo.fecha_inicio_ausencia} hasta: {ausentismo.fecha_fin_ausencia}",
                     fecha_deteccion=timezone.now(),
                     detectado_por_sistema='consolidacion_paralela_v2'
@@ -2231,12 +2283,44 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                     rut_empleado=rut_normalizado  # ✅ NORMALIZAR RUT
                 )
                 
+                # Vacaciones como subtipo ausencia
+                fecha_inicio = vacacion.fecha_inicio
+                fecha_fin = vacacion.fecha_fin_vacaciones
+                dias_evento = (fecha_fin - fecha_inicio).days + 1 if fecha_inicio and fecha_fin else vacacion.cantidad_dias
+                try:
+                    year, month = map(int, cierre.periodo.split('-'))
+                    from datetime import date
+                    import calendar
+                    start_periodo = date(year, month, 1)
+                    last_day = calendar.monthrange(year, month)[1]
+                    end_periodo = date(year, month, last_day)
+                    clip_start = fecha_inicio if fecha_inicio > start_periodo else start_periodo
+                    clip_end = fecha_fin if fecha_fin < end_periodo else end_periodo
+                    dias_en_periodo = (clip_end - clip_start).days + 1 if clip_end >= clip_start else 0
+                    multi_mes_flag = (fecha_inicio < start_periodo) or (fecha_fin > end_periodo)
+                except Exception:
+                    dias_en_periodo = vacacion.cantidad_dias
+                    multi_mes_flag = False
+                from hashlib import sha1
+                base_hash = f"{nomina_consolidada.rut_empleado}:ausencia:vacaciones:{fecha_inicio}:{fecha_fin}".lower()
+                hash_evento = sha1(base_hash.encode('utf-8')).hexdigest()
+                hash_registro_periodo = sha1(f"{hash_evento}:{cierre.periodo}".encode('utf-8')).hexdigest()
                 mov_personal = MovimientoPersonal(
                     nomina_consolidada=nomina_consolidada,
                     tipo_movimiento='ausentismo',
+                    categoria='ausencia',
+                    subtipo='vacaciones',
                     motivo='Vacaciones',
+                    descripcion='Vacaciones',
                     dias_ausencia=vacacion.cantidad_dias,
-                    fecha_movimiento=vacacion.fecha_inicio,
+                    fecha_movimiento=fecha_inicio,
+                    fecha_inicio=fecha_inicio,
+                    fecha_fin=fecha_fin,
+                    dias_evento=dias_evento,
+                    dias_en_periodo=dias_en_periodo,
+                    multi_mes=multi_mes_flag,
+                    hash_evento=hash_evento,
+                    hash_registro_periodo=hash_registro_periodo,
                     observaciones=f"Vacaciones desde: {vacacion.fecha_inicio} hasta: {vacacion.fecha_fin_vacaciones}",
                     fecha_deteccion=timezone.now(),
                     detectado_por_sistema='consolidacion_paralela_v2'

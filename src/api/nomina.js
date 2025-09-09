@@ -619,6 +619,13 @@ export const obtenerLibroRemuneraciones = async (cierreId) => {
 // Obtener movimientos del mes (ingresos, ausencias, finiquitos)
 export const obtenerMovimientosMes = async (cierreId) => {
   const response = await api.get(`/nomina/cierres/${cierreId}/movimientos/`);
+  console.log("🔍 [API] obtenerMovimientosMes - Respuesta completa:", response);
+  return response.data;
+};
+
+// Movimientos Personal V2 (simplificado: ingresos, finiquitos, ausentismos)
+export const obtenerMovimientosPersonalV2 = async (cierreId) => {
+  const response = await api.get(`/nomina/cierres/${cierreId}/movimientos/v2/resumen/`);
   return response.data;
 };
 

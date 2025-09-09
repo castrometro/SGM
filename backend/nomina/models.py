@@ -1660,20 +1660,45 @@ class MovimientoPersonal(models.Model):
     """
     nomina_consolidada = models.ForeignKey(NominaConsolidada, on_delete=models.CASCADE, related_name='movimientos')
     
+    # Tipo legado (mantener por compatibilidad con vistas existentes)
     TIPO_MOVIMIENTO_CHOICES = [
-        ('ingreso', 'Nueva Incorporación'),
+        ('ingreso', 'Ingreso'),
         ('finiquito', 'Finiquito'),
-        ('ausentismo', 'Ausencia Periodo'),
-        ('reincorporacion', 'Reincorporación después de Ausencia'),
-        ('cambio_datos', 'Cambio de Datos Personales'),
+        ('ausentismo', 'Ausencia'),
+        ('reincorporacion', 'Reincorporación'),
+        ('cambio_datos', 'Cambio de Datos'),
     ]
     tipo_movimiento = models.CharField(max_length=20, choices=TIPO_MOVIMIENTO_CHOICES)
     
     # Detalles del movimiento
+    # Campo legacy 'motivo' (mantiene compatibilidad). Nuevo campo sugerido 'descripcion'.
     motivo = models.CharField(max_length=300, null=True, blank=True)
-    dias_ausencia = models.IntegerField(null=True, blank=True, help_text="Días de ausencia si aplica")
+    descripcion = models.CharField(max_length=300, null=True, blank=True, help_text="Descripción textual directa del origen")
+    dias_ausencia = models.IntegerField(null=True, blank=True, help_text="Días de ausencia (legacy, evento completo)")
     fecha_movimiento = models.DateField(null=True, blank=True)
     observaciones = models.TextField(null=True, blank=True)
+
+    # Normalización nueva para ausencias / eventos
+    categoria = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        help_text="Clasificación general: ingreso | finiquito | ausencia | reincorporacion | cambio_datos"
+    )
+    subtipo = models.CharField(
+        max_length=40,
+        null=True,
+        blank=True,
+        help_text="Subtipo de la ausencia o detalle del evento (vacaciones, licencia_medica, sin_justificar, etc.)"
+    )
+    fecha_inicio = models.DateField(null=True, blank=True, help_text="Inicio real del evento (ausencia, vacaciones, etc.)")
+    fecha_fin = models.DateField(null=True, blank=True, help_text="Fin real del evento")
+    dias_evento = models.IntegerField(null=True, blank=True, help_text="Duración total del evento (fin - inicio + 1)")
+    dias_en_periodo = models.IntegerField(null=True, blank=True, help_text="Días del evento imputables al periodo del cierre")
+    multi_mes = models.BooleanField(default=False, help_text="El evento cruza límites de mes")
+    hash_evento = models.CharField(max_length=64, null=True, blank=True, db_index=True, help_text="Hash global del evento (rango completo)")
+    hash_registro_periodo = models.CharField(max_length=80, null=True, blank=True, db_index=True, help_text="Hash del evento ligado al periodo (hash_evento + periodo)")
+    detalle_fuente = models.JSONField(null=True, blank=True, help_text="Snapshot opcional de campos origen para auditoría")
     
     # Metadatos
     fecha_deteccion = models.DateTimeField(auto_now_add=True)
@@ -1685,6 +1710,9 @@ class MovimientoPersonal(models.Model):
         indexes = [
             models.Index(fields=['nomina_consolidada', 'tipo_movimiento']),
             models.Index(fields=['fecha_movimiento']),
+            models.Index(fields=['categoria', 'subtipo']),
+            models.Index(fields=['fecha_inicio']),
+            models.Index(fields=['hash_evento']),
         ]
         ordering = ['-fecha_deteccion']
     

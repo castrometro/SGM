@@ -1819,25 +1819,34 @@ class MovimientoPersonalAdmin(admin.ModelAdmin):
     list_display = (
         'empleado_info',
         'cierre_info',
-        'tipo_movimiento_display',
-        'motivo_corto',
-        'fecha_movimiento',
-        'dias_ausencia',
+        'categoria_display',
+        'subtipo',
+        'descripcion_corta',
+        'fecha_rango',
+        'dias_evento',
+        'dias_en_periodo',
+        'multi_mes_badge',
         'fecha_deteccion'
     )
     list_filter = (
-        'tipo_movimiento',
+        'categoria',
+        'subtipo',
+        'tipo_movimiento',  # legacy
         'nomina_consolidada__cierre__cliente',
         'nomina_consolidada__cierre__periodo',
+        'multi_mes',
         'fecha_deteccion',
-        'fecha_movimiento',
+        'fecha_inicio',
+        'fecha_fin',
         'detectado_por_sistema'
     )
     search_fields = (
         'nomina_consolidada__nombre_empleado',
         'nomina_consolidada__rut_empleado',
         'motivo',
+        'descripcion',
         'observaciones',
+        'subtipo',
         'nomina_consolidada__cierre__cliente__nombre'
     )
     readonly_fields = (
@@ -1846,26 +1855,23 @@ class MovimientoPersonalAdmin(admin.ModelAdmin):
         'resumen_movimiento'
     )
     fieldsets = (
-        ('Información del Empleado', {
-            'fields': (
-                'nomina_consolidada',
-            )
+        ('Empleado y Cierre', {
+            'fields': ('nomina_consolidada',)
         }),
-        ('Detalles del Movimiento', {
-            'fields': (
-                'tipo_movimiento',
-                'motivo',
-                'dias_ausencia',
-                'fecha_movimiento',
-                'observaciones'
-            )
+        ('Clasificación Normalizada', {
+            'fields': ('categoria', 'subtipo')
+        }),
+        ('Fechas y Duraciones', {
+            'fields': ('fecha_inicio', 'fecha_fin', 'dias_evento', 'dias_en_periodo', 'multi_mes')
+        }),
+        ('Detalle / Legacy', {
+            'fields': ('tipo_movimiento', 'motivo', 'descripcion', 'dias_ausencia', 'fecha_movimiento', 'observaciones')
+        }),
+        ('Hashes y Fuente', {
+            'fields': ('hash_evento', 'hash_registro_periodo', 'detalle_fuente')
         }),
         ('Metadatos de Detección', {
-            'fields': (
-                'fecha_deteccion',
-                'detectado_por_sistema',
-                'resumen_movimiento'
-            ),
+            'fields': ('fecha_deteccion', 'detectado_por_sistema', 'resumen_movimiento'),
             'classes': ('collapse',)
         })
     )
@@ -1882,29 +1888,39 @@ class MovimientoPersonalAdmin(admin.ModelAdmin):
         return f"{obj.nomina_consolidada.cierre.cliente.nombre} - {obj.nomina_consolidada.cierre.periodo}"
     cierre_info.short_description = 'Cierre'
     
-    def tipo_movimiento_display(self, obj):
-        """Display con colores para tipo de movimiento"""
+    def categoria_display(self, obj):
         colors = {
-            'ingreso': '#10b981',            # verde
-            'finiquito': '#ef4444',          # rojo
-            'ausentismo': '#f59e0b',         # amarillo
-            'reincorporacion': '#3b82f6',    # azul
-            'cambio_datos': '#8b5cf6'        # morado
+            'ingreso': '#10b981',
+            'finiquito': '#ef4444',
+            'ausencia': '#f59e0b',
+            'reincorporacion': '#3b82f6',
+            'cambio_datos': '#8b5cf6'
         }
-        color = colors.get(obj.tipo_movimiento, '#6b7280')
-        return format_html(
-            '<span style="color: {}; font-weight: bold;">●</span> {}',
-            color,
-            obj.get_tipo_movimiento_display()
-        )
-    tipo_movimiento_display.short_description = 'Tipo Movimiento'
+        label = obj.categoria or obj.tipo_movimiento
+        color = colors.get(label, '#6b7280')
+        return format_html('<span style="color:{};font-weight:bold;">●</span> {}', color, label or '-')
+    categoria_display.short_description = 'Categoría'
+
+    def descripcion_corta(self, obj):
+        txt = obj.descripcion or obj.motivo or ''
+        return (txt[:40] + '...') if len(txt) > 43 else txt or '-'
+    descripcion_corta.short_description = 'Descripción'
+
+    def fecha_rango(self, obj):
+        if obj.fecha_inicio and obj.fecha_fin:
+            if obj.fecha_inicio == obj.fecha_fin:
+                return obj.fecha_inicio.strftime('%d/%m/%Y')
+            return f"{obj.fecha_inicio.strftime('%d/%m/%Y')} → {obj.fecha_fin.strftime('%d/%m/%Y')}"
+        return obj.fecha_movimiento.strftime('%d/%m/%Y') if obj.fecha_movimiento else '-'
+    fecha_rango.short_description = 'Rango'
+
+    def multi_mes_badge(self, obj):
+        if obj.multi_mes:
+            return format_html('<span style="background:#334155;color:#fbbf24;padding:2px 6px;border-radius:10px;font-size:11px;">Multi-mes</span>')
+        return ''
+    multi_mes_badge.short_description = 'Multi'
     
-    def motivo_corto(self, obj):
-        """Motivo truncado para la lista"""
-        if obj.motivo:
-            return (obj.motivo[:50] + '...') if len(obj.motivo) > 50 else obj.motivo
-        return '-'
-    motivo_corto.short_description = 'Motivo'
+    # Retiramos motivo_corto (reemplazado por descripcion_corta)
     
     def resumen_movimiento(self, obj):
         """Resumen detallado del movimiento"""

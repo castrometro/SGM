@@ -33,8 +33,8 @@ import LogsActividadNomina from "./components/Gerente/LogsActividadNomina";
 import CacheRedisNomina from "./components/Gerente/CacheRedisNomina";
 
 // Importar nuevos componentes de Nómina
-import LibroRemuneracionesPage from "./pages/LibroRemuneraciones";
-import MovimientosMesPage from "./pages/MovimientosMes";
+import LibroRemuneracionesPage from "./pages/DashboardsNomina/LibroRemuneraciones";
+import MovimientosMesPage from "./pages/DashboardsNomina/MovimientosMes";
 
 // Importar componentes de Captura Masiva de Gastos
 import CapturaMasivaGastos from "./pages/CapturaMasivaGastos";

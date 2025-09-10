@@ -1345,15 +1345,15 @@ class ConceptoConsolidadoInline(admin.TabularInline):
 
 
 class MovimientoPersonalInline(admin.TabularInline):
-    """Inline para mostrar movimientos de personal dentro de una nómina consolidada"""
+    """Inline para mostrar movimientos de personal dentro de una nómina consolidada (schema normalizado)"""
     model = MovimientoPersonal
     extra = 0
-    readonly_fields = ('tipo_movimiento', 'motivo', 'fecha_movimiento', 'fecha_deteccion')
-    fields = ('tipo_movimiento', 'motivo', 'fecha_movimiento', 'observaciones')
-    
+    readonly_fields = ('categoria', 'subtipo', 'fecha_inicio', 'fecha_fin', 'dias_evento', 'dias_en_periodo', 'fecha_deteccion')
+    fields = ('categoria', 'subtipo', 'descripcion', 'fecha_inicio', 'fecha_fin', 'dias_evento', 'dias_en_periodo', 'multi_mes', 'observaciones')
+
     def has_add_permission(self, request, obj=None):
         return False
-    
+
     def has_delete_permission(self, request, obj=None):
         return False
 
@@ -1816,64 +1816,39 @@ class ConceptoConsolidadoAdmin(admin.ModelAdmin):
 @admin.register(MovimientoPersonal)
 class MovimientoPersonalAdmin(admin.ModelAdmin):
     """Administración de movimientos de personal"""
+    class SinJustificarFilter(admin.SimpleListFilter):
+        title = 'Ausencia sin justificar'
+        parameter_name = 'sin_justificar'
+
+        def lookups(self, request, model_admin):
+            return (
+                ('1', 'Solo sin justificar'),
+            )
+
+        def queryset(self, request, queryset):
+            if self.value() == '1':
+                return queryset.filter(subtipo__iexact='sin_justificar')
+            return queryset
+
     list_display = (
-        'empleado_info',
-        'cierre_info',
-        'categoria_display',
-        'subtipo',
-        'descripcion_corta',
-        'fecha_rango',
-        'dias_evento',
-        'dias_en_periodo',
-        'multi_mes_badge',
-        'fecha_deteccion'
+            'empleado_info','cierre_info','categoria_display','subtipo','subtipo_badge',
+            'descripcion_corta','fecha_rango','dias_evento','dias_en_periodo','multi_mes_badge','fecha_deteccion'
     )
     list_filter = (
-        'categoria',
-        'subtipo',
-        'tipo_movimiento',  # legacy
-        'nomina_consolidada__cierre__cliente',
-        'nomina_consolidada__cierre__periodo',
-        'multi_mes',
-        'fecha_deteccion',
-        'fecha_inicio',
-        'fecha_fin',
-        'detectado_por_sistema'
+            'categoria','subtipo',SinJustificarFilter,'nomina_consolidada__cierre__cliente',
+            'nomina_consolidada__cierre__periodo','multi_mes','fecha_deteccion','fecha_inicio','fecha_fin','detectado_por_sistema'
     )
     search_fields = (
-        'nomina_consolidada__nombre_empleado',
-        'nomina_consolidada__rut_empleado',
-        'motivo',
-        'descripcion',
-        'observaciones',
-        'subtipo',
-        'nomina_consolidada__cierre__cliente__nombre'
+        'nomina_consolidada__nombre_empleado','nomina_consolidada__rut_empleado','descripcion','observaciones','subtipo','nomina_consolidada__cierre__cliente__nombre'
     )
-    readonly_fields = (
-        'fecha_deteccion',
-        'detectado_por_sistema',
-        'resumen_movimiento'
-    )
+    readonly_fields = ('fecha_deteccion','detectado_por_sistema','resumen_movimiento')
     fieldsets = (
-        ('Empleado y Cierre', {
-            'fields': ('nomina_consolidada',)
-        }),
-        ('Clasificación Normalizada', {
-            'fields': ('categoria', 'subtipo')
-        }),
-        ('Fechas y Duraciones', {
-            'fields': ('fecha_inicio', 'fecha_fin', 'dias_evento', 'dias_en_periodo', 'multi_mes')
-        }),
-        ('Detalle / Legacy', {
-            'fields': ('tipo_movimiento', 'motivo', 'descripcion', 'dias_ausencia', 'fecha_movimiento', 'observaciones')
-        }),
-        ('Hashes y Fuente', {
-            'fields': ('hash_evento', 'hash_registro_periodo', 'detalle_fuente')
-        }),
-        ('Metadatos de Detección', {
-            'fields': ('fecha_deteccion', 'detectado_por_sistema', 'resumen_movimiento'),
-            'classes': ('collapse',)
-        })
+            ('Empleado y Cierre', {'fields': ('nomina_consolidada',)}),
+            ('Clasificación', {'fields': ('categoria','subtipo')}),
+            ('Fechas y Duraciones', {'fields': ('fecha_inicio','fecha_fin','dias_evento','dias_en_periodo','multi_mes')}),
+            ('Detalle', {'fields': ('descripcion','observaciones')}),
+            ('Hashes y Fuente', {'fields': ('hash_evento','hash_registro_periodo','detalle_fuente')}),
+            ('Metadatos de Detección', {'fields': ('fecha_deteccion','detectado_por_sistema','resumen_movimiento'), 'classes': ('collapse',)})
     )
     date_hierarchy = 'fecha_deteccion'
     list_per_page = 100
@@ -1894,15 +1869,17 @@ class MovimientoPersonalAdmin(admin.ModelAdmin):
             'finiquito': '#ef4444',
             'ausencia': '#f59e0b',
             'reincorporacion': '#3b82f6',
-            'cambio_datos': '#8b5cf6'
+            'cambio_datos': '#8b5cf6',
+            'cambio_contrato': '#8b5cf6',
+            'cambio_sueldo': '#8b5cf6'
         }
-        label = obj.categoria or obj.tipo_movimiento
+        label = obj.categoria or '-'
         color = colors.get(label, '#6b7280')
         return format_html('<span style="color:{};font-weight:bold;">●</span> {}', color, label or '-')
     categoria_display.short_description = 'Categoría'
 
     def descripcion_corta(self, obj):
-        txt = obj.descripcion or obj.motivo or ''
+        txt = obj.descripcion or ''
         return (txt[:40] + '...') if len(txt) > 43 else txt or '-'
     descripcion_corta.short_description = 'Descripción'
 
@@ -1911,7 +1888,7 @@ class MovimientoPersonalAdmin(admin.ModelAdmin):
             if obj.fecha_inicio == obj.fecha_fin:
                 return obj.fecha_inicio.strftime('%d/%m/%Y')
             return f"{obj.fecha_inicio.strftime('%d/%m/%Y')} → {obj.fecha_fin.strftime('%d/%m/%Y')}"
-        return obj.fecha_movimiento.strftime('%d/%m/%Y') if obj.fecha_movimiento else '-'
+        return '-'
     fecha_rango.short_description = 'Rango'
 
     def multi_mes_badge(self, obj):
@@ -1919,6 +1896,12 @@ class MovimientoPersonalAdmin(admin.ModelAdmin):
             return format_html('<span style="background:#334155;color:#fbbf24;padding:2px 6px;border-radius:10px;font-size:11px;">Multi-mes</span>')
         return ''
     multi_mes_badge.short_description = 'Multi'
+
+    def subtipo_badge(self, obj):
+        if (obj.subtipo or '').lower() == 'sin_justificar':
+            return format_html('<span style="background:#991b1b;color:#fff;padding:2px 6px;border-radius:10px;font-size:11px;">Sin justificar</span>')
+        return ''
+    subtipo_badge.short_description = '⚠️'
     
     # Retiramos motivo_corto (reemplazado por descripcion_corta)
     
@@ -1932,11 +1915,11 @@ class MovimientoPersonalAdmin(admin.ModelAdmin):
         - RUT: {obj.nomina_consolidada.rut_empleado}
         - Estado: {obj.nomina_consolidada.get_estado_empleado_display()}
         
-        🔄 MOVIMIENTO:
-        - Tipo: {obj.get_tipo_movimiento_display()}
-        - Motivo: {obj.motivo or 'Sin especificar'}
-        - Fecha: {obj.fecha_movimiento.strftime('%d/%m/%Y') if obj.fecha_movimiento else 'Sin fecha'}
-        - Días Ausencia: {obj.dias_ausencia or 'N/A'}
+    🔄 MOVIMIENTO:
+    - Categoría: {obj.categoria or '-'}
+    - Subtipo: {obj.subtipo or '-'}
+    - Rango: {self.fecha_rango(obj)}
+    - Días Evento: {obj.dias_evento or '-'} / En período: {obj.dias_en_periodo or '-'}
         
         📊 CONTEXTO:
         - Cierre: {obj.nomina_consolidada.cierre.cliente.nombre} - {obj.nomina_consolidada.cierre.periodo}

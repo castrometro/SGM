@@ -82,7 +82,7 @@ from django.conf import settings
 from django.views.static import serve
 from .views_nomina_consolidada import obtener_resumen_nomina_consolidada, obtener_detalle_nomina_consolidada
 from .views_libro_v2 import libro_resumen_v2
-from .views_movimientos_v2 import movimientos_personal_resumen_v2
+from .views_movimientos_v3 import movimientos_personal_detalle_v3
 
 router = routers.DefaultRouter()
 router.register(r'cierres', CierreNominaViewSet)
@@ -227,7 +227,7 @@ urlpatterns = router.urls + [
     # === URLs para Visualización de Datos Consolidados ===
     path('cierres/<int:cierre_id>/libro-remuneraciones/', obtener_libro_remuneraciones, name='libro_remuneraciones'),
     path('cierres/<int:cierre_id>/movimientos/', obtener_movimientos_mes, name='movimientos_mes'),
-    path('cierres/<int:cierre_id>/movimientos/v2/resumen/', movimientos_personal_resumen_v2, name='movimientos_personal_resumen_v2'),
+    path('cierres/<int:cierre_id>/movimientos/v3/detalle/', movimientos_personal_detalle_v3, name='movimientos_personal_detalle_v3'),
     
     # === URL para Estadísticas del Cierre ===
     path('cierres/<int:cierre_id>/estadisticas/', obtener_estadisticas_cierre, name='estadisticas_cierre'),

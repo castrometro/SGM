@@ -3543,44 +3543,25 @@ def obtener_libro_remuneraciones(request, cierre_id):
 
 @api_view(['GET'])
 def obtener_movimientos_mes(request, cierre_id):
+    """Alias compacto (legacy path) → devuelve resumen normalizado basado en MovimientoPersonal.
+
+    Se mantiene la URL /movimientos/ pero ahora SIN campos legacy y con estructura reducida.
+    Para detalle completo usar /movimientos/v3/detalle/.
     """
-    🔄 MOVIMIENTOS DEL MES
-    
-    Devuelve todos los movimientos de personal del mes:
-    - Ingresos (nuevas incorporaciones)
-    - Finiquitos (términos de contrato)
-    - Ausentismos (licencias, vacaciones)
-    - Reincorporaciones
-    """
+    from .models import CierreNomina, MovimientoPersonal
     try:
-        # Obtener el cierre y verificar permisos
         cierre = CierreNomina.objects.get(id=cierre_id)
-        
-        # Verificar que hay datos consolidados
         if not cierre.nomina_consolidada.exists():
-            return Response({
-                'error': 'No hay datos consolidados para este cierre',
-                'mensaje': 'Debe ejecutar la consolidación antes de ver los movimientos'
-            }, status=status.HTTP_404_NOT_FOUND)
-        
-        # Importar modelos aquí para evitar import circular
-        from .models import MovimientoPersonal, NominaConsolidada
-        
-        # Obtener todos los movimientos para este cierre
-        movimientos = MovimientoPersonal.objects.filter(
-            nomina_consolidada__cierre=cierre
-        ).select_related('nomina_consolidada').order_by('-fecha_deteccion')
-        
-        # Contar movimientos por tipo
-        resumen_tipos = {}
-        for tipo, display in MovimientoPersonal.TIPO_MOVIMIENTO_CHOICES:
-            count = movimientos.filter(tipo_movimiento=tipo).count()
-            resumen_tipos[tipo] = {
-                'count': count,
-                'display': display
-            }
-        
-        # Datos principales del cierre
+            return Response({'error': 'No hay datos consolidados para este cierre'}, status=status.HTTP_404_NOT_FOUND)
+        qs = (MovimientoPersonal.objects
+              .filter(nomina_consolidada__cierre=cierre)
+              .select_related('nomina_consolidada'))
+        por_categoria = {}
+        for mv in qs:
+            cat = mv.categoria or 'sin_categoria'
+            entry = por_categoria.get(cat) or {'count': 0}
+            entry['count'] += 1
+            por_categoria[cat] = entry
         data = {
             'cierre': {
                 'id': cierre.id,
@@ -3589,49 +3570,34 @@ def obtener_movimientos_mes(request, cierre_id):
                 'estado': cierre.estado,
             },
             'resumen': {
-                'total_movimientos': movimientos.count(),
-                'por_tipo': resumen_tipos,
+                'total_movimientos': qs.count(),
+                'por_categoria': por_categoria,
             },
-            'movimientos': []
+            'movimientos': [
+                {
+                    'id': mv.id,
+                    'categoria': mv.categoria,
+                    'subtipo': mv.subtipo,
+                    'descripcion': mv.descripcion,
+                    'fecha_inicio': mv.fecha_inicio,
+                    'fecha_fin': mv.fecha_fin,
+                    'dias_evento': mv.dias_evento,
+                    'dias_en_periodo': mv.dias_en_periodo,
+                    'empleado': {
+                        'rut': mv.nomina_consolidada.rut_empleado if mv.nomina_consolidada else None,
+                        'nombre': mv.nomina_consolidada.nombre_empleado if mv.nomina_consolidada else None,
+                        'estado': mv.nomina_consolidada.estado_empleado if mv.nomina_consolidada else None,
+                    },
+                    'fecha_deteccion': mv.fecha_deteccion,
+                } for mv in qs.order_by('-fecha_deteccion')
+            ]
         }
-        
-        # Construir lista de movimientos
-        for movimiento in movimientos:
-            movimiento_data = {
-                'id': movimiento.id,
-                'tipo_movimiento': movimiento.tipo_movimiento,
-                'tipo_display': movimiento.get_tipo_movimiento_display(),
-                'empleado': {
-                    'rut': movimiento.nomina_consolidada.rut_empleado,
-                    'nombre': movimiento.nomina_consolidada.nombre_empleado,
-                    'cargo': movimiento.nomina_consolidada.cargo,
-                    'centro_costo': movimiento.nomina_consolidada.centro_costo,
-                    'estado': movimiento.nomina_consolidada.estado_empleado,
-                    'liquido_pagar': str(((movimiento.nomina_consolidada.haberes_imponibles or 0) + (movimiento.nomina_consolidada.haberes_no_imponibles or 0)) - ((movimiento.nomina_consolidada.dctos_legales or 0) + (movimiento.nomina_consolidada.otros_dctos or 0) + (movimiento.nomina_consolidada.impuestos or 0))) if movimiento.nomina_consolidada else '0',
-                },
-                'motivo': movimiento.motivo,
-                'dias_ausencia': movimiento.dias_ausencia,
-                'fecha_movimiento': movimiento.fecha_movimiento,
-                'observaciones': movimiento.observaciones,
-                'fecha_deteccion': movimiento.fecha_deteccion,
-                'detectado_por_sistema': movimiento.detectado_por_sistema,
-            }
-            
-            data['movimientos'].append(movimiento_data)
-        
         return Response(data, status=status.HTTP_200_OK)
-        
     except CierreNomina.DoesNotExist:
-        return Response(
-            {'error': 'Cierre no encontrado'}, 
-            status=status.HTTP_404_NOT_FOUND
-        )
+        return Response({'error': 'Cierre no encontrado'}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
-        logging.error(f"Error obteniendo movimientos del mes: {str(e)}")
-        return Response(
-            {'error': 'Error interno del servidor'}, 
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+        logging.error(f"Error alias movimientos normalizados: {e}")
+        return Response({'error': 'Error interno del servidor', 'detalle': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['GET'])

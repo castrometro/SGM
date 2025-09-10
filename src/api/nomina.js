@@ -629,6 +629,12 @@ export const obtenerMovimientosPersonalV2 = async (cierreId) => {
   return response.data;
 };
 
+// Movimientos Personal V3 (detalle completo con normalización)
+export const obtenerMovimientosPersonalV3 = async (cierreId) => {
+  const response = await api.get(`/nomina/cierres/${cierreId}/movimientos/v3/detalle/`);
+  return response.data;
+};
+
 // Resumen de nómina consolidada (NominaConsolidada)
 export const obtenerResumenNominaConsolidada = async (cierreId) => {
   const response = await api.get(`/nomina/cierres/${cierreId}/nomina-consolidada/resumen/`);

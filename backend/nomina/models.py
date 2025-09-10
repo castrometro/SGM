@@ -1652,30 +1652,13 @@ class ConceptoConsolidado(models.Model):
 
 
 class MovimientoPersonal(models.Model):
-    """
-    🔄 MOVIMIENTOS DE PERSONAL DETECTADOS
-    
-    Cambios de personal entre periodos (incorporaciones, finiquitos, ausencias).
-    Responde: "¿Quién entró, salió o faltó este mes?"
+    """Modelo normalizado de movimientos de personal.
+
+    Eliminada compatibilidad legacy: ya no existen campos tipo_movimiento/motivo/dias_ausencia/fecha_movimiento.
+    Usar siempre: categoria + subtipo + fechas (inicio/fin) + días calculados.
     """
     nomina_consolidada = models.ForeignKey(NominaConsolidada, on_delete=models.CASCADE, related_name='movimientos')
-    
-    # Tipo legado (mantener por compatibilidad con vistas existentes)
-    TIPO_MOVIMIENTO_CHOICES = [
-        ('ingreso', 'Ingreso'),
-        ('finiquito', 'Finiquito'),
-        ('ausentismo', 'Ausencia'),
-        ('reincorporacion', 'Reincorporación'),
-        ('cambio_datos', 'Cambio de Datos'),
-    ]
-    tipo_movimiento = models.CharField(max_length=20, choices=TIPO_MOVIMIENTO_CHOICES)
-    
-    # Detalles del movimiento
-    # Campo legacy 'motivo' (mantiene compatibilidad). Nuevo campo sugerido 'descripcion'.
-    motivo = models.CharField(max_length=300, null=True, blank=True)
-    descripcion = models.CharField(max_length=300, null=True, blank=True, help_text="Descripción textual directa del origen")
-    dias_ausencia = models.IntegerField(null=True, blank=True, help_text="Días de ausencia (legacy, evento completo)")
-    fecha_movimiento = models.DateField(null=True, blank=True)
+    descripcion = models.CharField(max_length=300, null=True, blank=True, help_text="Descripción textual directa del origen / motivo humano")
     observaciones = models.TextField(null=True, blank=True)
 
     # Normalización nueva para ausencias / eventos
@@ -1708,14 +1691,16 @@ class MovimientoPersonal(models.Model):
         verbose_name = "Movimiento de Personal"
         verbose_name_plural = "Movimientos de Personal"
         indexes = [
-            models.Index(fields=['nomina_consolidada', 'tipo_movimiento']),
-            models.Index(fields=['fecha_movimiento']),
+            models.Index(fields=['nomina_consolidada', 'categoria']),
             models.Index(fields=['categoria', 'subtipo']),
             models.Index(fields=['fecha_inicio']),
             models.Index(fields=['hash_evento']),
         ]
         ordering = ['-fecha_deteccion']
-    
+
     def __str__(self):
-        return f"{self.get_tipo_movimiento_display()} - {self.nomina_consolidada.nombre_empleado}"
+        base = self.categoria or 'mov'
+        if self.subtipo:
+            base += f"/{self.subtipo}"
+        return f"{base} - {self.nomina_consolidada.nombre_empleado}"
 

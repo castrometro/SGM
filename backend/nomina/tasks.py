@@ -2142,16 +2142,13 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                 categoria = 'ingreso' if movimiento.alta_o_baja == 'ALTA' else 'finiquito'
                 mov_personal = MovimientoPersonal(
                     nomina_consolidada=nomina_consolidada,
-                    tipo_movimiento=categoria,
-                    motivo=movimiento.motivo,
+                    categoria=categoria,
+                    subtipo=None,
                     descripcion=movimiento.motivo,
-                    fecha_movimiento=fecha_evt,
                     fecha_inicio=fecha_evt,
                     fecha_fin=fecha_evt,
                     dias_evento=1,
                     dias_en_periodo=1,
-                    categoria=categoria,
-                    subtipo=None,
                     multi_mes=False,
                     observaciones=f"Tipo contrato: {movimiento.tipo_contrato}, Sueldo base: ${movimiento.sueldo_base:,.0f}",
                     fecha_deteccion=timezone.now(),
@@ -2174,11 +2171,9 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                     
                     mov_personal = MovimientoPersonal(
                         nomina_consolidada=nomina_consolidada,
-                        tipo_movimiento='finiquito',
                         categoria='finiquito',
-                        motivo=movimiento.motivo,
+                        subtipo=None,
                         descripcion=movimiento.motivo,
-                        fecha_movimiento=movimiento.fecha_retiro,
                         fecha_inicio=movimiento.fecha_retiro,
                         fecha_fin=movimiento.fecha_retiro,
                         dias_evento=1,
@@ -2206,12 +2201,9 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                 # Actualizar estado si es ausencia total
                 if ausentismo.dias >= 30:
                     nomina_consolidada.estado_empleado = 'ausente_total'
-                    nomina_consolidada.dias_ausencia = ausentismo.dias
                 else:
                     nomina_consolidada.estado_empleado = 'ausente_parcial'
-                    nomina_consolidada.dias_ausencia = ausentismo.dias
-                
-                nomina_consolidada.save(update_fields=['estado_empleado', 'dias_ausencia'])
+                nomina_consolidada.save(update_fields=['estado_empleado'])
                 
                 # Normalización de ausentismo
                 descripcion = f"{ausentismo.tipo} - {ausentismo.motivo}".strip(' -')
@@ -2240,13 +2232,9 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                 hash_registro_periodo = sha1(f"{hash_evento}:{cierre.periodo}".encode('utf-8')).hexdigest()
                 mov_personal = MovimientoPersonal(
                     nomina_consolidada=nomina_consolidada,
-                    tipo_movimiento='ausentismo',
                     categoria='ausencia',
                     subtipo=subtipo or 'sin_justificar',
-                    motivo=descripcion,
                     descripcion=descripcion,
-                    dias_ausencia=ausentismo.dias,
-                    fecha_movimiento=fecha_inicio,
                     fecha_inicio=fecha_inicio,
                     fecha_fin=fecha_fin,
                     dias_evento=dias_evento,
@@ -2307,13 +2295,9 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                 hash_registro_periodo = sha1(f"{hash_evento}:{cierre.periodo}".encode('utf-8')).hexdigest()
                 mov_personal = MovimientoPersonal(
                     nomina_consolidada=nomina_consolidada,
-                    tipo_movimiento='ausentismo',
                     categoria='ausencia',
                     subtipo='vacaciones',
-                    motivo='Vacaciones',
                     descripcion='Vacaciones',
-                    dias_ausencia=vacacion.cantidad_dias,
-                    fecha_movimiento=fecha_inicio,
                     fecha_inicio=fecha_inicio,
                     fecha_fin=fecha_fin,
                     dias_evento=dias_evento,
@@ -2358,10 +2342,14 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                 motivo_text = f"Cambio de sueldo: de ${variacion.sueldo_base_anterior:,.0f} a ${variacion.sueldo_base_actual:,.0f}"
                 mov_personal = MovimientoPersonal(
                     nomina_consolidada=nomina_consolidada,
-                    tipo_movimiento='cambio_sueldo',
-                    motivo=motivo_text,
-                    # Algunos modelos no tienen 'fecha_cambio' — usar fallback seguro
-                    fecha_movimiento=getattr(variacion, 'fecha_cambio', getattr(variacion, 'fecha_ingreso', timezone.now())),
+                    categoria='cambio_datos',
+                    subtipo='cambio_sueldo',
+                    descripcion=motivo_text,
+                    fecha_inicio=getattr(variacion, 'fecha_cambio', getattr(variacion, 'fecha_ingreso', timezone.now())),
+                    fecha_fin=getattr(variacion, 'fecha_cambio', getattr(variacion, 'fecha_ingreso', timezone.now())),
+                    dias_evento=1,
+                    dias_en_periodo=1,
+                    multi_mes=False,
                     observaciones=f"De ${variacion.sueldo_base_anterior:,.0f} a ${variacion.sueldo_base_actual:,.0f}",
                     fecha_deteccion=timezone.now(),
                     detectado_por_sistema='consolidacion_paralela_v2'
@@ -2390,10 +2378,14 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                 motivo_text = f"Cambio de contrato: de {variacion.tipo_contrato_anterior} a {variacion.tipo_contrato_actual}"
                 mov_personal = MovimientoPersonal(
                     nomina_consolidada=nomina_consolidada,
-                    tipo_movimiento='cambio_contrato',
-                    motivo=motivo_text,
-                    # Algunos modelos no tienen 'fecha_cambio' — usar fallback seguro
-                    fecha_movimiento=getattr(variacion, 'fecha_cambio', getattr(variacion, 'fecha_ingreso', timezone.now())),
+                    categoria='cambio_datos',
+                    subtipo='cambio_contrato',
+                    descripcion=motivo_text,
+                    fecha_inicio=getattr(variacion, 'fecha_cambio', getattr(variacion, 'fecha_ingreso', timezone.now())),
+                    fecha_fin=getattr(variacion, 'fecha_cambio', getattr(variacion, 'fecha_ingreso', timezone.now())),
+                    dias_evento=1,
+                    dias_en_periodo=1,
+                    multi_mes=False,
                     observaciones=f"De {variacion.tipo_contrato_anterior} a {variacion.tipo_contrato_actual}",
                     fecha_deteccion=timezone.now(),
                     detectado_por_sistema='consolidacion_paralela_v2'
@@ -3024,19 +3016,19 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
                 # Actualizar estado si es ausencia total
                 if ausentismo.dias >= 30:  # Más de 30 días = ausencia total
                     nomina_consolidada.estado_empleado = 'ausente_total'
-                    nomina_consolidada.dias_ausencia = ausentismo.dias
+                    # estado ausente total
                 else:
                     nomina_consolidada.estado_empleado = 'ausente_parcial'
-                    nomina_consolidada.dias_ausencia = ausentismo.dias
+                    # estado ausente parcial
                 
-                nomina_consolidada.save(update_fields=['estado_empleado', 'dias_ausencia'])
+                nomina_consolidada.save(update_fields=['estado_empleado'])
                 
                 # Crear MovimientoPersonal
                 MovimientoPersonal.objects.create(
                     nomina_consolidada=nomina_consolidada,
                     tipo_movimiento='ausentismo',
                     motivo=f"{ausentismo.tipo} - {ausentismo.motivo}",
-                    dias_ausencia=ausentismo.dias,
+                    # dias_ausencia eliminado
                     fecha_movimiento=ausentismo.fecha_inicio_ausencia,
                     observaciones=f"Desde: {ausentismo.fecha_inicio_ausencia} hasta: {ausentismo.fecha_fin_ausencia}. {ausentismo.observaciones}",
                     fecha_deteccion=timezone.now(),
@@ -3065,7 +3057,7 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
                     nomina_consolidada=nomina_consolidada,
                     tipo_movimiento='ausentismo',
                     motivo='Vacaciones',
-                    dias_ausencia=vacacion.cantidad_dias,
+                    # dias_ausencia eliminado
                     fecha_movimiento=vacacion.fecha_inicio,
                     observaciones=f"Vacaciones desde: {vacacion.fecha_inicio} hasta: {vacacion.fecha_fin_vacaciones}. Retorno: {vacacion.fecha_retorno}",
                     fecha_deteccion=timezone.now(),
@@ -4504,11 +4496,11 @@ def build_informe_libro(cierre_id: int) -> dict:
 
 @shared_task(name='nomina.build_informe_movimientos')
 def build_informe_movimientos(cierre_id: int) -> dict:
-    """
-    Construye un resumen compacto de Movimientos del Mes:
-    - Total de ingresos
-    - Total de finiquitos
-    - Total de ausentismos y desglose por tipo (motivo)
+    """Resumen compacto de Movimientos (schema normalizado)
+    Métricas:
+      - Totales por categoria con empleados únicos
+      - Ausentismo: eventos, días, promedio y subtipos
+      - Cambios (contrato/sueldo) por subtipo
     """
     from .models import CierreNomina, MovimientoPersonal
     cierre = CierreNomina.objects.get(id=cierre_id)
@@ -4516,33 +4508,44 @@ def build_informe_movimientos(cierre_id: int) -> dict:
     if not cierre.nomina_consolidada.exists():
         return {'error': 'No hay datos consolidados para este cierre', 'movimientos': None}
 
-    movimientos = MovimientoPersonal.objects.filter(nomina_consolidada__cierre=cierre)
+    movimientos = MovimientoPersonal.objects.filter(nomina_consolidada__cierre=cierre).select_related('nomina_consolidada')
 
-    # Totales principales
-    total_ingresos = movimientos.filter(tipo_movimiento='ingreso').count()
-    total_finiquitos = movimientos.filter(tipo_movimiento='finiquito').count()
-    ausentismos_qs = movimientos.filter(tipo_movimiento='ausentismo')
-    total_ausentismos = ausentismos_qs.count()
+    por_categoria = {}
+    for mv in movimientos:
+        cat = mv.categoria or 'sin_categoria'
+        entry = por_categoria.get(cat) or {'count': 0, 'empleados_unicos': set()}
+        entry['count'] += 1
+        rut = mv.nomina_consolidada.rut_empleado if mv.nomina_consolidada else None
+        if rut:
+            entry['empleados_unicos'].add(rut)
+        por_categoria[cat] = entry
+    por_categoria_fmt = {k: {'count': v['count'], 'empleados_unicos': len(v['empleados_unicos'])} for k, v in por_categoria.items()}
 
-    # Desglose de ausentismos por "tipo" usando el campo motivo
-    ausentismos_por_motivo = (
-        ausentismos_qs
-        .values('motivo')
-        .annotate(c=Count('id'))
-        .order_by('-c')
-    )
-    ausentismos_por_tipo = {}
-    for row in ausentismos_por_motivo:
-        key = row['motivo'] or 'Sin especificar'
-        ausentismos_por_tipo[key] = row['c']
+    aus_qs = [mv for mv in movimientos if mv.categoria == 'ausencia']
+    aus_subtipos = {}
+    total_dias_aus = 0
+    for mv in aus_qs:
+        dias = mv.dias_en_periodo if mv.dias_en_periodo is not None else (mv.dias_evento or 0)
+        total_dias_aus += dias
+        st = (mv.subtipo or 'sin_justificar').strip() or 'sin_justificar'
+        obj = aus_subtipos.get(st) or {'eventos': 0, 'dias': 0}
+        obj['eventos'] += 1
+        obj['dias'] += dias
+        aus_subtipos[st] = obj
+    aus_subtipos_list = [
+        {'subtipo': k, 'eventos': v['eventos'], 'dias': v['dias']} for k, v in aus_subtipos.items()
+    ]
+    aus_subtipos_list.sort(key=lambda x: (x['eventos'], x['dias']), reverse=True)
 
-    # Conteo por tipo general (compatibilidad mínima)
-    por_tipo = {}
-    for tipo, display in MovimientoPersonal.TIPO_MOVIMIENTO_CHOICES:
-        por_tipo[tipo] = {
-            'count': movimientos.filter(tipo_movimiento=tipo).count(),
-            'display': display,
-        }
+    cambios_map = {}
+    for mv in movimientos:
+        if mv.subtipo in ('cambio_contrato', 'cambio_sueldo') or mv.categoria == 'cambio_datos':
+            st = mv.subtipo or 'cambio_datos'
+            obj = cambios_map.get(st) or {'subtipo': st, 'eventos': 0}
+            obj['eventos'] += 1
+            cambios_map[st] = obj
+    cambios_list = list(cambios_map.values())
+    cambios_list.sort(key=lambda x: x['eventos'], reverse=True)
 
     payload = {
         'cierre': {
@@ -4553,16 +4556,16 @@ def build_informe_movimientos(cierre_id: int) -> dict:
         },
         'resumen': {
             'total_movimientos': movimientos.count(),
-            'por_tipo': por_tipo,
-            'totales': {
-                'ingresos': total_ingresos,
-                'finiquitos': total_finiquitos,
-                'ausentismos': total_ausentismos,
+            'por_categoria': por_categoria_fmt,
+            'ausentismo': {
+                'eventos': len(aus_qs),
+                'total_dias': total_dias_aus,
+                'promedio_dias': round(total_dias_aus / len(aus_qs), 1) if aus_qs else 0.0,
+                'subtipos': aus_subtipos_list,
             },
-            'ausentismos_por_tipo': ausentismos_por_tipo,
+            'cambios': cambios_list,
         },
-        # Mantener clave por compatibilidad pero vacía para JSON liviano
-        'movimientos': [],
+        'movimientos': [],  # Compacto
     }
     return payload
 

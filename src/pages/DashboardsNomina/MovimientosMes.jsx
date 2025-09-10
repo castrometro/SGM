@@ -23,6 +23,10 @@ import { ArrowUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, PieChart, Pie, Cell } from 'recharts';
 import { buildOrderedColorMap, BASE_PALETTE } from '../../utils/dashboard/colors';
 import { createBarTooltip, createPieTooltip } from '../../utils/dashboard/tooltips.jsx';
+import { prettifyEtiqueta as prettifyEtiquetaUtil } from '../../utils/dashboard/labels';
+import { colorClassForEmpleado, colorIndexForEmpleado } from '../../utils/dashboard/colorHash';
+import { useMovimientosMetrics } from '../../hooks/dashboard/useMovimientosMetrics';
+import { useHiddenSlices } from '../../hooks/dashboard/useHiddenSlices';
 // Componente principal
 const MovimientosMes = () => {
   // Navegación y params (por ahora no usados directamente, se pueden reutilizar si se restaura fetch real)
@@ -37,7 +41,7 @@ const MovimientosMes = () => {
   // Estados UI métricas / selección
   const [selectedCard, setSelectedCard] = useState('');
   const [selectedTipo, setSelectedTipo] = useState(null);
-  const [hiddenSlices, setHiddenSlices] = useState(new Set());
+  const { hiddenSlices, toggleSlice, resetSlices } = useHiddenSlices();
 
   // Estados comparador
   const [compareSelected, setCompareSelected] = useState(new Set());
@@ -82,64 +86,10 @@ const MovimientosMes = () => {
   const movimientosFiltrados = React.useMemo(() => datos?.movimientos || [], [datos]);
 
             // Métricas tarjetas
-            const tarjetasMetrics = React.useMemo(()=> {
-              const movs = datos?.movimientos || [];
-              let ingresos=0, finiquitos=0, diasAusJustificados=0, vacacionesDias=0, ausSinJustificar=0;
-              const ingresosSet=new Set(), finiquitosSet=new Set(), diasAusJustSet=new Set(), vacacionesSet=new Set(), ausSinJustSet=new Set();
-              for (const mv of movs) {
-                const cat = mv.categoria;
-                const empKey = mv?.empleado ? (mv.empleado.id || mv.empleado.rut || mv.empleado.uuid || mv.empleado.run || null) : null;
-                if (cat === 'ingreso') ingresos += 1;
-                else if (cat === 'finiquito') finiquitos += 1;
-                else if (cat === 'ausencia') {
-                  const st = (mv.subtipo || '').trim() || 'sin_justificar';
-                  const dias = Number(mv.dias_en_periodo ?? mv.dias_evento ?? 0) || 0;
-                  if (st === 'vacaciones') vacacionesDias += dias;
-                  else if (st === 'sin_justificar') ausSinJustificar += 1;
-                  else diasAusJustificados += dias;
-                }
-                if (empKey) {
-                  if (cat === 'ingreso') ingresosSet.add(empKey);
-                  else if (cat === 'finiquito') finiquitosSet.add(empKey);
-                  else if (cat === 'ausencia') {
-                    const st = (mv.subtipo || '').trim() || 'sin_justificar';
-                    if (st === 'vacaciones') vacacionesSet.add(empKey);
-                    else if (st === 'sin_justificar') ausSinJustSet.add(empKey);
-                    else diasAusJustSet.add(empKey);
-                  }
-                }
-              }
-              return {
-                ingresos, finiquitos, diasAusJustificados, vacacionesDias, ausSinJustificar,
-                ingresosEmp: ingresosSet.size,
-                finiquitosEmp: finiquitosSet.size,
-                diasAusJustEmp: diasAusJustSet.size,
-                vacacionesEmp: vacacionesSet.size,
-                ausSinJustEmp: ausSinJustSet.size,
-                total: movs.length
-              };
-            }, [datos]);
+            const tarjetasMetrics = useMovimientosMetrics(datos);
 
   // Helper para formatear etiquetas
-  const prettifyEtiqueta = React.useCallback((raw) => {
-    if (!raw) return '-';
-    const lower = raw.toLowerCase();
-    const mapa = {
-      'licencia_medica': 'Licencia médica',
-      'sin_justificar': 'Sin justificar',
-      'vacaciones': 'Vacaciones',
-      'cambio_datos': 'Cambio de datos',
-      'cambio_contrato': 'Cambio de contrato',
-      'cambio_sueldo': 'Cambio de sueldo',
-      'reincorporacion': 'Reincorporación',
-      'ingreso': 'Ingreso',
-      'finiquito': 'Finiquito',
-      'ausencia': 'Ausencia',
-      'sin_subtipo': 'Sin subtipo'
-    };
-    if (mapa[lower]) return mapa[lower];
-    return lower.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-  }, []);
+  const prettifyEtiqueta = React.useCallback(prettifyEtiquetaUtil, []);
 
   // Dataset base para gráficos
   const chartBaseData = React.useMemo(() => {
@@ -255,14 +205,7 @@ const MovimientosMes = () => {
   }, [activeChartData, compareSelected, tarjetasMetrics]);
   const compareTotal = React.useMemo(() => compareData.reduce((acc,d)=> acc + (compareMetric==='valor' ? (d.value||0) : (d.empleados||0)), 0), [compareData, compareMetric]);
 
-  const toggleSlice = (name) => {
-    setHiddenSlices(prev => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name); else next.add(name);
-      return next;
-    });
-  };
-  const resetSlices = () => setHiddenSlices(new Set());
+  // toggleSlice y resetSlices provienen del hook useHiddenSlices
 
   // Al hacer click en una tarjeta togglear selección y reiniciar slices
   const handleSelectCard = (key) => {
@@ -273,41 +216,8 @@ const MovimientosMes = () => {
   };
 
   // Paleta y función hash para asignar color por empleado (solo en ausencias/vacaciones)
-  const EMP_COLOR_CLASSES = React.useMemo(() => [
-    'border-l-teal-500',
-    'border-l-emerald-500',
-    'border-l-sky-500',
-    'border-l-indigo-500',
-    'border-l-fuchsia-500',
-    'border-l-rose-500',
-    'border-l-amber-500',
-    'border-l-lime-500',
-    'border-l-cyan-500',
-    'border-l-orange-500',
-  ], []);
-
-  const obtenerClaseColorEmpleado = React.useCallback((empleado) => {
-    if (!empleado) return 'border-l-4 border-l-gray-700';
-    const key = String(empleado.id || empleado.rut || empleado.uuid || '');
-    if (!key) return 'border-l-4 border-l-gray-700';
-    let hash = 0;
-    for (let i = 0; i < key.length; i++) {
-      hash = (hash * 31 + key.charCodeAt(i)) & 0xffffffff;
-    }
-    const idx = Math.abs(hash) % EMP_COLOR_CLASSES.length;
-    return 'border-l-4 ' + EMP_COLOR_CLASSES[idx];
-  }, [EMP_COLOR_CLASSES]);
-
-  const obtenerIndiceColorEmpleado = React.useCallback((empleado) => {
-    if (!empleado) return -1;
-    const key = String(empleado.id || empleado.rut || empleado.uuid || '');
-    if (!key) return -1;
-    let hash = 0;
-    for (let i = 0; i < key.length; i++) {
-      hash = (hash * 31 + key.charCodeAt(i)) & 0xffffffff;
-    }
-    return Math.abs(hash) % EMP_COLOR_CLASSES.length;
-  }, [EMP_COLOR_CLASSES]);
+  const obtenerClaseColorEmpleado = React.useCallback(colorClassForEmpleado, []);
+  const obtenerIndiceColorEmpleado = React.useCallback(colorIndexForEmpleado, []);
 
   const topAusenciasData = React.useMemo(() => {
     const acc = new Map();

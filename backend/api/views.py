@@ -1109,11 +1109,45 @@ def leer_headers_excel(request):
         headers = []
         for cell in ws[1]:
             headers.append(cell.value)
+
+        # DEBUG: imprimir valor de la columna 20 (1-indexed) de la fila 1 y su tokenización
+        try:
+            import re
+            cell_20_value = ws.cell(row=1, column=20).value if ws.max_column >= 20 else None
+            h20 = str(cell_20_value or '').lower()
+            tokens_20 = [t for t in re.split(r"[^a-z0-9]+", h20) if t]
+            print("[DEBUG leer_headers_excel] fila 1, columna 20:", {
+                'valor': cell_20_value,
+                'lower': h20,
+                'tokens': tokens_20,
+                'token_set': set(tokens_20),
+            })
+            # DEBUG: listar todos los headers con índice 1-based y tokens
+            headers_debug = []
+            for j, hdr in enumerate(headers, start=1):
+                hj = str(hdr or '').lower()
+                toks = [t for t in re.split(r"[^a-z0-9]+", hj) if t]
+                headers_debug.append({'columna': j, 'valor': hdr, 'tokens': toks})
+            print("[DEBUG leer_headers_excel] headers fila 1:", headers_debug)
+        except Exception as dbg_e:
+            print("[DEBUG leer_headers_excel] error debug columna 20:", str(dbg_e))
         
-        # Detectar columnas de centros de costos
+        # Detectar columnas de centros de costos (PyC, EB/PS, CO) usando tokens para evitar falsos positivos
+        import re
         centros_costos = {}
         for i, header in enumerate(headers):
-            if header and ('pyc' in header.lower() or 'ps/eb' in header.lower() or 'co' in header.lower()):
+            if not header:
+                continue
+            h = str(header).lower()
+            # Normalizar separadores y tokenizar
+            tokens = [t for t in re.split(r"[^a-z0-9]+", h) if t]
+            token_set = set(tokens)
+
+            es_pyc = 'pyc' in token_set
+            es_ps_eb = ('ps' in token_set) or ('eb' in token_set) or ('ps' in h and 'eb' in h)  # soporta 'ps/eb'
+            es_co = 'co' in token_set
+
+            if es_pyc or es_ps_eb or es_co:
                 centros_costos[f'col{i}'] = header
         
         return Response({

@@ -1407,166 +1407,323 @@ def consolidar_resultados_gastos_directo(grupos_por_tipo_cc, headers, mapeo_cc, 
 
 def get_headers_salida_contabilidad():
     """
-    Headers de salida para el archivo Excel procesado según especificaciones contables
+    Retorna los headers ERP completos, compatibles con la herramienta de Rinde Gastos (backup).
     """
     return [
-        'Fecha',
-        'Tipo Doc',
-        'Número Doc',
-        'RUT',
-        'Razón Social',
-        'Cuenta',
-        'Nombre Cuenta',
-        'Debe',
-        'Haber',
-        'Centro Costo',
-        'Proyecto',
-        'Glosa',
-        'Referencia'
+        "Numero",
+        "Código Plan de Cuenta",
+        "Monto al Debe Moneda Base",
+        "Monto al Haber Moneda Base",
+        "Descripción Movimiento",
+        "Equivalencia Moneda",
+        "Monto al Debe Moneda Adicional",
+        "Monto al Haber Moneda Adicional",
+        "Código Condición de Venta",
+        "Código Vendedor",
+        "Código Ubicación",
+        "Código Concepto de Caja",
+        "Código Instrumento Financiero",
+        "Cantidad Instrumento Financiero",
+        "Código Detalle de Gasto",
+        "Cantidad Concepto de Gasto",
+        "Código Centro de Costo",
+        "Tipo Docto. Conciliación",
+        "Nro. Docto. Conciliación",
+        "Codigo Auxiliar",
+        "Tipo Documento",
+        "Numero Doc",
+        "Fecha Emisión Docto.(DD/MM/AAAA)",
+        "Fecha Vencimiento Docto.(DD/MM/AAAA)",
+        "Tipo Docto. Referencia",
+        "Nro. Docto. Referencia",
+        "Nro. Correlativo Interno",
+        "Monto 1 Detalle Libro",
+        "Monto 2 Detalle Libro",
+        "Monto 3 Detalle Libro",
+        "Monto 4 Detalle Libro",
+        "Monto 5 Detalle Libro",
+        "Monto 6 Detalle Libro",
+        "Monto 7 Detalle Libro",
+        "Monto 8 Detalle Libro",
+        "Monto 9 Detalle Libro",
+        "Monto Suma Detalle Libro",
+        "Número Documento Desde",
+        "Número Documento Hasta",
+        "Nro. agrupación en igual comprobante",
+        "Graba el detalle de libro (S/N) (Opcional, por defecto 'S')",
+        "Documento Nulo (S/N) (Opcional, por defecto 'N')",
+        "Código flujo efectivo 1 (Opcional)",
+        "Monto flujo 1 (Opcional)",
+        "Código flujo efectivo 2 (Opcional)",
+        "Monto flujo 2 (Opcional)",
+        "Código flujo efectivo 3 (Opcional)",
+        "Monto flujo 3 (Opcional)",
+        "Código flujo efectivo 4 (Opcional)",
+        "Monto flujo 4 (Opcional)",
+        "Código flujo efectivo 5 (Opcional)",
+        "Monto flujo 5 (Opcional)",
+        "Código flujo efectivo 6 (Opcional)",
+        "Monto flujo 6 (Opcional)",
+        "Código flujo efectivo 7 (Opcional)",
+        "Monto flujo 7 (Opcional)",
+        "Código flujo efectivo 8 (Opcional)",
+        "Monto flujo 8 (Opcional)",
+        "Código flujo efectivo 9 (Opcional)",
+        "Monto flujo 9 (Opcional)",
+        "Código flujo efectivo 10 (Opcional)",
+        "Monto flujo 10 (Opcional)",
+        "Numero Cuota de Pago",
     ]
 
 def aplicar_reglas_tipo_documento(fila, headers, tipo_doc, cc_count, mapeo_cc, tipos_doc_map):
     """
-    Aplica las reglas de transformación según el tipo de documento
-    Retorna una lista de filas transformadas
+    Transforma una fila de entrada a una o más filas ERP de salida según el tipo de documento.
+    Implementa reglas mínimas compatibles con el backup: 33 (Factura), 34 (Exenta), 61 (Nota de Crédito),
+    con soporte para 1-3 centros de costo (reparto por ponderadores si existen; si no, prorratea).
     """
-    filas_resultado = []
-    
-    try:
-        # Headers de entrada esperados
-        fecha_idx = next((i for i, h in enumerate(headers) if h and 'fecha' in h.lower() and 'docto' in h.lower()), 6)
-        folio_idx = next((i for i, h in enumerate(headers) if h and 'folio' in h.lower()), 5)
-        rut_idx = next((i for i, h in enumerate(headers) if h and 'rut' in h.lower()), 3)
-        razon_idx = next((i for i, h in enumerate(headers) if h and 'razon' in h.lower() or 'social' in h.lower()), 4)
-        
-        # Montos
-        monto_neto_idx = next((i for i, h in enumerate(headers) if h and 'neto' in h.lower()), 8)
-        monto_iva_idx = next((i for i, h in enumerate(headers) if h and 'iva' in h.lower() and 'recuperable' in h.lower()), 9)
-        monto_total_idx = next((i for i, h in enumerate(headers) if h and 'total' in h.lower()), 11)
-        
-        # Obtener valores de la fila
-        fecha = fila.get(headers[fecha_idx]) if fecha_idx < len(headers) else ""
-        folio = fila.get(headers[folio_idx]) if folio_idx < len(headers) else ""
-        rut = fila.get(headers[rut_idx]) if rut_idx < len(headers) else ""
-        razon_social = fila.get(headers[razon_idx]) if razon_idx < len(headers) else ""
-        
-        monto_neto = float(fila.get(headers[monto_neto_idx], 0) or 0)
-        monto_iva = float(fila.get(headers[monto_iva_idx], 0) or 0)
-        monto_total = float(fila.get(headers[monto_total_idx], 0) or 0)
-        
-        # Descripción del tipo de documento
-        tipo_doc_desc = tipos_doc_map.get(str(tipo_doc), f"Tipo {tipo_doc}")
-        
-        # Reglas según tipo de documento
-        if tipo_doc == "33":  # Factura Electrónica
-            # 1. Fila de Proveedores (HABER)
-            filas_resultado.append({
-                'Fecha': fecha,
-                'Tipo Doc': tipo_doc,
-                'Número Doc': folio,
-                'RUT': rut,
-                'Razón Social': razon_social,
-                'Cuenta': '2111001',  # Cuenta de proveedores
-                'Nombre Cuenta': 'Proveedores Nacionales',
-                'Debe': '',
-                'Haber': monto_total,
-                'Centro Costo': '',
-                'Proyecto': '',
-                'Glosa': f'{tipo_doc_desc} - {razon_social}',
-                'Referencia': folio
-            })
-            
-            # 2. Fila de Gastos (DEBE)
-            filas_resultado.append({
-                'Fecha': fecha,
-                'Tipo Doc': tipo_doc,
-                'Número Doc': folio,
-                'RUT': rut,
-                'Razón Social': razon_social,
-                'Cuenta': '5111001',  # Cuenta de gastos generales
-                'Nombre Cuenta': 'Gastos Generales',
-                'Debe': monto_neto,
-                'Haber': '',
-                'Centro Costo': get_centro_costo_principal(fila, headers, mapeo_cc),
-                'Proyecto': '',
-                'Glosa': f'{tipo_doc_desc} - {razon_social}',
-                'Referencia': folio
-            })
-            
-            # 3. Fila de IVA (DEBE)
-            if monto_iva > 0:
-                filas_resultado.append({
-                    'Fecha': fecha,
-                    'Tipo Doc': tipo_doc,
-                    'Número Doc': folio,
-                    'RUT': rut,
-                    'Razón Social': razon_social,
-                    'Cuenta': '1141001',  # IVA Crédito Fiscal
-                    'Nombre Cuenta': 'IVA Crédito Fiscal',
-                    'Debe': monto_iva,
-                    'Haber': '',
-                    'Centro Costo': '',
-                    'Proyecto': '',
-                    'Glosa': f'IVA {tipo_doc_desc} - {razon_social}',
-                    'Referencia': folio
-                })
-        
-        elif tipo_doc == "39":  # Boleta Electrónica
-            # Para boletas, solo una fila de gasto (no hay IVA recuperable)
-            filas_resultado.append({
-                'Fecha': fecha,
-                'Tipo Doc': tipo_doc,
-                'Número Doc': folio,
-                'RUT': rut,
-                'Razón Social': razon_social,
-                'Cuenta': '5111002',  # Gastos menores
-                'Nombre Cuenta': 'Gastos Menores',
-                'Debe': monto_total,
-                'Haber': '',
-                'Centro Costo': get_centro_costo_principal(fila, headers, mapeo_cc),
-                'Proyecto': '',
-                'Glosa': f'{tipo_doc_desc} - {razon_social}',
-                'Referencia': folio
-            })
-        
+    headers_salida = get_headers_salida_contabilidad()
+
+    def normalizar_numero(val):
+        try:
+            if val is None or val == "":
+                return 0.0
+            if isinstance(val, (int, float)):
+                return float(val)
+            s = str(val).strip().replace(".", "").replace(",", ".")
+            return float(s)
+        except Exception:
+            return 0.0
+
+    # Extracción básica de campos comunes
+    def tomar_por_inclusion(nombre):
+        nombre = nombre.lower()
+        for h in headers:
+            if not h:
+                continue
+            hl = str(h).lower()
+            if all(p in hl for p in nombre.split(" ")):
+                return h
+        return None
+
+    h_fecha = tomar_por_inclusion("fecha") or headers[0]
+    h_folio = tomar_por_inclusion("folio") or tomar_por_inclusion("numero doc") or headers[1] if len(headers) > 1 else headers[0]
+    h_rut = tomar_por_inclusion("rut")
+    h_razon = tomar_por_inclusion("razon") or tomar_por_inclusion("social")
+    h_neto = tomar_por_inclusion("neto")
+    h_iva = tomar_por_inclusion("iva")
+    h_total = tomar_por_inclusion("total")
+
+    fecha = fila.get(h_fecha, "") if h_fecha else ""
+    folio = fila.get(h_folio, "") if h_folio else ""
+    rut = fila.get(h_rut, "") if h_rut else ""
+    razon = fila.get(h_razon, "") if h_razon else ""
+    neto = normalizar_numero(fila.get(h_neto, 0)) if h_neto else 0
+    iva = normalizar_numero(fila.get(h_iva, 0)) if h_iva else 0
+    total = normalizar_numero(fila.get(h_total, 0)) if h_total else (neto + iva)
+
+    # Detectar posiciones CC y ponderadores
+    posiciones_cc = detectar_posiciones_centros_costo(headers)
+    ponderadores = {}
+    suma_pond = 0.0
+    for clave, col in posiciones_cc.items():
+        val = fila.get(col)
+        p = normalizar_numero(val)
+        if p == 0 and (val not in (None, "", 0)):
+            # Si hay valor no numérico, interpretarlo como presente (ponderador 1)
+            p = 1.0
+        ponderadores[clave] = p
+        suma_pond += p
+    if suma_pond == 0 and cc_count > 0:
+        # Si no hay números, prorratear uniforme según cc_count
+        for k in list(ponderadores.keys())[:cc_count]:
+            ponderadores[k] = 1.0
+        suma_pond = sum(ponderadores.values())
+
+    def fila_base():
+        return {
+            "Numero": "",
+            "Código Plan de Cuenta": "",
+            "Monto al Debe Moneda Base": "",
+            "Monto al Haber Moneda Base": "",
+            "Descripción Movimiento": "",
+            "Equivalencia Moneda": "",
+            "Monto al Debe Moneda Adicional": "",
+            "Monto al Haber Moneda Adicional": "",
+            "Código Condición de Venta": "",
+            "Código Vendedor": "",
+            "Código Ubicación": "",
+            "Código Concepto de Caja": "",
+            "Código Instrumento Financiero": "",
+            "Cantidad Instrumento Financiero": "",
+            "Código Detalle de Gasto": "",
+            "Cantidad Concepto de Gasto": "",
+            "Código Centro de Costo": "",
+            "Tipo Docto. Conciliación": "",
+            "Nro. Docto. Conciliación": "",
+            "Codigo Auxiliar": "",
+            "Tipo Documento": str(tipo_doc),
+            "Numero Doc": folio,
+            "Fecha Emisión Docto.(DD/MM/AAAA)": fecha or "",
+            "Fecha Vencimiento Docto.(DD/MM/AAAA)": fecha or "",
+            "Tipo Docto. Referencia": "",
+            "Nro. Docto. Referencia": "",
+            "Nro. Correlativo Interno": "",
+            "Monto 1 Detalle Libro": "",
+            "Monto 2 Detalle Libro": "",
+            "Monto 3 Detalle Libro": "",
+            "Monto 4 Detalle Libro": "",
+            "Monto 5 Detalle Libro": "",
+            "Monto 6 Detalle Libro": "",
+            "Monto 7 Detalle Libro": "",
+            "Monto 8 Detalle Libro": "",
+            "Monto 9 Detalle Libro": "",
+            "Monto Suma Detalle Libro": "",
+            "Número Documento Desde": "",
+            "Número Documento Hasta": "",
+            "Nro. agrupación en igual comprobante": "",
+            "Graba el detalle de libro (S/N) (Opcional, por defecto 'S')": "S",
+            "Documento Nulo (S/N) (Opcional, por defecto 'N')": "N",
+            "Código flujo efectivo 1 (Opcional)": "",
+            "Monto flujo 1 (Opcional)": "",
+            "Código flujo efectivo 2 (Opcional)": "",
+            "Monto flujo 2 (Opcional)": "",
+            "Código flujo efectivo 3 (Opcional)": "",
+            "Monto flujo 3 (Opcional)": "",
+            "Código flujo efectivo 4 (Opcional)": "",
+            "Monto flujo 4 (Opcional)": "",
+            "Código flujo efectivo 5 (Opcional)": "",
+            "Monto flujo 5 (Opcional)": "",
+            "Código flujo efectivo 6 (Opcional)": "",
+            "Monto flujo 6 (Opcional)": "",
+            "Código flujo efectivo 7 (Opcional)": "",
+            "Monto flujo 7 (Opcional)": "",
+            "Código flujo efectivo 8 (Opcional)": "",
+            "Monto flujo 8 (Opcional)": "",
+            "Código flujo efectivo 9 (Opcional)": "",
+            "Monto flujo 9 (Opcional)": "",
+            "Código flujo efectivo 10 (Opcional)": "",
+            "Monto flujo 10 (Opcional)": "",
+            "Numero Cuota de Pago": "",
+        }
+
+    filas = []
+
+    def agregar_proveedor(monto):
+        f = fila_base()
+        f["Código Plan de Cuenta"] = "2111001"
+        f["Monto al Haber Moneda Base"] = round(monto, 2)
+        f["Descripción Movimiento"] = f"Factura Proveedor {razon}" if str(tipo_doc) == "33" else f"Doc Proveedor {razon}"
+        filas.append(f)
+
+    def agregar_gasto(monto, cc_codigo=""):
+        f = fila_base()
+        f["Código Plan de Cuenta"] = "5111001"
+        f["Monto al Debe Moneda Base"] = round(monto, 2)
+        f["Código Centro de Costo"] = cc_codigo
+        f["Descripción Movimiento"] = f"Gasto {razon}"
+        filas.append(f)
+
+    def agregar_iva(monto):
+        if monto and monto > 0:
+            f = fila_base()
+            f["Código Plan de Cuenta"] = "1141001"
+            f["Monto al Debe Moneda Base"] = round(monto, 2)
+            f["Descripción Movimiento"] = "IVA Crédito Fiscal"
+            filas.append(f)
+
+    # Aplicación de reglas mínimas
+    if str(tipo_doc) == "33":
+        agregar_proveedor(total)
+        if cc_count <= 1 or suma_pond == 0:
+            # Un solo gasto completo al CC principal
+            cc_principal = get_centro_costo_principal(fila, headers, mapeo_cc)
+            agregar_gasto(neto, cc_principal)
         else:
-            # Para otros tipos de documento, usar regla genérica
-            filas_resultado.append({
-                'Fecha': fecha,
-                'Tipo Doc': tipo_doc,
-                'Número Doc': folio,
-                'RUT': rut,
-                'Razón Social': razon_social,
-                'Cuenta': '5111003',  # Gastos varios
-                'Nombre Cuenta': 'Gastos Varios',
-                'Debe': monto_total,
-                'Haber': '',
-                'Centro Costo': get_centro_costo_principal(fila, headers, mapeo_cc),
-                'Proyecto': '',
-                'Glosa': f'{tipo_doc_desc} - {razon_social}',
-                'Referencia': folio
-            })
-    
-    except Exception as e:
-        logger.error(f"Error aplicando reglas para tipo {tipo_doc}: {str(e)}")
-        # En caso de error, crear una fila básica
-        filas_resultado.append({
-            'Fecha': '',
-            'Tipo Doc': tipo_doc,
-            'Número Doc': '',
-            'RUT': '',
-            'Razón Social': '',
-            'Cuenta': '5111099',
-            'Nombre Cuenta': 'Gastos Sin Clasificar',
-            'Debe': '',
-            'Haber': '',
-            'Centro Costo': '',
-            'Proyecto': '',
-            'Glosa': f'Error procesando: {str(e)}',
-            'Referencia': ''
-        })
-    
-    return filas_resultado
+            # Distribución por ponderadores normalizados
+            for k, p in ponderadores.items():
+                if p <= 0:
+                    continue
+                factor = p / suma_pond
+                cc_codigo = mapeo_cc.get(k, k)  # usar mapeo si existe
+                agregar_gasto(neto * factor, cc_codigo)
+        agregar_iva(iva)
+
+    elif str(tipo_doc) == "34":  # Factura Exenta: sin IVA
+        agregar_proveedor(total if total else neto)
+        cc_principal = get_centro_costo_principal(fila, headers, mapeo_cc)
+        if cc_count <= 1 or suma_pond == 0:
+            agregar_gasto(total if total else neto, cc_principal)
+        else:
+            for k, p in ponderadores.items():
+                if p <= 0:
+                    continue
+                factor = p / suma_pond
+                cc_codigo = mapeo_cc.get(k, k)
+                agregar_gasto((total if total else neto) * factor, cc_codigo)
+
+    elif str(tipo_doc) == "61":  # Nota de Crédito: montos en signo inverso
+        # Proveedor al Debe
+        f = fila_base()
+        f["Código Plan de Cuenta"] = "2111001"
+        f["Monto al Debe Moneda Base"] = round(total, 2)
+        f["Descripción Movimiento"] = f"NC Proveedor {razon}"
+        filas.append(f)
+        # Gastos al Haber y IVA al Haber
+        if cc_count <= 1 or suma_pond == 0:
+            cc_principal = get_centro_costo_principal(fila, headers, mapeo_cc)
+            f2 = fila_base()
+            f2["Código Plan de Cuenta"] = "5111001"
+            f2["Monto al Haber Moneda Base"] = round(neto, 2)
+            f2["Código Centro de Costo"] = cc_principal
+            f2["Descripción Movimiento"] = "Reverso Gasto"
+            filas.append(f2)
+        else:
+            for k, p in ponderadores.items():
+                if p <= 0:
+                    continue
+                factor = p / suma_pond
+                cc_codigo = mapeo_cc.get(k, k)
+                f2 = fila_base()
+                f2["Código Plan de Cuenta"] = "5111001"
+                f2["Monto al Haber Moneda Base"] = round(neto * factor, 2)
+                f2["Código Centro de Costo"] = cc_codigo
+                f2["Descripción Movimiento"] = "Reverso Gasto"
+                filas.append(f2)
+        if iva > 0:
+            f3 = fila_base()
+            f3["Código Plan de Cuenta"] = "1141001"
+            f3["Monto al Haber Moneda Base"] = round(iva, 2)
+            f3["Descripción Movimiento"] = "Reverso IVA Crédito Fiscal"
+            filas.append(f3)
+
+    else:
+        # Regla genérica: un gasto al Debe y proveedor al Haber por el total
+        agregar_proveedor(total)
+        cc_principal = get_centro_costo_principal(fila, headers, mapeo_cc)
+        agregar_gasto(total, cc_principal)
+
+    # Asegurar que todas las claves existan en el orden de headers_salida
+    filas_normalizadas = []
+    for f in filas:
+        filas_normalizadas.append({k: f.get(k, "") for k in headers_salida})
+    return filas_normalizadas
+
+def detectar_posiciones_centros_costo(headers):
+    """Detecta columnas de PyC, PS/EB y CO por tokens en los headers."""
+    posiciones = {}
+    for h in headers:
+        if not h:
+            continue
+        hl = str(h).lower()
+        tokens = [t for t in re.split(r"[^a-z0-9]+", hl) if t]
+        token_set = set(tokens)
+        if 'pyc' in token_set:
+            posiciones['PyC'] = h
+        if 'ps' in token_set or 'eb' in token_set or ('ps' in hl and 'eb' in hl):
+            posiciones['PS'] = h
+        if 'co' in token_set:
+            posiciones['CO'] = h
+    return posiciones
 
 def get_centro_costo_principal(fila, headers, mapeo_cc):
     """
@@ -1605,30 +1762,17 @@ def procesar_filas_gastos_simple(filas_data, headers, mapeo_cc):
     return {'resumen': resumen}
 
 def crear_excel_resultado_gastos(filas_data, headers, resultado):
-    """
-    Crea un archivo Excel con los resultados del procesamiento
-    """
+    """Crea un Excel ERP con headers de salida y filas transformadas."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Gastos Procesados"
-    
-    # Agregar headers
+    # Headers
     for col, header in enumerate(headers, 1):
         ws.cell(row=1, column=col, value=header)
-    
-    # Agregar datos
+    # Filas
     for row_idx, fila in enumerate(filas_data, 2):
         for col_idx, header in enumerate(headers, 1):
-            valor = fila.get(header)
-            ws.cell(row=row_idx, column=col_idx, value=valor)
-    
-    # Agregar columna de estado
-    estado_col = len(headers) + 1
-    ws.cell(row=1, column=estado_col, value="Estado Procesamiento")
-    
-    for row_idx in range(2, len(filas_data) + 2):
-        ws.cell(row=row_idx, column=estado_col, value="Procesado")
-    
+            ws.cell(row=row_idx, column=col_idx, value=fila.get(header, ""))
     return wb
 
 
@@ -1791,22 +1935,27 @@ def procesar_captura_masiva_gastos_task(self, archivo_content, archivo_nombre, u
             ex=86400
         )
         
-        # Procesar filas y generar archivo de resultado
-        filas_procesadas = []
+        # Procesar filas con reglas ERP y generar archivo de resultado
         errores = []
-        
+        filas_transformadas = []
+        tipos_doc_map = {"33": "Factura Electrónica", "34": "Factura Exenta", "61": "Nota de Crédito"}
+
         for i, fila in enumerate(filas_data):
             try:
-                # Aquí iría la lógica de procesamiento específica de gastos
-                # Por ahora, simplemente agregamos la fila con un indicador de procesada
-                fila_procesada = fila.copy()
-                fila_procesada['__ESTADO__'] = 'Procesada'
-                fila_procesada['__FECHA_PROCESO__'] = datetime.datetime.now().isoformat()
-                filas_procesadas.append(fila_procesada)
-                
-                # Actualizar progreso cada 10 filas
+                # Determinar tipo de documento desde la fila
+                tipo_col = next((h for h in headers if h and 'tipo' in str(h).lower() and ('doc' in str(h).lower() or 'documento' in str(h).lower())), None)
+                tipo_doc_val = str(fila.get(tipo_col, '33') if tipo_col else '33')
+
+                # Contar CC detectados para esta fila
+                cc_count = contar_centros_costos(fila, headers, mapeo_cc)
+
+                # Aplicar reglas y acumular
+                filas_resultado = aplicar_reglas_tipo_documento(fila, headers, tipo_doc_val, cc_count, mapeo_cc, tipos_doc_map)
+                filas_transformadas.extend(filas_resultado)
+
+                # Progreso
                 if i % 10 == 0:
-                    progreso = 10 + int((i / len(filas_data)) * 80)  # De 10% a 90%
+                    progreso = 10 + int((i / max(1, len(filas_data))) * 80)
                     task_metadata['progreso'] = progreso
                     task_metadata['filas_procesadas'] = i + 1
                     redis_client.set(
@@ -1814,25 +1963,14 @@ def procesar_captura_masiva_gastos_task(self, archivo_content, archivo_nombre, u
                         json.dumps(task_metadata),
                         ex=86400
                     )
-                
             except Exception as e:
                 error_msg = f"Error en fila {i+2}: {str(e)}"
                 errores.append(error_msg)
                 logger.error(error_msg)
-        
-        # Crear archivo Excel de resultado
-        wb_resultado = Workbook()
-        ws_resultado = wb_resultado.active
-        ws_resultado.title = "Gastos Procesados"
-        
-        # Agregar headers (originales + nuevas columnas)
-        headers_resultado = headers + ['__ESTADO__', '__FECHA_PROCESO__']
-        ws_resultado.append(headers_resultado)
-        
-        # Agregar filas procesadas
-        for fila in filas_procesadas:
-            fila_valores = [fila.get(header, '') for header in headers_resultado]
-            ws_resultado.append(fila_valores)
+
+        # Generar Excel ERP
+        headers_salida = get_headers_salida_contabilidad()
+        wb_resultado = crear_excel_resultado_gastos(filas_transformadas, headers_salida, {})
         
         # Guardar archivo en Redis
         archivo_buffer = BytesIO()
@@ -1855,7 +1993,7 @@ def procesar_captura_masiva_gastos_task(self, archivo_content, archivo_nombre, u
             'estado': 'completado',
             'timestamp_fin': datetime.datetime.now().isoformat(),
             'progreso': 100,
-            'filas_procesadas': len(filas_procesadas),
+            'filas_procesadas': len(filas_transformadas),
             'total_errores': len(errores),
             'errores': errores[:10],  # Solo primeros 10 errores
             'archivo_resultado': archivo_resultado_nombre,

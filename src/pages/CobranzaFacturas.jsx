@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Upload, FileSpreadsheet, CheckCircle2, Clock, ArrowLeft, PlusCircle, AlertTriangle, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { parseAuxiliarCXC } from '../api/cobranza';
 
 // Estructura de la factura
 // {
@@ -10,14 +11,7 @@ import * as XLSX from 'xlsx';
 //   numeroComprobante, codigoCorrelativoDctoCompra, fechaComprobante, debe, haber, saldo, descripcion
 // }
 
-const STORAGE_KEY = 'cobranza_facturas_by_cliente_v1';
-
-function loadAll() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; }
-}
-function saveAll(map) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(map)); } catch {}
-}
+// Sin persistencia: estado en memoria por cliente durante la sesión
 
 function normalizeDate(v) {
   if (!v) return null;
@@ -45,54 +39,44 @@ function parseMonto(v) {
 export default function CobranzaFacturas() {
   const { clienteId } = useParams();
   const navigate = useNavigate();
-  const [mapByCliente, setMapByCliente] = useState(() => loadAll());
+  const [mapByCliente, setMapByCliente] = useState({});
   const facturas = useMemo(() => mapByCliente[clienteId] || [], [mapByCliente, clienteId]);
   const [detalleIdx, setDetalleIdx] = useState(null);
 
-  useEffect(() => { saveAll(mapByCliente); }, [mapByCliente]);
+  // No persistimos en localStorage ni backend
 
   const setFacturas = (rows) => setMapByCliente(prev => ({ ...prev, [clienteId]: rows }));
 
   const parseUpload = async (file) => {
     if (!file) return;
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type: 'array' });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-    // Mapeo heurístico de columnas
-    const mapCol = (obj, keys) => {
-      for (const k of keys) {
-        const f = Object.keys(obj).find(h => h.toLowerCase().includes(k));
-        if (f) return obj[f];
+    // Enviar al backend para parsear con pythonlocales/parser.py
+    const data = await parseAuxiliarCXC(file);
+    // Mapear a facturas planas para la tabla
+    const facturasParsed = [];
+    for (const cuenta of data.cuentas || []) {
+      for (const f of cuenta.facturas || []) {
+        facturasParsed.push({
+          numero: String(f.numero || f['numero'] || '').trim(),
+          emision: normalizeDate(f.fecha_emision || f['fecha_emision'] || f['fecha'] || null),
+          vencimiento: normalizeDate(f.fecha_vcto || f['fecha_vcto'] || f['vencimiento'] || null),
+          estado: 'pendiente',
+          numeroCuenta: cuenta.numero_cuenta || f.numero_cuenta,
+          nombreCuenta: cuenta.nombre_cuenta || f.nombre_cuenta,
+          tipoDocumento: f.tipo_documento || f.tipo_documento_repetido || '',
+          nombreTipoDocumento: f.tipo_documento || '',
+          numeroReferencia: f.numero_referencia || '',
+          tipoMovimiento: f.tipo_movimiento || '',
+          numeroComprobante: f.numero_comprobante || '',
+          codigoCorrelativoDctoCompra: f.correlativo_doc_compra || f.codigo_correlativo_dcto_compra || '',
+          fechaComprobante: normalizeDate(f.fecha_comprobante || null),
+          debe: parseMonto(f.debe),
+          haber: parseMonto(f.haber),
+          saldo: parseMonto(f.saldo),
+          descripcion: f.descripcion || ''
+        });
       }
-      return '';
-    };
-    const parsed = rows.map(r => {
-      const numero = String(mapCol(r, ['numero','nº','nro','factura','doc'])).trim();
-      const emision = normalizeDate(mapCol(r, ['emision','emisión','fecha emision','fecha emisión','fecha']));
-      const venc = normalizeDate(mapCol(r, ['venc','vto','vencimiento','fecha venc']));
-      let estado = String(mapCol(r, ['estado','situacion','situación'])).toLowerCase().trim();
-      if (!['pendiente','esperando comprobante','cobrada'].includes(estado)) estado = 'pendiente';
-
-      const numeroCuenta = String(mapCol(r, ['numero de cuenta','n° cuenta','nº cuenta','cuenta numero','num cuenta','cuenta'])).trim();
-      const nombreCuenta = String(mapCol(r, ['nombre de cuenta','cuenta nombre','razon social','razón social','cliente','nombre cliente'])).trim();
-      const tipoDocumento = String(mapCol(r, ['tipo de documento','tipo documento','tdoc'])).trim();
-      const nombreTipoDocumento = String(mapCol(r, ['nombre tipo de documento','nombre tipo documento','ntdoc'])).trim();
-      const numeroReferencia = String(mapCol(r, ['numero de referencia','nro referencia','nº referencia','referencia'])).trim();
-      const tipoMovimiento = String(mapCol(r, ['tipo de movimiento','tipo movimiento'])).trim();
-      const numeroComprobante = String(mapCol(r, ['numero de comprobante','nro comprobante','nº comprobante','comprobante'])).trim();
-      const codigoCorrelativoDctoCompra = String(mapCol(r, ['codigo correlativo de dcto compra','código correlativo de dcto compra','correlativo compra','codigo correlativo','código correlativo'])).trim();
-      const fechaComprobante = normalizeDate(mapCol(r, ['fecha de comprobante','fecha comprobante']));
-      const debe = parseMonto(mapCol(r, ['debe','cargo']));
-      const haber = parseMonto(mapCol(r, ['haber','abono']));
-      const saldo = parseMonto(mapCol(r, ['saldo']));
-      const descripcion = String(mapCol(r, ['descripcion','descripción','glosa','detalle'])).trim();
-
-      return { numero, emision, vencimiento: venc, estado,
-        numeroCuenta, nombreCuenta, tipoDocumento, nombreTipoDocumento, numeroReferencia, tipoMovimiento,
-        numeroComprobante, codigoCorrelativoDctoCompra, fechaComprobante, debe, haber, saldo, descripcion };
-    }).filter(r => r.numero);
-    setFacturas(parsed);
+    }
+    setFacturas(facturasParsed);
   };
 
   const onFile = (e) => parseUpload(e.target.files?.[0]);
@@ -124,7 +108,7 @@ export default function CobranzaFacturas() {
         <div className="flex items-center gap-2">
           <label className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 hover:bg-indigo-500 cursor-pointer flex items-center gap-2">
             <Upload className="w-4 h-4" /> Subir auxiliar
-            <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={onFile} />
+            <input type="file" accept=".xlsx,.xls" className="hidden" onChange={onFile} />
           </label>
           <button onClick={agregarFilaManual} className="px-3 py-1.5 text-xs rounded-md bg-teal-600 hover:bg-teal-500 flex items-center gap-2"><PlusCircle className="w-4 h-4"/> Agregar</button>
         </div>
@@ -140,8 +124,11 @@ export default function CobranzaFacturas() {
             <thead className="bg-white/5 text-gray-300">
               <tr>
                 <th className="px-3 py-2 text-left">Factura</th>
-                <th className="px-3 py-2 text-left">Emisión</th>
+                <th className="px-3 py-2 text-left">Cuenta Nº</th>
+                <th className="px-3 py-2 text-left">Nombre cuenta</th>
+                <th className="px-3 py-2 text-left">Fecha emisión</th>
                 <th className="px-3 py-2 text-left">Vencimiento</th>
+                <th className="px-3 py-2 text-right">Monto</th>
                 <th className="px-3 py-2 text-left">Estado</th>
                 <th className="px-3 py-2 text-right">Acciones</th>
               </tr>
@@ -152,8 +139,11 @@ export default function CobranzaFacturas() {
                   <td className="px-3 py-2">
                     <button onClick={()=>setDetalleIdx(idx)} className="text-sky-300 hover:underline">{f.numero}</button>
                   </td>
+                  <td className="px-3 py-2">{f.numeroCuenta || '-'}</td>
+                  <td className="px-3 py-2">{f.nombreCuenta || '-'}</td>
                   <td className="px-3 py-2">{fmtDate(f.emision)}</td>
                   <td className="px-3 py-2">{fmtDate(f.vencimiento)}</td>
+                  <td className="px-3 py-2 text-right">{fmtMonto((f.saldo ?? f.debe ?? 0))}</td>
                   <td className="px-3 py-2">
                     {f.estado === 'cobrada' ? (
                       <span className="inline-flex items-center gap-1 text-emerald-300"><CheckCircle2 className="w-4 h-4"/> Cobrada</span>
@@ -180,7 +170,7 @@ export default function CobranzaFacturas() {
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-gray-400">Sin facturas aún. Sube un auxiliar o agrega manualmente.</td>
+                  <td colSpan={8} className="px-3 py-6 text-center text-gray-400">Sin facturas aún. Sube un auxiliar o agrega manualmente.</td>
                 </tr>
               )}
             </tbody>

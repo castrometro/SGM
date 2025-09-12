@@ -33,6 +33,14 @@ from django.db.models import Count, Q, Avg, Sum, F
 from django.utils import timezone
 from datetime import datetime, timedelta
 from decimal import Decimal
+from rest_framework.parsers import MultiPartParser, FormParser
+import tempfile
+import sys, os
+# Asegurar que el repo raíz esté en sys.path para importar pythonlocales/parser.py
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if REPO_ROOT not in sys.path:
+    sys.path.append(REPO_ROOT)
+from api import parser as auxiliar_parser
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
@@ -199,6 +207,58 @@ class ServicioViewSet(viewsets.ModelViewSet):
     queryset = Servicio.objects.all()
     serializer_class = ServicioSerializer
     permission_classes = [IsAuthenticatedAndActive]
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def parse_auxiliar_cxc(request):
+    """Recibe un archivo Excel/CSV por multipart/form-data bajo 'file',
+    invoca pythonlocales/parser.parse_auxiliar y devuelve JSON con
+    cliente, cuentas, facturas y totales. No persiste nada."""
+    up = request.FILES.get('file')
+    if not up:
+        return Response({"error": "Falta archivo 'file'"}, status=400)
+    # Guardar temporalmente y pasar ruta al parser
+    name_lower = up.name.lower()
+    if not (name_lower.endswith('.xlsx') or name_lower.endswith('.xls')):
+        return Response({"error": "Formato no soportado. Sube un Excel (.xlsx o .xls) del auxiliar."}, status=400)
+    suffix = '.xlsx' if name_lower.endswith('.xlsx') else '.xls'
+    try:
+        with tempfile.NamedTemporaryFile(delete=True, suffix=suffix) as tmp:
+            for chunk in up.chunks():
+                tmp.write(chunk)
+            tmp.flush()
+            result = auxiliar_parser.parse_auxiliar(tmp.name, sheet_name=None)
+    except Exception as e:
+        return Response({"error": f"No se pudo parsear: {e}"}, status=400)
+
+    # Normalizar dataframes a listas de dicts
+    cliente = result.get('cliente') or {}
+    cuentas_out = []
+    for c in result.get('cuentas', []) or []:
+        fact_df = c.get('facturas')
+        if hasattr(fact_df, 'to_dict'):
+            facturas = fact_df.to_dict(orient='records')
+        else:
+            facturas = c.get('facturas') or []
+        tot_tipo = c.get('totales_por_tipo_documento')
+        if hasattr(tot_tipo, 'to_dict'):
+            totales_tipo = tot_tipo.to_dict(orient='records')
+        else:
+            totales_tipo = tot_tipo or []
+        cuentas_out.append({
+            'numero_cuenta': c.get('numero_cuenta'),
+            'nombre_cuenta': c.get('nombre_cuenta'),
+            'facturas': facturas,
+            'totales_por_tipo_documento': totales_tipo,
+            'total_cuenta': c.get('total_cuenta')
+        })
+
+    return Response({
+        'cliente': cliente,
+        'cuentas': cuentas_out,
+        'total_global': result.get('total_global')
+    })
 
 class ServicioClienteViewSet(viewsets.ModelViewSet):
     queryset = ServicioCliente.objects.all()

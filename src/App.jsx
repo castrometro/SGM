@@ -41,7 +41,9 @@ import CapturaMasivaGastos from "./pages/CapturaMasivaGastos";
 
 
 
-import GestionCobranza from "./pages/GestionCobranza";
+
+import GestionCobranzav2 from "./pages/GestionCobranzav2";
+import CobranzaFacturas from "./pages/CobranzaFacturas";
 
 function App() {
   return (
@@ -112,7 +114,8 @@ function App() {
           <Route path="tools" element={<Tools />} />
           
           {/* ----------- ÁREA: COBRANZA ------------- */}
-          <Route path="gestion-cobranza" element={<GestionCobranza />} />
+          <Route path="gestion-cobranza-v2" element={<GestionCobranzav2 />} />
+          <Route path="gestion-cobranza-v2/:clienteId/facturas" element={<CobranzaFacturas />} />
           
           {/* ----------- ÁREA: CAPTURA MASIVA DE GASTOS ------------- */}
           <Route path="captura-gastos" element={<CapturaMasivaGastos />} />

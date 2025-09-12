@@ -76,7 +76,7 @@ const MenuUsuario = () => {
     // Funcionalidades específicas de Contabilidad para Gerentes
     if (tieneContabilidad) {
       opciones.push(
-        { label: "Gestión de Cobranza", descripcion: "Seguimiento y gestión de cobros a clientes", icon: CreditCard, color: "#059669", path: "/menu/gestion-cobranza" },
+        { label: "Gestión de Cobranza", descripcion: "Seguimiento y gestión de cobros a clientes", icon: CreditCard, color: "#059669", path: "/menu/gestion-cobranza-v2" },
         { label: "Logs y Actividad", descripcion: "Auditoría y logs de actividades de usuarios", icon: FileText, color: "#F97316", path: "/menu/gerente/logs-actividad" },
         { label: "Estados de Cierres", descripcion: "Monitoreo en tiempo real de estados de cierres", icon: Monitor, color: "#06B6D4", path: "/menu/gerente/estados-cierres" },
         { label: "Cache Redis", descripcion: "Estado y gestión del cache Redis de cierres", icon: Database, color: "#10B981", path: "/menu/gerente/cache-redis" }
@@ -119,7 +119,7 @@ const MenuUsuario = () => {
       descripcion: "Seguimiento y gestión de cobros a clientes", 
       icon: CreditCard, 
       color: "#059669", 
-      path: "/menu/gestion-cobranza"
+      path: "/menu/gestion-cobranza-v2"
     });
   }
 

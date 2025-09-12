@@ -49,34 +49,41 @@ export default function CobranzaFacturas() {
 
   const parseUpload = async (file) => {
     if (!file) return;
-    // Enviar al backend para parsear con pythonlocales/parser.py
-    const data = await parseAuxiliarCXC(file);
-    // Mapear a facturas planas para la tabla
-    const facturasParsed = [];
-    for (const cuenta of data.cuentas || []) {
-      for (const f of cuenta.facturas || []) {
-        facturasParsed.push({
-          numero: String(f.numero || f['numero'] || '').trim(),
-          emision: normalizeDate(f.fecha_emision || f['fecha_emision'] || f['fecha'] || null),
-          vencimiento: normalizeDate(f.fecha_vcto || f['fecha_vcto'] || f['vencimiento'] || null),
-          estado: 'pendiente',
-          numeroCuenta: cuenta.numero_cuenta || f.numero_cuenta,
-          nombreCuenta: cuenta.nombre_cuenta || f.nombre_cuenta,
-          tipoDocumento: f.tipo_documento || f.tipo_documento_repetido || '',
-          nombreTipoDocumento: f.tipo_documento || '',
-          numeroReferencia: f.numero_referencia || '',
-          tipoMovimiento: f.tipo_movimiento || '',
-          numeroComprobante: f.numero_comprobante || '',
-          codigoCorrelativoDctoCompra: f.correlativo_doc_compra || f.codigo_correlativo_dcto_compra || '',
-          fechaComprobante: normalizeDate(f.fecha_comprobante || null),
-          debe: parseMonto(f.debe),
-          haber: parseMonto(f.haber),
-          saldo: parseMonto(f.saldo),
-          descripcion: f.descripcion || ''
-        });
+    try {
+      const data = await parseAuxiliarCXC(file);
+      console.log('[CobranzaFacturas] parseAuxiliarCXC raw response:', data);
+
+      // Mapear a facturas planas para la tabla
+      const facturasParsed = [];
+      for (const cuenta of data.cuentas || []) {
+        for (const f of cuenta.facturas || []) {
+          facturasParsed.push({
+            numero: String(f.numero || f['numero'] || '').trim(),
+            emision: normalizeDate(f.fecha_emision || f['fecha_emision'] || f['fecha'] || null),
+            vencimiento: normalizeDate(f.fecha_vcto || f['fecha_vcto'] || f['vencimiento'] || null),
+            estado: 'pendiente',
+            numeroCuenta: cuenta.numero_cuenta || f.numero_cuenta,
+            nombreCuenta: cuenta.nombre_cuenta || f.nombre_cuenta,
+            tipoDocumento: f.tipo_documento_codigo || f.tipo_documento || f.tipo_documento_repetido || '',
+            nombreTipoDocumento: f.tipo_documento || '',
+            numeroReferencia: f.numero_referencia || '',
+            tipoMovimiento: f.tipo_movimiento || '',
+            numeroComprobante: f.numero_comprobante || '',
+            codigoCorrelativoDctoCompra: f.correlativo_doc_compra || f.codigo_correlativo_dcto_compra || '',
+            fechaComprobante: normalizeDate(f.fecha_comprobante || null),
+            debe: parseMonto(f.debe),
+            haber: parseMonto(f.haber),
+            saldo: parseMonto(f.saldo),
+            descripcion: f.descripcion || ''
+          });
+        }
       }
+
+      console.log('[CobranzaFacturas] mapped facturas (first 5):', facturasParsed.slice(0, 5));
+      setFacturas(facturasParsed);
+    } catch (err) {
+      console.error('[CobranzaFacturas] parseUpload error:', err);
     }
-    setFacturas(facturasParsed);
   };
 
   const onFile = (e) => parseUpload(e.target.files?.[0]);
@@ -123,12 +130,14 @@ export default function CobranzaFacturas() {
           <table className="w-full text-sm">
             <thead className="bg-white/5 text-gray-300">
               <tr>
-                <th className="px-3 py-2 text-left">Factura</th>
-                <th className="px-3 py-2 text-left">Cuenta Nº</th>
-                <th className="px-3 py-2 text-left">Nombre cuenta</th>
-                <th className="px-3 py-2 text-left">Fecha emisión</th>
+                <th className="px-3 py-2 text-left">Cod. Doc.</th>
+                <th className="px-3 py-2 text-left">Numero</th>
+                <th className="px-3 py-2 text-left">Nº de Cuenta</th>
+                <th className="px-3 py-2 text-left">Nombre Cuenta</th>
+                <th className="px-3 py-2 text-left">Fecha Emisión</th>
                 <th className="px-3 py-2 text-left">Vencimiento</th>
-                <th className="px-3 py-2 text-right">Monto</th>
+                <th className="px-3 py-2 text-right">Debe</th>
+                <th className="px-3 py-2 text-right">Haber</th>
                 <th className="px-3 py-2 text-left">Estado</th>
                 <th className="px-3 py-2 text-right">Acciones</th>
               </tr>
@@ -136,14 +145,16 @@ export default function CobranzaFacturas() {
             <tbody>
               {facturas.length ? facturas.map((f,idx) => (
                 <tr key={idx} className="odd:bg-white/0 even:bg-white/5">
+                  <td className="px-3 py-2">{f.tipoDocumento || '-'}</td>
                   <td className="px-3 py-2">
-                    <button onClick={()=>setDetalleIdx(idx)} className="text-sky-300 hover:underline">{f.numero}</button>
+                    <button onClick={()=>setDetalleIdx(idx)} className="text-sky-300 hover:underline">{f.numero || '-'}</button>
                   </td>
                   <td className="px-3 py-2">{f.numeroCuenta || '-'}</td>
                   <td className="px-3 py-2">{f.nombreCuenta || '-'}</td>
                   <td className="px-3 py-2">{fmtDate(f.emision)}</td>
                   <td className="px-3 py-2">{fmtDate(f.vencimiento)}</td>
-                  <td className="px-3 py-2 text-right">{fmtMonto((f.saldo ?? f.debe ?? 0))}</td>
+                  <td className="px-3 py-2 text-right">{fmtMonto(f.debe)}</td>
+                  <td className="px-3 py-2 text-right">{fmtMonto(f.haber)}</td>
                   <td className="px-3 py-2">
                     {f.estado === 'cobrada' ? (
                       <span className="inline-flex items-center gap-1 text-emerald-300"><CheckCircle2 className="w-4 h-4"/> Cobrada</span>
@@ -170,7 +181,7 @@ export default function CobranzaFacturas() {
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={8} className="px-3 py-6 text-center text-gray-400">Sin facturas aún. Sube un auxiliar o agrega manualmente.</td>
+                  <td colSpan={10} className="px-3 py-6 text-center text-gray-400">Sin facturas aún. Sube un auxiliar o agrega manualmente.</td>
                 </tr>
               )}
             </tbody>

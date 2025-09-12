@@ -13,8 +13,10 @@ Qué devuelve:
           # columnas pedidas:
           "numero_cuenta",
           "nombre_cuenta",
+          "tipo_documento_codigo",
           "tipo_documento",
           "numero",
+          "fecha_emision",
           "fecha_vcto",
           "tipo_documento_repetido",
           "numero_referencia",
@@ -298,7 +300,9 @@ def parse_auxiliar(
                         "numero_cuenta": numero_cuenta,
                         "nombre_cuenta": nombre_cuenta,
                         "tipo_documento": tipo_nom,
+                        "tipo_documento_codigo": tipo_num,
                         "numero": r[1],
+                        "fecha_emision": r[2],
                         "fecha_vcto": r[3],
                         "tipo_documento_repetido": r[4],
                         "numero_referencia": r[5],
@@ -386,7 +390,7 @@ def parse_auxiliar(
 
         # construir DataFrame de facturas y totales de la cuenta
         facturas_df = pd.DataFrame(fact_rows_all, columns=[
-            "numero_cuenta","nombre_cuenta","tipo_documento","numero","fecha_vcto",
+            "numero_cuenta","nombre_cuenta","tipo_documento_codigo","tipo_documento","numero","fecha_emision","fecha_vcto",
             "tipo_documento_repetido","numero_referencia","tipo_movimiento","numero_comprobante",
             "correlativo_doc_compra","fecha_comprobante","debe","haber","saldo","descripcion"
         ])

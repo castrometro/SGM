@@ -103,7 +103,7 @@ export default function CobranzaFacturas() {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <button onClick={()=>navigate(-1)} className="px-3 py-1.5 text-xs rounded-md bg-white/10 hover:bg-white/20 flex items-center gap-2"><ArrowLeft className="w-4 h-4"/> Volver</button>
-          <h1 className="text-2xl font-bold text-teal-400">Facturas de {clienteId}</h1>
+          <h1 className="text-2xl font-bold text-teal-400">Facturas por Cobrar a {clienteId}</h1>
         </div>
         <div className="flex items-center gap-2">
           <label className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 hover:bg-indigo-500 cursor-pointer flex items-center gap-2">

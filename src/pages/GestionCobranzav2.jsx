@@ -256,7 +256,7 @@ const GestionCobranzav2 = () => {
     const t = setInterval(() => {
       idx = (idx + 1) % seq.length;
       setClienteId(seq[idx]);
-    }, 12000);
+    }, 3000);
     return () => clearInterval(t);
   }, [isKiosk, clienteId]);
 
@@ -353,7 +353,7 @@ const GestionCobranzav2 = () => {
           </div>
         )}
         {isKiosk && (
-          <div className="text-xs text-gray-400 -mt-2">Mostrando: {nombreClienteActual}</div>
+          <div className="text-xl text-white-400 -mt-2">Mostrando: {nombreClienteActual}</div>
         )}
 
         {/* Tarjetas de totales */}
@@ -414,14 +414,14 @@ const GestionCobranzav2 = () => {
             <div className="bg-white/5 border border-white/10 rounded-xl p-4">
               <div className="flex items-center gap-2 mb-3">
                 <Users className="w-5 h-5 text-sky-400" />
-                <h3 className="text-lg font-semibold">Leaderboard de analistas</h3>
+                <h3 className="text-lg font-semibold">Leaderboard</h3>
               </div>
               <div className="max-h-64 overflow-auto rounded-lg border border-white/5">
                 <table className="w-full text-sm">
                   <thead className="bg-white/5 text-gray-300">
                     <tr>
                       <th className="px-3 py-2 text-left">Pos</th>
-                      <th className="px-3 py-2 text-left">Analista</th>
+                      <th className="px-3 py-2 text-left">Vendedor(a)</th>
                       <th className="px-3 py-2 text-right">Monto cobrado</th>
                       <th className="px-3 py-2 text-right">% cobradas</th>
                       <th className="px-3 py-2 text-right">Δ puesto</th>

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Users, DollarSign, FileSpreadsheet, AlertTriangle } from "lucide-react";
+import { Users, FileSpreadsheet, AlertTriangle } from "lucide-react";
 import { useNavigate } from 'react-router-dom';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line, PieChart, Pie, Cell } from "recharts";
 import { buildOrderedColorMap, BASE_PALETTE } from "../utils/dashboard/colors";
@@ -256,7 +256,7 @@ const GestionCobranzav2 = () => {
     const t = setInterval(() => {
       idx = (idx + 1) % seq.length;
       setClienteId(seq[idx]);
-    }, 3000);
+    }, 10000);
     return () => clearInterval(t);
   }, [isKiosk, clienteId]);
 
@@ -353,7 +353,7 @@ const GestionCobranzav2 = () => {
           </div>
         )}
         {isKiosk && (
-          <div className="text-xl text-white-400 -mt-2">Mostrando: {nombreClienteActual}</div>
+          <div className="text-3xl text-white-400 -mt-2">Mostrando: {nombreClienteActual}</div>
         )}
 
         {/* Tarjetas de totales */}
@@ -362,11 +362,15 @@ const GestionCobranzav2 = () => {
           <div className="bg-gray-900/60 rounded-xl p-6 border border-gray-800 hover:border-gray-700 transition-colors">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-400">Monto total pendiente por cobrar</p>
-                <p className="text-2xl font-bold text-rose-300">{fmtMonto(montoPendiente)}</p>
-                <p className="text-xs text-gray-500 mt-1">{nombreClienteActual}</p>
+                <p className={`${isKiosk ? 'text-base' : 'text-sm'} text-gray-300`}>Monto total pendiente por cobrar</p>
+                <p className={`${isKiosk ? 'text-5xl' : 'text-3xl md:text-4xl'} font-extrabold text-rose-300 leading-tight`}>{fmtMonto(montoPendiente)}</p>
+                <p className={`${isKiosk ? 'text-sm' : 'text-xs'} text-gray-400 mt-1`}>{nombreClienteActual}</p>
               </div>
-              <DollarSign className="w-8 h-8 text-rose-400" />
+              <span
+                className={`${isKiosk ? 'px-3 py-1 text-2xl' : 'px-2 py-0.5 text-xs'} font-semibold rounded-md bg-rose-500/15 text-rose-300 border border-rose-400/30`}
+              >
+                CLP
+              </span>
             </div>
           </div>
 
@@ -374,11 +378,11 @@ const GestionCobranzav2 = () => {
           <div className="bg-gray-900/60 rounded-xl p-6 border border-gray-800 hover:border-gray-700 transition-colors">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-400">Total de facturas por cobrar</p>
-                <p className="text-2xl font-bold text-emerald-300">{countPendiente}</p>
-                <p className="text-xs text-gray-500 mt-1">Solo facturas pendientes</p>
+                <p className={`${isKiosk ? 'text-base' : 'text-sm'} text-gray-300`}>Total de facturas por cobrar</p>
+                <p className={`${isKiosk ? 'text-5xl' : 'text-3xl md:text-4xl'} font-extrabold text-emerald-300 leading-tight`}>{countPendiente}</p>
+                <p className={`${isKiosk ? 'text-sm' : 'text-xs'} text-gray-400 mt-1`}>Solo facturas pendientes</p>
               </div>
-              <FileSpreadsheet className="w-8 h-8 text-emerald-400" />
+              <FileSpreadsheet className={`${isKiosk ? 'w-10 h-10' : 'w-9 h-9'} text-emerald-400`} />
             </div>
           </div>
 
@@ -386,11 +390,11 @@ const GestionCobranzav2 = () => {
           <div className="bg-gray-900/60 rounded-xl p-6 border border-gray-800 hover:border-gray-700 transition-colors">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-400">Clientes en mora</p>
-                <p className="text-2xl font-bold text-blue-300">{clientesEnMora}</p>
-                <p className="text-xs text-gray-500 mt-1">Al menos una factura pendiente vencida</p>
+                <p className={`${isKiosk ? 'text-base' : 'text-sm'} text-gray-300`}>Clientes en mora</p>
+                <p className={`${isKiosk ? 'text-5xl' : 'text-3xl md:text-4xl'} font-extrabold text-blue-300 leading-tight`}>{clientesEnMora}</p>
+                <p className={`${isKiosk ? 'text-sm' : 'text-xs'} text-gray-400 mt-1`}>Al menos una factura pendiente vencida</p>
               </div>
-              <Users className="w-8 h-8 text-blue-400" />
+              <Users className={`${isKiosk ? 'w-10 h-10' : 'w-9 h-9'} text-blue-400`} />
             </div>
           </div>
 
@@ -398,11 +402,11 @@ const GestionCobranzav2 = () => {
           <div className="bg-gray-900/60 rounded-xl p-6 border border-gray-800 hover:border-gray-700 transition-colors">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-400">Monto en mora</p>
-                <p className="text-2xl font-bold text-amber-300">{fmtMonto(montoEnMora)}</p>
-                <p className="text-xs text-gray-500 mt-1">Suma de facturas pendientes vencidas</p>
+                <p className={`${isKiosk ? 'text-base' : 'text-sm'} text-gray-300`}>Monto en mora</p>
+                <p className={`${isKiosk ? 'text-5xl' : 'text-3xl md:text-4xl'} font-extrabold text-amber-300 leading-tight`}>{fmtMonto(montoEnMora)}</p>
+                <p className={`${isKiosk ? 'text-sm' : 'text-xs'} text-gray-400 mt-1`}>Suma de facturas pendientes vencidas</p>
               </div>
-              <AlertTriangle className="w-8 h-8 text-amber-400" />
+              <AlertTriangle className={`${isKiosk ? 'w-10 h-10' : 'w-9 h-9'} text-amber-400`} />
             </div>
           </div>
         </div>

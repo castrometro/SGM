@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Upload, FileSpreadsheet, CheckCircle2, Clock, ArrowLeft, PlusCircle, AlertTriangle, X } from 'lucide-react';
+import { Upload, FileSpreadsheet, CheckCircle2, Clock, ArrowLeft, PlusCircle, AlertTriangle, X, Coins, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { parseAuxiliarCXC } from '../api/cobranza';
 
@@ -42,6 +42,10 @@ export default function CobranzaFacturas() {
   const [mapByCliente, setMapByCliente] = useState({});
   const facturas = useMemo(() => mapByCliente[clienteId] || [], [mapByCliente, clienteId]);
   const [detalleIdx, setDetalleIdx] = useState(null);
+
+  // NUEVO: filtros
+  const [periodo, setPeriodo] = useState('all'); // all | last1 | last3 | last6
+  const [busqueda, setBusqueda] = useState('');
 
   // No persistimos en localStorage ni backend
 
@@ -105,6 +109,142 @@ export default function CobranzaFacturas() {
     ]);
   };
 
+  // Helpers de fecha para filtro por periodo (usa vencimiento como base)
+  const startDateByPeriodo = useMemo(() => {
+    const today = new Date();
+    const firstDayThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const subMonths = (d, m) => new Date(d.getFullYear(), d.getMonth() - m, 1);
+    if (periodo === 'last1') return subMonths(firstDayThisMonth, 1);
+    if (periodo === 'last3') return subMonths(firstDayThisMonth, 3);
+    if (periodo === 'last6') return subMonths(firstDayThisMonth, 6);
+    return null; // all
+  }, [periodo]);
+
+  // Helper: inicio de día para comparar fechas sin horas
+  const startOfDay = (d) => {
+    if (!d) return null;
+    const x = new Date(d);
+    x.setHours(0,0,0,0);
+    return x;
+  };
+  const hoy = useMemo(() => {
+    const d = new Date();
+    d.setHours(0,0,0,0);
+    return d;
+  }, []);
+
+  // NUEVO: helper para estado visual "Vencida"
+  const esVencida = (f) => {
+    if (!f) return false;
+    if (Number(f.saldo) >= 0) return false;        // respeta la regla de estados solo saldo < 0
+    if (f.estado === 'cobrada') return false;      // cobradas no son vencidas
+    const vto = startOfDay(f.vencimiento);
+    return vto && vto < hoy;
+  };
+
+  // NUEVO: facturas filtradas por periodo (vencimiento) y búsqueda (Nº cuenta o Nº referencia)
+  const facturasFiltradas = useMemo(() => {
+    const q = (busqueda || '').toString().trim().toLowerCase();
+    return (facturas || []).filter(f => {
+      // Filtro periodo por vencimiento
+      if (startDateByPeriodo) {
+        const vto = f.vencimiento ? new Date(f.vencimiento) : null;
+        if (!vto || vto < startDateByPeriodo) return false;
+      }
+      // Filtro búsqueda por Nº de cuenta o Nº de referencia
+      if (q) {
+        const ncta = (f.numeroCuenta || '').toString().toLowerCase();
+        const nref = (f.numeroReferencia || '').toString().toLowerCase();
+        if (!ncta.includes(q) && !nref.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [facturas, startDateByPeriodo, busqueda]);
+
+  // NUEVO: Totales sobre el subconjunto filtrado (agrego facturasVencidas)
+  const totales = useMemo(() => {
+    const asNumber = v => Number(v) || 0;
+    const absNeg = v => (v < 0 ? -v : 0);
+    const rows = facturasFiltradas;
+
+    const pendientesRows = rows.filter(r => asNumber(r.saldo) < 0 && r.estado !== 'cobrada');
+    const cobradasRows  = rows.filter(r => r.estado === 'cobrada');
+
+    const facturasPendientes = pendientesRows.length;
+    const facturasCobradas   = cobradasRows.length;
+
+    const montoPendiente = pendientesRows.reduce((acc, r) => acc + absNeg(asNumber(r.saldo)), 0);
+    const montoCobrado   = cobradasRows.reduce((acc, r) => {
+      const haber = asNumber(r.haber);
+      const saldo = asNumber(r.saldo);
+      return acc + (haber !== 0 ? haber : absNeg(saldo));
+    }, 0);
+
+    // NUEVO: conteo de vencidas (saldo < 0, no cobradas, vto < hoy)
+    const facturasVencidas = rows.filter(r => asNumber(r.saldo) < 0 && r.estado !== 'cobrada' && (() => {
+      const vto = r.vencimiento ? new Date(r.vencimiento) : null;
+      if (!vto) return false;
+      vto.setHours(0,0,0,0);
+      return vto < hoy;
+    })()).length;
+
+    return { facturasPendientes, facturasCobradas, montoPendiente, montoCobrado, facturasVencidas };
+  }, [facturasFiltradas, hoy]);
+
+  // Derivar filas ordenadas y coloreadas por Nº de Referencia (solo si hay duplicados)
+  const filasAgrupadas = useMemo(() => {
+    const base = facturasFiltradas; // <-- usar filtradas
+    const refMap = new Map();
+    base.forEach((f, i) => {
+      const key = (f.numeroReferencia || '').toString().trim().toLowerCase();
+      if (!key) return;
+      const arr = refMap.get(key) || [];
+      arr.push(i);
+      refMap.set(key, arr);
+    });
+
+    const palette = [
+      '#0ea5e933', '#22c55e33', '#eab30833', '#f9731633',
+      '#a78bfa33', '#ec489933', '#14b8a633', '#f59e0b33',
+      '#06b6d433', '#10b98133', '#84cc1633', '#fb718533',
+    ];
+
+    const colorByKey = {};
+    let cidx = 0;
+    for (const [key, idxs] of refMap.entries()) {
+      if (idxs.length >= 2) {
+        colorByKey[key] = palette[cidx % palette.length];
+        cidx++;
+      }
+    }
+
+    // construir filas con metadata de grupo y ordenar para contigüidad
+    const rows = base.map((f, i) => {
+      const key = (f.numeroReferencia || '').toString().trim().toLowerCase();
+      return {
+        ...f,
+        _idx: facturas.indexOf(f), // índice original en la lista completa
+        _groupKey: key,
+        _groupColor: colorByKey[key] || null,
+      };
+    });
+
+    rows.sort((a, b) => {
+      const ag = a._groupColor ? 0 : 1;
+      const bg = b._groupColor ? 0 : 1;
+      if (ag !== bg) return ag - bg;
+      if (a._groupKey !== b._groupKey) return a._groupKey.localeCompare(b._groupKey);
+
+      const da = a.emision ? new Date(a.emision).getTime() : 0;
+      const db = b.emision ? new Date(b.emision).getTime() : 0;
+      if (da !== db) return da - db;
+
+      return String(a.numero || '').localeCompare(String(b.numero || ''));
+    });
+
+    return rows;
+  }, [facturasFiltradas, facturas]);
+
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
       <div className="flex items-center justify-between mb-4">
@@ -121,10 +261,84 @@ export default function CobranzaFacturas() {
         </div>
       </div>
 
+      {/* NUEVO: Tarjetas de totales */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
+        {/* Facturas pendientes */}
+        <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-400">Facturas pendientes</span>
+            <AlertTriangle className="w-4 h-4 text-rose-300" />
+          </div>
+          <div className="mt-1 text-2xl font-semibold">{totales.facturasPendientes.toLocaleString('es-CL')}</div>
+        </div>
+        {/* Facturas cobradas */}
+        <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-400">Facturas cobradas</span>
+            <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+          </div>
+          <div className="mt-1 text-2xl font-semibold">{totales.facturasCobradas.toLocaleString('es-CL')}</div>
+        </div>
+        {/* Monto pendiente */}
+        <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-400">Monto pendiente por cobrar</span>
+            <Clock className="w-4 h-4 text-amber-300" />
+          </div>
+          <div className="mt-1 text-2xl font-semibold">{fmtMonto(totales.montoPendiente)}</div>
+        </div>
+        {/* Monto cobrado */}
+        <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-400">Monto cobrado</span>
+            <Coins className="w-4 h-4 text-teal-300" />
+          </div>
+          <div className="mt-1 text-2xl font-semibold">{fmtMonto(totales.montoCobrado)}</div>
+        </div>
+        {/* NUEVO: Facturas vencidas */}
+        <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-400">Facturas vencidas</span>
+            <AlertTriangle className="w-4 h-4 text-red-400" />
+          </div>
+          <div className="mt-1 text-2xl font-semibold">{totales.facturasVencidas.toLocaleString('es-CL')}</div>
+        </div>
+      </div>
+
+      {/* NUEVO: Filtros (periodo y búsqueda) */}
+      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-400">Periodo:</label>
+          <select
+            value={periodo}
+            onChange={e=>setPeriodo(e.target.value)}
+            className="bg-white/10 border border-white/10 rounded-md text-sm px-2 py-1 focus:outline-none"
+          >
+            <option value="all">Todos</option>
+            <option value="last1">Último mes</option>
+            <option value="last3">Últimos 3 meses</option>
+            <option value="last6">Últimos 6 meses</option>
+          </select>
+        </div>
+        <div className="relative w-full sm:w-80">
+          <Search className="w-4 h-4 text-gray-400 absolute left-2 top-1/2 -translate-y-1/2" />
+          <input
+            value={busqueda}
+            onChange={e=>setBusqueda(e.target.value)}
+            placeholder="Buscar por Nº de cuenta o Nº de referencia…"
+            className="w-full pl-8 pr-3 py-1.5 bg-white/10 border border-white/10 rounded-md text-sm focus:outline-none placeholder:text-gray-500"
+          />
+        </div>
+      </div>
+
+      {/* Listado (agrupado y coloreado) */}
       <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
-          <h3 className="text-lg font-semibold">Listado de facturas</h3>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
+            <h3 className="text-lg font-semibold">Listado de facturas</h3>
+          </div>
+          <div className="text-xs text-gray-400">Agrupadas por “Nº de Referencia” (mismo color)</div>
         </div>
         <div className="max-h-[70vh] overflow-auto rounded-lg border border-white/5">
           <table className="w-full text-sm">
@@ -133,55 +347,77 @@ export default function CobranzaFacturas() {
                 <th className="px-3 py-2 text-left">Cod. Doc.</th>
                 <th className="px-3 py-2 text-left">Numero</th>
                 <th className="px-3 py-2 text-left">Nº de Cuenta</th>
+                <th className="px-3 py-2 text-left">Nº de Referencia</th>
                 <th className="px-3 py-2 text-left">Nombre Cuenta</th>
                 <th className="px-3 py-2 text-left">Fecha Emisión</th>
                 <th className="px-3 py-2 text-left">Vencimiento</th>
                 <th className="px-3 py-2 text-right">Debe</th>
                 <th className="px-3 py-2 text-right">Haber</th>
+                <th className="px-3 py-2 text-right">Saldo</th>
                 <th className="px-3 py-2 text-left">Estado</th>
                 <th className="px-3 py-2 text-right">Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {facturas.length ? facturas.map((f,idx) => (
-                <tr key={idx} className="odd:bg-white/0 even:bg-white/5">
-                  <td className="px-3 py-2">{f.tipoDocumento || '-'}</td>
+              {filasAgrupadas.length ? filasAgrupadas.map((row) => (
+                <tr
+                  key={`${row._groupKey}-${row._idx}`}
+                  className="odd:bg-white/0 even:bg-white/5"
+                  style={row._groupColor ? { backgroundColor: row._groupColor } : undefined}
+                >
+                  <td className="px-3 py-2" title={row.nombreTipoDocumento || ''}>{row.tipoDocumento || '-'}</td>
                   <td className="px-3 py-2">
-                    <button onClick={()=>setDetalleIdx(idx)} className="text-sky-300 hover:underline">{f.numero || '-'}</button>
+                    <button onClick={()=>setDetalleIdx(row._idx)} className="text-sky-300 hover:underline">{row.numero || '-'}</button>
                   </td>
-                  <td className="px-3 py-2">{f.numeroCuenta || '-'}</td>
-                  <td className="px-3 py-2">{f.nombreCuenta || '-'}</td>
-                  <td className="px-3 py-2">{fmtDate(f.emision)}</td>
-                  <td className="px-3 py-2">{fmtDate(f.vencimiento)}</td>
-                  <td className="px-3 py-2 text-right">{fmtMonto(f.debe)}</td>
-                  <td className="px-3 py-2 text-right">{fmtMonto(f.haber)}</td>
+                  <td className="px-3 py-2">{row.numeroCuenta || '-'}</td>
+                  <td className="px-3 py-2">{row.numeroReferencia || '-'}</td>
+                  <td className="px-3 py-2">{row.nombreCuenta || '-'}</td>
+                  <td className="px-3 py-2">{fmtDate(row.emision)}</td>
+                  <td className="px-3 py-2">{fmtDate(row.vencimiento)}</td>
+                  <td className="px-3 py-2 text-right">{fmtMonto(row.debe)}</td>
+                  <td className="px-3 py-2 text-right">{fmtMonto(row.haber)}</td>
+                  <td className="px-3 py-2 text-right">{fmtMonto(row.saldo)}</td>
+                  {/* Estado: solo si saldo < 0; mostrar 'Vencida' si aplica */}
                   <td className="px-3 py-2">
-                    {f.estado === 'cobrada' ? (
-                      <span className="inline-flex items-center gap-1 text-emerald-300"><CheckCircle2 className="w-4 h-4"/> Cobrada</span>
-                    ) : f.estado === 'esperando comprobante' ? (
-                      <span className="inline-flex items-center gap-1 text-amber-300"><Clock className="w-4 h-4"/> Esperando comprobante</span>
+                    {Number(row.saldo) < 0 ? (
+                      row.estado === 'cobrada' ? (
+                        <span className="inline-flex items-center gap-1 text-emerald-300"><CheckCircle2 className="w-4 h-4"/> Cobrada</span>
+                      ) : esVencida(row) ? (
+                        <span className="inline-flex items-center gap-1 text-red-300"><AlertTriangle className="w-4 h-4"/> Vencida</span>
+                      ) : row.estado === 'esperando comprobante' ? (
+                        <span className="inline-flex items-center gap-1 text-amber-300"><Clock className="w-4 h-4"/> Esperando comprobante</span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-rose-300"><AlertTriangle className="w-4 h-4"/> Pendiente</span>
+                      )
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-rose-300"><AlertTriangle className="w-4 h-4"/> Pendiente</span>
+                      <span className="text-xs text-gray-400">—</span>
                     )}
                   </td>
+                  {/* Acciones: solo si saldo < 0 (sin cambios; Vencida se comporta como 'pendiente') */}
                   <td className="px-3 py-2 text-right">
-                    {f.estado === 'pendiente' && (
-                      <button onClick={()=>actualizarEstado(idx,'esperando comprobante')} className="px-2 py-1 text-xs rounded-md bg-blue-600 hover:bg-blue-500">Generar Pago</button>
-                    )}
-                    {f.estado === 'esperando comprobante' && (
-                      <label className="px-2 py-1 text-xs rounded-md bg-teal-600 hover:bg-teal-500 cursor-pointer inline-flex items-center gap-2">
-                        Subir comprobante
-                        <input type="file" accept="image/*,application/pdf" className="hidden" onChange={()=>actualizarEstado(idx,'cobrada')} />
-                      </label>
-                    )}
-                    {f.estado === 'cobrada' && (
-                      <span className="text-xs text-emerald-400">—</span>
+                    {Number(row.saldo) < 0 ? (
+                      <>
+                        {row.estado === 'pendiente' && (
+                          <button onClick={()=>actualizarEstado(row._idx,'esperando comprobante')} className="px-2 py-1 text-xs rounded-md bg-blue-600 hover:bg-blue-500">Generar Pago</button>
+                        )}
+                        {row.estado === 'esperando comprobante' && (
+                          <label className="px-2 py-1 text-xs rounded-md bg-teal-600 hover:bg-teal-500 cursor-pointer inline-flex items-center gap-2">
+                            Subir comprobante
+                            <input type="file" accept="image/*,application/pdf" className="hidden" onChange={()=>actualizarEstado(row._idx,'cobrada')} />
+                          </label>
+                        )}
+                        {row.estado === 'cobrada' && (
+                          <span className="text-xs text-emerald-400">—</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-xs text-gray-500">—</span>
                     )}
                   </td>
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={10} className="px-3 py-6 text-center text-gray-400">Sin facturas aún. Sube un auxiliar o agrega manualmente.</td>
+                  <td colSpan={12} className="px-3 py-6 text-center text-gray-400">Sin facturas aún. Sube un auxiliar o agrega manualmente.</td>
                 </tr>
               )}
             </tbody>
@@ -189,7 +425,7 @@ export default function CobranzaFacturas() {
         </div>
       </div>
 
-      {/* Modal Detalle */}
+      {/* Modal Detalle: reflejar 'Vencida' también */}
       {detalleIdx !== null && facturas[detalleIdx] && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/60" onClick={()=>setDetalleIdx(null)} />
@@ -221,12 +457,18 @@ export default function CobranzaFacturas() {
                   </div>
                   <div className="flex justify-between items-center"><span className="text-gray-400">Estado</span>
                     <span>
-                      {f.estado === 'cobrada' ? (
-                        <span className="inline-flex items-center gap-1 text-emerald-300"><CheckCircle2 className="w-4 h-4"/> Cobrada</span>
-                      ) : f.estado === 'esperando comprobante' ? (
-                        <span className="inline-flex items-center gap-1 text-amber-300"><Clock className="w-4 h-4"/> Esperando comprobante</span>
+                      {Number(f.saldo) < 0 ? (
+                        f.estado === 'cobrada' ? (
+                          <span className="inline-flex items-center gap-1 text-emerald-300"><CheckCircle2 className="w-4 h-4"/> Cobrada</span>
+                        ) : esVencida(f) ? (
+                          <span className="inline-flex items-center gap-1 text-red-300"><AlertTriangle className="w-4 h-4"/> Vencida</span>
+                        ) : f.estado === 'esperando comprobante' ? (
+                          <span className="inline-flex items-center gap-1 text-amber-300"><Clock className="w-4 h-4"/> Esperando comprobante</span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-rose-300"><AlertTriangle className="w-4 h-4"/> Pendiente</span>
+                        )
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-rose-300"><AlertTriangle className="w-4 h-4"/> Pendiente</span>
+                        <span className="text-xs text-gray-400">No aplica (saldo ≥ 0)</span>
                       )}
                     </span>
                   </div>

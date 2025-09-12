@@ -296,11 +296,16 @@ def parse_auxiliar(
                 for r in rows:
                     # asegurar longitud
                     r = (r + [None] * 14)[:14]
+
+                    # tomar el tipo de documento desde la columna A de la fila (fallback al del header)
+                    a_val = r[0]
+                    doc_code = str(a_val).strip() if a_val is not None and str(a_val).strip() != "" else (str(tipo_num) if tipo_num is not None else None)
+
                     fact_rows_all.append({
                         "numero_cuenta": numero_cuenta,
                         "nombre_cuenta": nombre_cuenta,
                         "tipo_documento": tipo_nom,
-                        "tipo_documento_codigo": tipo_num,
+                        "tipo_documento_codigo": doc_code,  # <- ahora desde col A de la propia fila
                         "numero": r[1],
                         "fecha_emision": r[2],
                         "fecha_vcto": r[3],
@@ -452,4 +457,4 @@ if __name__ == "__main__":
 
     if "total_global" in data:
         print("\n================ TOTAL GLOBAL ================")
-        print(data["total_global"]) 
+        print(data["total_global"])

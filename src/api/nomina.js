@@ -222,6 +222,17 @@ export const obtenerResumenVariaciones = async (cierreId) => {
 
 // Crear una nueva resolución para una incidencia
 export const crearResolucionIncidencia = async (incidenciaId, resolucionData) => {
+  // Permitir enviar como FormData (para adjuntos) o como JSON simple
+  if (typeof FormData !== 'undefined' && resolucionData instanceof FormData) {
+    // Asegurar que incluya la incidencia
+    if (!resolucionData.has('incidencia')) {
+      resolucionData.append('incidencia', incidenciaId);
+    }
+    const response = await api.post('/nomina/resoluciones-incidencias/', resolucionData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return response.data;
+  }
   const response = await api.post('/nomina/resoluciones-incidencias/', {
     incidencia: incidenciaId,
     ...resolucionData

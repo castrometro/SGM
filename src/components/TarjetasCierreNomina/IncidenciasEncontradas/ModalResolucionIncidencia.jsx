@@ -97,7 +97,8 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
     e.preventDefault();
     setError('');
     
-    if (!comentario.trim()) {
+    // Requerir mensaje solo del analista; para supervisor es opcional (puede adjuntar archivo)
+    if (esAnalista() && !comentario.trim()) {
       setError('El mensaje es requerido');
       return;
     }
@@ -105,23 +106,20 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
     setEnviando(true);
     try {
       const formData = new FormData();
-      
       // Determinar el tipo de resolución basado en el rol
-      if (esAnalista()) {
-        formData.append('tipo_resolucion', 'justificacion');
-      } else {
-        // Para supervisores, usar 'consulta' cuando hacen comentarios
-        formData.append('tipo_resolucion', 'consulta');
+      // Mensaje neutral de conversación:
+      // - Analista: justificación
+      // - Supervisor: consulta (comentario/pregunta)
+      formData.append('tipo_resolucion', esAnalista() ? 'justificacion' : 'consulta');
+      // Comentario opcional para supervisor (permite mandar solo adjunto)
+      if (comentario && comentario.trim()) {
+        formData.append('comentario', comentario.trim());
       }
-      
-      formData.append('comentario', comentario);
-      
       if (adjunto) {
         formData.append('adjunto', adjunto);
       }
-
-      const resolucionData = Object.fromEntries(formData.entries());
-      await crearResolucionIncidencia(incidencia.id, resolucionData);
+      // Enviar como FormData para preservar adjuntos
+      await crearResolucionIncidencia(incidencia.id, formData);
       
       // Recargar historial y notificar
       await cargarHistorial();
@@ -428,77 +426,81 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
       <div className="bg-gray-900 rounded-lg shadow-lg w-full max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-700 flex-shrink-0">
-          <div>
-            <h2 className="text-xl font-semibold text-white">
-              Resolución de Incidencia
-            </h2>
-            <p className="text-gray-400 text-sm mt-1">
-              {incidencia.rut_empleado} - {incidencia.get_tipo_incidencia_display || incidencia.tipo_incidencia}
-            </p>
-            {/* Indicador de estado y turno */}
-            <div className="flex items-center gap-2 mt-2">
-              {obtenerIconoEstado()}
-              <span className="text-sm font-medium text-white">
-                Estado: {obtenerTextoEstado()}
-              </span>
-              {esSupervisor() && (
-                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-900/50 text-purple-300 border border-purple-500/30 ml-2">
-                  Supervisor
+        {/* Encabezado unificado + Resumen colapsable */}
+        <div className="p-4 border-b border-gray-700 bg-gray-900/90 flex-shrink-0">
+          <div className="flex items-start justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                {obtenerIconoEstado()}
+                <h2 className="text-lg md:text-xl font-semibold text-white truncate">
+                  Resolución de Incidencia
+                </h2>
+                {esSupervisor() && (
+                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-900/50 text-purple-300 border border-purple-500/30">
+                    Supervisor
+                  </span>
+                )}
+              </div>
+              <div className="text-gray-400 text-xs md:text-sm mt-1 truncate">
+                {incidencia.rut_empleado} - {incidencia.get_tipo_incidencia_display || incidencia.tipo_incidencia}
+              </div>
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                <span className="text-xs font-medium text-white/90">
+                  Estado: {obtenerTextoEstado()}
                 </span>
+                <span className="text-xs text-gray-400">
+                  • {obtenerMensajeTurno()}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={onCerrar}
+              className="text-gray-400 hover:text-white transition-colors ml-3 flex-shrink-0"
+              aria-label="Cerrar"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+
+          {/* Resumen compacto colapsable */}
+          <details className="mt-3 group">
+            <summary className="list-none flex items-center justify-between cursor-pointer select-none">
+              <div className="flex items-center gap-2 text-sm text-gray-300">
+                <span className="font-medium text-white">Resumen de la incidencia</span>
+                <span className="px-2 py-0.5 rounded-full text-xs bg-gray-800/80 border border-gray-700 text-gray-300 capitalize">
+                  Prioridad: {incidencia.prioridad}
+                </span>
+              </div>
+              <span className="text-xs text-gray-400 group-open:hidden">Ver más</span>
+              <span className="text-xs text-gray-400 hidden group-open:inline">Ver menos</span>
+            </summary>
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm bg-gray-800/40 border border-gray-700 rounded-lg p-3">
+              <div>
+                <span className="text-gray-400">Descripción:</span>
+                <p className="text-white mt-1">{incidencia.descripcion}</p>
+              </div>
+              <div>
+                <span className="text-gray-400">Prioridad:</span>
+                <p className="text-white mt-1 capitalize">{incidencia.prioridad}</p>
+              </div>
+              {incidencia.valor_libro && (
+                <div>
+                  <span className="text-gray-400">
+                    {incidencia.tipo_incidencia === 'variacion_concepto' ? 'Valor Período Actual:' : 'Valor en Libro:'}
+                  </span>
+                  <p className="text-white mt-1">{incidencia.valor_libro}</p>
+                </div>
+              )}
+              {incidencia.valor_novedades && (
+                <div>
+                  <span className="text-gray-400">
+                    {incidencia.tipo_incidencia === 'variacion_concepto' ? 'Valor Período Anterior:' : 'Valor en Novedades:'}
+                  </span>
+                  <p className="text-white mt-1">{incidencia.valor_novedades}</p>
+                </div>
               )}
             </div>
-            {/* Indicador de turno */}
-            <div className="mt-1">
-              <span className="text-xs text-gray-400">
-                💭 {obtenerMensajeTurno()}
-              </span>
-            </div>
-          </div>
-          <button
-            onClick={onCerrar}
-            className="text-gray-400 hover:text-white transition-colors"
-          >
-            <X className="w-6 h-6" />
-          </button>
-        </div>
-
-        {/* Detalles de la incidencia */}
-        <div className="p-4 border-b border-gray-700 bg-gray-800/50 flex-shrink-0">
-          <h3 className="text-md font-medium text-white mb-2">Detalles de la Incidencia</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-            <div>
-              <span className="text-gray-400">Descripción:</span>
-              <p className="text-white mt-1">{incidencia.descripcion}</p>
-            </div>
-            <div>
-              <span className="text-gray-400">Prioridad:</span>
-              <p className="text-white mt-1 capitalize">{incidencia.prioridad}</p>
-            </div>
-            {incidencia.valor_libro && (
-              <div>
-                <span className="text-gray-400">
-                  {incidencia.tipo_incidencia === 'variacion_concepto' ? 
-                    'Valor Período Actual:' : 
-                    'Valor en Libro:'
-                  }
-                </span>
-                <p className="text-white mt-1">{incidencia.valor_libro}</p>
-              </div>
-            )}
-            {incidencia.valor_novedades && (
-              <div>
-                <span className="text-gray-400">
-                  {incidencia.tipo_incidencia === 'variacion_concepto' ? 
-                    'Valor Período Anterior:' : 
-                    'Valor en Novedades:'
-                  }
-                </span>
-                <p className="text-white mt-1">{incidencia.valor_novedades}</p>
-              </div>
-            )}
-          </div>
+          </details>
         </div>
 
         {/* Contenido principal - Flujo de conversación */}

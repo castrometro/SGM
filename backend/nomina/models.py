@@ -853,6 +853,11 @@ class TipoIncidencia(models.TextChoices):
     CONCEPTO_NUEVO_PERIODO = 'concepto_nuevo_periodo', 'Concepto Nuevo en Período'
     CONCEPTO_ELIMINADO_PERIODO = 'concepto_eliminado_periodo', 'Concepto Eliminado del Período'
     
+    # Casos especiales de personal detectados en consolidación
+    FINIQUITO_NO_APLICADO = 'finiquito_no_aplicado', 'Finiquito no aplicado'
+    INGRESO_NO_INFORMADO = 'ingreso_no_informado', 'Ingreso no informado'
+    INGRESO_EMPLEADO = 'ingreso_empleado', 'Ingreso de empleado (Informativo)'
+    
     # Validaciones de Reglas de Negocio
     REGLA_NEGOCIO_VIOLADA = 'regla_negocio_violada', 'Violación de Regla de Negocio'
     CALCULO_INCORRECTO = 'calculo_incorrecto', 'Error en Cálculo'

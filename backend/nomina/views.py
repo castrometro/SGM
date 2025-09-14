@@ -589,8 +589,12 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         
         # Contar incidencias por estado de resolución
         from .models import IncidenciaCierre, ResolucionIncidencia
-        incidencias = IncidenciaCierre.objects.filter(cierre=cierre)
-        resoluciones = ResolucionIncidencia.objects.filter(incidencia__cierre=cierre)
+        # Base: excluir incidencias informativas del cómputo (p. ej. ingresos informativos auto-resueltos)
+        incidencias = IncidenciaCierre.objects.filter(cierre=cierre).exclude(
+            datos_adicionales__informativo=True
+        )
+        # Alinear resoluciones al subconjunto filtrado de incidencias
+        resoluciones = ResolucionIncidencia.objects.filter(incidencia__in=incidencias)
         
         # NUEVO: Estadísticas por tipo de comparación del sistema dual
         incidencias_individuales = incidencias.filter(tipo_comparacion='individual')
@@ -599,25 +603,25 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         
         # Progreso general
         progreso = {
-            'aprobadas': resoluciones.filter(tipo_resolucion='aprobacion_supervisor').count(),
+            # Nuevo esquema: 'aprobacion' y 'rechazo' (sin sufijos)
+            'aprobadas': resoluciones.filter(tipo_resolucion='aprobacion').count(),
             'pendientes': incidencias.exclude(
                 id__in=resoluciones.filter(
-                    tipo_resolucion__in=['aprobacion_supervisor', 'rechazo_supervisor']
-                ).values('incidencia_id')
+                    tipo_resolucion__in=['aprobacion', 'rechazo']
+                ).values_list('incidencia_id', flat=True)
             ).count(),
-            'rechazadas': resoluciones.filter(tipo_resolucion='rechazo_supervisor').count()
+            'rechazadas': resoluciones.filter(tipo_resolucion='rechazo').count()
         }
         
         # Estados de resolución
         estados = {
             'pendiente': incidencias.exclude(
-                id__in=resoluciones.values('incidencia_id')
+                id__in=resoluciones.values_list('incidencia_id', flat=True)
             ).count(),
-            'resuelta_analista': resoluciones.filter(
-                tipo_resolucion__in=['justificacion_analista', 'correccion_analista', 'consulta_analista']
-            ).count(),
-            'aprobada_supervisor': resoluciones.filter(tipo_resolucion='aprobacion_supervisor').count(),
-            'rechazada_supervisor': resoluciones.filter(tipo_resolucion='rechazo_supervisor').count()
+            # Nuevo esquema: consideramos 'justificacion' como resolución del analista
+            'resuelta_analista': resoluciones.filter(tipo_resolucion='justificacion').count(),
+            'aprobada_supervisor': resoluciones.filter(tipo_resolucion='aprobacion').count(),
+            'rechazada_supervisor': resoluciones.filter(tipo_resolucion='rechazo').count()
         }
         
         # Distribución por prioridad
@@ -635,8 +639,8 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
                 'total': incidencias_individuales.count(),
                 'pendientes': incidencias_individuales.exclude(
                     id__in=resoluciones.filter(
-                        tipo_resolucion__in=['aprobacion_supervisor', 'rechazo_supervisor']
-                    ).values('incidencia_id')
+                        tipo_resolucion__in=['aprobacion', 'rechazo']
+                    ).values_list('incidencia_id', flat=True)
                 ).count(),
                 'tipos_detectados': list(incidencias_individuales.values_list(
                     'tipo_incidencia', flat=True
@@ -652,8 +656,8 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
                 'total': incidencias_suma_total.count(),
                 'pendientes': incidencias_suma_total.exclude(
                     id__in=resoluciones.filter(
-                        tipo_resolucion__in=['aprobacion_supervisor', 'rechazo_supervisor']
-                    ).values('incidencia_id')  
+                        tipo_resolucion__in=['aprobacion', 'rechazo']
+                    ).values_list('incidencia_id', flat=True)  
                 ).count(),
                 'tipos_detectados': list(incidencias_suma_total.values_list(
                     'tipo_incidencia', flat=True

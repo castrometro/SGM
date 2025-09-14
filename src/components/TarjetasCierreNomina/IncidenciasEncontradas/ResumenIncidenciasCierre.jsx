@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { CheckCircle, Clock, AlertTriangle, Users, FileText, RefreshCw } from 'lucide-react';
 import { obtenerIncidenciasCierre } from '../../../api/nomina';
 import { calcularProgresoIncidencias, calcularContadoresEstados, ESTADOS_INCIDENCIA } from '../../../utils/incidenciaUtils';
+import IncidenciasKPIs from './IncidenciasKPIs';
 
 const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
   const [resumen, setResumen] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [ejecutandoAccion, setEjecutandoAccion] = useState(false);
   const [error, setError] = useState('');
+  const [incidencias, setIncidencias] = useState([]);
 
   useEffect(() => {
     if (cierreId) {
@@ -28,7 +30,7 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
       if (!estadoResponse.ok) throw new Error('Error cargando estado');
       
       const estadoData = await estadoResponse.json();
-      const incidencias = Array.isArray(incidenciasData.results) ? incidenciasData.results : incidenciasData;
+  const incidencias = Array.isArray(incidenciasData.results) ? incidenciasData.results : incidenciasData;
       
       // Calcular estados reales basados en resoluciones
       const estadosReales = calcularContadoresEstados(incidencias);
@@ -43,6 +45,7 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
       };
       
       setResumen(resumenActualizado);
+      setIncidencias(incidencias);
     } catch (err) {
       console.error('Error:', err);
       setError('Error cargando el resumen de incidencias');
@@ -182,6 +185,13 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
           <RefreshCw className={`w-4 h-4 ${cargando ? 'animate-spin' : ''}`} />
         </button>
       </div>
+
+      {/* KPIs de incidencias */}
+      {Array.isArray(incidencias) && incidencias.length > 0 && (
+        <div>
+          <IncidenciasKPIs incidencias={incidencias} />
+        </div>
+      )}
 
       {/* Progreso general */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

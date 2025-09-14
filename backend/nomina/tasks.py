@@ -2992,11 +2992,11 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
             # Crear MovimientoPersonal
             MovimientoPersonal.objects.create(
                 nomina_consolidada=nomina_consolidada,
-                tipo_movimiento='ingreso' if movimiento.alta_o_baja == 'ALTA' else 'finiquito',
-                motivo=movimiento.motivo,
-                fecha_movimiento=movimiento.fecha_ingreso if movimiento.alta_o_baja == 'ALTA' else movimiento.fecha_retiro,
+                categoria='ingreso' if movimiento.alta_o_baja == 'ALTA' else 'finiquito',
+                subtipo=movimiento.motivo or None,
+                fecha_inicio=(movimiento.fecha_ingreso if movimiento.alta_o_baja == 'ALTA' else movimiento.fecha_retiro),
+                fecha_fin=(movimiento.fecha_ingreso if movimiento.alta_o_baja == 'ALTA' else movimiento.fecha_retiro),
                 observaciones=f"Tipo contrato: {movimiento.tipo_contrato}, Sueldo base: ${movimiento.sueldo_base:,.0f}",
-                fecha_deteccion=timezone.now(),
                 detectado_por_sistema='consolidacion_automatica_v1'
             )
             
@@ -3026,12 +3026,12 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
                 # Crear MovimientoPersonal
                 MovimientoPersonal.objects.create(
                     nomina_consolidada=nomina_consolidada,
-                    tipo_movimiento='ausentismo',
-                    motivo=f"{ausentismo.tipo} - {ausentismo.motivo}",
-                    # dias_ausencia eliminado
-                    fecha_movimiento=ausentismo.fecha_inicio_ausencia,
+                    categoria='ausencia',
+                    subtipo=str(ausentismo.tipo) if getattr(ausentismo, 'tipo', None) else None,
+                    fecha_inicio=ausentismo.fecha_inicio_ausencia,
+                    fecha_fin=ausentismo.fecha_fin_ausencia,
+                    dias_evento=int(ausentismo.dias) if getattr(ausentismo, 'dias', None) else None,
                     observaciones=f"Desde: {ausentismo.fecha_inicio_ausencia} hasta: {ausentismo.fecha_fin_ausencia}. {ausentismo.observaciones}",
-                    fecha_deteccion=timezone.now(),
                     detectado_por_sistema='consolidacion_automatica_v1'
                 )
                 
@@ -3055,12 +3055,11 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
                 # Crear MovimientoPersonal para vacaciones
                 MovimientoPersonal.objects.create(
                     nomina_consolidada=nomina_consolidada,
-                    tipo_movimiento='ausentismo',
-                    motivo='Vacaciones',
-                    # dias_ausencia eliminado
-                    fecha_movimiento=vacacion.fecha_inicio,
+                    categoria='ausencia',
+                    subtipo='vacaciones',
+                    fecha_inicio=vacacion.fecha_inicio,
+                    fecha_fin=vacacion.fecha_fin_vacaciones,
                     observaciones=f"Vacaciones desde: {vacacion.fecha_inicio} hasta: {vacacion.fecha_fin_vacaciones}. Retorno: {vacacion.fecha_retorno}",
-                    fecha_deteccion=timezone.now(),
                     detectado_por_sistema='consolidacion_automatica_v1'
                 )
                 
@@ -3084,11 +3083,11 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
                 # Crear MovimientoPersonal
                 MovimientoPersonal.objects.create(
                     nomina_consolidada=nomina_consolidada,
-                    tipo_movimiento='cambio_datos',
-                    motivo=f"Variación de sueldo: {variacion.porcentaje_reajuste}%",
-                    fecha_movimiento=cierre.fecha_creacion.date(),
-                    observaciones=f"Sueldo anterior: ${variacion.sueldo_base_anterior:,.0f} → Sueldo actual: ${variacion.sueldo_base_actual:,.0f} (Variación: ${variacion.variacion_pesos:,.0f})",
-                    fecha_deteccion=timezone.now(),
+                    categoria='cambio_datos',
+                    subtipo='variacion_sueldo',
+                    fecha_inicio=cierre.fecha_creacion.date(),
+                    fecha_fin=cierre.fecha_creacion.date(),
+                    observaciones=f"Variación de sueldo: {variacion.porcentaje_reajuste}%. Sueldo anterior: ${variacion.sueldo_base_anterior:,.0f} → Sueldo actual: ${variacion.sueldo_base_actual:,.0f} (Variación: ${variacion.variacion_pesos:,.0f})",
                     detectado_por_sistema='consolidacion_automatica_v1'
                 )
                 
@@ -3112,11 +3111,11 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
                 # Crear MovimientoPersonal
                 MovimientoPersonal.objects.create(
                     nomina_consolidada=nomina_consolidada,
-                    tipo_movimiento='cambio_datos',
-                    motivo='Cambio de tipo de contrato',
-                    fecha_movimiento=cierre.fecha_creacion.date(),
-                    observaciones=f"Contrato anterior: {variacion.tipo_contrato_anterior} → Contrato actual: {variacion.tipo_contrato_actual}",
-                    fecha_deteccion=timezone.now(),
+                    categoria='cambio_datos',
+                    subtipo='cambio_contrato',
+                    fecha_inicio=cierre.fecha_creacion.date(),
+                    fecha_fin=cierre.fecha_creacion.date(),
+                    observaciones=f"Cambio de tipo de contrato. Contrato anterior: {variacion.tipo_contrato_anterior} → Contrato actual: {variacion.tipo_contrato_actual}",
                     detectado_por_sistema='consolidacion_automatica_v1'
                 )
                 
@@ -4688,9 +4687,11 @@ def calcular_kpis_cierre(prev_result: dict, cierre_id: int) -> dict:
 
     # Ingresos / Finiquitos / Ausentismos
     mov_qs = MovimientoPersonal.objects.filter(nomina_consolidada__cierre=cierre)
-    ingresos_total = mov_qs.filter(tipo_movimiento='ingreso').count()
-    finiquitos_total = mov_qs.filter(tipo_movimiento='finiquito').count()
-    ausentismos_total = mov_qs.filter(tipo_movimiento='ausentismo').count()
+    # Campos normalizados: usar 'categoria' en vez de 'tipo_movimiento'
+    ingresos_total = mov_qs.filter(categoria='ingreso').count()
+    finiquitos_total = mov_qs.filter(categoria='finiquito').count()
+    # Aceptar tanto 'ausencia' (normalizado) como 'ausentismo' (legacy si existiera)
+    ausentismos_total = mov_qs.filter(categoria__in=['ausencia', 'ausentismo']).count()
 
     # Tasas
     denom = float(dotacion_total) if dotacion_total else 1.0

@@ -24,9 +24,9 @@ def movimientos_personal_resumen_v2(request, cierre_id: int):
         if not cierre.nomina_consolidada.exists():
             return Response({'error': 'No hay datos consolidados para este cierre'}, status=status.HTTP_404_NOT_FOUND)
 
-        tipos_incluidos = ['ingreso', 'finiquito', 'ausentismo']
+        tipos_incluidos = ['ingreso', 'finiquito', 'ausencia']
         qs = (MovimientoPersonal.objects
-              .filter(nomina_consolidada__cierre=cierre, tipo_movimiento__in=tipos_incluidos)
+                  .filter(nomina_consolidada__cierre=cierre, categoria__in=tipos_incluidos)
               .select_related('nomina_consolidada')
               .order_by('-fecha_deteccion'))
 
@@ -35,23 +35,22 @@ def movimientos_personal_resumen_v2(request, cierre_id: int):
         # Construimos sets de empleados únicos por tipo en un solo recorrido para eficiencia
         empleados_por_tipo = { t: set() for t in tipos_incluidos }
         for mv in qs:
-            t = mv.tipo_movimiento
+            t = mv.categoria
             if t in empleados_por_tipo:
                 rut = mv.nomina_consolidada.rut_empleado if mv.nomina_consolidada else None
                 if rut:
                     empleados_por_tipo[t].add(rut)
-        for tipo, display in MovimientoPersonal.TIPO_MOVIMIENTO_CHOICES:
-            if tipo not in tipos_incluidos:
-                continue
-            c = qs.filter(tipo_movimiento=tipo).count()
+        # Conteos por categoría
+        for tipo in tipos_incluidos:
+            c = qs.filter(categoria=tipo).count()
             total += c
             por_tipo[tipo] = {
                 'count': c,
-                'display': display,
+                'display': tipo.capitalize(),
                 'empleados_unicos': len(empleados_por_tipo.get(tipo, [])),
             }
 
-        aus_qs = qs.filter(tipo_movimiento='ausentismo')
+        aus_qs = qs.filter(categoria='ausencia')
         eventos_aus = aus_qs.count()
         total_dias = 0
         # Agregaciones usando campos normalizados cuando existan
@@ -60,9 +59,9 @@ def movimientos_personal_resumen_v2(request, cierre_id: int):
         tipos_inasistencias_map = {}
         for mv in aus_qs:
             # Priorizar dias_en_periodo (imputable) luego dias_evento luego dias_ausencia
-            dias = (mv.dias_en_periodo if mv.dias_en_periodo is not None else (mv.dias_evento if mv.dias_evento is not None else (mv.dias_ausencia or 0)))
+            dias = (mv.dias_en_periodo if mv.dias_en_periodo is not None else (mv.dias_evento if mv.dias_evento is not None else 0))
             total_dias += dias
-            raw_motivo = (mv.motivo or mv.descripcion or '').strip() or 'Sin motivo'
+            raw_motivo = (mv.descripcion or mv.subtipo or '').strip() or 'Sin motivo'
             # Motivos (compatibilidad frontend actual)
             m = motivos_map.get(raw_motivo) or { 'motivo': raw_motivo, 'eventos': 0, 'dias': 0 }
             m['eventos'] += 1
@@ -75,7 +74,7 @@ def movimientos_personal_resumen_v2(request, cierre_id: int):
             s_obj['dias'] += dias
             subtipos_map[subtipo] = s_obj
             # Tipo base (histórico) derivado de motivo original para no romper gráfico previo "por tipo"
-            if raw_motivo == 'Vacaciones':
+            if raw_motivo.lower() == 'vacaciones':
                 tipo_base = 'Vacaciones'
             else:
                 parts = raw_motivo.split(' - ', 1)
@@ -109,8 +108,8 @@ def movimientos_personal_resumen_v2(request, cierre_id: int):
             liquido = ((nc.haberes_imponibles or 0) + (nc.haberes_no_imponibles or 0)) - ((nc.dctos_legales or 0) + (nc.otros_dctos or 0) + (nc.impuestos or 0)) if nc else 0
             movimientos_serializados.append({
                 'id': mv.id,
-                'tipo_movimiento': mv.tipo_movimiento,
-                'tipo_display': mv.get_tipo_movimiento_display(),
+                'tipo_movimiento': mv.categoria,  # compat
+                'tipo_display': (mv.categoria or '').capitalize(),
                 'empleado': {
                     'rut': nc.rut_empleado if nc else None,
                     'nombre': nc.nombre_empleado if nc else None,
@@ -119,9 +118,9 @@ def movimientos_personal_resumen_v2(request, cierre_id: int):
                     'estado': nc.estado_empleado if nc else None,
                     'liquido_pagar': float(liquido),
                 },
-                'motivo': mv.motivo,
-                'dias_ausencia': mv.dias_ausencia,
-                'fecha_movimiento': mv.fecha_movimiento,
+                'motivo': mv.descripcion or mv.subtipo,
+                'dias_ausencia': mv.dias_en_periodo or mv.dias_evento,
+                'fecha_movimiento': mv.fecha_inicio,
                 'fecha_deteccion': mv.fecha_deteccion,
                 'detectado_por_sistema': mv.detectado_por_sistema,
             })
@@ -133,7 +132,7 @@ def movimientos_personal_resumen_v2(request, cierre_id: int):
                 'por_tipo': por_tipo,
                 'ingreso': por_tipo.get('ingreso', {}).get('count', 0),
                 'finiquito': por_tipo.get('finiquito', {}).get('count', 0),
-                'ausentismo': por_tipo.get('ausentismo', {}).get('count', 0),
+                'ausentismo': por_tipo.get('ausencia', {}).get('count', 0),
                 'ausentismo_metricas': {
                     'eventos': eventos_aus,
                     'total_dias': total_dias,

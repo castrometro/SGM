@@ -1,7 +1,10 @@
 import { useState, useEffect } from "react";
-import { AlertOctagon, ChevronDown, ChevronRight, Play, Loader2, CheckCircle, AlertTriangle, Filter, Users, Eye, Lock, TrendingUp } from "lucide-react";
+import { AlertOctagon, ChevronDown, ChevronRight, Play, Loader2, CheckCircle, AlertTriangle, Users, Eye, Lock, TrendingUp } from "lucide-react";
 import { formatearMonedaChilena } from "../../utils/formatters";
 import IncidenciasTable from "./IncidenciasEncontradas/IncidenciasTable";
+// Vista unificada (solo incidencias)
+import IncidenciasUnifiedTable from "./IncidenciasEncontradas/IncidenciasUnifiedTable";
+import IncidenciasKPIs from "./IncidenciasEncontradas/IncidenciasKPIs";
 import ModalResolucionIncidencia from "./IncidenciasEncontradas/ModalResolucionIncidencia";
 import { 
   obtenerIncidenciasCierre, 
@@ -72,6 +75,28 @@ const IncidenciasEncontradasSection = ({
   const [mostrandoAnalisisCompleto, setMostrandoAnalisisCompleto] = useState(false);
   const [cargandoAnalisis, setCargandoAnalisis] = useState(false);
 
+  // Fallback local para contadores (cuando el backend reporta 0 pero sí hay incidencias)
+  const contadoresLocales = (() => {
+    const inc = Array.isArray(incidencias) ? incidencias.filter(i => {
+      const noInformativa = !(i?.datos_adicionales?.informativo === true);
+      const tipoOk = i?.tipo_comparacion === 'individual' || i?.tipo_comparacion === 'suma_total';
+      return noInformativa && tipoOk;
+    }) : [];
+    const total = inc.length;
+    let aprobadas = 0;
+    let rechazadas = 0;
+    let pendientes = 0;
+    for (const i of inc) {
+      const rs = Array.isArray(i.resoluciones) ? i.resoluciones : [];
+      const tieneAprob = rs.some(r => r.tipo_resolucion === 'aprobacion');
+      const tieneRech = rs.some(r => r.tipo_resolucion === 'rechazo');
+      if (tieneAprob) aprobadas += 1;
+      else if (tieneRech) rechazadas += 1;
+      else pendientes += 1;
+    }
+    return { total, aprobadas, rechazadas, pendientes };
+  })();
+
   // Cargar estado de incidencias automáticamente al montar el componente
   useEffect(() => {
     console.log("🔍 [useEffect Init] Componente montado, cierre:", cierre);
@@ -85,38 +110,34 @@ const IncidenciasEncontradasSection = ({
     }
   }, [cierre?.id]);
 
-  // Cargar datos de incidencias cuando se detecta que existen
+  // Cargar datos de incidencias siempre que tengamos estado (aunque el total sea 0)
   useEffect(() => {
     console.log("🔍 [useEffect] Estado de incidencias cambió:", estadoIncidencias);
     console.log("🔍 [useEffect] Total incidencias del estado:", estadoIncidencias?.total_incidencias);
-    
-    if (estadoIncidencias?.total_incidencias > 0) {
-      console.log("🔍 [useEffect] Detectadas incidencias, llamando cargarDatos()");
+    if (estadoIncidencias) {
+      console.log("🔍 [useEffect] Cargando datos de incidencias (incluye informativas si existen)");
       cargarDatos();
-    } else {
-      console.log("🔍 [useEffect] No hay incidencias para cargar");
     }
-  }, [estadoIncidencias?.total_incidencias]);
+  }, [estadoIncidencias]);
 
   // 🎯 Efecto para reportar el estado de la sección al componente padre
   useEffect(() => {
     if (estadoIncidencias && onEstadoChange) {
-      // Determinar el estado: procesado si todas las incidencias están resueltas
-      const estadoFinal = (estadoIncidencias.total_incidencias_resueltas === estadoIncidencias.total_incidencias && 
-                          estadoIncidencias.total_incidencias >= 0) 
-        ? "procesado" 
-        : "pendiente";
-      
+      // Determinar el estado: procesado si todas las incidencias están aprobadas por supervisor
+      const total = estadoIncidencias.total_incidencias || 0;
+      const aprobadas = estadoIncidencias?.progreso?.aprobadas || 0;
+      const estadoFinal = (total > 0 && aprobadas === total) ? "procesado" : "pendiente";
+
       console.log('📊 [IncidenciasEncontradasSection] Reportando estado:', estadoFinal, {
-        totalIncidencias: estadoIncidencias.total_incidencias,
-        incidenciasResueltas: estadoIncidencias.total_incidencias_resueltas
+        totalIncidencias: total,
+        incidenciasAprobadas: aprobadas
       });
-      
+
       onEstadoChange(estadoFinal);
     }
   }, [
-    estadoIncidencias?.total_incidencias, 
-    estadoIncidencias?.total_incidencias_resueltas, 
+    estadoIncidencias?.total_incidencias,
+    estadoIncidencias?.progreso?.aprobadas,
     onEstadoChange
   ]);
 
@@ -475,23 +496,23 @@ const IncidenciasEncontradasSection = ({
                   • Estado: {obtenerTextoEstadoIncidencias(cierre.estado_incidencias)}
                 </span>
               )}
-              {estadoIncidencias?.total_incidencias && (
+              {(estadoIncidencias?.total_incidencias != null || contadoresLocales.total > 0) && (
                 <span className="text-gray-300">
-                  • {estadoIncidencias.total_incidencias || 0} incidencias
+                  • {(estadoIncidencias?.total_incidencias && estadoIncidencias.total_incidencias > 0) ? estadoIncidencias.total_incidencias : contadoresLocales.total} incidencias
                 </span>
               )}
             </div>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {estadoIncidencias?.tiene_incidencias && (
+          {(estadoIncidencias?.total_incidencias > 0 || contadoresLocales.total > 0) && (
             <div className="flex items-center gap-2 text-sm">
               <span className="text-gray-400">
-                {estadoIncidencias.incidencias_pendientes} incidencias pendientes
+                {(estadoIncidencias?.progreso?.pendientes && estadoIncidencias.progreso.pendientes > 0) ? estadoIncidencias.progreso.pendientes : contadoresLocales.pendientes} por aprobar
               </span>
               <span className="text-gray-400">•</span>
               <span className="text-green-400">
-                {estadoIncidencias.incidencias_resueltas} resueltas
+                {(estadoIncidencias?.progreso?.aprobadas && estadoIncidencias.progreso.aprobadas > 0) ? estadoIncidencias.progreso.aprobadas : contadoresLocales.aprobadas} aprobadas
               </span>
             </div>
           )}
@@ -530,25 +551,25 @@ const IncidenciasEncontradasSection = ({
                 </div>
 
                 {/* Contadores */}
-                {estadoIncidencias?.total_incidencias && estadoIncidencias.total_incidencias > 0 && (
+                {(estadoIncidencias?.total_incidencias > 0 || contadoresLocales.total > 0) && (
                   <>
                     <div className="text-center">
                       <div className="text-2xl font-bold text-red-400">
-                        {(estadoIncidencias.estados?.pendiente || 0) + (estadoIncidencias.estados?.resuelta_analista || 0)}
+                        {(estadoIncidencias?.progreso?.pendientes && estadoIncidencias.progreso.pendientes > 0) ? estadoIncidencias.progreso.pendientes : contadoresLocales.pendientes}
                       </div>
-                      <p className="text-sm text-gray-400">Pendientes</p>
+                      <p className="text-sm text-gray-400">Por aprobar</p>
                     </div>
                     
                     <div className="text-center">
                       <div className="text-2xl font-bold text-green-400">
-                        {estadoIncidencias.estados?.aprobada_supervisor || 0}
+                        {(estadoIncidencias?.progreso?.aprobadas && estadoIncidencias.progreso.aprobadas > 0) ? estadoIncidencias.progreso.aprobadas : contadoresLocales.aprobadas}
                       </div>
-                      <p className="text-sm text-gray-400">Resueltas</p>
+                      <p className="text-sm text-gray-400">Aprobadas</p>
                     </div>
                     
                     <div className="text-center">
                       <div className="text-2xl font-bold text-white">
-                        {estadoIncidencias.total_incidencias || 0}
+                        {(estadoIncidencias?.total_incidencias && estadoIncidencias.total_incidencias > 0) ? estadoIncidencias.total_incidencias : contadoresLocales.total}
                       </div>
                       <p className="text-sm text-gray-400">Total</p>
                     </div>
@@ -587,11 +608,11 @@ const IncidenciasEncontradasSection = ({
                   )}
                 </button>
 
-                {/* Botón Finalizar Cierre - Solo cuando estado es incidencias_resueltas */}
-                {cierre?.estado === 'incidencias_resueltas' && (
+                {/* Botón Finalizar Cierre - Basado en puede_finalizar (backend) o estado local */}
+                {(estadoIncidencias?.puede_finalizar || cierre?.estado === 'incidencias_resueltas') && (
                   <button
                     onClick={manejarFinalizarCierre}
-                    disabled={finalizandoCierre}
+                    disabled={finalizandoCierre || !estadoIncidencias?.puede_finalizar}
                     className="flex items-center px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
                   >
                     {finalizandoCierre ? (
@@ -990,164 +1011,33 @@ const IncidenciasEncontradasSection = ({
             </div>
           )}
 
-          {/* Resumen de incidencias */}
-          {resumen && (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-gray-400">Total Incidencias</p>
-                      <p className="text-2xl font-bold text-white">{resumen.total}</p>
-                    </div>
-                    <AlertOctagon className="w-8 h-8 text-red-500" />
-                  </div>
+          {/* Resumen de incidencias - contadores removed por requerimiento (total, críticas, pendientes, impacto) */}
+          {resumen && resumen.total > 0 && (
+            <div className="bg-yellow-900/20 border border-yellow-500/30 rounded-lg p-4">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-5 h-5 text-yellow-400 mt-0.5" />
+                <div className="text-sm text-yellow-300">
+                  <strong>¿Cómo resolver las incidencias?</strong>
+                  <p className="mt-1">
+                    Las incidencias comparan datos actuales vs históricos. Para resolverlas:
+                  </p>
+                  <ol className="mt-2 space-y-1 list-decimal list-inside">
+                    <li><strong>Revisar incidencias:</strong> Examina las diferencias temporales detectadas en la tabla inferior.</li>
+                    <li><strong>Opción A - Marcar como resueltas:</strong> Si las diferencias son esperadas o correctas, marca las incidencias como resueltas.</li>
+                    <li><strong>Opción B - Corregir datos actuales:</strong> Si hay errores en los datos del mes actual:</li>
+                    <ul className="ml-6 mt-1 space-y-1 list-disc list-inside text-xs">
+                      <li>Usa "Resubir archivo" en las tarjetas de <strong>Talana</strong> (Libro de Remuneraciones, MovimientosMes)</li>
+                      <li>Sube los archivos de Talana corregidos</li>
+                      <li>Regresa aquí y presiona "Generar Incidencias" nuevamente</li>
+                      <li>Repite hasta resolver todas las inconsistencias temporales</li>
+                    </ul>
+                  </ol>
                 </div>
-                
-                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-gray-400">Críticas</p>
-                      <p className="text-2xl font-bold text-red-400">
-                        {resumen.por_prioridad?.critica || 0}
-                      </p>
-                    </div>
-                    <AlertTriangle className="w-8 h-8 text-red-500" />
-                  </div>
-                </div>
-                
-                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-gray-400">Pendientes</p>
-                      <p className="text-2xl font-bold text-yellow-400">
-                        {(estadoIncidencias?.estados?.pendiente || 0) + (estadoIncidencias?.estados?.resuelta_analista || 0)}
-                      </p>
-                    </div>
-                    <Loader2 className="w-8 h-8 text-yellow-500" />
-                  </div>
-                </div>
-                
-                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-gray-400">Impacto Total</p>
-                      <p className="text-lg font-bold text-white">
-                        {formatearMonedaChilena(resumen.impacto_monetario_total || 0)}
-                      </p>
-                    </div>
-                    <span className="text-green-400 text-xl">$</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Mensaje sobre cómo resolver incidencias */}
-              {resumen.total > 0 && (
-                <div className="bg-yellow-900/20 border border-yellow-500/30 rounded-lg p-4">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="w-5 h-5 text-yellow-400 mt-0.5" />
-                    <div className="text-sm text-yellow-300">
-                      <strong>¿Cómo resolver las incidencias?</strong>
-                      <p className="mt-1">
-                        Las incidencias comparan datos actuales vs históricos. Para resolverlas:
-                      </p>
-                      <ol className="mt-2 space-y-1 list-decimal list-inside">
-                        <li><strong>Revisar incidencias:</strong> Examina las diferencias temporales detectadas en la tabla inferior.</li>
-                        <li><strong>Opción A - Marcar como resueltas:</strong> Si las diferencias son esperadas o correctas, marca las incidencias como resueltas.</li>
-                        <li><strong>Opción B - Corregir datos actuales:</strong> Si hay errores en los datos del mes actual:</li>
-                        <ul className="ml-6 mt-1 space-y-1 list-disc list-inside text-xs">
-                          <li>Usa "Resubir archivo" en las tarjetas de <strong>Talana</strong> (Libro de Remuneraciones, MovimientosMes)</li>
-                          <li>Sube los archivos de Talana corregidos</li>
-                          <li>Regresa aquí y presiona "Generar Incidencias" nuevamente</li>
-                          <li>Repite hasta resolver todas las inconsistencias temporales</li>
-                        </ul>
-                      </ol>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* Filtros */}
-          {estadoIncidencias?.total_incidencias > 0 && (
-            <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-              <div className="flex items-center gap-4 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <Filter className="w-4 h-4 text-gray-400" />
-                  <span className="text-sm text-gray-400">Filtros:</span>
-                </div>
-
-                <select
-                  value={filtros.tipo_comparacion || ''}
-                  onChange={(e) => manejarFiltroChange({ tipo_comparacion: e.target.value })}
-                  className="bg-gray-700 border border-gray-600 rounded px-3 py-1 text-sm text-white"
-                >
-                  <option value="">Todos los análisis</option>
-                  <option value="individual">Individual</option>
-                  <option value="suma_total">Suma Total</option>
-                  <option value="legacy">Legacy</option>
-                </select>
-                
-                <select
-                  value={filtros.estado || ''}
-                  onChange={(e) => manejarFiltroChange({ estado: e.target.value })}
-                  className="bg-gray-700 border border-gray-600 rounded px-3 py-1 text-sm text-white"
-                >
-                  <option value="">Todos los estados</option>
-                  <option value="pendiente">Pendientes</option>
-                  <option value="resuelta_analista">Resueltas</option>
-                </select>
-                
-                <select
-                  value={filtros.prioridad || ''}
-                  onChange={(e) => manejarFiltroChange({ prioridad: e.target.value })}
-                  className="bg-gray-700 border border-gray-600 rounded px-3 py-1 text-sm text-white"
-                >
-                  <option value="">Todas las prioridades</option>
-                  <option value="critica">Crítica</option>
-                  <option value="alta">Alta</option>
-                  <option value="media">Media</option>
-                  <option value="baja">Baja</option>
-                </select>
-                
-                <select
-                  value={filtros.tipo_incidencia || ''}
-                  onChange={(e) => manejarFiltroChange({ tipo_incidencia: e.target.value })}
-                  className="bg-gray-700 border border-gray-600 rounded px-3 py-1 text-sm text-white"
-                >
-                  <option value="">Todos los tipos</option>
-                  {/* Grupo 1: Libro vs Novedades */}
-                  <optgroup label="Libro vs Novedades">
-                    <option value="empleado_solo_libro">Empleado solo en Libro</option>
-                    <option value="empleado_solo_novedades">Empleado solo en Novedades</option>
-                    <option value="diff_datos_personales">Diferencia en Datos Personales</option>
-                    <option value="diff_sueldo_base">Diferencia en Sueldo Base</option>
-                    <option value="diff_concepto_monto">Diferencia en Monto por Concepto</option>
-                    <option value="concepto_solo_libro">Concepto solo en Libro</option>
-                    <option value="concepto_solo_novedades">Concepto solo en Novedades</option>
-                  </optgroup>
-                  {/* Grupo 2: MovimientosMes vs Analista */}
-                  <optgroup label="Movimientos vs Analista">
-                    <option value="ingreso_no_reportado">Ingreso no reportado</option>
-                    <option value="finiquito_no_reportado">Finiquito no reportado</option>
-                    <option value="ausencia_no_reportada">Ausencia no reportada</option>
-                    <option value="diff_fechas_ausencia">Diferencia en Fechas de Ausencia</option>
-                    <option value="diff_dias_ausencia">Diferencia en Días de Ausencia</option>
-                    <option value="diff_tipo_ausencia">Diferencia en Tipo de Ausencia</option>
-                  </optgroup>
-                </select>
-                
-                <input
-                  type="text"
-                  placeholder="Buscar por RUT, descripción, concepto..."
-                  value={filtros.busqueda || ''}
-                  onChange={(e) => manejarFiltroChange({ busqueda: e.target.value })}
-                  className="bg-gray-700 border border-gray-600 rounded px-3 py-1 text-sm text-white placeholder-gray-400"
-                />
               </div>
             </div>
           )}
+
+          {/* Bloque de filtros eliminado por requerimiento */}
 
           {/* Error */}
           {error && (
@@ -1159,8 +1049,8 @@ const IncidenciasEncontradasSection = ({
             </div>
           )}
 
-          {/* Tabla de incidencias */}
-          {estadoIncidencias?.total_incidencias > 0 ? (
+          {/* Tabla de incidencias: mostrar si hay incidencias cargadas (aunque total backend sea 0) */}
+          {Array.isArray(incidencias) && incidencias.length > 0 ? (
             <div className="bg-gray-800 rounded-lg border border-gray-700">
               <div className="p-4 border-b border-gray-700">
                 <div className="flex items-center justify-between">
@@ -1172,11 +1062,12 @@ const IncidenciasEncontradasSection = ({
                   </div>
                 </div>
               </div>
-              <div className="p-4">
-                <IncidenciasTable
-                  cierreId={cierre?.id}
-                  cierre={cierre}
-                  filtros={filtros}
+              <div className="p-4 space-y-6">
+                {/* KPIs estilo 'LibroRemuneraciones' */}
+                <IncidenciasKPIs incidencias={incidencias} />
+                {/* Tabla unificada de incidencias (individual + suma_total por ítem) */}
+                <IncidenciasUnifiedTable
+                  incidencias={incidencias}
                   onIncidenciaSeleccionada={manejarIncidenciaSeleccionada}
                 />
               </div>

@@ -1,9 +1,14 @@
 # backend/nomina/utils/DetectarIncidenciasConsolidadas.py
 """
 Sistema de detección de incidencias entre períodos consolidados de nómina
-VERSIÓN 2.0: Sistema Dual con Celery Chord
-- Comparación Individual (elemento a elemento) para conceptos seleccionados
-- Comparación Suma Total (agregada) para todos los conceptos
+VERSIÓN 2.2: Sistema Dual con Celery Chord (ajustado a requerimientos)
+- Comparación Individual (ítem por empleado) para categorías seleccionadas (haber_imponible, haber_no_imponible, otro_descuento)
+- Comparación Suma Total por Ítem (agregada por ítem) para TODAS las categorías
+
+Notas:
+- Individual: limitado a haber_imponible, haber_no_imponible, otro_descuento
+- Suma total por ÍTEM: habilitada para TODAS las categorías
+- Suma total por CATEGORÍA: deshabilitada (solo por ítem agregado)
 """
 
 import logging
@@ -30,8 +35,12 @@ logger = logging.getLogger('nomina.incidencias')
 # ================================
 
 # Controla si se generan incidencias de suma total por item (concepto específico).
-# Requisito actual: SOLO CATEGORÍAS en la primera tabla → dejar en False.
-GENERAR_INCIDENCIAS_SUMA_TOTAL_POR_CONCEPTO = False
+# Requisito actualizado: SÍ, por ítem agregado. Alcance: TODAS las categorías.
+GENERAR_INCIDENCIAS_SUMA_TOTAL_POR_CONCEPTO = True
+
+# Controla si se generan incidencias por sumas de CATEGORÍA (total categoría)
+# Requisito actualizado: NO generar incidencias por categoría agregada
+GENERAR_INCIDENCIAS_SUMA_TOTAL_POR_CATEGORIA = False
 
 # Conceptos que Pablo quiere analizar en DETALLE (empleado por empleado)
 CONCEPTOS_ANALISIS_DETALLADO = [
@@ -139,7 +148,7 @@ def generar_incidencias_consolidados_v2(cierre_id, clasificaciones_seleccionadas
                 )
             )
         
-        # TAREA TIPO B: Comparación suma total (tarea única dedicada) - TODOS LOS CONCEPTOS
+        # TAREA TIPO B: Comparación suma total (tarea única dedicada) - TODAS LAS CATEGORÍAS (por ítem)
         tasks.append(
             procesar_comparacion_suma_total.s(
                 cierre_id,
@@ -207,6 +216,7 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
     """
     start_time = time.time()
     incidencias_detectadas = []
+    eventos_informativos = []  # p.ej., ingresos de empleados nuevos
     # Métricas de diagnóstico
     empleados_con_match = 0
     empleados_sin_match = 0
@@ -235,6 +245,77 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
             empleados_con_match += 1 if empleado_anterior else 0
             empleados_sin_match += 1 if not empleado_anterior else 0
 
+            # === NUEVAS INCIDENCIAS DE PRESENCIA/ALTA/BAJA ===
+            # 1) Empleado aparece en cierre actual, pero en el cierre anterior tiene finiquito → finiquito_no_aplicado
+            try:
+                if empleado_anterior:
+                    tuvo_finiquito = MovimientoPersonal.objects.filter(
+                        nomina_consolidada=empleado_anterior,
+                        categoria='finiquito'
+                    ).exists()
+                    if tuvo_finiquito:
+                        incidencias_detectadas.append(
+                            IncidenciaCierre(
+                                cierre_id=cierre_actual_id,
+                                rut_empleado=empleado_actual.rut_empleado,
+                                empleado_nombre=empleado_actual.nombre_empleado,
+                                tipo_incidencia='finiquito_no_aplicado',
+                                tipo_comparacion='individual',
+                                prioridad='alta',
+                                concepto_afectado='Estado del empleado',
+                                descripcion=f"Empleado con finiquito en {empleado_anterior.cierre.periodo} aparece en el cierre actual",
+                                impacto_monetario=Decimal('0'),
+                                datos_adicionales={
+                                    'alcance': 'empleado',
+                                    'categoria_concepto': 'movimiento_personal',
+                                    'tipo_comparacion': 'individual',
+                                    'periodo_finiquito': empleado_anterior.cierre.periodo,
+                                    'rut': empleado_actual.rut_empleado,
+                                    'empleado': empleado_actual.nombre_empleado,
+                                }
+                            )
+                        )
+            except Exception:
+                # No bloquear el resto por este chequeo
+                pass
+
+            # 2) Empleado NO existe en cierre anterior: verificar que tenga registro de ingreso en actual o anterior → si no, ingreso_no_informado
+            try:
+                if not empleado_anterior:
+                    ingreso_actual = MovimientoPersonal.objects.filter(
+                        nomina_consolidada=empleado_actual,
+                        categoria='ingreso'
+                    ).exists()
+                    ingreso_en_anterior = MovimientoPersonal.objects.filter(
+                        nomina_consolidada__cierre_id=cierre_anterior_id,
+                        nomina_consolidada__rut_empleado=empleado_actual.rut_empleado,
+                        categoria='ingreso'
+                    ).exists()
+                    if not ingreso_actual and not ingreso_en_anterior:
+                        incidencias_detectadas.append(
+                            IncidenciaCierre(
+                                cierre_id=cierre_actual_id,
+                                rut_empleado=empleado_actual.rut_empleado,
+                                empleado_nombre=empleado_actual.nombre_empleado,
+                                tipo_incidencia='ingreso_no_informado',
+                                tipo_comparacion='individual',
+                                prioridad='alta',
+                                concepto_afectado='Estado del empleado',
+                                descripcion='Empleado presente sin registro de ingreso informado',
+                                impacto_monetario=Decimal('0'),
+                                datos_adicionales={
+                                    'alcance': 'empleado',
+                                    'categoria_concepto': 'movimiento_personal',
+                                    'tipo_comparacion': 'individual',
+                                    'periodo_actual': empleado_actual.cierre.periodo,
+                                    'rut': empleado_actual.rut_empleado,
+                                    'empleado': empleado_actual.nombre_empleado,
+                                }
+                            )
+                        )
+            except Exception:
+                pass
+
             # Cargar conceptos actuales y anteriores, solo de las clasificaciones seleccionadas
             conceptos_actuales_qs = ConceptoConsolidado.objects.filter(
                 nomina_consolidada=empleado_actual,
@@ -247,6 +328,40 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
 
             mapa_actual = { (c['nombre_concepto'], c['tipo_concepto']): c['monto_total'] for c in conceptos_actuales_qs }
             mapa_anterior = { (c['nombre_concepto'], c['tipo_concepto']): c['monto_total'] for c in anteriores_qs if c['tipo_concepto'] in clasificaciones_seleccionadas }
+
+            # Si el empleado es NUEVO (no existía en el cierre anterior), queremos:
+            # - NO crear incidencias de variación individual (vs 0)
+            # - Crear registros informativos por concepto para mostrarlos en el front como "Ingreso"
+            if not empleado_anterior:
+                try:
+                    for (nombre_concepto, tipo_concepto), monto_act in mapa_actual.items():
+                        eventos_informativos.append(
+                            IncidenciaCierre(
+                                cierre_id=cierre_actual_id,
+                                rut_empleado=empleado_actual.rut_empleado,
+                                empleado_nombre=empleado_actual.nombre_empleado,
+                                tipo_incidencia='ingreso_empleado',  # informativo
+                                tipo_comparacion='individual',  # se mostrará en detalle pero será filtrado en KPIs/front
+                                estado='resuelta_analista',  # No requiere aprobación
+                                prioridad='baja',
+                                concepto_afectado=nombre_concepto,
+                                descripcion=f'Ingreso del empleado (nuevo en período) para {nombre_concepto}',
+                                impacto_monetario=Decimal(monto_act or 0),
+                                datos_adicionales={
+                                    'alcance': 'empleado',
+                                    'categoria_concepto': tipo_concepto,
+                                    'concepto': nombre_concepto,
+                                    'tipo_concepto': tipo_concepto,
+                                    'monto_actual': float(monto_act or 0),
+                                    'monto_anterior': 0.0,
+                                    'variacion_porcentual': 100.0 if (monto_act or 0) > 0 else 0.0,
+                                    'tipo_comparacion': 'individual',
+                                    'informativo': True
+                                }
+                            )
+                        )
+                except Exception:
+                    pass
 
             # Unión de conceptos
             todas_claves = set(mapa_actual.keys()) | set(mapa_anterior.keys())
@@ -262,6 +377,9 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
                     pass
 
             for (nombre_concepto, tipo_concepto) in todas_claves:
+                # Si el empleado es nuevo, saltar la creación de incidencias de variación
+                if not empleado_anterior:
+                    continue
                 monto_act = mapa_actual.get((nombre_concepto, tipo_concepto), Decimal('0'))
                 monto_ant = mapa_anterior.get((nombre_concepto, tipo_concepto), Decimal('0'))
 
@@ -295,9 +413,12 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
                             tipo_incidencia='variacion_concepto_individual',
                             tipo_comparacion='individual',
                             prioridad=determinar_prioridad_individual(variacion_pct_f),
+                            concepto_afectado=nombre_concepto,
                             descripcion=f'Variación {variacion_pct_f:.1f}% en {nombre_concepto}',
                             impacto_monetario=abs(Decimal(monto_act) - Decimal(monto_ant)),
                             datos_adicionales={
+                                'alcance': 'empleado',
+                                'categoria_concepto': tipo_concepto,
                                 'concepto': nombre_concepto,
                                 'tipo_concepto': tipo_concepto,
                                 'monto_actual': float(monto_act),
@@ -325,9 +446,9 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
                         pass
         
         # Batch insert optimizado
-        if incidencias_detectadas:
+        if incidencias_detectadas or eventos_informativos:
             IncidenciaCierre.objects.bulk_create(
-                incidencias_detectadas, 
+                incidencias_detectadas + eventos_informativos,
                 batch_size=100,
                 ignore_conflicts=True
             )
@@ -402,30 +523,34 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
     DEBUG_TOP_N = 10
     variaciones_detalle = []
 
-    logger.info(f"📊 {task_id}: Iniciando comparación suma total (solo categorías)")
+    logger.info(f"📊 {task_id}: Iniciando comparación suma total por ÍTEM (TODAS las categorías)")
 
     try:
-        # 1) Comparación por concepto (item específico) — desactivada por requisito
+        # 1) Comparación por concepto (ítem específico agregado sobre empleados) — ACTIVADO (todas las categorías)
+        conceptos_unicos = set()
         if GENERAR_INCIDENCIAS_SUMA_TOTAL_POR_CONCEPTO:
+            # Alcance ampliado: considerar todos los tipo_concepto presentes
             conceptos_actuales = ConceptoConsolidado.objects.filter(
-                nomina_consolidada__cierre_id=cierre_actual_id
+                nomina_consolidada__cierre_id=cierre_actual_id,
             ).values('nombre_concepto', 'tipo_concepto').distinct()
 
             conceptos_anteriores = ConceptoConsolidado.objects.filter(
-                nomina_consolidada__cierre_id=cierre_anterior_id
+                nomina_consolidada__cierre_id=cierre_anterior_id,
             ).values('nombre_concepto', 'tipo_concepto').distinct()
 
-            conceptos_unicos = set()
             for c in conceptos_actuales:
                 conceptos_unicos.add((c['nombre_concepto'], c['tipo_concepto']))
             for c in conceptos_anteriores:
                 conceptos_unicos.add((c['nombre_concepto'], c['tipo_concepto']))
 
             logger.info(
-                f"📊 Analizando {len(conceptos_unicos)} conceptos únicos para suma total (umbral={obtener_umbral_suma_total('cualquiera')}%)"
+                f"📊 Analizando {len(conceptos_unicos)} ítems únicos (umbral={obtener_umbral_suma_total('cualquiera')}%)"
             )
 
             for nombre_concepto, tipo_concepto in conceptos_unicos:
+                # No generar incidencias agregadas por ítem para categorías con análisis individual
+                if tipo_concepto in CONCEPTOS_ANALISIS_DETALLADO:
+                    continue
                 suma_actual = ConceptoConsolidado.objects.filter(
                     nomina_consolidada__cierre_id=cierre_actual_id,
                     nombre_concepto=nombre_concepto,
@@ -469,78 +594,79 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
                 except Exception:
                     pass
 
-    # 2) Comparar sumas por CATEGORÍA (ej: total haberes imponibles)
-        CATEGORIAS = [
-            'haber_imponible',
-            'haber_no_imponible',
-            'descuento_legal',
-            'otro_descuento',
-            'impuesto',
-            'aporte_patronal',
-        ]
-        cat_tot_act = {}
-        cat_tot_ant = {}
-        for categoria in CATEGORIAS:
-            suma_cat_actual = ConceptoConsolidado.objects.filter(
-                nomina_consolidada__cierre_id=cierre_actual_id,
-                tipo_concepto=categoria,
-            ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
+        # 2) Comparación por CATEGORÍA (total categoría) — DESACTIVADA por requerimiento
+        if GENERAR_INCIDENCIAS_SUMA_TOTAL_POR_CATEGORIA:
+            CATEGORIAS = [
+                'haber_imponible',
+                'haber_no_imponible',
+                'descuento_legal',
+                'otro_descuento',
+                'impuesto',
+                'aporte_patronal',
+            ]
+            cat_tot_act = {}
+            cat_tot_ant = {}
+            for categoria in CATEGORIAS:
+                suma_cat_actual = ConceptoConsolidado.objects.filter(
+                    nomina_consolidada__cierre_id=cierre_actual_id,
+                    tipo_concepto=categoria,
+                ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
 
-            suma_cat_anterior = ConceptoConsolidado.objects.filter(
-                nomina_consolidada__cierre_id=cierre_anterior_id,
-                tipo_concepto=categoria,
-            ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
+                suma_cat_anterior = ConceptoConsolidado.objects.filter(
+                    nomina_consolidada__cierre_id=cierre_anterior_id,
+                    tipo_concepto=categoria,
+                ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
 
-            cat_tot_act[categoria] = suma_cat_actual
-            cat_tot_ant[categoria] = suma_cat_anterior
+                cat_tot_act[categoria] = suma_cat_actual
+                cat_tot_ant[categoria] = suma_cat_anterior
 
-            variacion_pct_cat = calcular_variacion_porcentual(suma_cat_actual, suma_cat_anterior)
-            umbral_cat = obtener_umbral_suma_total(categoria)
-            categorias_analizadas += 1
+                variacion_pct_cat = calcular_variacion_porcentual(suma_cat_actual, suma_cat_anterior)
+                umbral_cat = obtener_umbral_suma_total(categoria)
+                categorias_analizadas += 1
 
-            if abs(variacion_pct_cat) >= umbral_cat:
+                if abs(variacion_pct_cat) >= umbral_cat:
+                    variaciones_categoria_sobre_umbral += 1
+                    incidencias_detectadas.append(
+                        crear_incidencia_suma_total_categoria(
+                            cierre_actual_id,
+                            categoria,
+                            suma_cat_actual,
+                            suma_cat_anterior,
+                            variacion_pct_cat,
+                        )
+                    )
+
+            # Variación del TOTAL (Total Líquido = Haberes - Descuentos - Impuestos)
+            hab_imp_act = cat_tot_act.get('haber_imponible', Decimal('0'))
+            hab_no_imp_act = cat_tot_act.get('haber_no_imponible', Decimal('0'))
+            dcto_legal_act = cat_tot_act.get('descuento_legal', Decimal('0'))
+            otro_dcto_act = cat_tot_act.get('otro_descuento', Decimal('0'))
+            impuesto_act = cat_tot_act.get('impuesto', Decimal('0'))
+
+            hab_imp_ant = cat_tot_ant.get('haber_imponible', Decimal('0'))
+            hab_no_imp_ant = cat_tot_ant.get('haber_no_imponible', Decimal('0'))
+            dcto_legal_ant = cat_tot_ant.get('descuento_legal', Decimal('0'))
+            otro_dcto_ant = cat_tot_ant.get('otro_descuento', Decimal('0'))
+            impuesto_ant = cat_tot_ant.get('impuesto', Decimal('0'))
+
+            total_liquido_act = (hab_imp_act + hab_no_imp_act) - (dcto_legal_act + otro_dcto_act + impuesto_act)
+            total_liquido_ant = (hab_imp_ant + hab_no_imp_ant) - (dcto_legal_ant + otro_dcto_ant + impuesto_ant)
+
+            variacion_pct_total = calcular_variacion_porcentual(total_liquido_act, total_liquido_ant)
+            umbral_total = obtener_umbral_suma_total('total_liquido')
+            if abs(variacion_pct_total) >= umbral_total:
                 variaciones_categoria_sobre_umbral += 1
                 incidencias_detectadas.append(
                     crear_incidencia_suma_total_categoria(
                         cierre_actual_id,
-                        categoria,
-                        suma_cat_actual,
-                        suma_cat_anterior,
-                        variacion_pct_cat,
+                        'total_liquido',
+                        total_liquido_act,
+                        total_liquido_ant,
+                        variacion_pct_total,
                     )
                 )
 
-        # Variación del TOTAL (Total Líquido = Haberes - Descuentos - Impuestos)
-        hab_imp_act = cat_tot_act.get('haber_imponible', Decimal('0'))
-        hab_no_imp_act = cat_tot_act.get('haber_no_imponible', Decimal('0'))
-        dcto_legal_act = cat_tot_act.get('descuento_legal', Decimal('0'))
-        otro_dcto_act = cat_tot_act.get('otro_descuento', Decimal('0'))
-        impuesto_act = cat_tot_act.get('impuesto', Decimal('0'))
-
-        hab_imp_ant = cat_tot_ant.get('haber_imponible', Decimal('0'))
-        hab_no_imp_ant = cat_tot_ant.get('haber_no_imponible', Decimal('0'))
-        dcto_legal_ant = cat_tot_ant.get('descuento_legal', Decimal('0'))
-        otro_dcto_ant = cat_tot_ant.get('otro_descuento', Decimal('0'))
-        impuesto_ant = cat_tot_ant.get('impuesto', Decimal('0'))
-
-        total_liquido_act = (hab_imp_act + hab_no_imp_act) - (dcto_legal_act + otro_dcto_act + impuesto_act)
-        total_liquido_ant = (hab_imp_ant + hab_no_imp_ant) - (dcto_legal_ant + otro_dcto_ant + impuesto_ant)
-
-        variacion_pct_total = calcular_variacion_porcentual(total_liquido_act, total_liquido_ant)
-        umbral_total = obtener_umbral_suma_total('total_liquido')
-        if abs(variacion_pct_total) >= umbral_total:
-            variaciones_categoria_sobre_umbral += 1
-            incidencias_detectadas.append(
-                crear_incidencia_suma_total_categoria(
-                    cierre_actual_id,
-                    'total_liquido',
-                    total_liquido_act,
-                    total_liquido_ant,
-                    variacion_pct_total,
-                )
-            )
-
-    # 3) No se consideran conceptos nuevos/eliminados a este nivel
+        # 3) No se consideran conceptos nuevos/eliminados a este nivel
         conceptos_solo_actual = set()
         conceptos_solo_anterior = set()
 
@@ -551,7 +677,7 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
 
         tiempo_procesamiento = time.time() - start_time
 
-        # Top-N variaciones por |variacion_pct|
+        # Top-N variaciones por |variacion_pct| (ítems agregados)
         if variaciones_detalle:
             try:
                 top_variaciones = sorted(
@@ -584,15 +710,15 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
         }
 
         logger.info(
-            f"✅ {task_id}: {len(incidencias_detectadas)} incs suma_total | "
+            f"✅ {task_id}: {len(incidencias_detectadas)} incs suma_total_por_item | "
             f"comparaciones: {conceptos_analizados}, sobre_umbral: {variaciones_sobre_umbral}, "
-            f"categorias: {categorias_analizadas}, cat_sobre_umbral: {variaciones_categoria_sobre_umbral}, "
+            f"categorias_eval: {categorias_analizadas if GENERAR_INCIDENCIAS_SUMA_TOTAL_POR_CATEGORIA else 0}, "
+            f"cat_sobre_umbral: {variaciones_categoria_sobre_umbral if GENERAR_INCIDENCIAS_SUMA_TOTAL_POR_CATEGORIA else 0}, "
             f"nuevos: {len(conceptos_solo_actual)}, eliminados: {len(conceptos_solo_anterior)} | "
             f"t={tiempo_procesamiento:.2f}s, umbral={resultado['diag']['umbral_suma_total']}%"
         )
-        logger.info(f"   📊 {len(conceptos_unicos)} conceptos analizados")
-        logger.info(f"   🆕 {len(conceptos_solo_actual)} conceptos nuevos")
-        logger.info(f"   ❌ {len(conceptos_solo_anterior)} conceptos eliminados")
+        if GENERAR_INCIDENCIAS_SUMA_TOTAL_POR_CONCEPTO:
+            logger.info(f"   📊 {len(conceptos_unicos)} ítems únicos analizados (todas las categorías)")
 
         return resultado
 
@@ -826,9 +952,12 @@ def crear_incidencia_variacion_individual(empleado, concepto_actual, concepto_an
         tipo_incidencia='variacion_concepto_individual',
         tipo_comparacion='individual',
         prioridad=determinar_prioridad_individual(variacion_pct),
+        concepto_afectado=concepto_actual.nombre_concepto,
         descripcion=f'Variación {variacion_pct:.1f}% en {concepto_actual.nombre_concepto}',
         impacto_monetario=abs(concepto_actual.monto_total - concepto_anterior.monto_total),
         datos_adicionales={
+            'alcance': 'empleado',
+            'categoria_concepto': concepto_actual.tipo_concepto,
             'concepto': concepto_actual.nombre_concepto,
             'tipo_concepto': concepto_actual.tipo_concepto,
             'monto_actual': float(concepto_actual.monto_total),
@@ -848,9 +977,12 @@ def crear_incidencia_concepto_nuevo_empleado(empleado, concepto):
         tipo_incidencia='concepto_nuevo_empleado',
         tipo_comparacion='individual',
         prioridad='media',
+        concepto_afectado=concepto.nombre_concepto,
         descripcion=f'Nuevo concepto {concepto.nombre_concepto} para empleado',
         impacto_monetario=concepto.monto_total,
         datos_adicionales={
+            'alcance': 'empleado',
+            'categoria_concepto': concepto.tipo_concepto,
             'concepto': concepto.nombre_concepto,
             'tipo_concepto': concepto.tipo_concepto,
             'monto_actual': float(concepto.monto_total),
@@ -870,9 +1002,12 @@ def crear_incidencia_concepto_eliminado_empleado(empleado_anterior, concepto_ant
         tipo_incidencia='concepto_eliminado_empleado',
         tipo_comparacion='individual',
         prioridad='media',
+        concepto_afectado=concepto_anterior.nombre_concepto,
         descripcion=f'Concepto {concepto_anterior.nombre_concepto} eliminado del empleado',
         impacto_monetario=concepto_anterior.monto_total,
         datos_adicionales={
+            'alcance': 'empleado',
+            'categoria_concepto': concepto_anterior.tipo_concepto,
             'concepto': concepto_anterior.nombre_concepto,
             'tipo_concepto': concepto_anterior.tipo_concepto,
             'monto_actual': 0.0,
@@ -889,10 +1024,15 @@ def crear_incidencia_empleado_nuevo(empleado):
         empleado_nombre=empleado.nombre_empleado,
         tipo_incidencia='empleado_nuevo',
         tipo_comparacion='individual',
+        estado='resuelta_analista',  # Informativa: no requiere aprobación
         prioridad='baja',
+        concepto_afectado='Estado del empleado',
         descripcion=f'Empleado nuevo sin período anterior',
         impacto_monetario=(empleado.haberes_imponibles or 0) + (empleado.haberes_no_imponibles or 0),
         datos_adicionales={
+            'alcance': 'empleado',
+            'categoria_concepto': 'movimiento_personal',
+            'informativo': True,
             # Mantener keys antiguas por compatibilidad, pero llenar desde nuevas categorías
             'total_haberes': float(((empleado.haberes_imponibles or 0) + (empleado.haberes_no_imponibles or 0)) or 0),
             'total_descuentos': float(((empleado.dctos_legales or 0) + (empleado.otros_dctos or 0) + (empleado.impuestos or 0)) or 0),
@@ -909,9 +1049,12 @@ def crear_incidencia_suma_total(cierre_id, nombre_concepto, tipo_concepto, suma_
         tipo_incidencia='variacion_suma_total',
         tipo_comparacion='suma_total',
         prioridad=determinar_prioridad_suma_total(variacion_pct_float, variacion_abs_float),
+        concepto_afectado=nombre_concepto,
         descripcion=f'Variación {variacion_pct_float:.1f}% en suma total de {nombre_concepto}',
         impacto_monetario=abs(suma_actual - suma_anterior),
         datos_adicionales={
+            'alcance': 'item',
+            'categoria_concepto': tipo_concepto,
             'concepto': nombre_concepto,
             'tipo_concepto': tipo_concepto,
             'suma_actual': float(suma_actual),
@@ -941,9 +1084,12 @@ def crear_incidencia_suma_total_categoria(cierre_id, categoria, suma_actual, sum
         tipo_incidencia='variacion_suma_total_categoria',
         tipo_comparacion='suma_total',
         prioridad=determinar_prioridad_suma_total(variacion_pct_float, variacion_abs_float),
+        concepto_afectado=f'Total {nombre_legible}',
         descripcion=f'Variación {variacion_pct_float:.1f}% en total de {nombre_legible}',
         impacto_monetario=abs(suma_actual - suma_anterior),
         datos_adicionales={
+            'alcance': 'categoria',
+            'categoria_concepto': categoria,
             'categoria': categoria,
             'concepto': f'Total {nombre_legible}',
             'tipo_concepto': categoria,
@@ -962,8 +1108,11 @@ def crear_incidencia_concepto_nuevo_periodo(cierre_id, nombre_concepto, tipo_con
         tipo_incidencia='concepto_nuevo_periodo',
         tipo_comparacion='suma_total',
         prioridad='media',
+        concepto_afectado=nombre_concepto,
         descripcion=f'Concepto {nombre_concepto} aparece por primera vez',
         datos_adicionales={
+            'alcance': 'item',
+            'categoria_concepto': tipo_concepto,
             'concepto': nombre_concepto,
             'tipo_concepto': tipo_concepto,
             'tipo_comparacion': 'suma_total'
@@ -977,8 +1126,11 @@ def crear_incidencia_concepto_eliminado_periodo(cierre_id, nombre_concepto, tipo
         tipo_incidencia='concepto_eliminado_periodo',
         tipo_comparacion='suma_total',
         prioridad='alta',  # Eliminación completa es más crítica
+        concepto_afectado=nombre_concepto,
         descripcion=f'Concepto {nombre_concepto} desaparece completamente',
         datos_adicionales={
+            'alcance': 'item',
+            'categoria_concepto': tipo_concepto,
             'concepto': nombre_concepto,
             'tipo_concepto': tipo_concepto,
             'tipo_comparacion': 'suma_total'

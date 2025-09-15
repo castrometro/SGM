@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle, Clock, AlertTriangle, Users, FileText, RefreshCw } from 'lucide-react';
-import { obtenerIncidenciasCierre } from '../../../api/nomina';
+import { obtenerIncidenciasCierre, obtenerResumenReconciliacion, confirmarDesaparicionesCierre, obtenerCierreNominaPorId, solicitarRecargaArchivosAnalista, aprobarRecargaArchivos } from '../../../api/nomina';
 import { calcularProgresoIncidencias, calcularContadoresEstados, ESTADOS_INCIDENCIA } from '../../../utils/incidenciaUtils';
 import IncidenciasKPIs from './IncidenciasKPIs';
+import { useAuth } from '../../../hooks/useAuth';
 
 const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
   const [resumen, setResumen] = useState(null);
@@ -10,6 +11,10 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
   const [ejecutandoAccion, setEjecutandoAccion] = useState(false);
   const [error, setError] = useState('');
   const [incidencias, setIncidencias] = useState([]);
+  const [reconciliacion, setReconciliacion] = useState(null);
+  const [cierre, setCierre] = useState(null);
+  const { usuario } = useAuth();
+  const esSupervisor = (usuario?.tipo_usuario === 'supervisor' || usuario?.tipo_usuario === 'gerente');
 
   useEffect(() => {
     if (cierreId) {
@@ -22,14 +27,16 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
     setError('');
     try {
       // Cargar tanto el estado del cierre como las incidencias detalladas
-      const [estadoResponse, incidenciasData] = await Promise.all([
+      const [estadoResponse, incidenciasData, reconData, cierreData] = await Promise.all([
         fetch(`/api/nomina/cierres/${cierreId}/estado-incidencias/`),
-        obtenerIncidenciasCierre(cierreId, { page_size: 1000 })
+        obtenerIncidenciasCierre(cierreId, { page_size: 1000 }),
+        obtenerResumenReconciliacion(cierreId),
+        obtenerCierreNominaPorId(cierreId)
       ]);
       
       if (!estadoResponse.ok) throw new Error('Error cargando estado');
       
-      const estadoData = await estadoResponse.json();
+  const estadoData = await estadoResponse.json();
   const incidencias = Array.isArray(incidenciasData.results) ? incidenciasData.results : incidenciasData;
       
       // Calcular estados reales basados en resoluciones
@@ -44,13 +51,32 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
         total_incidencias: incidencias.length
       };
       
-      setResumen(resumenActualizado);
-      setIncidencias(incidencias);
+  setResumen(resumenActualizado);
+    setIncidencias(incidencias);
+    setReconciliacion(reconData);
+    setCierre(cierreData);
     } catch (err) {
       console.error('Error:', err);
       setError('Error cargando el resumen de incidencias');
     } finally {
       setCargando(false);
+    }
+  };
+
+  const manejarConfirmarDesapariciones = async () => {
+    if (!reconciliacion || !reconciliacion.supervisor_pendiente) return;
+    if (!window.confirm(`¿Confirmar desaparición de ${reconciliacion.supervisor_pendiente} incidencias?`)) return;
+    setEjecutandoAccion(true);
+    try {
+      const comentario = 'Confirmación masiva de desapariciones tras recarga';
+      const res = await confirmarDesaparicionesCierre(cierreId, comentario);
+      await cargarResumen();
+      alert(`✅ ${res?.confirmadas || reconciliacion.supervisor_pendiente} desapariciones confirmadas`);
+    } catch (e) {
+      console.error(e);
+      setError(e.message || 'Error confirmando desapariciones');
+    } finally {
+      setEjecutandoAccion(false);
     }
   };
 
@@ -111,20 +137,7 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
     setEjecutandoAccion(true);
     setError('');
     try {
-      const response = await fetch(`/api/nomina/cierres/${cierreId}/solicitar-recarga-archivos/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ motivo: motivo.trim() }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Error solicitando recarga');
-      }
-
-      const resultado = await response.json();
+      const resultado = await solicitarRecargaArchivosAnalista(cierreId, motivo.trim());
       
       // Recargar resumen
       await cargarResumen();
@@ -133,11 +146,28 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
         onEstadoActualizado(resultado);
       }
 
-      alert(`✅ Solicitud registrada. El cierre ahora permite recargar archivos.\\n\\nInstrucciones:\\n${resultado.instrucciones.join('\\n')}`);
+  alert(`✅ Solicitud registrada. Pendiente de aprobación del supervisor.`);
 
     } catch (err) {
       console.error('Error:', err);
       setError(err.message);
+    } finally {
+      setEjecutandoAccion(false);
+    }
+  };
+
+  const aprobarRecarga = async () => {
+    if (!window.confirm('¿Aprobar solicitud de recarga? Se habilitará la resubida de archivos y aumentará la versión de datos.')) return;
+    setEjecutandoAccion(true);
+    setError('');
+    try {
+      const res = await aprobarRecargaArchivos(cierreId);
+      await cargarResumen();
+      alert('✅ Recarga aprobada. Proceda a resubir archivos.');
+      if (onEstadoActualizado) onEstadoActualizado(res);
+    } catch (e) {
+      console.error(e);
+      setError(e.message || 'Error aprobando recarga');
     } finally {
       setEjecutandoAccion(false);
     }
@@ -190,6 +220,37 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
       {Array.isArray(incidencias) && incidencias.length > 0 && (
         <div>
           <IncidenciasKPIs incidencias={incidencias} />
+        </div>
+      )}
+
+      {/* Estado actual del cierre */}
+      {cierre && (
+        <div className="text-sm text-gray-400 -mt-2">
+          Estado cierre: <span className="text-gray-200 font-medium">{cierre.estado}</span>
+          {typeof cierre.version_datos !== 'undefined' && (
+            <>
+              <span className="mx-2">•</span>
+              Versión datos: <span className="text-gray-200 font-medium">v{cierre.version_datos}</span>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* KPIs de reconciliación (recarga Talana) */}
+      {reconciliacion && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-gray-700/50 rounded-lg p-4">
+            <div className="text-sm text-gray-400">Vigentes actualizadas</div>
+            <div className="text-2xl font-bold text-blue-400">{reconciliacion.vigentes_actualizadas ?? 0}</div>
+          </div>
+          <div className="bg-gray-700/50 rounded-lg p-4">
+            <div className="text-sm text-gray-400">Pendientes confirmación</div>
+            <div className="text-2xl font-bold text-yellow-400">{reconciliacion.supervisor_pendiente ?? 0}</div>
+          </div>
+          <div className="bg-gray-700/50 rounded-lg p-4">
+            <div className="text-sm text-gray-400">Unificadas por firma</div>
+            <div className="text-2xl font-bold text-emerald-400">{reconciliacion.unificadas ?? 0}</div>
+          </div>
         </div>
       )}
 
@@ -284,7 +345,22 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
             </button>
           )}
 
-          {progreso.rechazadas > 0 && (
+          {reconciliacion?.supervisor_pendiente > 0 && (
+            <button
+              onClick={manejarConfirmarDesapariciones}
+              disabled={ejecutandoAccion}
+              className="flex items-center justify-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            >
+              {ejecutandoAccion ? (
+                <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+              ) : (
+                <CheckCircle className="w-4 h-4 mr-2" />
+              )}
+              Confirmar desapariciones ({reconciliacion.supervisor_pendiente})
+            </button>
+          )}
+
+          {!esSupervisor && cierre?.estado !== 'recarga_solicitud_pendiente' && (
             <button
               onClick={solicitarRecargaArchivos}
               disabled={ejecutandoAccion}
@@ -294,11 +370,23 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
               Solicitar Recarga de Archivos
             </button>
           )}
+
+          {esSupervisor && cierre?.estado === 'recarga_solicitud_pendiente' && (
+            <button
+              onClick={aprobarRecarga}
+              disabled={ejecutandoAccion}
+              className="flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              <CheckCircle className="w-4 h-4 mr-2" />
+              Aprobar Recarga
+            </button>
+          )}
         </div>
 
         <div className="text-xs text-gray-500 space-y-1">
           <p>• <strong>Aprobar Todas:</strong> Marca todas las justificaciones pendientes como aprobadas</p>
           <p>• <strong>Recarga de Archivos:</strong> Permite resubir archivos corregidos desde Talana</p>
+          <p>• <strong>Confirmar desapariciones:</strong> Cierra incidencias que ya no aplican tras recarga</p>
         </div>
       </div>
 

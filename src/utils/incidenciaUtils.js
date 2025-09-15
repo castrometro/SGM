@@ -9,7 +9,8 @@ export const ESTADOS_INCIDENCIA = {
   RESUELTA_ANALISTA: 'resuelta_analista', 
   APROBADA_SUPERVISOR: 'aprobada_supervisor',
   RECHAZADA_SUPERVISOR: 'rechazada_supervisor',
-  RE_RESUELTA: 're_resuelta'
+  RE_RESUELTA: 're_resuelta',
+  RESOLUCION_SUPERVISOR_PENDIENTE: 'resolucion_supervisor_pendiente'
 };
 
 export const ESTADOS_DISPLAY = {
@@ -17,7 +18,8 @@ export const ESTADOS_DISPLAY = {
   [ESTADOS_INCIDENCIA.RESUELTA_ANALISTA]: 'Resuelta por Analista',
   [ESTADOS_INCIDENCIA.APROBADA_SUPERVISOR]: 'Aprobada por Supervisor', 
   [ESTADOS_INCIDENCIA.RECHAZADA_SUPERVISOR]: 'Rechazada por Supervisor',
-  [ESTADOS_INCIDENCIA.RE_RESUELTA]: 'Re-resuelta por Analista'
+  [ESTADOS_INCIDENCIA.RE_RESUELTA]: 'Re-resuelta por Analista',
+  [ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE]: 'Confirmación de desaparición pendiente'
 };
 
 /**
@@ -28,6 +30,17 @@ export const ESTADOS_DISPLAY = {
 export const obtenerEstadoReal = (incidencia) => {
   const resoluciones = incidencia.resoluciones || [];
   
+  // 1) Priorizar el estado directo del backend si existe y es válido
+  const estadosValidos = new Set(Object.values(ESTADOS_INCIDENCIA));
+  const estadoDirecto = incidencia?.estado;
+  if (estadoDirecto && estadosValidos.has(estadoDirecto)) {
+    return {
+      estado: estadoDirecto,
+      display: ESTADOS_DISPLAY[estadoDirecto] ?? estadoDirecto
+    };
+  }
+
+  // 2) Si no hay estado directo, inferir desde resoluciones
   if (resoluciones.length === 0) {
     return {
       estado: ESTADOS_INCIDENCIA.PENDIENTE,
@@ -35,8 +48,8 @@ export const obtenerEstadoReal = (incidencia) => {
     };
   }
 
-  // Ordenar por fecha y obtener la última resolución
-  const ultimaResolucion = resoluciones.sort((a, b) => 
+  // Ordenar por fecha y obtener la última resolución (copia defensiva)
+  const ultimaResolucion = [...resoluciones].sort((a, b) => 
     new Date(b.fecha_resolucion) - new Date(a.fecha_resolucion)
   )[0];
 
@@ -76,12 +89,18 @@ export const calcularContadoresEstados = (incidencias) => {
     resuelta_analista: 0,
     aprobada_supervisor: 0,
     rechazada_supervisor: 0,
-    re_resuelta: 0
+    re_resuelta: 0,
+    resolucion_supervisor_pendiente: 0
   };
 
   incidencias.forEach(incidencia => {
     const { estado } = obtenerEstadoReal(incidencia);
-    contadores[estado]++;
+    if (contadores[estado] == null) {
+      // Mapear cualquier estado desconocido a pendiente
+      contadores.pendiente++;
+    } else {
+      contadores[estado]++;
+    }
   });
 
   return contadores;
@@ -97,7 +116,7 @@ export const calcularProgresoIncidencias = (incidencias) => {
   
   return {
     aprobadas: contadores.aprobada_supervisor,
-    pendientes: contadores.pendiente + contadores.resuelta_analista,
+    pendientes: contadores.pendiente + contadores.resuelta_analista + (contadores.resolucion_supervisor_pendiente || 0),
     rechazadas: contadores.rechazada_supervisor,
     total: incidencias.length
   };

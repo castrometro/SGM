@@ -17,6 +17,7 @@ import {
   obtenerAnalisisCompletoTemporal,
   limpiarIncidenciasCierre
 } from "../../api/nomina";
+import { obtenerEstadoReal, ESTADOS_INCIDENCIA } from "../../utils/incidenciaUtils";
 
 // Clasificaciones disponibles para selección
 const clasificacionesDisponibles = [
@@ -87,12 +88,10 @@ const IncidenciasEncontradasSection = ({
     let rechazadas = 0;
     let pendientes = 0;
     for (const i of inc) {
-      const rs = Array.isArray(i.resoluciones) ? i.resoluciones : [];
-      const tieneAprob = rs.some(r => r.tipo_resolucion === 'aprobacion');
-      const tieneRech = rs.some(r => r.tipo_resolucion === 'rechazo');
-      if (tieneAprob) aprobadas += 1;
-      else if (tieneRech) rechazadas += 1;
-      else pendientes += 1;
+      const { estado } = obtenerEstadoReal(i);
+      if (estado === ESTADOS_INCIDENCIA.APROBADA_SUPERVISOR) aprobadas += 1;
+      else if (estado === ESTADOS_INCIDENCIA.RECHAZADA_SUPERVISOR) rechazadas += 1;
+      else pendientes += 1; // incluye pendiente, resuelta_analista y resolucion_supervisor_pendiente
     }
     return { total, aprobadas, rechazadas, pendientes };
   })();
@@ -1069,6 +1068,11 @@ const IncidenciasEncontradasSection = ({
                 <IncidenciasUnifiedTable
                   incidencias={incidencias}
                   onIncidenciaSeleccionada={manejarIncidenciaSeleccionada}
+                  onAfterAction={() => {
+                    // Refrescar estado y lista tras acciones individuales
+                    cargarEstadoIncidencias();
+                    cargarDatos();
+                  }}
                 />
               </div>
             </div>

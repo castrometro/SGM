@@ -24,6 +24,7 @@ from ..models import (
     NominaConsolidada, 
     ConceptoConsolidado, 
     MovimientoPersonal,
+    EmpleadoCierre,
     IncidenciaCierre,
     TipoIncidencia
 )
@@ -230,6 +231,40 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
     logger.info(f"   📋 Clasificaciones: {clasificaciones_seleccionadas}")
     
     try:
+        # Obtener versión de datos del cierre (vN) y cache de empleados para referencias
+        try:
+            cierre_version = CierreNomina.objects.values_list('version_datos', flat=True).get(id=cierre_actual_id) or 1
+        except Exception:
+            cierre_version = 1
+        cache_empleado_libro = {}
+
+        def _empleado_libro_id(rut: str):
+            if not rut:
+                return None
+            rid = cache_empleado_libro.get(rut)
+            if rid is not None:
+                return rid
+            rid = EmpleadoCierre.objects.filter(cierre_id=cierre_actual_id, rut=rut).values_list('id', flat=True).first()
+            cache_empleado_libro[rut] = rid
+            return rid
+
+        def _preparar_incidencia(inc: IncidenciaCierre, rut: str):
+            """Completa firma, versiones y referencia empleado_libro antes de agregar al batch."""
+            try:
+                # Firma
+                clave, h = inc.generar_firma()
+                inc.firma_clave = inc.firma_clave or clave
+                inc.firma_hash = inc.firma_hash or h
+                # Versiones
+                if not inc.version_detectada_primera:
+                    inc.version_detectada_primera = cierre_version
+                inc.version_detectada_ultima = cierre_version
+                # Referencia empleado
+                if rut and not inc.empleado_libro_id:
+                    inc.empleado_libro_id = _empleado_libro_id(rut)
+            except Exception:
+                pass
+            return inc
         for empleado_consolidado_id in empleados_ids:
             empleado_actual = NominaConsolidada.objects.select_related('cierre').get(
                 id=empleado_consolidado_id
@@ -255,7 +290,7 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
                     ).exists()
                     if tuvo_finiquito:
                         incidencias_detectadas.append(
-                            IncidenciaCierre(
+                            _preparar_incidencia(IncidenciaCierre(
                                 cierre_id=cierre_actual_id,
                                 rut_empleado=empleado_actual.rut_empleado,
                                 empleado_nombre=empleado_actual.nombre_empleado,
@@ -273,7 +308,7 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
                                     'rut': empleado_actual.rut_empleado,
                                     'empleado': empleado_actual.nombre_empleado,
                                 }
-                            )
+                            ), empleado_actual.rut_empleado)
                         )
             except Exception:
                 # No bloquear el resto por este chequeo
@@ -293,7 +328,7 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
                     ).exists()
                     if not ingreso_actual and not ingreso_en_anterior:
                         incidencias_detectadas.append(
-                            IncidenciaCierre(
+                            _preparar_incidencia(IncidenciaCierre(
                                 cierre_id=cierre_actual_id,
                                 rut_empleado=empleado_actual.rut_empleado,
                                 empleado_nombre=empleado_actual.nombre_empleado,
@@ -311,7 +346,7 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
                                     'rut': empleado_actual.rut_empleado,
                                     'empleado': empleado_actual.nombre_empleado,
                                 }
-                            )
+                            ), empleado_actual.rut_empleado)
                         )
             except Exception:
                 pass
@@ -336,7 +371,7 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
                 try:
                     for (nombre_concepto, tipo_concepto), monto_act in mapa_actual.items():
                         eventos_informativos.append(
-                            IncidenciaCierre(
+                            _preparar_incidencia(IncidenciaCierre(
                                 cierre_id=cierre_actual_id,
                                 rut_empleado=empleado_actual.rut_empleado,
                                 empleado_nombre=empleado_actual.nombre_empleado,
@@ -358,7 +393,7 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
                                     'tipo_comparacion': 'individual',
                                     'informativo': True
                                 }
-                            )
+                            ), empleado_actual.rut_empleado)
                         )
                 except Exception:
                     pass
@@ -406,7 +441,7 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
                     obj_anterior.monto_total = Decimal(monto_ant)
 
                     incidencias_detectadas.append(
-                        IncidenciaCierre(
+                        _preparar_incidencia(IncidenciaCierre(
                             cierre_id=cierre_actual_id,
                             rut_empleado=empleado_actual.rut_empleado,
                             empleado_nombre=empleado_actual.nombre_empleado,
@@ -427,7 +462,7 @@ def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierr
                                 'variacion_absoluta': float(abs(Decimal(monto_act) - Decimal(monto_ant))),
                                 'tipo_comparacion': 'individual'
                             }
-                        )
+                        ), empleado_actual.rut_empleado)
                     )
 
                 if len(debug_samples) < DEBUG_MAX_SAMPLES:
@@ -526,6 +561,10 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
     logger.info(f"📊 {task_id}: Iniciando comparación suma total por ÍTEM (TODAS las categorías)")
 
     try:
+        try:
+            cierre_version = CierreNomina.objects.values_list('version_datos', flat=True).get(id=cierre_actual_id) or 1
+        except Exception:
+            cierre_version = 1
         # 1) Comparación por concepto (ítem específico agregado sobre empleados) — ACTIVADO (todas las categorías)
         conceptos_unicos = set()
         if GENERAR_INCIDENCIAS_SUMA_TOTAL_POR_CONCEPTO:
@@ -569,8 +608,7 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
 
                 if abs(variacion_pct) >= umbral_suma:
                     variaciones_sobre_umbral += 1
-                    incidencias_detectadas.append(
-                        crear_incidencia_suma_total(
+                    inc_tmp = crear_incidencia_suma_total(
                             cierre_actual_id,
                             nombre_concepto,
                             tipo_concepto,
@@ -578,7 +616,14 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
                             suma_anterior,
                             variacion_pct,
                         )
-                    )
+                    # Completar firma/version antes de batch
+                    clave, h = inc_tmp.generar_firma()
+                    inc_tmp.firma_clave = inc_tmp.firma_clave or clave
+                    inc_tmp.firma_hash = inc_tmp.firma_hash or h
+                    if not inc_tmp.version_detectada_primera:
+                        inc_tmp.version_detectada_primera = cierre_version
+                    inc_tmp.version_detectada_ultima = cierre_version
+                    incidencias_detectadas.append(inc_tmp)
 
                 # Mantener detalle para top-N debug
                 try:
@@ -806,6 +851,14 @@ def consolidar_resultados_incidencias(resultados_tasks, cierre_id, chunks_indivi
         throughput_individual = empleados_procesados_total / tiempo_total_individual if tiempo_total_individual > 0 else 0
         tiempo_total_sistema = max(tiempo_total_individual, tiempo_suma_total)
         
+        # Ejecutar reconciliación por firma (vN)
+        try:
+            from .reconciliacion import reconciliar_cierre_por_firma
+            resumen_recon = reconciliar_cierre_por_firma(cierre_id)
+            logger.info(f"🔄 Reconciliación v{resumen_recon['version']}: {resumen_recon}")
+        except Exception as e:
+            logger.error(f"❌ Error en reconciliación por firma: {e}")
+
         # Log final detallado
         logger.info(f"🎯 ===== CONSOLIDACIÓN COMPLETADA =====")
         logger.info(f"   🔍 Incidencias individuales: {total_incidencias_individuales}")
@@ -945,9 +998,9 @@ def crear_chunks_empleados_dinamicos(empleados_consolidados):
 
 def crear_incidencia_variacion_individual(empleado, concepto_actual, concepto_anterior, variacion_pct):
     """Crea incidencia para variación individual por empleado"""
-    return IncidenciaCierre(
+    obj = IncidenciaCierre(
         cierre=empleado.cierre,
-        empleado_rut=empleado.rut_empleado,
+        rut_empleado=empleado.rut_empleado,
         empleado_nombre=empleado.nombre_empleado,
         tipo_incidencia='variacion_concepto_individual',
         tipo_comparacion='individual',
@@ -967,12 +1020,16 @@ def crear_incidencia_variacion_individual(empleado, concepto_actual, concepto_an
             'tipo_comparacion': 'individual'
         }
     )
+    clave, h = obj.generar_firma()
+    obj.firma_clave = clave
+    obj.firma_hash = h
+    return obj
 
 def crear_incidencia_concepto_nuevo_empleado(empleado, concepto):
     """Crea incidencia para concepto nuevo en empleado existente"""
-    return IncidenciaCierre(
+    obj = IncidenciaCierre(
         cierre=empleado.cierre,
-        empleado_rut=empleado.rut_empleado,
+        rut_empleado=empleado.rut_empleado,
         empleado_nombre=empleado.nombre_empleado,
         tipo_incidencia='concepto_nuevo_empleado',
         tipo_comparacion='individual',
@@ -990,14 +1047,18 @@ def crear_incidencia_concepto_nuevo_empleado(empleado, concepto):
             'tipo_comparacion': 'individual'
         }
     )
+    clave, h = obj.generar_firma()
+    obj.firma_clave = clave
+    obj.firma_hash = h
+    return obj
 
 def crear_incidencia_concepto_eliminado_empleado(empleado_anterior, concepto_anterior, cierre_actual_id=None):
     """Crea incidencia para concepto eliminado de empleado existente
     Nota: cierre_actual_id debe ser el cierre en curso; si no se entrega, se usa el del empleado_anterior (fallback)
     """
-    return IncidenciaCierre(
+    obj = IncidenciaCierre(
         cierre_id=cierre_actual_id or empleado_anterior.cierre.id,
-        empleado_rut=empleado_anterior.rut_empleado,
+        rut_empleado=empleado_anterior.rut_empleado,
         empleado_nombre=empleado_anterior.nombre_empleado,
         tipo_incidencia='concepto_eliminado_empleado',
         tipo_comparacion='individual',
@@ -1015,12 +1076,17 @@ def crear_incidencia_concepto_eliminado_empleado(empleado_anterior, concepto_ant
             'tipo_comparacion': 'individual'
         }
     )
+    clave, h = obj.generar_firma()
+    obj.firma_clave = clave
+    obj.firma_hash = h
+    return obj
 
 def crear_incidencia_empleado_nuevo(empleado):
     """Crea incidencia informativa para empleado nuevo"""
+    # Informativa: no genera firma
     return IncidenciaCierre(
         cierre=empleado.cierre,
-        empleado_rut=empleado.rut_empleado,
+        rut_empleado=empleado.rut_empleado,
         empleado_nombre=empleado.nombre_empleado,
         tipo_incidencia='empleado_nuevo',
         tipo_comparacion='individual',
@@ -1044,7 +1110,7 @@ def crear_incidencia_suma_total(cierre_id, nombre_concepto, tipo_concepto, suma_
     """Crea incidencia para variación en suma total (valores JSON-serializables)."""
     variacion_pct_float = float(variacion_pct)
     variacion_abs_float = float(abs(suma_actual - suma_anterior))
-    return IncidenciaCierre(
+    obj = IncidenciaCierre(
         cierre_id=cierre_id,
         tipo_incidencia='variacion_suma_total',
         tipo_comparacion='suma_total',
@@ -1064,6 +1130,10 @@ def crear_incidencia_suma_total(cierre_id, nombre_concepto, tipo_concepto, suma_
             'tipo_comparacion': 'suma_total'
         }
     )
+    clave, h = obj.generar_firma()
+    obj.firma_clave = clave
+    obj.firma_hash = h
+    return obj
 
 def crear_incidencia_suma_total_categoria(cierre_id, categoria, suma_actual, suma_anterior, variacion_pct):
     """Crea incidencia para variación en suma total por CATEGORÍA (e.g., total haberes imponibles)."""
@@ -1079,7 +1149,7 @@ def crear_incidencia_suma_total_categoria(cierre_id, categoria, suma_actual, sum
     'total_liquido': 'Total Líquido',
     }
     nombre_legible = etiquetas.get(categoria, categoria)
-    return IncidenciaCierre(
+    obj = IncidenciaCierre(
         cierre_id=cierre_id,
         tipo_incidencia='variacion_suma_total_categoria',
         tipo_comparacion='suma_total',
@@ -1100,6 +1170,10 @@ def crear_incidencia_suma_total_categoria(cierre_id, categoria, suma_actual, sum
             'tipo_comparacion': 'suma_total'
         }
     )
+    clave, h = obj.generar_firma()
+    obj.firma_clave = clave
+    obj.firma_hash = h
+    return obj
 
 def crear_incidencia_concepto_nuevo_periodo(cierre_id, nombre_concepto, tipo_concepto):
     """Crea incidencia para concepto completamente nuevo en el período"""
@@ -1335,7 +1409,7 @@ def crear_incidencia_informativa_sin_conceptos(empleado):
     """Crea incidencia informativa para empleado sin conceptos"""
     return IncidenciaCierre(
         cierre=empleado.cierre,
-        empleado_rut=empleado.rut_empleado,
+        rut_empleado=empleado.rut_empleado,
         empleado_nombre=empleado.nombre_empleado,
         tipo_incidencia='empleado_sin_conceptos',
         tipo_comparacion='informativo',
@@ -1354,7 +1428,7 @@ def crear_incidencia_informativa_montos_cero(empleado):
     """Crea incidencia informativa para empleado con todos los conceptos en cero"""
     return IncidenciaCierre(
         cierre=empleado.cierre,
-        empleado_rut=empleado.rut_empleado,
+        rut_empleado=empleado.rut_empleado,
         empleado_nombre=empleado.nombre_empleado,
         tipo_incidencia='empleado_montos_cero',
         tipo_comparacion='informativo',
@@ -1372,7 +1446,7 @@ def crear_incidencia_informativa_monto_alto(empleado, concepto):
     """Crea incidencia informativa para concepto con monto anómalamente alto"""
     return IncidenciaCierre(
         cierre=empleado.cierre,
-        empleado_rut=empleado.rut_empleado,
+        rut_empleado=empleado.rut_empleado,
         empleado_nombre=empleado.nombre_empleado,
         tipo_incidencia='concepto_monto_anomalo',
         tipo_comparacion='informativo',

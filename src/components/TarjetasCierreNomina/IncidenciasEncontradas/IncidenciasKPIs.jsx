@@ -29,8 +29,13 @@ export default function IncidenciasKPIs({ incidencias = [] }) {
         case ESTADOS_INCIDENCIA.RESUELTA_ANALISTA:
           resueltasAnalista += 1; break;
         default:
-          // Considerar como pendiente todo lo que no esté aprobado; si está resuelta por analista pero no aprobada, cuenta aparte
-          if (er.estado === ESTADOS_INCIDENCIA.PENDIENTE || er.estado === ESTADOS_INCIDENCIA.RECHAZADA_SUPERVISOR || er.estado === ESTADOS_INCIDENCIA.RE_RESUELTA) {
+          // Pendientes: estados que aún requieren acción (no aprobadas ni rechazadas)
+          if (
+            er.estado === ESTADOS_INCIDENCIA.PENDIENTE ||
+            er.estado === ESTADOS_INCIDENCIA.RE_RESUELTA ||
+            er.estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE ||
+            er.estado === ESTADOS_INCIDENCIA.RESUELTA_ANALISTA
+          ) {
             pendientes += 1;
           }
           break;

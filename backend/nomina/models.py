@@ -4,6 +4,8 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import datetime
 from django.conf import settings
+import unicodedata
+import hashlib
 
 # Importar modelos de logging
 from .models_logging import UploadLogNomina, TarjetaActivityLogNomina
@@ -55,6 +57,7 @@ class CierreNomina(models.Model):
             ('con_discrepancias', 'Con Discrepancias'),
             ('con_incidencias', 'Con Incidencias'),
             ('incidencias_resueltas', 'Incidencias Resueltas'),
+            ('recarga_solicitud_pendiente', 'Recarga Solicitada (Pendiente de Aprobación)'),
             ('requiere_recarga_archivos', 'Requiere Recarga de Archivos'),
             ('validacion_final', 'Validación Final'),
             ('finalizado', 'Finalizado'),
@@ -82,6 +85,7 @@ class CierreNomina(models.Model):
     # === CAMPOS PARA MANEJO DE RECARGA DE ARCHIVOS ===
     observaciones_recarga = models.TextField(null=True, blank=True, help_text="Motivo para solicitar recarga de archivos")
     fecha_solicitud_recarga = models.DateTimeField(null=True, blank=True, help_text="Fecha cuando se solicitó la recarga")
+    fecha_aprobacion_recarga = models.DateTimeField(null=True, blank=True, help_text="Fecha cuando el supervisor aprobó la recarga")
     version_datos = models.PositiveIntegerField(default=1, help_text="Versión de los datos consolidados (incrementa con cada recarga)")
 
     # === CAMPOS PARA CONSOLIDACIÓN ===
@@ -868,6 +872,7 @@ class EstadoIncidencia(models.TextChoices):
     APROBADA_SUPERVISOR = 'aprobada_supervisor', 'Aprobada por Supervisor'
     RECHAZADA_SUPERVISOR = 'rechazada_supervisor', 'Rechazada por Supervisor'
     RE_RESUELTA = 're_resuelta', 'Re-resuelta por Analista'
+    RESOLUCION_SUPERVISOR_PENDIENTE = 'resolucion_supervisor_pendiente', 'Resolución de Supervisor Pendiente'
 
 def resolucion_upload_to(instance, filename):
     now = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -921,7 +926,7 @@ class IncidenciaCierre(models.Model):
     )
     
     # CAMPOS PARA RESOLUCIÓN COLABORATIVA
-    estado = models.CharField(max_length=20, choices=EstadoIncidencia.choices, default='pendiente')
+    estado = models.CharField(max_length=40, choices=EstadoIncidencia.choices, default='pendiente')
     prioridad = models.CharField(max_length=10, choices=[
         ('baja', 'Baja'),
         ('media', 'Media'),
@@ -943,6 +948,31 @@ class IncidenciaCierre(models.Model):
     resuelto_por = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='incidencias_resueltas')
     fecha_resolucion = models.DateTimeField(null=True, blank=True)
     comentario_resolucion = models.TextField(blank=True)
+
+    # Firma estable y tracking de versiones (para reconciliación vN)
+    firma_clave = models.CharField(
+        max_length=300,
+        null=True,
+        blank=True,
+        help_text="Clave legible de firma: ej. por_item_total|<item>|- o por_empleado_item|<item>|<rut>"
+    )
+    firma_hash = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Hash SHA1 hex de la firma_clave para búsquedas rápidas"
+    )
+    version_detectada_primera = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Primera versión de datos (cierre.version_datos) donde apareció la incidencia"
+    )
+    version_detectada_ultima = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Última versión de datos donde fue recalculada/detectada"
+    )
     
     class Meta:
         indexes = [
@@ -955,6 +985,9 @@ class IncidenciaCierre(models.Model):
             models.Index(fields=['cierre', 'tipo_comparacion']),
             models.Index(fields=['tipo_comparacion', 'estado']),
             models.Index(fields=['prioridad', 'fecha_detectada']),
+            # Índices para reconciliación por firma
+            models.Index(fields=['cierre', 'firma_hash']),
+            models.Index(fields=['firma_clave']),
         ]
         ordering = ['-fecha_detectada', '-impacto_monetario']
     
@@ -1057,7 +1090,58 @@ class IncidenciaCierre(models.Model):
         # Calcular impacto monetario automáticamente
         if not self.impacto_monetario:
             self.impacto_monetario = self.calcular_impacto_monetario()
+        # Generar firma y actualizar versiones para sistema dual
+        try:
+            if self.tipo_comparacion in ['individual', 'suma_total']:
+                if not self.firma_clave or not self.firma_hash:
+                    clave, h = self.generar_firma()
+                    self.firma_clave = self.firma_clave or clave
+                    self.firma_hash = self.firma_hash or h
+                # Tracking de versiones basado en cierre.version_datos
+                if self.cierre and getattr(self.cierre, 'version_datos', None) is not None:
+                    self.actualizar_firma_y_versiones(self.cierre.version_datos)
+        except Exception:
+            # No bloquear guardado si hay algún problema no crítico con la firma
+            pass
         super().save(*args, **kwargs)
+
+    # ===== Métodos de firma y versiones =====
+    @staticmethod
+    def _normalizar_item(nombre: str) -> str:
+        if not nombre:
+            return ''
+        # a minúsculas, trim, colapsar espacios y quitar acentos
+        s = unicodedata.normalize('NFKD', nombre).encode('ascii', 'ignore').decode('ascii')
+        s = ' '.join(s.strip().lower().split())
+        return s
+
+    def generar_firma(self):
+        """
+        Genera (firma_clave, firma_hash) según reglas acordadas:
+        - suma_total: por_item_total|<item_normalizado>|-
+        - individual: por_empleado_item|<item_normalizado>|<rut>
+        No aplica para 'legacy' o 'regla_negocio'.
+        """
+        if self.tipo_comparacion == 'suma_total':
+            item = self._normalizar_item(self.concepto_afectado or '')
+            clave = f"por_item_total|{item}|-"
+        elif self.tipo_comparacion == 'individual':
+            item = self._normalizar_item(self.concepto_afectado or '')
+            rut = (self.rut_empleado or '').strip()
+            clave = f"por_empleado_item|{item}|{rut}"
+        else:
+            # Sin firma para otros tipos
+            return None, None
+        h = hashlib.sha1(clave.encode('utf-8')).hexdigest()
+        return clave, h
+
+    def actualizar_firma_y_versiones(self, cierre_version: int):
+        """Actualiza version_detectada_primera y version_detectada_ultima si corresponde"""
+        if cierre_version is None:
+            return
+        if not self.version_detectada_primera:
+            self.version_detectada_primera = cierre_version
+        self.version_detectada_ultima = cierre_version
 
 class ResolucionIncidencia(models.Model):
     """Historial de resoluciones de una incidencia (conversación simplificada)"""

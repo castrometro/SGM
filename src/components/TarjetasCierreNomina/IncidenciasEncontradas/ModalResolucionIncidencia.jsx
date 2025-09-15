@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { X, Send, Upload, AlertTriangle, CheckCircle, MessageSquare, Clock, Eye, Lock } from "lucide-react";
-import { crearResolucionIncidencia, obtenerHistorialIncidencia, aprobarIncidencia, rechazarIncidencia } from "../../../api/nomina";
+import { crearResolucionIncidencia, obtenerHistorialIncidencia, aprobarIncidencia, rechazarIncidencia, confirmarDesaparicionIncidencia } from "../../../api/nomina";
+import { ESTADOS_INCIDENCIA } from "../../../utils/incidenciaUtils";
 
 const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucionCreada }) => {
   const [comentario, setComentario] = useState('');
@@ -292,6 +293,32 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
     return obtenerEstadoConversacion() === 'resuelta';
   };
 
+  const esConfirmacionPendiente = () => {
+    try {
+      return incidencia?.estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE;
+    } catch {
+      return false;
+    }
+  };
+
+  const manejarConfirmarDesaparicion = async () => {
+    if (!esConfirmacionPendiente()) return;
+    if (!window.confirm('¿Confirmar desaparición de esta incidencia?')) return;
+    setEnviando(true);
+    setError('');
+    try {
+      await confirmarDesaparicionIncidencia(incidencia.id, 'Confirmación desde modal');
+      await cargarHistorial();
+      if (onResolucionCreada) onResolucionCreada();
+      setTimeout(() => onCerrar && onCerrar(), 500);
+    } catch (e) {
+      console.error(e);
+      setError(e.message || 'Error confirmando desaparición');
+    } finally {
+      setEnviando(false);
+    }
+  };
+
   const obtenerMensajeTurno = () => {
     const estado = obtenerEstadoConversacion();
     if (estado === 'resuelta') {
@@ -451,6 +478,11 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                 <span className="text-xs text-gray-400">
                   • {obtenerMensajeTurno()}
                 </span>
+                {esConfirmacionPendiente() && (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-900/50 text-yellow-300 border border-yellow-700/30">
+                    Confirmación de desaparición pendiente
+                  </span>
+                )}
               </div>
             </div>
             <button
@@ -781,6 +813,20 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                         </div>
                       ) : (
                         <div className="flex justify-center space-x-4">
+                          {esConfirmacionPendiente() && esSupervisor() && (
+                            <button
+                              onClick={manejarConfirmarDesaparicion}
+                              disabled={enviando}
+                              className="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              {enviando ? (
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                              ) : (
+                                <CheckCircle className="w-4 h-4 mr-2" />
+                              )}
+                              Confirmar desaparición
+                            </button>
+                          )}
                           <button
                             onClick={manejarAprobar}
                             disabled={enviando || esIncidenciaResuelta() || !puedeAprobarORechazar()}

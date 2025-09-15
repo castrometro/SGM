@@ -587,41 +587,32 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         """
         cierre = self.get_object()
         
-        # Contar incidencias por estado de resolución
-        from .models import IncidenciaCierre, ResolucionIncidencia
+        # Contar incidencias por estado de resolución usando el estado de la incidencia
+        from .models import IncidenciaCierre
         # Base: excluir incidencias informativas del cómputo (p. ej. ingresos informativos auto-resueltos)
         incidencias = IncidenciaCierre.objects.filter(cierre=cierre).exclude(
             datos_adicionales__informativo=True
         )
-        # Alinear resoluciones al subconjunto filtrado de incidencias
-        resoluciones = ResolucionIncidencia.objects.filter(incidencia__in=incidencias)
         
         # NUEVO: Estadísticas por tipo de comparación del sistema dual
         incidencias_individuales = incidencias.filter(tipo_comparacion='individual')
         incidencias_suma_total = incidencias.filter(tipo_comparacion='suma_total')  
         incidencias_legacy = incidencias.filter(tipo_comparacion='legacy')
         
-        # Progreso general
+        # Progreso general (por estado directo de la incidencia)
         progreso = {
-            # Nuevo esquema: 'aprobacion' y 'rechazo' (sin sufijos)
-            'aprobadas': resoluciones.filter(tipo_resolucion='aprobacion').count(),
-            'pendientes': incidencias.exclude(
-                id__in=resoluciones.filter(
-                    tipo_resolucion__in=['aprobacion', 'rechazo']
-                ).values_list('incidencia_id', flat=True)
-            ).count(),
-            'rechazadas': resoluciones.filter(tipo_resolucion='rechazo').count()
+            'aprobadas': incidencias.filter(estado='aprobada_supervisor').count(),
+            'pendientes': incidencias.filter(estado__in=['pendiente', 'resolucion_supervisor_pendiente']).count(),
+            'rechazadas': incidencias.filter(estado='rechazada_supervisor').count(),
         }
         
         # Estados de resolución
         estados = {
-            'pendiente': incidencias.exclude(
-                id__in=resoluciones.values_list('incidencia_id', flat=True)
-            ).count(),
-            # Nuevo esquema: consideramos 'justificacion' como resolución del analista
-            'resuelta_analista': resoluciones.filter(tipo_resolucion='justificacion').count(),
-            'aprobada_supervisor': resoluciones.filter(tipo_resolucion='aprobacion').count(),
-            'rechazada_supervisor': resoluciones.filter(tipo_resolucion='rechazo').count()
+            'pendiente': incidencias.filter(estado='pendiente').count(),
+            'resolucion_supervisor_pendiente': incidencias.filter(estado='resolucion_supervisor_pendiente').count(),
+            'resuelta_analista': incidencias.filter(estado='resuelta_analista').count(),
+            'aprobada_supervisor': incidencias.filter(estado='aprobada_supervisor').count(),
+            'rechazada_supervisor': incidencias.filter(estado='rechazada_supervisor').count(),
         }
         
         # Distribución por prioridad
@@ -637,11 +628,7 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
             'activo': incidencias_individuales.exists() or incidencias_suma_total.exists(),
             'comparacion_individual': {
                 'total': incidencias_individuales.count(),
-                'pendientes': incidencias_individuales.exclude(
-                    id__in=resoluciones.filter(
-                        tipo_resolucion__in=['aprobacion', 'rechazo']
-                    ).values_list('incidencia_id', flat=True)
-                ).count(),
+                'pendientes': incidencias_individuales.filter(estado__in=['pendiente', 'resolucion_supervisor_pendiente']).count(),
                 'tipos_detectados': list(incidencias_individuales.values_list(
                     'tipo_incidencia', flat=True
                 ).distinct()),
@@ -654,11 +641,7 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
             },
             'comparacion_suma_total': {
                 'total': incidencias_suma_total.count(),
-                'pendientes': incidencias_suma_total.exclude(
-                    id__in=resoluciones.filter(
-                        tipo_resolucion__in=['aprobacion', 'rechazo']
-                    ).values_list('incidencia_id', flat=True)  
-                ).count(),
+                'pendientes': incidencias_suma_total.filter(estado__in=['pendiente', 'resolucion_supervisor_pendiente']).count(),
                 'tipos_detectados': list(incidencias_suma_total.values_list(
                     'tipo_incidencia', flat=True
                 ).distinct()),
@@ -708,6 +691,20 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
             # NUEVOS CAMPOS DEL SISTEMA DUAL
             'sistema_dual': sistema_dual,
             'rendimiento': rendimiento_info
+        })
+
+    @action(detail=True, methods=['get'], url_path='resumen-reconciliacion')
+    def resumen_reconciliacion(self, request, pk=None):
+        """Devuelve resumen de reconciliación por firma (vN) para mostrar KPIs de recarga."""
+        from .utils.reconciliacion import reconciliar_cierre_por_firma
+        cierre = self.get_object()
+        resumen = reconciliar_cierre_por_firma(cierre.id)
+        return Response({
+            'success': True,
+            'version': resumen.get('version'),
+            'vigentes_actualizadas': resumen.get('vigentes_actualizadas', 0),
+            'supervisor_pendiente': resumen.get('supervisor_pendiente', 0),
+            'unificadas': resumen.get('unificadas', 0)
         })
 
     @action(detail=True, methods=['post'], url_path='marcar-todas-como-justificadas')
@@ -823,12 +820,11 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
             # Actualizar campos de recarga
             cierre.observaciones_recarga = motivo
             cierre.fecha_solicitud_recarga = timezone.now()
-            cierre.version_datos = (cierre.version_datos or 0) + 1
-            cierre.estado = 'recarga_solicitada'  # Nuevo estado
+            # Supervisor podría marcar de inmediato como pendiente de aprobación o directamente requerir recarga
+            cierre.estado = 'recarga_solicitud_pendiente'
             cierre.save(update_fields=[
                 'observaciones_recarga', 
                 'fecha_solicitud_recarga', 
-                'version_datos', 
                 'estado'
             ])
             
@@ -841,9 +837,7 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
                 usuario=request.user,
                 detalles={
                     "motivo": motivo,
-                    "version_datos": cierre.version_datos,
-                    "estado_anterior": cierre.estado,
-                    "nueva_version": cierre.version_datos
+                    "estado": cierre.estado
                 },
                 ip_address=get_client_ip(request)
             )
@@ -860,7 +854,6 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
             return Response({
                 "success": True,
                 "mensaje": "Solicitud de recarga registrada exitosamente",
-                "version_datos": cierre.version_datos,
                 "estado_cierre": cierre.estado,
                 "instrucciones": instrucciones
             })
@@ -869,6 +862,100 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
             return Response({
                 "error": f"Error solicitando recarga: {str(e)}"
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'], url_path='solicitar-recarga-archivos-analista')
+    def solicitar_recarga_archivos_analista(self, request, pk=None):
+        """
+        El analista solicita la recarga; queda pendiente de aprobación del supervisor
+        """
+        from .models_logging import registrar_actividad_tarjeta_nomina
+        from .utils.clientes import get_client_ip
+        from django.utils import timezone
+
+        cierre = self.get_object()
+        motivo = request.data.get('motivo', '').strip()
+
+        if not motivo:
+            return Response({"error": "Debe proporcionar un motivo para la recarga"}, status=400)
+
+        try:
+            # Marcar como solicitud pendiente
+            cierre.observaciones_recarga = motivo
+            cierre.fecha_solicitud_recarga = timezone.now()
+            cierre.fecha_aprobacion_recarga = None
+            cierre.estado = 'recarga_solicitud_pendiente'
+            cierre.save(update_fields=['observaciones_recarga', 'fecha_solicitud_recarga', 'fecha_aprobacion_recarga', 'estado'])
+
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=cierre.id,
+                tarjeta="incidencias",
+                accion="solicitud_recarga_analista",
+                descripcion=f"Analista solicita recarga: {motivo}",
+                usuario=request.user,
+                detalles={"motivo": motivo, "estado": cierre.estado},
+                ip_address=get_client_ip(request)
+            )
+
+            return Response({
+                "success": True,
+                "mensaje": "Solicitud de recarga enviada y pendiente de aprobación",
+                "estado_cierre": cierre.estado
+            })
+        except Exception as e:
+            return Response({"error": f"Error solicitando recarga: {str(e)}"}, status=500)
+
+    @action(detail=True, methods=['post'], url_path='aprobar-recarga-archivos')
+    def aprobar_recarga_archivos(self, request, pk=None):
+        """
+        Supervisor aprueba la solicitud de recarga. Incrementa version_datos y habilita recarga.
+        """
+        from .models_logging import registrar_actividad_tarjeta_nomina
+        from .utils.clientes import get_client_ip
+        from django.utils import timezone
+
+        cierre = self.get_object()
+
+        # Verificar permisos de supervisor
+        if not request.user.puede_supervisar_analista():
+            return Response({"error": "Solo supervisores pueden aprobar recarga"}, status=403)
+
+        try:
+            cierre.fecha_aprobacion_recarga = timezone.now()
+            cierre.version_datos = (cierre.version_datos or 0) + 1
+            cierre.estado = 'requiere_recarga_archivos'
+            cierre.save(update_fields=['fecha_aprobacion_recarga', 'version_datos', 'estado'])
+
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=cierre.id,
+                tarjeta="incidencias",
+                accion="aprobar_recarga_archivos",
+                descripcion=f"Aprobación de recarga. Versión datos: {cierre.version_datos}",
+                usuario=request.user,
+                detalles={
+                    "estado_previo": 'recarga_solicitud_pendiente',
+                    "estado_nuevo": cierre.estado,
+                    "version_datos": cierre.version_datos
+                },
+                ip_address=get_client_ip(request)
+            )
+
+            instrucciones = [
+                "1. Corregir los datos problemáticos en Talana",
+                "2. Exportar nuevamente los archivos desde Talana",
+                "3. Resubir archivos en esta plataforma",
+                "4. Ejecutar nueva consolidación",
+                "5. Verificar que las incidencias se resuelvan"
+            ]
+
+            return Response({
+                "success": True,
+                "mensaje": "Recarga aprobada. Proceda a resubir archivos",
+                "version_datos": cierre.version_datos,
+                "estado_cierre": cierre.estado,
+                "instrucciones": instrucciones
+            })
+        except Exception as e:
+            return Response({"error": f"Error aprobando recarga: {str(e)}"}, status=500)
 
 class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
     queryset = LibroRemuneracionesUpload.objects.all()
@@ -2004,6 +2091,52 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
             "modo_procesamiento": "dual_v2",
             "logger": "nomina.incidencias"
         }, status=202)
+
+    @action(detail=True, methods=['post'], url_path='confirmar-desaparicion')
+    def confirmar_desaparicion(self, request, pk=None):
+        """Confirma como cerrada una incidencia marcada como resolucion_supervisor_pendiente (caso desaparecida)."""
+        try:
+            inc = self.get_object()
+            if inc.estado != 'resolucion_supervisor_pendiente':
+                return Response({"error": "La incidencia no está pendiente de confirmación"}, status=400)
+            if not request.user.puede_supervisar_analista():
+                return Response({"error": "Solo supervisor puede confirmar desapariciones"}, status=403)
+            inc.estado = 'aprobada_supervisor'
+            inc.save(update_fields=['estado'])
+            # Nota del sistema
+            from .models import ResolucionIncidencia
+            ResolucionIncidencia.objects.create(
+                incidencia=inc,
+                usuario=request.user,
+                tipo_resolucion='aprobacion',
+                comentario='Confirmada desaparición tras recarga (reconciliación)'
+            )
+            return Response({"success": True})
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+
+    @action(detail=False, methods=['post'], url_path='confirmar-desapariciones/(?P<cierre_id>[^/.]+)')
+    def confirmar_desapariciones_masivo(self, request, cierre_id=None):
+        """Confirma en bloque todas las incidencias de un cierre en estado resolucion_supervisor_pendiente."""
+        try:
+            if not request.user.puede_supervisar_analista():
+                return Response({"error": "Solo supervisor puede confirmar desapariciones"}, status=403)
+            qs = IncidenciaCierre.objects.filter(cierre_id=cierre_id, estado='resolucion_supervisor_pendiente')
+            count = 0
+            from .models import ResolucionIncidencia
+            for inc in qs.iterator():
+                inc.estado = 'aprobada_supervisor'
+                inc.save(update_fields=['estado'])
+                ResolucionIncidencia.objects.create(
+                    incidencia=inc,
+                    usuario=request.user,
+                    tipo_resolucion='aprobacion',
+                    comentario='Confirmación masiva de desapariciones (reconciliación)'
+                )
+                count += 1
+            return Response({"success": True, "confirmadas": count})
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
     
     @action(detail=False, methods=['delete'], url_path='limpiar/(?P<cierre_id>[^/.]+)')
     def limpiar_incidencias(self, request, cierre_id=None):

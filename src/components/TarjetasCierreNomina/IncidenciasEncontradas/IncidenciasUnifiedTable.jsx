@@ -2,17 +2,18 @@ import React, { useMemo, useState } from "react";
 import { Eye, BarChart3, LayoutList, CornerDownRight, ChevronsUpDown, ChevronUp, ChevronDown, TrendingUp, TrendingDown } from "lucide-react";
 import { formatearMonedaChilena } from "../../../utils/formatters";
 import { useAuth } from "../../../hooks/useAuth";
-import { obtenerEstadoReal } from "../../../utils/incidenciaUtils";
+import { obtenerEstadoReal, ESTADOS_INCIDENCIA } from "../../../utils/incidenciaUtils";
+import { confirmarDesaparicionIncidencia } from "../../../api/nomina";
 
 // Tabla unificada que muestra SOLO incidencias de los tipos requeridos:
 // - individual (por empleado por ítem)
 // - suma_total (agregado por ítem del mes vs mes anterior)
 // Excluye: legacy y agregados por categoría (cuando vienen como 'categoria' en datos_adicionales)
-export default function IncidenciasUnifiedTable({ incidencias = [], onIncidenciaSeleccionada }) {
+export default function IncidenciasUnifiedTable({ incidencias = [], onIncidenciaSeleccionada, onAfterAction }) {
   const { user } = useAuth();
   const [sortKey, setSortKey] = useState("variacion_porcentual");
   const [sortDir, setSortDir] = useState("desc");
-  const [viewChip, setViewChip] = useState("todos"); // todos | topVar | topImpact
+  const [viewChip, setViewChip] = useState("todos"); // todos | topVar | topImpact | pendConf
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [dense, setDense] = useState(true);
@@ -47,6 +48,15 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
         .filter(i => i.tipo_incidencia !== 'ingreso_empleado')
         .sort((a, b) => Math.abs(Number(b.impacto_monetario ?? 0)) - Math.abs(Number(a.impacto_monetario ?? 0)))
         .slice(0, 50);
+    } else if (viewChip === 'pendConf') {
+      filtradas = filtradas.filter(i => {
+        if (i?.estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE) return true;
+        try {
+          return obtenerEstadoReal(i).estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE;
+        } catch {
+          return false;
+        }
+      });
     }
     // Agrupar por concepto/tipo_concepto
     const byKey = new Map();
@@ -231,6 +241,7 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
               { key: 'todos', label: 'Todos' },
               { key: 'topVar', label: 'Top 50 Var%' },
               { key: 'topImpact', label: 'Top 50 Impacto' },
+              { key: 'pendConf', label: 'Confirmación pendiente' },
             ].map(ch => (
               <button
                 key={ch.key}
@@ -329,19 +340,19 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
                     <td className={`${tdPad} whitespace-nowrap`}>
                       {isExpandable ? '—' : (
                         (() => {
-                          const esSupervisor = user?.is_staff || user?.is_superuser;
-                          const resoluciones = g.resumen?.raw?.resoluciones || [];
-                          if (!resoluciones.length) {
-                            return <span className={`text-sm font-medium ${!esSupervisor ? 'text-yellow-400' : 'text-gray-400'}`}>Analista</span>;
-                          }
-                          const ultima = [...resoluciones].sort((a,b) => new Date(b.fecha_resolucion) - new Date(a.fecha_resolucion))[0];
-                          if (ultima.tipo_resolucion === 'aprobacion') {
+                          const estado = g.resumen?.raw ? obtenerEstadoReal(g.resumen.raw).estado : null;
+                          if (!estado) return <span className="text-sm font-medium text-gray-400">Analista</span>;
+                          if (estado === ESTADOS_INCIDENCIA.APROBADA_SUPERVISOR) {
                             return <span className="text-sm font-medium text-green-400">Aprobada</span>;
                           }
-                          const esDelSupervisor = ['consulta', 'rechazo'].includes(ultima.tipo_resolucion);
-                          const turno = esDelSupervisor ? 'Analista' : 'Supervisor';
-                          const color = turno === 'Analista' ? 'text-yellow-400' : 'text-gray-400';
-                          return <span className={`text-sm font-medium ${color}`}>{turno}</span>;
+                          if (estado === ESTADOS_INCIDENCIA.RECHAZADA_SUPERVISOR) {
+                            return <span className="text-sm font-medium text-yellow-400">Analista</span>;
+                          }
+                          if (estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE || estado === ESTADOS_INCIDENCIA.RESUELTA_ANALISTA) {
+                            return <span className="text-sm font-medium text-gray-400">Supervisor</span>;
+                          }
+                          // pendiente o re_resuelta
+                          return <span className="text-sm font-medium text-yellow-400">Analista</span>;
                         })()
                       )}
                     </td>
@@ -399,6 +410,8 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
                         <div className="flex items-center">
                           {r.especial === 'ingreso_empleado' ? (
                             <span className="text-sm text-emerald-300 font-medium">Informativo</span>
+                          ) : r.raw?.estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE ? (
+                            <span className="text-sm text-yellow-300">Confirmación pendiente</span>
                           ) : (
                             <span className="text-sm text-gray-300">{r.estadoReal.display}</span>
                           )}
@@ -409,31 +422,49 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
                           <span className="text-sm font-medium text-emerald-300">Informativo</span>
                         ) : (
                           (() => {
-                            const esSupervisor = user?.is_staff || user?.is_superuser;
-                            const resoluciones = r.raw?.resoluciones || [];
-                            if (!resoluciones.length) {
-                              return <span className={`text-sm font-medium ${!esSupervisor ? 'text-yellow-400' : 'text-gray-400'}`}>{!esSupervisor ? 'Analista' : 'Analista'}</span>;
-                            }
-                            const ultima = [...resoluciones].sort((a,b) => new Date(b.fecha_resolucion) - new Date(a.fecha_resolucion))[0];
-                            if (ultima.tipo_resolucion === 'aprobacion') {
+                            const estado = r.raw ? obtenerEstadoReal(r.raw).estado : null;
+                            if (!estado) return <span className="text-sm font-medium text-gray-400">Analista</span>;
+                            if (estado === ESTADOS_INCIDENCIA.APROBADA_SUPERVISOR) {
                               return <span className="text-sm font-medium text-green-400">Aprobada</span>;
                             }
-                            const esDelSupervisor = ['consulta', 'rechazo'].includes(ultima.tipo_resolucion);
-                            const turno = esDelSupervisor ? 'Analista' : 'Supervisor';
-                            const color = turno === 'Analista' ? 'text-yellow-400' : 'text-gray-400';
-                            return <span className={`text-sm font-medium ${color}`}>{turno}</span>;
+                            if (estado === ESTADOS_INCIDENCIA.RECHAZADA_SUPERVISOR) {
+                              return <span className="text-sm font-medium text-yellow-400">Analista</span>;
+                            }
+                            if (estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE || estado === ESTADOS_INCIDENCIA.RESUELTA_ANALISTA) {
+                              return <span className="text-sm font-medium text-gray-400">Supervisor</span>;
+                            }
+                            // pendiente o re_resuelta
+                            return <span className="text-sm font-medium text-yellow-400">Analista</span>;
                           })()
                         )}
                       </td>
                       <td className={`${tdPad} whitespace-nowrap text-sm text-gray-300`}>
                         {r.especial === 'ingreso_empleado' ? null : (
-                          <button
-                            onClick={() => onIncidenciaSeleccionada && onIncidenciaSeleccionada(r.raw)}
-                            className="text-blue-400 hover:text-blue-300 p-1 rounded-md hover:bg-blue-500/10 transition-colors"
-                            title="Ver detalles"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
+                          <div className="flex items-center gap-2">
+                            {r.raw?.estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE && (
+                              <button
+                                onClick={async () => {
+                                  if (!window.confirm('¿Confirmar desaparición de esta incidencia?')) return;
+                                  try {
+                                    await confirmarDesaparicionIncidencia(r.raw.id, 'Confirmación individual');
+                                    onAfterAction && onAfterAction();
+                                  } catch (e) {
+                                    // eslint-disable-next-line no-console
+                                    console.error(e);
+                                    alert('Error confirmando desaparición');
+                                  }
+                                }}
+                                className="text-indigo-300 hover:text-white px-2 py-1 rounded bg-indigo-600/20 hover:bg-indigo-600/40"
+                              >Confirmar</button>
+                            )}
+                            <button
+                              onClick={() => onIncidenciaSeleccionada && onIncidenciaSeleccionada(r.raw)}
+                              className="text-blue-400 hover:text-blue-300 p-1 rounded-md hover:bg-blue-500/10 transition-colors"
+                              title="Ver detalles"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>

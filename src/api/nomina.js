@@ -45,6 +45,26 @@ export const actualizarEstadoCierreNomina = async (cierreId) => {
   return res.data;
 };
 
+// Solicitar recarga de archivos (reactiva la etapa de carga/clasificación)
+export const solicitarRecargaArchivos = async (cierreId, motivo) => {
+  const res = await api.post(`/nomina/cierres/${cierreId}/solicitar-recarga-archivos/`, {
+    motivo,
+  });
+  return res.data;
+};
+
+// Solicitar recarga (analista) → deja el cierre en 'recarga_solicitud_pendiente'
+export const solicitarRecargaArchivosAnalista = async (cierreId, motivo) => {
+  const res = await api.post(`/nomina/cierres/${cierreId}/solicitar-recarga-archivos-analista/`, { motivo });
+  return res.data;
+};
+
+// Aprobar recarga (supervisor) → pasa a 'requiere_recarga_archivos' y sube version_datos
+export const aprobarRecargaArchivos = async (cierreId) => {
+  const res = await api.post(`/nomina/cierres/${cierreId}/aprobar-recarga-archivos/`);
+  return res.data;
+};
+
 // Consolidar datos de Talana (Libro + Novedades)
 export const consolidarDatosTalana = async (cierreId) => {
   const res = await api.post(`/nomina/cierres/${cierreId}/consolidar-datos/`);
@@ -278,6 +298,30 @@ export const obtenerEstadoIncidenciasCierre = async (cierreId) => {
     console.error("❌ [API] obtenerEstadoIncidenciasCierre - Error response:", error.response);
     throw error;
   }
+};
+
+// ========== RECONCILIACIÓN (recargas Talana) ==========
+
+// KPIs de reconciliación por cierre (vigentes_actualizadas, supervisor_pendiente, unificadas, etc.)
+export const obtenerResumenReconciliacion = async (cierreId) => {
+  const response = await api.get(`/nomina/cierres/${cierreId}/resumen-reconciliacion/`);
+  return response.data;
+};
+
+// Confirmar desaparición individual (incidencia marcada como 'resolucion_supervisor_pendiente')
+export const confirmarDesaparicionIncidencia = async (incidenciaId, comentario = '') => {
+  const response = await api.post(`/nomina/incidencias/${incidenciaId}/confirmar-desaparicion/`, {
+    comentario,
+  });
+  return response.data;
+};
+
+// Confirmar todas las desapariciones de un cierre
+export const confirmarDesaparicionesCierre = async (cierreId, comentario = '') => {
+  const response = await api.post(`/nomina/incidencias/confirmar-desapariciones/${cierreId}/`, {
+    comentario,
+  });
+  return response.data;
 };
 
 // Lanzar generación de incidencias desde el cierre

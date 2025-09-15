@@ -620,7 +620,7 @@ class ResolucionIncidenciaInline(admin.TabularInline):
     model = ResolucionIncidencia
     extra = 0
     readonly_fields = ('fecha_resolucion',)
-    fields = ('tipo_resolucion', 'usuario', 'comentario', 'valor_corregido', 'fecha_resolucion')
+    fields = ('tipo_resolucion', 'usuario', 'comentario', 'fecha_resolucion')
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('usuario')
@@ -633,6 +633,7 @@ class IncidenciaCierreAdmin(admin.ModelAdmin):
         'id',
         'cierre_info',
         'rut_empleado',
+        'tipo_comparacion',
         'tipo_incidencia_display',
         'prioridad_display', 
         'estado_display',
@@ -661,7 +662,15 @@ class IncidenciaCierreAdmin(admin.ModelAdmin):
     readonly_fields = (
         'fecha_detectada',
         'fecha_primera_resolucion',
-        'cierre_info_detailed'
+        'cierre_info_detailed',
+        'valor_actual_display',
+        'valor_anterior_display',
+        'empleado_display',
+        'tipo_comparacion',
+        'firma_clave',
+        'firma_hash',
+        'version_detectada_primera',
+        'version_detectada_ultima'
     )
     fieldsets = (
         ('Información General', {
@@ -669,7 +678,9 @@ class IncidenciaCierreAdmin(admin.ModelAdmin):
                 'cierre',
                 'cierre_info_detailed',
                 'tipo_incidencia',
+                'tipo_comparacion',
                 'rut_empleado',
+                'empleado_display',
                 'descripcion'
             )
         }),
@@ -683,18 +694,28 @@ class IncidenciaCierreAdmin(admin.ModelAdmin):
         }),
         ('Valores Comparados', {
             'fields': (
+                'valor_actual_display',
+                'valor_anterior_display',
+                'impacto_monetario'
+            )
+        }),
+        ('Valores Legacy (compatibilidad)', {
+            'fields': (
                 'valor_libro',
                 'valor_novedades',
                 'valor_movimientos',
                 'valor_analista',
-                'impacto_monetario'
             ),
             'classes': ('collapse',)
         }),
         ('Referencias', {
             'fields': (
                 'empleado_libro',
-                'empleado_novedades'
+                'empleado_novedades',
+                'firma_clave',
+                'firma_hash',
+                'version_detectada_primera',
+                'version_detectada_ultima'
             ),
             'classes': ('collapse',)
         }),
@@ -752,6 +773,45 @@ class IncidenciaCierreAdmin(admin.ModelAdmin):
         color = colors.get(obj.estado, '#6b7280')
         return format_html('<span style="color: {};">●</span> {}', color, obj.get_estado_display())
     estado_display.short_description = 'Estado'
+
+    # ===== Campos derivados para mostrar valores y referencias del sistema dual =====
+    def _extraer_valor(self, obj, clave_primaria, fallback):
+        try:
+            if obj.datos_adicionales and clave_primaria in obj.datos_adicionales:
+                return obj.datos_adicionales.get(clave_primaria)
+        except Exception:
+            pass
+        # Fallback a campo legacy si existe
+        return fallback
+
+    def valor_actual_display(self, obj):
+        """Muestra 'valor actual' tomando monto/suma actual desde datos_adicionales o legacy."""
+        # individual: monto_actual, suma_total: suma_actual
+        valor = self._extraer_valor(obj, 'monto_actual', None)
+        if valor is None:
+            valor = self._extraer_valor(obj, 'suma_actual', None)
+        if valor is None:
+            valor = obj.valor_libro
+        return valor if valor not in [None, ''] else '-'
+    valor_actual_display.short_description = 'Valor actual'
+
+    def valor_anterior_display(self, obj):
+        """Muestra 'valor anterior' tomando monto/suma anterior desde datos_adicionales o legacy."""
+        valor = self._extraer_valor(obj, 'monto_anterior', None)
+        if valor is None:
+            valor = self._extraer_valor(obj, 'suma_anterior', None)
+        if valor is None:
+            valor = obj.valor_novedades
+        return valor if valor not in [None, ''] else '-'
+    valor_anterior_display.short_description = 'Valor anterior'
+
+    def empleado_display(self, obj):
+        nombre = getattr(obj, 'empleado_nombre', None)
+        rut = getattr(obj, 'rut_empleado', None)
+        if nombre or rut:
+            return f"{nombre or ''} ({rut or 's/rut'})"
+        return '-'
+    empleado_display.short_description = 'Empleado'
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
@@ -873,6 +933,91 @@ IncidenciaCierreAdmin.actions = [
     marcar_como_pendientes,
     marcar_como_resueltas
 ]
+
+
+# ====== ACCIONES MASIVAS DE SUPERVISIÓN ======
+
+@admin.action(description='Rechazar incidencias seleccionadas (masivo)')
+def rechazar_incidencias_masivo(modeladmin, request, queryset):
+    """Marca todas las incidencias seleccionadas como rechazadas por el supervisor y registra una resolución."""
+    from django.utils import timezone
+    from .models import ResolucionIncidencia
+
+    comentario = request.POST.get('comentario', '').strip() or 'Rechazo masivo desde admin'
+    usuario = request.user
+
+    actualizadas = 0
+    # Hacemos un loop para registrar resolución por cada incidencia
+    for inc in queryset.select_related('cierre'):
+        cambios = {}
+        if inc.estado != 'rechazada_supervisor':
+            inc.estado = 'rechazada_supervisor'
+            cambios['estado'] = 'rechazada_supervisor'
+        if getattr(inc, 'resuelto_por_id', None) != usuario.id:
+            inc.resuelto_por = usuario
+            cambios['resuelto_por'] = usuario
+        if not inc.fecha_resolucion:
+            inc.fecha_resolucion = timezone.now()
+            cambios['fecha_resolucion'] = inc.fecha_resolucion
+        if comentario and inc.comentario_resolucion != comentario:
+            inc.comentario_resolucion = comentario
+            cambios['comentario_resolucion'] = comentario
+        if cambios:
+            inc.save()
+            actualizadas += 1
+        # Registrar resolución
+        ResolucionIncidencia.objects.create(
+            incidencia=inc,
+            usuario=usuario,
+            tipo_resolucion='rechazo',
+            comentario=comentario
+        )
+
+    modeladmin.message_user(request, f"{actualizadas} incidencia(s) actualizada(s) a 'rechazada_supervisor'.")
+
+
+# Registrar acción en la clase
+IncidenciaCierreAdmin.actions = list(IncidenciaCierreAdmin.actions) + [rechazar_incidencias_masivo]
+
+
+@admin.action(description='Aprobar incidencias seleccionadas (masivo)')
+def aprobar_incidencias_masivo(modeladmin, request, queryset):
+    """Marca todas las incidencias seleccionadas como aprobadas por el supervisor y registra una resolución."""
+    from django.utils import timezone
+    from .models import ResolucionIncidencia
+
+    comentario = request.POST.get('comentario', '').strip() or 'Aprobación masiva desde admin'
+    usuario = request.user
+
+    actualizadas = 0
+    for inc in queryset.select_related('cierre'):
+        cambios = {}
+        if inc.estado != 'aprobada_supervisor':
+            inc.estado = 'aprobada_supervisor'
+            cambios['estado'] = 'aprobada_supervisor'
+        if getattr(inc, 'resuelto_por_id', None) != usuario.id:
+            inc.resuelto_por = usuario
+            cambios['resuelto_por'] = usuario
+        if not inc.fecha_resolucion:
+            inc.fecha_resolucion = timezone.now()
+            cambios['fecha_resolucion'] = inc.fecha_resolucion
+        if comentario and inc.comentario_resolucion != comentario:
+            inc.comentario_resolucion = comentario
+            cambios['comentario_resolucion'] = comentario
+        if cambios:
+            inc.save()
+            actualizadas += 1
+        # Registrar resolución
+        ResolucionIncidencia.objects.create(
+            incidencia=inc,
+            usuario=usuario,
+            tipo_resolucion='aprobacion',
+            comentario=comentario
+        )
+
+    modeladmin.message_user(request, f"{actualizadas} incidencia(s) actualizada(s) a 'aprobada_supervisor'.")
+
+IncidenciaCierreAdmin.actions = list(IncidenciaCierreAdmin.actions) + [aprobar_incidencias_masivo]
 
 
 # ========== ADMINISTRACIÓN DE ANÁLISIS DE DATOS ==========

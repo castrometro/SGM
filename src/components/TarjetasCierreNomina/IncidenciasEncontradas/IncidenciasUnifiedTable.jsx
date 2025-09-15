@@ -15,7 +15,7 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
   const [sortDir, setSortDir] = useState("desc");
   const [viewChip, setViewChip] = useState("todos"); // todos | topVar | topImpact | pendConf
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  const [pageSize, setPageSize] = useState(10);
   const [dense, setDense] = useState(true);
   const [expanded, setExpanded] = useState(() => new Set()); // grupos expandidos
 

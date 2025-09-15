@@ -1110,31 +1110,7 @@ const IncidenciasEncontradasSection = ({
             </div>
           )}
 
-          {/* Resumen de incidencias - contadores removed por requerimiento (total, críticas, pendientes, impacto) */}
-          {resumen && resumen.total > 0 && (
-            <div className="bg-yellow-900/20 border border-yellow-500/30 rounded-lg p-4">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="w-5 h-5 text-yellow-400 mt-0.5" />
-                <div className="text-sm text-yellow-300">
-                  <strong>¿Cómo resolver las incidencias?</strong>
-                  <p className="mt-1">
-                    Las incidencias comparan datos actuales vs históricos. Para resolverlas:
-                  </p>
-                  <ol className="mt-2 space-y-1 list-decimal list-inside">
-                    <li><strong>Revisar incidencias:</strong> Examina las diferencias temporales detectadas en la tabla inferior.</li>
-                    <li><strong>Opción A - Marcar como resueltas:</strong> Si las diferencias son esperadas o correctas, marca las incidencias como resueltas.</li>
-                    <li><strong>Opción B - Corregir datos actuales:</strong> Si hay errores en los datos del mes actual:</li>
-                    <ul className="ml-6 mt-1 space-y-1 list-disc list-inside text-xs">
-                      <li>Usa "Resubir archivo" en las tarjetas de <strong>Talana</strong> (Libro de Remuneraciones, MovimientosMes)</li>
-                      <li>Sube los archivos de Talana corregidos</li>
-                      <li>Regresa aquí y presiona "Generar Incidencias" nuevamente</li>
-                      <li>Repite hasta resolver todas las inconsistencias temporales</li>
-                    </ul>
-                  </ol>
-                </div>
-              </div>
-            </div>
-          )}
+          {/* Bloque informativo “¿Cómo resolver las incidencias?” eliminado por requerimiento */}
 
           {/* Bloque de filtros eliminado por requerimiento */}
 

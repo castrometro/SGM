@@ -23,6 +23,7 @@ const NovedadesCard = ({
 }) => {
   const fileInputRef = useRef();
   const pollingRef = useRef(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
 
   // Estado local para errores y procesamiento
   const [error, setError] = useState("");
@@ -133,6 +134,12 @@ const NovedadesCard = ({
       console.log('📁 Iniciando subida de archivo Novedades:', archivo.name);
       await onSubirArchivo(archivo);
       console.log('✅ Archivo Novedades subido exitosamente');
+
+      // 🔄 Resetear input para permitir re-seleccionar el mismo archivo si es necesario
+      try {
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      } catch (_) {}
+      setFileInputKey((k) => k + 1);
       
       if (onActualizarEstado) {
         console.log('🔄 Forzando actualización de estado post-subida Novedades...');
@@ -178,6 +185,19 @@ const NovedadesCard = ({
     setError("");
     try {
       await onEliminarArchivo();
+      // 🔄 Resetear input para permitir nueva selección inmediata sin recargar
+      try {
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      } catch (_) {}
+      setFileInputKey((k) => k + 1);
+      setProcesandoLocal(false);
+
+      // 🔁 Re-consultar estado tras eliminación
+      if (onActualizarEstado) {
+        setTimeout(() => {
+          onActualizarEstado();
+        }, 300);
+      }
     } catch (err) {
       setError("Error eliminando el archivo.");
     } finally {
@@ -332,6 +352,7 @@ const NovedadesCard = ({
         type="file"
         accept=".xlsx"
         ref={fileInputRef}
+        key={`novedades-file-${fileInputKey}`}
         style={{ display: "none" }}
         onChange={handleSeleccionArchivo}
         disabled={isDisabled || !puedeInteractuarConArchivo}

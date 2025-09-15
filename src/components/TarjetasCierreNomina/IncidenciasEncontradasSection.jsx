@@ -708,10 +708,16 @@ const IncidenciasEncontradasSection = ({
                 </button>
 
                 {/* Botón Finalizar Cierre - Basado en puede_finalizar (backend) o estado local */}
-                {(estadoIncidencias?.puede_finalizar || cierre?.estado === 'incidencias_resueltas') && (
+                {(
+                  estadoIncidencias?.puede_finalizar ||
+                  cierre?.estado === 'incidencias_resueltas' ||
+                  (cierre?.estado_incidencias === 'resueltas' && (estadoIncidencias?.total_incidencias === 0 || cierre?.total_incidencias === 0))
+                ) && (
                   <button
                     onClick={manejarFinalizarCierre}
-                    disabled={finalizandoCierre || !estadoIncidencias?.puede_finalizar}
+                    disabled={finalizandoCierre || (
+                      !estadoIncidencias?.puede_finalizar && cierre?.estado !== 'incidencias_resueltas' && cierre?.estado_incidencias !== 'resueltas'
+                    )}
                     className="flex items-center px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
                   >
                     {finalizandoCierre ? (

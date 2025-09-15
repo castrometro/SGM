@@ -31,6 +31,30 @@ from ..models import (
 
 logger = logging.getLogger('nomina.incidencias')
 
+# ==============================
+# 🔐 Helpers de serialización
+# ==============================
+def _serialize_decimal(value):
+    """Convierte Decimals a tipos JSON-serializables.
+    - Si es entero exacto -> int
+    - Si tiene decimales -> float
+    - Recursivo sobre dicts/listas/tuplas/sets
+    """
+    if isinstance(value, Decimal):
+        if value == value.to_integral_value():
+            try:
+                return int(value)
+            except Exception:
+                return float(value)
+        return float(value)
+    if isinstance(value, dict):
+        return {k: _serialize_decimal(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        t = type(value)
+        return t(_serialize_decimal(v) for v in value)
+    return value
+
+
 # ================================
 # 🎯 CONFIGURACIÓN PABLO - CONCEPTOS A ANALIZAR
 # ================================
@@ -119,9 +143,11 @@ def generar_incidencias_consolidados_v2(cierre_id, clasificaciones_seleccionadas
         logger.info(f"📊 Comparando {cierre_actual.periodo} vs {cierre_anterior.periodo}")
         
         # 1. PREPARAR EMPLEADOS PARA COMPARACIÓN INDIVIDUAL
+        # Nota: El related_name correcto para ConceptoConsolidado es 'conceptos' (ver modelo),
+        # antes se intentaba prefetch_related('conceptos_consolidados') y fallaba.
         empleados_consolidados = NominaConsolidada.objects.filter(
             cierre=cierre_actual
-        ).select_related('cierre').prefetch_related('conceptos_consolidados')
+        ).select_related('cierre').prefetch_related('conceptos')
         
         total_empleados = empleados_consolidados.count()
         logger.info(f"👥 Total empleados a procesar: {total_empleados}")
@@ -1259,14 +1285,15 @@ def generar_analisis_primer_cierre(cierre_actual, clasificaciones_seleccionadas)
         dict: Resultado del análisis informativo
     """
     logger.info(f"🆕 Iniciando análisis informativo para primer cierre {cierre_actual.id}")
-    
+
     try:
-        incidencias_informativas = []
+        # Política final: Primer cierre NO genera incidencias (ninguna, ni informativas ni resumen).
         
         # 1. OBTENER EMPLEADOS CONSOLIDADOS
+        # Igual que arriba, usar 'conceptos' como related_name válido
         empleados_consolidados = NominaConsolidada.objects.filter(
             cierre=cierre_actual
-        ).prefetch_related('conceptos_consolidados')
+        ).prefetch_related('conceptos')
         
         total_empleados = empleados_consolidados.count()
         
@@ -1286,51 +1313,11 @@ def generar_analisis_primer_cierre(cierre_actual, clasificaciones_seleccionadas)
         empleados_con_montos_cero = 0
         conceptos_anomalos = []
         
-        for empleado in empleados_consolidados:
-            conceptos = empleado.conceptos_consolidados.filter(
-                tipo_concepto__in=clasificaciones_seleccionadas
-            ) if clasificaciones_seleccionadas else empleado.conceptos_consolidados.all()
-            
-            # Empleados sin conceptos
-            if conceptos.count() == 0:
-                empleados_sin_conceptos += 1
-                incidencias_informativas.append(
-                    crear_incidencia_informativa_sin_conceptos(empleado)
-                )
-            
-            # Empleados con todos los conceptos en 0
-            conceptos_con_monto = conceptos.filter(monto_total__gt=0)
-            if conceptos.count() > 0 and conceptos_con_monto.count() == 0:
-                empleados_con_montos_cero += 1
-                incidencias_informativas.append(
-                    crear_incidencia_informativa_montos_cero(empleado)
-                )
-            
-            # Detectar conceptos con montos muy altos (posibles errores)
-            for concepto in conceptos:
-                if concepto.monto_total > 10000000:  # Más de 10M
-                    conceptos_anomalos.append(concepto)
-                    incidencias_informativas.append(
-                        crear_incidencia_informativa_monto_alto(empleado, concepto)
-                    )
+        # (Eliminado) Generación de incidencias por empleado para primer cierre.
         
-        # 4. CREAR INCIDENCIA RESUMEN
-        incidencias_informativas.append(
-            crear_incidencia_resumen_primer_cierre(cierre_actual, stats, empleados_sin_conceptos, empleados_con_montos_cero)
-        )
-        
-        # 5. GUARDAR INCIDENCIAS INFORMATIVAS
-        if incidencias_informativas:
-            IncidenciaCierre.objects.bulk_create(
-                incidencias_informativas,
-                batch_size=100,
-                ignore_conflicts=True
-            )
-        
-        # 6. 🎯 ACTUALIZAR ESTADO DEL CIERRE PRIMER ANÁLISIS
-        total_incidencias = len(incidencias_informativas)
-        
-        # Usar función centralizada para actualizar estados
+        # 4. NO crear ninguna incidencia. Mantener total_incidencias=0
+        total_incidencias = 0
+        # Actualizar estado como "sin incidencias" directamente
         actualizar_estado_cierre_por_incidencias(cierre_actual, total_incidencias, es_primer_cierre=True)
         
         logger.info(f"✅ Análisis primer cierre completado:")
@@ -1346,14 +1333,14 @@ def generar_analisis_primer_cierre(cierre_actual, clasificaciones_seleccionadas)
             'tipo_analisis': 'primer_cierre',
             'total_empleados': total_empleados,
             'total_incidencias': total_incidencias,
-            'incidencias_informativas': total_incidencias,
+            'incidencias_informativas': 0,
             'empleados_sin_conceptos': empleados_sin_conceptos,
             'empleados_con_montos_cero': empleados_con_montos_cero,
             'conceptos_anomalos': len(conceptos_anomalos),
             'clasificaciones_analizadas': clasificaciones_seleccionadas,
             'estadisticas': stats,
             'estado_final': cierre_actual.estado_incidencias,
-            'mensaje': f'Primer cierre analizado: {total_incidencias} incidencias informativas detectadas'
+            'mensaje': 'Primer cierre analizado: sin generación de incidencias (política primer cierre)'
         }
         
     except Exception as e:
@@ -1438,7 +1425,7 @@ def crear_incidencia_informativa_montos_cero(empleado):
         datos_adicionales={
             'tipo_analisis': 'primer_cierre',
             'problema': 'montos_cero',
-            'total_conceptos': empleado.conceptos_consolidados.count()
+            'total_conceptos': empleado.conceptos.count()
         }
     )
 
@@ -1464,6 +1451,7 @@ def crear_incidencia_informativa_monto_alto(empleado, concepto):
 
 def crear_incidencia_resumen_primer_cierre(cierre, stats, empleados_sin_conceptos, empleados_con_montos_cero):
     """Crea incidencia resumen del análisis del primer cierre"""
+    stats_serializables = _serialize_decimal(stats)
     return IncidenciaCierre(
         cierre=cierre,
         tipo_incidencia='resumen_primer_cierre',
@@ -1474,7 +1462,7 @@ def crear_incidencia_resumen_primer_cierre(cierre, stats, empleados_sin_concepto
         datos_adicionales={
             'tipo_analisis': 'primer_cierre',
             'resumen': True,
-            'estadisticas': stats,
+            'estadisticas': stats_serializables,
             'empleados_sin_conceptos': empleados_sin_conceptos,
             'empleados_con_montos_cero': empleados_con_montos_cero,
             'total_haberes': float(stats.get('total_haberes', 0) or 0),

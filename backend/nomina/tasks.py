@@ -2141,11 +2141,15 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                 # Crear MovimientoPersonal
                 fecha_evt = movimiento.fecha_ingreso if movimiento.alta_o_baja == 'ALTA' else movimiento.fecha_retiro
                 categoria = 'ingreso' if movimiento.alta_o_baja == 'ALTA' else 'finiquito'
+                # Asegurar límites de campos
+                _desc = (movimiento.motivo or '')
+                if _desc and len(_desc) > 300:
+                    _desc = _desc[:300]
                 mov_personal = MovimientoPersonal(
                     nomina_consolidada=nomina_consolidada,
-                    categoria=categoria,
+                    categoria=(categoria[:20] if categoria else None),
                     subtipo=None,
-                    descripcion=movimiento.motivo,
+                    descripcion=_desc,
                     fecha_inicio=fecha_evt,
                     fecha_fin=fecha_evt,
                     dias_evento=1,
@@ -2170,11 +2174,14 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                         fuente_datos={'movimiento_finiquito': True}
                     )
                     
+                    _desc2 = (movimiento.motivo or '')
+                    if _desc2 and len(_desc2) > 300:
+                        _desc2 = _desc2[:300]
                     mov_personal = MovimientoPersonal(
                         nomina_consolidada=nomina_consolidada,
                         categoria='finiquito',
                         subtipo=None,
-                        descripcion=movimiento.motivo,
+                        descripcion=_desc2,
                         fecha_inicio=movimiento.fecha_retiro,
                         fecha_fin=movimiento.fecha_retiro,
                         dias_evento=1,
@@ -2208,7 +2215,10 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                 
                 # Normalización de ausentismo
                 descripcion = f"{ausentismo.tipo} - {ausentismo.motivo}".strip(' -')
+                # Subtipo puede exceder el max_length(40) del modelo; normalizar y truncar
                 subtipo = ausentismo.tipo.lower().replace(' ', '_') if ausentismo.tipo else 'sin_justificar'
+                if subtipo and len(subtipo) > 40:
+                    subtipo = subtipo[:40]
                 fecha_inicio = ausentismo.fecha_inicio_ausencia
                 fecha_fin = ausentismo.fecha_fin_ausencia
                 dias_evento = (fecha_fin - fecha_inicio).days + 1 if fecha_inicio and fecha_fin else ausentismo.dias

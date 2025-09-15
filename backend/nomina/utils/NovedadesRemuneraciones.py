@@ -11,6 +11,43 @@ from .LibroRemuneraciones import _es_rut_valido
 
 logger = logging.getLogger(__name__)
 
+def _normalizar_monto_peso(valor_raw):
+    """Normaliza un valor numérico a pesos (entero) con redondeo HALF_UP.
+    Retorna string con entero si es numérico; en caso contrario retorna None.
+    """
+    try:
+        from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+        import re
+        if valor_raw is None:
+            return None
+        # Si ya es número (int/float), usarlo directo
+        if isinstance(valor_raw, (int, float)):
+            d = Decimal(str(valor_raw)).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+            return str(int(d))
+        # Si es string, limpiar y detectar separadores
+        s = str(valor_raw).strip()
+        if s == '' or s.lower() == 'nan':
+            return None
+        # Mantener solo dígitos, separadores y signo
+        s = re.sub(r"[^0-9,\.\-]", "", s)
+        if not s:
+            return None
+        # Resolver separador decimal: si hay ambos, tomar el último como decimal
+        if ',' in s and '.' in s:
+            if s.rfind(',') > s.rfind('.'):
+                s = s.replace('.', '')
+                s = s.replace(',', '.')
+            else:
+                s = s.replace(',', '')
+        elif ',' in s and '.' not in s:
+            s = s.replace(',', '.')
+        # Convertir a Decimal y redondear
+        d = Decimal(s)
+        d0 = d.quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+        return str(int(d0))
+    except Exception:
+        return None
+
 def obtener_headers_archivo_novedades(path_archivo):
     """Obtiene los encabezados de un archivo de novedades.
 
@@ -210,6 +247,11 @@ def guardar_registros_novedades(archivo_novedades):
                             except (ValueError, TypeError):
                                 # Si no se puede convertir a número, mantener el valor original limpio
                                 pass
+
+                # Normalización a pesos en persistencia (si es numérico)
+                valor_norm = _normalizar_monto_peso(valor_raw)
+                if valor_norm is not None:
+                    valor = valor_norm
 
                 # Buscar el mapeo del header de novedades
                 concepto = ConceptoRemuneracionNovedades.objects.filter(

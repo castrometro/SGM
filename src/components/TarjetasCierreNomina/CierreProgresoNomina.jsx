@@ -246,6 +246,10 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
       case 'verificado_sin_discrepancias':
         // Habilitar: solo Verificación de datos
         return seccion !== 'verificadorDatos';
+      
+      case 'con_discrepancias':
+        // Habilitar: Talana + Analista + Verificación de datos
+        return !['archivosTalana', 'archivosAnalista', 'verificadorDatos'].includes(seccion);
         
       case 'datos_consolidados':
   // Cuando el estado es 'datos_consolidados' solo permitimos la sección de incidencias
@@ -720,12 +724,10 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
   }, [cierre?.id, libro?.estado]);
 
   const handleVerClasificacion = (soloLectura = false) => {
-    // Si el libro ya está procesado, forzar modo solo lectura
-    const esSoloLectura = soloLectura || libro?.estado === "procesado";
-    
+    // Permitir re-mapeo aun si el libro está procesado
     setTipoModalClasificacion('libro');
     setModalAbierto(true);
-    setModoSoloLectura(esSoloLectura);
+    setModoSoloLectura(!!soloLectura);
   };
 
   const handleVerClasificacionNovedades = (soloLectura = false) => {

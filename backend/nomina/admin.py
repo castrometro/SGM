@@ -601,6 +601,7 @@ class RegistroConceptoEmpleadoNovedadesAdmin(admin.ModelAdmin):
     list_filter = ('concepto__concepto_libro__clasificacion', 'concepto__activo', 'fecha_registro', 'empleado__cierre__cliente')
     readonly_fields = ('fecha_registro', 'empleado_info', 'cierre_id_display')
     date_hierarchy = 'fecha_registro'
+    actions = ['accion_normalizar_montos']
     
     def empleado_info(self, obj):
         """Información del empleado con RUT"""
@@ -611,6 +612,31 @@ class RegistroConceptoEmpleadoNovedadesAdmin(admin.ModelAdmin):
         """Muestra el ID del cierre desde el empleado"""
         return f"ID: {obj.empleado.cierre.id}"
     cierre_id_display.short_description = "Cierre ID"
+
+    def accion_normalizar_montos(self, request, queryset):
+        """Acción para normalizar montos seleccionados a pesos (entero, HALF_UP).
+        Si el queryset está vacío por selección, se puede filtrar por cierre desde el changelist.
+        """
+        from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+
+        total = queryset.count()
+        actualizados = 0
+        for reg in queryset.iterator(chunk_size=1000):
+            nuevo = None
+            try:
+                if reg.monto is not None and str(reg.monto).strip() != '':
+                    d = Decimal(str(reg.monto))
+                    d0 = d.quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+                    nuevo = str(int(d0))
+            except (InvalidOperation, ValueError, TypeError):
+                nuevo = None
+            if nuevo is not None and nuevo != reg.monto:
+                reg.monto = nuevo
+                reg.save(update_fields=['monto'])
+                actualizados += 1
+
+        self.message_user(request, f"Normalización completada. Seleccionados: {total}, actualizados: {actualizados}.")
+    accion_normalizar_montos.short_description = "Normalizar montos (pesos)"
 
 
 # ========== ADMINISTRACIÓN DE INCIDENCIAS ==========

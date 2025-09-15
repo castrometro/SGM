@@ -309,8 +309,8 @@ def _comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades):
                     empleado_novedades=emp_novedades,
                     rut_empleado=emp_libro.rut,
                     descripcion=f"Diferencia en monto del concepto '{reg_libro.nombre_concepto_original}' para RUT {emp_libro.rut}",
-                    valor_libro=str(reg_libro.monto),
-                    valor_novedades=str(reg_novedades.monto),
+                    valor_libro=str(int(reg_libro.monto_numerico)),
+                    valor_novedades=str(int(reg_novedades.monto_numerico)),
                     concepto_afectado=reg_libro.nombre_concepto_original
                 ))
         elif str(reg_libro.monto) != str(reg_novedades.monto):

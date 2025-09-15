@@ -196,6 +196,7 @@ def procesar_chunk_registros_novedades_util(archivo_id, chunk_data):
         Dict: Estadísticas del procesamiento
     """
     from ..models import ArchivoNovedadesUpload, EmpleadoCierre, ConceptoRemuneracion, RegistroConceptoEmpleado
+    from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
     
     chunk_id = chunk_data.get('chunk_id', 0)
     inicio_tiempo = timezone.now()
@@ -247,12 +248,22 @@ def procesar_chunk_registros_novedades_util(archivo_id, chunk_data):
                                     vigente=True
                                 ).first()
                                 
+                                # Normalizar a pesos si es numérico
+                                valor_normalizado = None
+                                try:
+                                    if valor is not None and str(valor).strip() != '':
+                                        d = Decimal(str(valor))
+                                        d0 = d.quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+                                        valor_normalizado = str(int(d0))
+                                except (InvalidOperation, ValueError, TypeError):
+                                    valor_normalizado = None
+
                                 # Crear o actualizar registro
                                 registro, created = RegistroConceptoEmpleado.objects.update_or_create(
                                     empleado=empleado,
                                     nombre_concepto_original=header_original,
                                     defaults={
-                                        "monto": str(valor),
+                                        "monto": str(valor_normalizado) if valor_normalizado is not None else str(valor),
                                         "concepto": concepto,
                                         "fuente_archivo": "novedades"
                                     }

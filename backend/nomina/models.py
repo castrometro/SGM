@@ -398,11 +398,20 @@ class RegistroConceptoEmpleado(models.Model):
     
     @property
     def monto_numerico(self):
-        """Convierte el monto a número para cálculos, retorna 0 si no es posible"""
+        """Convierte el monto a número (peso) redondeado a entero con HALF_UP para comparaciones."""
         try:
-            return float(self.monto) if self.monto else 0
-        except (ValueError, TypeError):
-            return 0
+            from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+            if self.monto is None or self.monto == "":
+                return 0
+            d = Decimal(str(self.monto))
+            d0 = d.quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+            return float(d0)
+        except (InvalidOperation, ValueError, TypeError):
+            try:
+                val = float(self.monto)
+                return float(int(val + 0.5)) if val >= 0 else float(int(val - 0.5))
+            except Exception:
+                return 0
     
     @property
     def es_numerico(self):
@@ -744,11 +753,23 @@ class RegistroConceptoEmpleadoNovedades(models.Model):
     
     @property
     def monto_numerico(self):
-        """Convierte el monto a número para cálculos, retorna 0 si no es posible"""
+        """Convierte el monto a número para cálculos, redondeando a entero (peso) con HALF_UP.
+        Esto alinea los montos de Novedades con los del Libro, evitando discrepancias por decimales.
+        """
         try:
-            return float(self.monto) if self.monto else 0
-        except (ValueError, TypeError):
-            return 0
+            from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+            if self.monto is None or self.monto == "":
+                return 0
+            d = Decimal(str(self.monto))
+            d0 = d.quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+            return float(d0)
+        except (InvalidOperation, ValueError, TypeError):
+            # Fallback: intentar como float y redondear con round estándar
+            try:
+                val = float(self.monto)
+                return float(int(val + 0.5)) if val >= 0 else float(int(val - 0.5))
+            except Exception:
+                return 0
     
     @property
     def es_numerico(self):

@@ -328,11 +328,11 @@ const LibroRemuneracionesCard = ({
 
       <div className="flex flex-col gap-1 mt-3">
         <button
-          onClick={() => onVerClasificacion(isProcessed)} // ← Pasa true si está procesado
+          onClick={() => onVerClasificacion(false)} // ← Siempre editable; permite re-mapeo aun procesado
           disabled={isDisabled}
           className="px-3 py-1 rounded text-sm font-medium transition bg-blue-700 hover:bg-blue-600 text-white w-fit disabled:opacity-60"
         >
-          {isProcessed ? "Ver Clasificaciones" : "Administrar Clasificaciones"}
+          {isProcessed ? "Re-mapear Clasificaciones" : "Administrar Clasificaciones"}
         </button>
 
         {true && (

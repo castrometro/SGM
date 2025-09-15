@@ -14,6 +14,16 @@ const TablaResumenMovimientos = ({
   obtenerClaseColorEmpleado,
   obtenerIndiceColorEmpleado
 }) => {
+  const formatRut = (rut) => {
+    if (!rut) return '-';
+    const raw = String(rut).trim();
+    // Eliminar puntos, guiones y espacios; conservar dígitos y K/k
+    const cleaned = raw.replace(/[^0-9kK]/g, '');
+    if (cleaned.length < 2) return raw; // no formateable
+    const cuerpo = cleaned.slice(0, -1);
+    const dv = cleaned.slice(-1).toUpperCase();
+    return `${cuerpo}-${dv}`;
+  };
   const rowsBase = [
     { key: 'ingreso', name: 'Ingresos', value: tarjetasMetrics.ingresos, empleados: tarjetasMetrics.ingresosEmp, tipo: 'count' },
     { key: 'finiquito', name: 'Finiquitos', value: tarjetasMetrics.finiquitos, empleados: tarjetasMetrics.finiquitosEmp, tipo: 'count' },
@@ -73,9 +83,15 @@ const TablaResumenMovimientos = ({
                               <thead className="bg-gray-800/80 border-b border-gray-700 sticky top-0 z-10">
                                 {(() => {
                                   const isIF = r.key === 'ingreso' || r.key === 'finiquito';
-                                  if (isIF) return (<tr><th className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase">Fecha</th></tr>);
+                                  if (isIF) return (
+                                    <tr>
+                                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase">RUT</th>
+                                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase">Fecha</th>
+                                    </tr>
+                                  );
                                   return (
                                     <tr>
+                                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase">RUT</th>
                                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase">Categoría/Subtipo</th>
                                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase">Fecha Inicio</th>
                                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase">Fecha Fin</th>
@@ -95,7 +111,9 @@ const TablaResumenMovimientos = ({
                                   else if (r.key === 'dias_ausencia_justificados') eventos = base.filter(m => m.categoria === 'ausencia' && !['sin_justificar','vacaciones',''].includes((m.subtipo || '').trim()));
                                   const rowsDet = eventos.map(ev => {
                                     const dias = Number(ev.dias_en_periodo ?? ev.dias_evento ?? 0) || 0;
+                                    const rut = (ev?.empleado?.rut || ev?.rut || '-')
                                     return {
+                                      rut,
                                       cat: ev.categoria === 'ausencia' ? (ev.subtipo || 'sin_subtipo') : ev.categoria,
                                       fi: ev.fecha_inicio || '-',
                                       ff: ev.fecha_fin || ev.fecha_inicio || '-',
@@ -105,17 +123,27 @@ const TablaResumenMovimientos = ({
                                       colorIdx: (ev.categoria === 'ausencia') ? obtenerIndiceColorEmpleado(ev.empleado) : 999
                                     };
                                   });
-                                  if (rowsDet.length === 0) return (<tr><td colSpan={r.key === 'ingreso' || r.key === 'finiquito' ? 1 : 4} className="px-4 py-6 text-center text-gray-500">Sin eventos</td></tr>);
+                                  if (rowsDet.length === 0) return (
+                                    <tr>
+                                      <td colSpan={r.key === 'ingreso' || r.key === 'finiquito' ? 2 : 5} className="px-4 py-6 text-center text-gray-500">Sin eventos</td>
+                                    </tr>
+                                  );
                                   const isIF = r.key === 'ingreso' || r.key === 'finiquito';
                                   return rowsDet
                                     .sort((a,b)=> a.colorIdx - b.colorIdx || (new Date(a.fi||'1970-01-01') - new Date(b.fi||'1970-01-01')))
                                     .map(rw => {
                                       if (isIF) {
                                         const fecha = rw.fi && rw.fi !== '-' ? new Date(rw.fi).toLocaleDateString('es-CL') : (rw.ff && rw.ff !== '-' ? new Date(rw.ff).toLocaleDateString('es-CL') : '-');
-                                        return (<tr key={rw.id} className="hover:bg-gray-800/60"><td className="px-4 py-3 text-white text-sm">{fecha}</td></tr>);
+                                        return (
+                                          <tr key={rw.id} className="hover:bg-gray-800/60">
+                                            <td className="px-4 py-3 text-gray-300 text-sm">{formatRut(rw.rut)}</td>
+                                            <td className="px-4 py-3 text-white text-sm">{fecha}</td>
+                                          </tr>
+                                        );
                                       }
                                       return (
                                         <tr key={rw.id} className={`hover:bg-gray-800/60 ${rw.color}`}>
+                                          <td className="px-4 py-3 text-gray-300 text-sm">{formatRut(rw.rut)}</td>
                                           <td className="px-4 py-3 text-white text-sm">{prettifyEtiqueta(rw.cat)}</td>
                                           <td className="px-4 py-3 text-gray-300 text-sm">{rw.fi ? new Date(rw.fi).toLocaleDateString('es-CL') : '-'}</td>
                                           <td className="px-4 py-3 text-gray-300 text-sm">{rw.ff ? new Date(rw.ff).toLocaleDateString('es-CL') : '-'}</td>

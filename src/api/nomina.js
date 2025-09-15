@@ -308,6 +308,14 @@ export const obtenerResumenReconciliacion = async (cierreId) => {
   return response.data;
 };
 
+// Aprobar todas las incidencias resueltas por analista (acción masiva)
+export const marcarTodasComoJustificadas = async (cierreId, comentario = 'Aprobación masiva por supervisor') => {
+  const response = await api.post(`/nomina/cierres/${cierreId}/marcar-todas-como-justificadas/`, {
+    comentario,
+  });
+  return response.data;
+};
+
 // Confirmar desaparición individual (incidencia marcada como 'resolucion_supervisor_pendiente')
 export const confirmarDesaparicionIncidencia = async (incidenciaId, comentario = '') => {
   const response = await api.post(`/nomina/incidencias/${incidenciaId}/confirmar-desaparicion/`, {

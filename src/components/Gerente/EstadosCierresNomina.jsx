@@ -403,6 +403,15 @@ const EstadosCierresNomina = () => {
                       <p className="text-sm font-medium flex items-center">
                         <BarChart3 className="w-4 h-4 mr-1" />
                         {cierre.estado_consolidacion.replace('_', ' ')}
+                        {cierre.estado_consolidacion === 'consolidando' && (
+                          <span className="ml-2 inline-flex items-center gap-1 text-yellow-300 text-xs bg-yellow-900/40 border border-yellow-700 px-2 py-0.5 rounded-full">
+                            <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                            </svg>
+                            en progreso
+                          </span>
+                        )}
                       </p>
                     </div>
                   )}

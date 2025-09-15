@@ -262,7 +262,7 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-full bg-gray-800 rounded-lg">
+        <table className="w-full min-w-[1300px] md:min-w-[1400px] lg:min-w-[1600px] bg-gray-800 rounded-lg">
           <thead className="bg-gray-800/90 backdrop-blur sticky top-0 z-10 border-b border-gray-700">
             <tr>
               <th onClick={() => onSort('concepto')} className={`${thPad} text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer`}>

@@ -147,6 +147,16 @@ const CierreInfoBar = ({ cierre, cliente, onCierreActualizado, tipoModulo = "con
       <div className="flex items-center gap-2">
         <span className="font-bold text-gray-300">Estado:</span>
         <EstadoBadge estado={cierre?.estado} size="md" />
+        {/* Indicador técnico de consolidación (solo nómina) */}
+        {tipoModulo === "nomina" && cierre?.estado_consolidacion === 'consolidando' && (
+          <span className="ml-2 inline-flex items-center gap-2 text-yellow-300 text-sm bg-yellow-900/40 border border-yellow-700 px-2 py-1 rounded-full">
+            <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+            </svg>
+            Consolidando datos...
+          </span>
+        )}
       </div>
 
       {/* Botón Actualizar Estado */}

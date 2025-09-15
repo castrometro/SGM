@@ -1845,9 +1845,10 @@ def consolidar_datos_nomina_task_optimizado(cierre_id):
         if cierre.estado not in ['verificado_sin_discrepancias', 'datos_consolidados']:
             raise ValueError(f"El cierre debe estar en 'verificado_sin_discrepancias' o 'datos_consolidados', actual: {cierre.estado}")
         
-        # Cambiar estado a procesando
-        cierre.estado = 'consolidando'
-        cierre.save(update_fields=['estado'])
+        # Marcar consolidación en progreso sin cambiar el estado visible del cierre
+        # Mantener "verificado_sin_discrepancias" hasta que termine y pase a "datos_consolidados"
+        cierre.estado_consolidacion = 'consolidando'
+        cierre.save(update_fields=['estado_consolidacion'])
         
         # 2. VERIFICAR ARCHIVOS PROCESADOS
         libro = cierre.libros_remuneraciones.filter(estado='procesado').first()
@@ -2608,8 +2609,13 @@ def finalizar_consolidacion_post_movimientos(cierre_id):
         # Poner estado final del cierre
         cierre = CierreNomina.objects.get(id=cierre_id)
         cierre.estado = 'datos_consolidados'
+        try:
+            cierre.estado_consolidacion = 'consolidado'
+            update_fields = ['estado', 'fecha_consolidacion', 'estado_consolidacion']
+        except Exception:
+            update_fields = ['estado', 'fecha_consolidacion']
         cierre.fecha_consolidacion = timezone.now()
-        cierre.save(update_fields=['estado', 'fecha_consolidacion'])
+        cierre.save(update_fields=update_fields)
 
         return {
             'success': True,
@@ -2732,8 +2738,13 @@ def consolidar_resultados_finales(resultados_paralelos, cierre_id):
         
         # FINALIZAR CONSOLIDACIÓN EXITOSA
         cierre.estado = 'datos_consolidados'
+        try:
+            cierre.estado_consolidacion = 'consolidado'
+            update_fields = ['estado', 'fecha_consolidacion', 'estado_consolidacion']
+        except Exception:
+            update_fields = ['estado', 'fecha_consolidacion']
         cierre.fecha_consolidacion = timezone.now()
-        cierre.save(update_fields=['estado', 'fecha_consolidacion'])
+        cierre.save(update_fields=update_fields)
         
         logger.info(f"✅ [FINAL] Consolidación OPTIMIZADA completada exitosamente:")
         logger.info(f"   📊 {empleados_consolidados} empleados consolidados")
@@ -2835,9 +2846,9 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
         if cierre.estado not in ['verificado_sin_discrepancias', 'datos_consolidados']:
             raise ValueError(f"El cierre debe estar en 'verificado_sin_discrepancias' o 'datos_consolidados', actual: {cierre.estado}")
         
-        # Cambiar estado a procesando
-        cierre.estado = 'consolidando'
-        cierre.save(update_fields=['estado'])
+        # Marcar consolidación en progreso en campo técnico sin afectar estado visible
+        cierre.estado_consolidacion = 'consolidando'
+        cierre.save(update_fields=['estado_consolidacion'])
         
         # 2. OBTENER ARCHIVOS PROCESADOS
         libro = cierre.libros_remuneraciones.filter(estado='procesado').first()
@@ -3216,8 +3227,13 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
         
         # 6. FINALIZAR CONSOLIDACIÓN
         cierre.estado = 'datos_consolidados'
+        try:
+            cierre.estado_consolidacion = 'consolidado'
+            update_fields = ['estado', 'fecha_consolidacion', 'estado_consolidacion']
+        except Exception:
+            update_fields = ['estado', 'fecha_consolidacion']
         cierre.fecha_consolidacion = timezone.now()
-        cierre.save(update_fields=['estado', 'fecha_consolidacion'])
+        cierre.save(update_fields=update_fields)
         
         logger.info(f"✅ Consolidación completada:")
         logger.info(f"   📊 {empleados_consolidados} empleados consolidados")

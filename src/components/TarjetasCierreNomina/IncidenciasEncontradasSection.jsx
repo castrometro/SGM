@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { AlertOctagon, ChevronDown, ChevronRight, Play, Loader2, CheckCircle, AlertTriangle, Users, Eye, Lock, TrendingUp } from "lucide-react";
+import { AlertOctagon, ChevronDown, ChevronRight, Play, Loader2, CheckCircle, AlertTriangle, Users, Eye, Lock, TrendingUp, RefreshCw } from "lucide-react";
 import { formatearMonedaChilena } from "../../utils/formatters";
 import IncidenciasTable from "./IncidenciasEncontradas/IncidenciasTable";
 // Vista unificada (solo incidencias)
@@ -17,6 +17,9 @@ import {
   obtenerAnalisisCompletoTemporal,
   limpiarIncidenciasCierre
 } from "../../api/nomina";
+// import { actualizarEstadoCierreNomina } from "../../api/nomina";
+import { solicitarRecargaArchivosAnalista } from "../../api/nomina";
+import { useAuth } from "../../hooks/useAuth";
 import { obtenerEstadoReal, ESTADOS_INCIDENCIA } from "../../utils/incidenciaUtils";
 
 // Clasificaciones disponibles para selección
@@ -75,6 +78,9 @@ const IncidenciasEncontradasSection = ({
   const [analisisCompleto, setAnalisisCompleto] = useState(null);
   const [mostrandoAnalisisCompleto, setMostrandoAnalisisCompleto] = useState(false);
   const [cargandoAnalisis, setCargandoAnalisis] = useState(false);
+  const [solicitandoRecarga, setSolicitandoRecarga] = useState(false);
+  const { usuario } = useAuth();
+  const esSupervisor = (usuario?.tipo_usuario === 'supervisor' || usuario?.tipo_usuario === 'gerente');
 
   // Fallback local para contadores (cuando el backend reporta 0 pero sí hay incidencias)
   const contadoresLocales = (() => {
@@ -263,12 +269,44 @@ const IncidenciasEncontradasSection = ({
       console.log("📋 Solo resumen: descuentos legales, aportes patronales, información adicional, impuestos, horas extras");
       
       // Usar configuración automática del backend (sin clasificaciones manuales)
-      await generarIncidenciasCierre(cierre.id);
-      
-      console.log("✅ Incidencias generadas, refrescando estado del cierre...");
-      
-      // Refrescar el estado del cierre para mostrar el cambio automáticamente
+      const resultado = await generarIncidenciasCierre(cierre.id);
+
+      // Si el backend ejecuta en background, hacer polling hasta SUCCESS antes de refrescar
+      const taskId = resultado?.task_id || resultado?.taskId || resultado?.task || resultado?.id;
+      if (taskId) {
+        console.log(`🚀 Generación de incidencias en background. Task: ${taskId}. Iniciando polling...`);
+        const inicio = Date.now();
+        const timeoutMs = 10 * 60 * 1000; // 10 minutos
+        const intervaloMs = 2000;
+        let exito = false;
+        while (Date.now() - inicio < timeoutMs) {
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            const estado = await consultarEstadoTarea(cierre.id, taskId);
+            const state = estado?.state || estado?.status;
+            if (state === 'SUCCESS') {
+              exito = true;
+              break;
+            }
+            if (state === 'FAILURE') {
+              console.error('❌ Error en generación de incidencias:', estado?.result);
+              break;
+            }
+          } catch (pollErr) {
+            // eslint-disable-next-line no-console
+            console.warn('Polling estado tarea falló, reintentando...', pollErr?.message || pollErr);
+          }
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((r) => setTimeout(r, intervaloMs));
+        }
+        if (!exito) {
+          console.warn('⚠️ Polling de generación de incidencias terminó por timeout o error. Se continuará con refresco best-effort.');
+        }
+      }
+
+      // Dar un pequeño margen y refrescar el cierre (el backend suele actualizar estado por su cuenta)
       if (onCierreActualizado) {
+        await new Promise((r) => setTimeout(r, 700));
         await onCierreActualizado();
       }
       
@@ -290,6 +328,10 @@ const IncidenciasEncontradasSection = ({
       setTimeout(async () => {
         await cargarEstadoIncidencias();
         await cargarDatos();
+        // Intento adicional de refrescar el cierre tras los datos
+        if (onCierreActualizado) {
+          await onCierreActualizado();
+        }
         console.log("🔄 Segunda recarga completada");
       }, 3000);
       
@@ -428,6 +470,41 @@ const IncidenciasEncontradasSection = ({
     }
   };
 
+  const manejarSolicitarRecarga = async (e) => {
+    // Evitar que el click colapse/expanda la sección
+    if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+
+    if (!cierre?.id) return;
+
+    const motivo = prompt('Indique el motivo para recargar archivos (requerido):');
+    if (!motivo || motivo.trim() === '') {
+      alert('Debe proporcionar un motivo para la recarga');
+      return;
+    }
+
+    if (!window.confirm('¿Confirma que desea solicitar la recarga de archivos? Esto permitirá resubir archivos corregidos desde Talana.')) {
+      return;
+    }
+
+    setSolicitandoRecarga(true);
+    try {
+      const res = await solicitarRecargaArchivosAnalista(cierre.id, motivo.trim());
+      // Refrescar estado del cierre en el padre
+      if (onCierreActualizado) {
+        await onCierreActualizado();
+      }
+      // Refrescar estado local de incidencias
+      await cargarEstadoIncidencias();
+      alert('✅ Solicitud registrada. Pendiente de aprobación del supervisor.');
+    } catch (err) {
+      const msg = err?.response?.data?.error || err?.message || 'Error solicitando recarga';
+      setError(msg);
+      alert(`❌ ${msg}`);
+    } finally {
+      setSolicitandoRecarga(false);
+    }
+  };
+
   const obtenerColorEstado = (estado) => {
     switch (estado) {
       case 'pendiente': return 'text-gray-400';
@@ -513,6 +590,29 @@ const IncidenciasEncontradasSection = ({
               <span className="text-green-400">
                 {(estadoIncidencias?.progreso?.aprobadas && estadoIncidencias.progreso.aprobadas > 0) ? estadoIncidencias.progreso.aprobadas : contadoresLocales.aprobadas} aprobadas
               </span>
+            </div>
+          )}
+          {/* Botón Solicitar Recarga (solo analista, y si no hay solicitud/recarga en curso) */}
+          {!disabled && !esSupervisor && cierre?.estado !== 'recarga_solicitud_pendiente' && cierre?.estado !== 'requiere_recarga_archivos' && cierre?.estado !== 'finalizado' && (
+            <div onClick={(e) => e.stopPropagation()}>
+              <button
+                onClick={manejarSolicitarRecarga}
+                disabled={solicitandoRecarga}
+                className="inline-flex items-center gap-2 px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm rounded-md disabled:opacity-60 disabled:cursor-not-allowed"
+                title="Solicitar recarga de archivos Talana"
+              >
+                {solicitandoRecarga ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Solicitando...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-4 h-4" />
+                    Solicitar Recarga
+                  </>
+                )}
+              </button>
             </div>
           )}
           {expandido ? (

@@ -231,9 +231,9 @@ const IncidenciasTable = ({ cierreId, cierre = null, filtros = {}, onIncidenciaS
   const obtenerTurnoIncidencia = (incidencia) => {
     const esSupervidor = user?.is_staff || user?.is_superuser;
     const resoluciones = incidencia.resoluciones || [];
-    
+
+    // INICIANDO: Sin mensajes → Turno del Analista
     if (resoluciones.length === 0) {
-      // INICIANDO: Sin mensajes → Turno del Analista
       return {
         esMiTurno: !esSupervidor,
         turno: 'Analista',
@@ -242,12 +242,12 @@ const IncidenciasTable = ({ cierreId, cierre = null, filtros = {}, onIncidenciaS
     }
 
     // Ordenar por fecha y obtener la última resolución
-    const ultimaResolucion = resoluciones.sort((a, b) => 
-      new Date(b.fecha_resolucion) - new Date(a.fecha_resolucion)
-    )[0];
+    const ultimaResolucion = resoluciones
+      .slice()
+      .sort((a, b) => new Date(b.fecha_resolucion) - new Date(a.fecha_resolucion))[0];
 
     // APROBADA: Último mensaje es aprobación → Conversación terminada
-    if (ultimaResolucion.tipo_resolucion === 'aprobacion') {
+    if (ultimaResolucion?.tipo_resolucion === 'aprobacion') {
       return {
         esMiTurno: false,
         turno: 'Aprobada',
@@ -256,8 +256,8 @@ const IncidenciasTable = ({ cierreId, cierre = null, filtros = {}, onIncidenciaS
     }
 
     // Determinar turno basado en el último mensaje
-    const esDelSupervisor = ['consulta', 'rechazo'].includes(ultimaResolucion.tipo_resolucion);
-    
+    const esDelSupervisor = ['consulta', 'rechazo'].includes(ultimaResolucion?.tipo_resolucion);
+
     if (esDelSupervisor) {
       // TURNO_ANALISTA: Último mensaje fue de supervisor → Analista debe responder
       return {
@@ -265,14 +265,14 @@ const IncidenciasTable = ({ cierreId, cierre = null, filtros = {}, onIncidenciaS
         turno: 'Analista',
         icono: <User className="w-4 h-4 text-blue-500" />
       };
-    } else {
-      // TURNO_SUPERVISOR: Último mensaje fue de analista → Supervisor debe decidir
-      return {
-        esMiTurno: esSupervidor,
-        turno: 'Supervisor',
-        icono: <UserCheck className="w-4 h-4 text-purple-500" />
-      };
     }
+
+    // TURNO_SUPERVISOR: Último mensaje fue de analista → Supervisor debe decidir
+    return {
+      esMiTurno: esSupervidor,
+      turno: 'Supervisor',
+      icono: <UserCheck className="w-4 h-4 text-purple-500" />
+    };
   };
 
   const obtenerClasePrioridad = (prioridad) => {
@@ -715,8 +715,8 @@ const IncidenciasTable = ({ cierreId, cierre = null, filtros = {}, onIncidenciaS
           </div>
           <span className="text-xs text-gray-500">{incidenciasFiltradas.length} resultados</span>
         </div>
-        <div className="overflow-x-auto">
-        <table className="min-w-full bg-gray-800 rounded-lg">
+  <div className="overflow-x-auto">
+  <table className="w-full min-w-[1300px] md:min-w-[1400px] lg:min-w-[1600px] bg-gray-800 rounded-lg">
           <thead className="bg-gray-800/80 border-b border-gray-700">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">

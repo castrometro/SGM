@@ -26,6 +26,8 @@ const estadoCierreColors = {
   verificado_sin_discrepancias: { texto: "Verificado", color: "bg-green-600" },
   sin_discrepancias:  { texto: "Sin Discrepancias", color: "bg-green-600" },
   incidencias_pendientes: { texto: "Incidencias Pendientes", color: "bg-orange-500" },
+  // Estado principal cuando existen incidencias post-verificación/consolidación
+  con_incidencias:    { texto: "Con Incidencias", color: "bg-red-500" },
   datos_consolidados: { texto: "Datos Consolidados", color: "bg-blue-600" },
   incidencias_resueltas: { texto: "Incidencias Resueltas", color: "bg-green-500" },
   reportes_generados: { texto: "Reportes Generados", color: "bg-purple-600" },

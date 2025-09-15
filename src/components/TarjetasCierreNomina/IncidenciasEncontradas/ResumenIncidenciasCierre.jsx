@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle, Clock, AlertTriangle, Users, FileText, RefreshCw } from 'lucide-react';
-import { obtenerIncidenciasCierre, obtenerResumenReconciliacion, confirmarDesaparicionesCierre, obtenerCierreNominaPorId, solicitarRecargaArchivosAnalista, aprobarRecargaArchivos } from '../../../api/nomina';
+import { obtenerIncidenciasCierre, obtenerResumenReconciliacion, confirmarDesaparicionesCierre, obtenerCierreNominaPorId, solicitarRecargaArchivosAnalista, aprobarRecargaArchivos, obtenerEstadoIncidenciasCierre, marcarTodasComoJustificadas } from '../../../api/nomina';
 import { calcularProgresoIncidencias, calcularContadoresEstados, ESTADOS_INCIDENCIA } from '../../../utils/incidenciaUtils';
 import IncidenciasKPIs from './IncidenciasKPIs';
 import { useAuth } from '../../../hooks/useAuth';
@@ -26,38 +26,47 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
     setCargando(true);
     setError('');
     try {
-      // Cargar tanto el estado del cierre como las incidencias detalladas
-      const [estadoResponse, incidenciasData, reconData, cierreData] = await Promise.all([
-        fetch(`/api/nomina/cierres/${cierreId}/estado-incidencias/`),
+      // Cargar tanto el estado del cierre como las incidencias detalladas, tolerando fallos parciales
+      const [estadoRes, incRes, reconRes, cierreRes] = await Promise.allSettled([
+        obtenerEstadoIncidenciasCierre(cierreId),
         obtenerIncidenciasCierre(cierreId, { page_size: 1000 }),
         obtenerResumenReconciliacion(cierreId),
         obtenerCierreNominaPorId(cierreId)
       ]);
       
-      if (!estadoResponse.ok) throw new Error('Error cargando estado');
+      const estadoData = estadoRes.status === 'fulfilled' ? estadoRes.value : null;
+      const incidenciasData = incRes.status === 'fulfilled' ? incRes.value : { results: [] };
+      const reconData = reconRes.status === 'fulfilled' ? reconRes.value : null;
+      const cierreData = cierreRes.status === 'fulfilled' ? cierreRes.value : null;
       
-  const estadoData = await estadoResponse.json();
-  const incidencias = Array.isArray(incidenciasData.results) ? incidenciasData.results : incidenciasData;
+      const incidencias = Array.isArray(incidenciasData.results) ? incidenciasData.results : incidenciasData;
       
       // Calcular estados reales basados en resoluciones
       const estadosReales = calcularContadoresEstados(incidencias);
       const progresoReal = calcularProgresoIncidencias(incidencias);
       
       // Combinar datos del servidor con cálculos reales
-      const resumenActualizado = {
+      const resumenActualizado = estadoData ? {
         ...estadoData,
         progreso: progresoReal,
         estados: estadosReales,
         total_incidencias: incidencias.length
+      } : {
+        progreso: progresoReal,
+        estados: estadosReales,
+        total_incidencias: incidencias.length,
+        prioridades: {},
+        puede_finalizar: false
       };
       
-  setResumen(resumenActualizado);
-    setIncidencias(incidencias);
-    setReconciliacion(reconData);
-    setCierre(cierreData);
+      setResumen(resumenActualizado);
+      setIncidencias(incidencias);
+      setReconciliacion(reconData);
+      setCierre(cierreData);
     } catch (err) {
       console.error('Error:', err);
-      setError('Error cargando el resumen de incidencias');
+      const msg = err?.response?.data?.error || err?.message || 'Error cargando el resumen de incidencias';
+      setError(msg);
     } finally {
       setCargando(false);
     }
@@ -85,25 +94,12 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
       return;
     }
 
-    const comentario = prompt('Comentario para la aprobación masiva (opcional):') || 'Aprobación masiva por supervisor';
+  const comentario = prompt('Comentario para la aprobación masiva (opcional):') || 'Aprobación masiva por supervisor';
 
     setEjecutandoAccion(true);
     setError('');
     try {
-      const response = await fetch(`/api/nomina/cierres/${cierreId}/marcar-todas-como-justificadas/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ comentario }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Error en aprobación masiva');
-      }
-
-      const resultado = await response.json();
+      const resultado = await marcarTodasComoJustificadas(cierreId, comentario);
       
       // Recargar resumen
       await cargarResumen();
@@ -117,7 +113,8 @@ const ResumenIncidenciasCierre = ({ cierreId, onEstadoActualizado }) => {
 
     } catch (err) {
       console.error('Error:', err);
-      setError(err.message);
+      const msg = err?.response?.data?.error || err?.message || 'Error en aprobación masiva';
+      setError(msg);
     } finally {
       setEjecutandoAccion(false);
     }

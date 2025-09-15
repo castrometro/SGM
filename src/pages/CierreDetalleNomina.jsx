@@ -58,6 +58,8 @@ const CierreDetalleNomina = () => {
           tipoModulo="nomina"
         />
       </div>
+
+
       <CierreProgresoNomina
         cierre={cierre}
         cliente={cliente}

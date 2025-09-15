@@ -235,14 +235,17 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     // Determinar bloqueo según estado del cierre
     switch (cierre?.estado) {
       case 'pendiente':
-        // Archivos Talana y Analista están desbloqueados desde el inicio
+        // Habilitar: Talana + Analista
         return !['archivosTalana', 'archivosAnalista'].includes(seccion);
         
       case 'archivos_completos':
       case 'verificacion_datos':
-      case 'verificado_sin_discrepancias': 
-        // Archivos Talana + Analista + Verificador están desbloqueados
+        // Habilitar: Talana + Analista + Verificación de datos
         return !['archivosTalana', 'archivosAnalista', 'verificadorDatos'].includes(seccion);
+
+      case 'verificado_sin_discrepancias':
+        // Habilitar: solo Verificación de datos
+        return seccion !== 'verificadorDatos';
         
       case 'datos_consolidados':
   // Cuando el estado es 'datos_consolidados' solo permitimos la sección de incidencias
@@ -250,17 +253,13 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
   return seccion !== 'incidencias';
         
       case 'con_incidencias':
-        // Todos están desbloqueados
-        return !['archivosTalana', 'archivosAnalista', 'verificadorDatos', 'incidencias'].includes(seccion);
-        
       case 'incidencias_resueltas':
-        // 🎯 ESTADO ESPECIAL: Solo la sección de incidencias debe estar desbloqueada para mostrar el botón "Finalizar Cierre"
-        // Las demás secciones se bloquean para evitar cambios mientras se prepara la finalización
+        // Habilitar: solo Incidencias
         return seccion !== 'incidencias';
         
       default:
-        // Estados posteriores: bloquear según la lógica existente
-        return esEstadoPosteriorAConsolidacion(cierre?.estado);
+        // Por defecto: bloquear todo si no está mapeado explícitamente
+        return true;
     }
   };
 

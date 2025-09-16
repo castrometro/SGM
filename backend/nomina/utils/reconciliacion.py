@@ -18,7 +18,10 @@ def reconciliar_cierre_por_firma(cierre_id: int) -> dict:
         cierre = CierreNomina.objects.select_for_update().get(id=cierre_id)
         vN = cierre.version_datos or 1
 
-        qs = IncidenciaCierre.objects.select_related('cierre').filter(
+        # No usar select_related('cierre') aquí porque más abajo se usa only(...) y se difiere el campo
+        # 'cierre', lo que provoca: "Field IncidenciaCierre.cierre cannot be both deferred and traversed"
+        # Además, en este flujo no accedemos a inc.cierre, por lo que el join no aporta.
+        qs = IncidenciaCierre.objects.filter(
             cierre_id=cierre_id,
             tipo_comparacion__in=['individual', 'suma_total']
         )

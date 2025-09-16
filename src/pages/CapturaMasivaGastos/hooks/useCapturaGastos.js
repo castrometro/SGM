@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { subirArchivoGastos, consultarEstadoGastos, descargarResultadoGastos, leerHeadersExcel } from "../../../api/capturaGastos";
+import { subirArchivoGastos, consultarEstadoGastos, descargarResultadoGastos } from "../../../api/capturaGastos";
 import { CAPTURA_CONFIG, UI_MESSAGES } from "../config/capturaConfig";
 
 /**
@@ -88,39 +88,26 @@ export const useCapturaGastos = () => {
     
     // Leer headers del Excel para configurar mapeo de centros de costos
     try {
-      const data = await leerHeadersExcel(archivoSeleccionado);
+      const formData = new FormData();
+      formData.append('archivo', archivoSeleccionado);
+      
+      const token = localStorage.getItem('token');
+      const response = await fetch('http://172.17.11.18:8000/api/gastos/leer-headers/', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        body: formData
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Error ${response.status}: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
       console.log('📡 Respuesta del API leer-headers:', data);
-
-      // Backend devuelve { headers: [], centros_costos_detectados: { col10: 'PyC', ... } }
-      // Compatibilidad: algunos backups usaban 'centros_costo'
-      const ccDetectadosRaw = data.centros_costos_detectados || data.centros_costo || {};
-
-      // Transformar a estructura esperada por el frontend: { PyC: {nombre, posicion}, PS: {...}, CO: {...} }
-      const transformarCC = (ccMap) => {
-        const resultado = {};
-        Object.entries(ccMap).forEach(([colKey, headerName]) => {
-          const idx = parseInt(String(colKey).replace('col', ''), 10);
-          const lower = String(headerName || '').toLowerCase();
-          const tokens = lower.split(/[^a-z0-9]+/).filter(Boolean);
-          const tokenSet = new Set(tokens);
-
-          const esPyC = tokenSet.has('pyc');
-          const esPsEb = tokenSet.has('ps') || tokenSet.has('eb') || lower.includes('ps/eb');
-          const esCO = tokenSet.has('co');
-
-          if (esPyC) {
-            resultado.PyC = { nombre: headerName, posicion: idx };
-          } else if (esPsEb) {
-            resultado.PS = { nombre: headerName, posicion: idx };
-          } else if (esCO) {
-            resultado.CO = { nombre: headerName, posicion: idx };
-          }
-        });
-        return resultado;
-      };
-
       setHeadersExcel(data.headers);
-      setCentrosCostoDetectados(transformarCC(ccDetectadosRaw));
+      setCentrosCostoDetectados(data.centros_costo || {});
       setMostrarMapeoCC(true);
       console.log('✅ Headers y centros de costo establecidos');
     } catch (error) {

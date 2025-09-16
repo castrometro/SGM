@@ -112,13 +112,12 @@ function App() {
           
           {/* ----------- ÁREA: HERRAMIENTAS ------------- */}
           <Route path="tools" element={<Tools />} />
+          <Route path="tools/captura-masiva-gastos" element={<CapturaMasivaGastos />} />
           
           {/* ----------- ÁREA: COBRANZA ------------- */}
           <Route path="gestion-cobranza-v2" element={<GestionCobranzav2 />} />
           <Route path="gestion-cobranza-v2/:clienteId/facturas" element={<CobranzaFacturas />} />
           
-          {/* ----------- ÁREA: CAPTURA MASIVA DE GASTOS ------------- */}
-          <Route path="captura-gastos" element={<CapturaMasivaGastos />} />
 
           {/* ----------- 404 / OTRAS ------------- */}
           <Route path="*" element={<h1 className="text-white">404 - Página no encontrada</h1>} />

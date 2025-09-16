@@ -879,9 +879,15 @@ def dashboard_streamlit_redirect(request, cliente_id=None):
         }, status=500)
 
 
-# =====================================================
-# FUNCIONES PARA CAPTURA MASIVA DE GASTOS
-# =====================================================
+## =============================================================================
+# 🧾 CAPTURA MASIVA RINDE GASTOS
+# =============================================================================
+
+import redis
+import json
+import os
+from django.http import JsonResponse
+from contabilidad.tasks import procesar_captura_masiva_gastos_task
 
 def get_redis_client_db1():
     """
@@ -940,9 +946,6 @@ def captura_masiva_gastos(request):
     Endpoint para procesar archivos Excel de captura masiva de gastos
     """
     try:
-        # Import aquí para evitar errores de dependencias circulares
-        from contabilidad.tasks import procesar_captura_masiva_gastos_task
-        
         # Validar que se haya enviado un archivo
         if 'archivo' not in request.FILES:
             return Response({
@@ -1030,7 +1033,7 @@ def descargar_resultado_gastos(request, task_id):
     Descargar el archivo Excel procesado
     """
     try:
-        redis_client = get_redis_client_db1_binary()
+        redis_client = get_redis_client_db1()
         
         # Verificar que la tarea esté completada - incluir usuario_id en la clave
         metadata_raw = redis_client.get(f"captura_gastos_meta:{request.user.id}:{task_id}")
@@ -1039,32 +1042,29 @@ def descargar_resultado_gastos(request, task_id):
                 'error': 'No se encontró información de la tarea'
             }, status=404)
         
-        # Decodificar metadata (viene como bytes)
-        metadata = json.loads(metadata_raw.decode('utf-8'))
+        metadata = json.loads(metadata_raw)
         
         if metadata.get('estado') != 'completado':
             return Response({
-                'error': 'La tarea aún no está completada'
+                'error': 'La tarea aún no ha sido completada'
             }, status=400)
         
-        # Obtener el archivo procesado
-        archivo_key = f"captura_gastos_archivo:{request.user.id}:{task_id}"
-        archivo_bytes = redis_client.get(archivo_key)
-        
-        if not archivo_bytes:
+        # Obtener el archivo Excel desde Redis (usar cliente binario) - incluir usuario_id en la clave
+        redis_client_binary = get_redis_client_db1_binary()
+        excel_content = redis_client_binary.get(f"captura_gastos_excel:{request.user.id}:{task_id}")
+        if not excel_content:
             return Response({
-                'error': 'No se encontró el archivo procesado'
+                'error': 'El archivo procesado no está disponible'
             }, status=404)
         
-        # Crear respuesta HTTP con el archivo Excel
+        # Crear respuesta HTTP con el archivo
+        from django.http import HttpResponse
+        
         response = HttpResponse(
-            archivo_bytes,
+            excel_content,
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
-        
-        # Nombre del archivo para descarga
-        archivo_nombre = metadata.get('archivo_resultado', 'gastos_procesados.xlsx')
-        response['Content-Disposition'] = f'attachment; filename="{archivo_nombre}"'
+        response['Content-Disposition'] = f'attachment; filename="gastos_procesados_{task_id}.xlsx"'
         
         return response
         
@@ -1076,9 +1076,10 @@ def descargar_resultado_gastos(request, task_id):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
-def leer_headers_excel(request):
+def leer_headers_excel_gastos(request):
     """
-    Leer los headers de un archivo Excel para mapeo de centros de costos
+    Endpoint para leer solo los headers de un archivo Excel
+    También detecta automáticamente las posiciones de centros de costo
     """
     try:
         # Validar que se haya enviado un archivo
@@ -1095,68 +1096,62 @@ def leer_headers_excel(request):
                 'error': 'El archivo debe ser un Excel (.xlsx o .xls)'
             }, status=400)
         
-        # Leer contenido del archivo
-        archivo_content = archivo.read()
-        
-        # Cargar el archivo Excel
+        # Leer solo la primera fila para obtener headers
         from openpyxl import load_workbook
         from io import BytesIO
         
-        wb = load_workbook(BytesIO(archivo_content))
-        ws = wb.active
+        archivo_content = archivo.read()
+        workbook = load_workbook(BytesIO(archivo_content), read_only=True)
+        sheet = workbook.active
         
-        # Obtener headers de la primera fila
+        # Leer la primera fila (headers)
         headers = []
-        for cell in ws[1]:
-            headers.append(cell.value)
-
-        # DEBUG: imprimir valor de la columna 20 (1-indexed) de la fila 1 y su tokenización
-        try:
-            import re
-            cell_20_value = ws.cell(row=1, column=20).value if ws.max_column >= 20 else None
-            h20 = str(cell_20_value or '').lower()
-            tokens_20 = [t for t in re.split(r"[^a-z0-9]+", h20) if t]
-            print("[DEBUG leer_headers_excel] fila 1, columna 20:", {
-                'valor': cell_20_value,
-                'lower': h20,
-                'tokens': tokens_20,
-                'token_set': set(tokens_20),
-            })
-            # DEBUG: listar todos los headers con índice 1-based y tokens
-            headers_debug = []
-            for j, hdr in enumerate(headers, start=1):
-                hj = str(hdr or '').lower()
-                toks = [t for t in re.split(r"[^a-z0-9]+", hj) if t]
-                headers_debug.append({'columna': j, 'valor': hdr, 'tokens': toks})
-            print("[DEBUG leer_headers_excel] headers fila 1:", headers_debug)
-        except Exception as dbg_e:
-            print("[DEBUG leer_headers_excel] error debug columna 20:", str(dbg_e))
+        primera_fila = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
         
-        # Detectar columnas de centros de costos (PyC, EB/PS, CO) usando tokens para evitar falsos positivos
-        import re
-        centros_costos = {}
+        for cell_value in primera_fila:
+            if cell_value is not None:
+                # Convertir a string con encoding UTF-8
+                header_str = str(cell_value).encode('utf-8', errors='ignore').decode('utf-8')
+                headers.append(header_str)
+            else:
+                headers.append('')
+        
+        # Detectar posiciones de centros de costo automáticamente
+        centros_costo_detectados = {}
         for i, header in enumerate(headers):
-            if not header:
-                continue
-            h = str(header).lower()
-            # Normalizar separadores y tokenizar
-            tokens = [t for t in re.split(r"[^a-z0-9]+", h) if t]
-            token_set = set(tokens)
-
-            es_pyc = 'pyc' in token_set
-            es_ps_eb = ('ps' in token_set) or ('eb' in token_set) or ('ps' in h and 'eb' in h)  # soporta 'ps/eb'
-            es_co = 'co' in token_set
-
-            if es_pyc or es_ps_eb or es_co:
-                centros_costos[f'col{i}'] = header
+            if header == 'PyC':
+                centros_costo_detectados['PyC'] = {'posicion': i, 'nombre': header}
+            elif header in ['PS', 'EB']:  # PS y EB son equivalentes
+                centros_costo_detectados['PS'] = {'posicion': i, 'nombre': header}
+            elif header == 'CO':
+                centros_costo_detectados['CO'] = {'posicion': i, 'nombre': header}
+        
+        # Detectar posiciones de código y nombre de cuenta
+        columnas_cuenta_detectadas = {}
+        
+        # Buscar primera columna que contenga "Codigo cuenta"
+        for i, header in enumerate(headers):
+            if header and 'Codigo cuenta' in str(header):
+                columnas_cuenta_detectadas['codigo_cuenta'] = {'posicion': i, 'nombre': header}
+                break
+        
+        # Buscar primera columna que contenga "Nombre cuenta"
+        for i, header in enumerate(headers):
+            if header and 'Nombre cuenta' in str(header):
+                columnas_cuenta_detectadas['nombre_cuenta'] = {'posicion': i, 'nombre': header}
+                break
+        
+        workbook.close()
         
         return Response({
             'headers': headers,
-            'centros_costos_detectados': centros_costos,
-            'total_columnas': len(headers)
+            'total_columnas': len(headers),
+            'centros_costo': centros_costo_detectados,
+            'columnas_cuenta': columnas_cuenta_detectadas,
+            'mensaje': 'Headers leídos exitosamente'
         })
         
     except Exception as e:
         return Response({
-            'error': f'Error leyendo headers: {str(e)}'
+            'error': f'Error leyendo headers del Excel: {str(e)}'
         }, status=500)

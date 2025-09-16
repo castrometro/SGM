@@ -58,31 +58,15 @@ const MapeoCC = ({
       });
     }
     
-    // Si no se detectaron centros de costo, mostrar los 3 campos con etiquetas fijas y subtítulo 'No detectado'
+    // Si no se detectaron centros de costo, usar configuración por defecto
     if (columnas.length === 0) {
-      console.log('⚠️ No se detectaron centros de costo, mostrando 3 entradas por defecto');
-      return [
-        { key: 'col10', label: 'PyC', subtitle: 'No detectado', placeholder: 'Código CC (ej: 01-003)' },
-        { key: 'col11', label: 'PS/EB', subtitle: 'No detectado', placeholder: 'Código CC (ej: 02-004)' },
-        { key: 'col12', label: 'CO', subtitle: 'No detectado', placeholder: 'Código CC (ej: 03-005)' },
-      ];
+      console.log('⚠️ No se detectaron centros de costo, usando configuración por defecto');
+      return config.columns.map(col => ({
+        ...col,
+        subtitle: headersExcel[col.key === 'col10' ? 9 : col.key === 'col11' ? 10 : 11] || 'Sin nombre'
+      }));
     }
-    // Si se detectaron menos de 3, completar con la configuración por defecto
-    const required = ['col10', 'col11', 'col12'];
-    const usados = new Set(columnas.map(c => c.key));
-    for (const key of required) {
-      if (!usados.has(key)) {
-        // Insertar entrada faltante con etiqueta fija y subtítulo claro
-        const label = key === 'col10' ? 'PyC' : key === 'col11' ? 'PS/EB' : 'CO';
-        const placeholder = key === 'col10'
-          ? 'Código CC (ej: 01-003)'
-          : key === 'col11'
-            ? 'Código CC (ej: 02-004)'
-            : 'Código CC (ej: 03-005)';
-        columnas.push({ key, label, subtitle: 'No detectado', placeholder });
-      }
-    }
-
+    
     console.log('✅ Columnas generadas:', columnas);
     return columnas;
   };

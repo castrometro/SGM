@@ -33,7 +33,9 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
     };
 
     let filtradas = (Array.isArray(incidencias) ? incidencias : [])
-      .filter(i => permitidaSuma(i) || permitidaIndiv(i));
+      .filter(i => permitidaSuma(i) || permitidaIndiv(i))
+      // Excluir incidencias informativas/ingreso de empleado en todas las vistas
+      .filter(i => i?.tipo_incidencia !== 'ingreso_empleado' && !Boolean(i?.informativo) && !Boolean(i?.datos_adicionales?.informativo));
 
     // Vistas rápidas
     if (viewChip === 'topVar') {

@@ -56,7 +56,7 @@ const CapturaMasivaGastos = () => {
           onProcesar={procesarArchivo}
         />
 
-        {/* Mapeo de Centros de Costos */}
+        {/* Mapeo de Centros de Costos (hasta 7 tipos) */}
         <MapeoCC 
           mostrarMapeoCC={mostrarMapeoCC}
           headersExcel={headersExcel}

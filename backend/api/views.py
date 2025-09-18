@@ -1125,6 +1125,14 @@ def leer_headers_excel_gastos(request):
                 centros_costo_detectados['PS'] = {'posicion': i, 'nombre': header}
             elif header == 'CO':
                 centros_costo_detectados['CO'] = {'posicion': i, 'nombre': header}
+            elif header == 'RE':
+                centros_costo_detectados['RE'] = {'posicion': i, 'nombre': header}
+            elif header == 'TR':
+                centros_costo_detectados['TR'] = {'posicion': i, 'nombre': header}
+            elif header == 'CF':
+                centros_costo_detectados['CF'] = {'posicion': i, 'nombre': header}
+            elif header == 'LRC':
+                centros_costo_detectados['LRC'] = {'posicion': i, 'nombre': header}
         
         # Detectar posiciones de código y nombre de cuenta
         columnas_cuenta_detectadas = {}

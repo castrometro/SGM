@@ -49,12 +49,18 @@ export const CAPTURA_CONFIG = {
   mapeoCC: {
     title: "Configurar Códigos de Centros de Costos",
     description: "Por favor, asigne los códigos de centro de costos para las columnas detectadas:",
-    formatPattern: /^\d{2}-\d{3}$/,
-    formatExample: "01-003",
+    formatPattern: /^\d{2,3}-\d{3}$/,
+    formatExample: "01-003 o 001-003",
+    // Fallback cuando no se detectan CC en el Excel: mostrar los 7 tipos posibles
+    // Las keys ahora son por tipo lógico para evitar dependencias con posiciones
     columns: [
-      { key: 'col10', label: 'Columna 10', placeholder: 'Código CC (ej: 01-003)' },
-      { key: 'col11', label: 'Columna 11', placeholder: 'Código CC (ej: 02-004)' },
-      { key: 'col12', label: 'Columna 12', placeholder: 'Código CC (ej: 03-005)' }
+      { key: 'PyC', label: 'PyC', placeholder: 'Código CC (ej: 01-003 o 001-003)' },
+      { key: 'PS', label: 'PS/EB', placeholder: 'Código CC (ej: 02-004 o 002-004)' },
+      { key: 'CO', label: 'CO', placeholder: 'Código CC (ej: 03-005 o 003-005)' },
+      { key: 'RE', label: 'RE', placeholder: 'Código CC (ej: 04-006 o 004-006)' },
+      { key: 'TR', label: 'TR', placeholder: 'Código CC (ej: 05-007 o 005-007)' },
+      { key: 'CF', label: 'CF', placeholder: 'Código CC (ej: 06-008 o 006-008)' },
+      { key: 'LRC', label: 'LRC', placeholder: 'Código CC (ej: 07-009 o 007-009)' }
     ]
   }
 };
@@ -90,7 +96,7 @@ export const UI_MESSAGES = {
   ccInfo: {
     title: "Información importante:",
     items: [
-      "Use el formato XX-XXX para códigos de centro de costos (ej: 01-003)",
+      "Use el formato XX-XXX o XXX-XXX para códigos de centro de costos (ej: 01-003 o 001-003)",
       "Deje vacío si la columna no corresponde a un centro de costos",
       'Los valores nulos, "-" o "0" en el Excel se consideran sin centro de costos',
       "Cualquier otro valor se considera como 1 centro de costos"

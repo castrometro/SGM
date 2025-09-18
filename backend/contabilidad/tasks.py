@@ -1323,36 +1323,21 @@ def aplicar_reglas_tipo_documento(fila, headers_entrada, tipo_doc, cc_count, map
     if tipo_doc == "33":
         if cc_count == 1:
             return aplicar_reglas_tipo_33_1cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
-        elif cc_count == 2:
-            return aplicar_reglas_tipo_33_2cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
-        elif cc_count == 3:
+        elif cc_count >= 2:
+            # La implementación de 3CC itera dinámicamente por todas las posiciones detectadas (soporta >3)
             return aplicar_reglas_tipo_33_3cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
-        else:
-            # Para más de 3 CC, usar lógica genérica por ahora
-            logger.warning(f"⚠️ Tipo 33 con {cc_count} CC no implementado, usando lógica de 1CC")
-            return aplicar_reglas_tipo_33_1cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
     elif tipo_doc == "34":
         if cc_count == 1:
             return aplicar_reglas_tipo_34(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
-        elif cc_count == 2:
-            return aplicar_reglas_tipo_34_2cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
-        elif cc_count == 3:
+        elif cc_count >= 2:
+            # Usar la versión 3CC que también soporta N CC dinámicamente
             return aplicar_reglas_tipo_34_3cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
-        else:
-            # Para más de 3 CC en tipo 34, usar lógica de 1CC por ahora
-            logger.warning(f"⚠️ Tipo 34 con {cc_count} CC no implementado, usando lógica de 1CC")
-            return aplicar_reglas_tipo_34(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
     elif tipo_doc == "61":
         if cc_count == 1:
             return aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
-        elif cc_count == 2:
-            return aplicar_reglas_tipo_61_2cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
-        elif cc_count == 3:
+        elif cc_count >= 2:
+            # Usar la versión 3CC que también soporta N CC dinámicamente
             return aplicar_reglas_tipo_61_3cc(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
-        else:
-            # Para más de 3 CC en tipo 61, usar lógica de 1CC por ahora
-            logger.warning(f"⚠️ Tipo 61 con {cc_count} CC no implementado, usando lógica de 1CC")
-            return aplicar_reglas_tipo_61(fila, headers_entrada, mapeo_cc, headers_salida, tipos_doc_map)
     else:
         # Para otros tipos de documento, implementar más adelante
         return aplicar_reglas_genericas(fila, headers_entrada, tipo_doc, mapeo_cc, headers_salida, tipos_doc_map)
@@ -1646,11 +1631,17 @@ def aplicar_reglas_tipo_33_2cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     contador_gasto = 1
     
     # Mapeo de columnas a keys de mapeo (igual que en calcular_codigos_cc_para_fila)
+    # El frontend ahora usa claves lógicas; mantener compatibilidad con claves legacy
     columnas_cc_mapeo = {
-        'PyC': 'col10',   # PyC
-        'PS': 'col11',    # PS/EB (EB es equivalente a PS)
-        'CO': 'col12'     # CO
+        'PyC': 'PyC',
+        'PS': 'PS',
+        'CO': 'CO',
+        'RE': 'RE',
+        'TR': 'TR',
+        'CF': 'CF',
+        'LRC': 'LRC'
     }
+    legacy_map = {'PyC': 'col10', 'PS': 'col11', 'CO': 'col12'}
     
     for nombre_cc, ponderador in ponderadores_cc.items():
         if ponderador > 0:  # Solo crear línea si hay ponderador
@@ -1662,10 +1653,13 @@ def aplicar_reglas_tipo_33_2cc(fila, headers_entrada, mapeo_cc, headers_salida, 
             mapeo_key = columnas_cc_mapeo.get(nombre_cc, '')
             codigo_cc_usuario = ""
             
-            if mapeo_key and mapeo_key in mapeo_cc:
-                codigo_cc_usuario = mapeo_cc[mapeo_key]
-                if codigo_cc_usuario:
-                    codigo_cc_usuario = codigo_cc_usuario.strip()
+            # Buscar primero por clave lógica, luego legacy
+            if mapeo_key and mapeo_key in mapeo_cc and mapeo_cc[mapeo_key]:
+                codigo_cc_usuario = str(mapeo_cc[mapeo_key]).strip()
+            else:
+                legacy_key = legacy_map.get(nombre_cc)
+                if legacy_key and legacy_key in mapeo_cc and mapeo_cc[legacy_key]:
+                    codigo_cc_usuario = str(mapeo_cc[legacy_key]).strip()
             
             if not codigo_cc_usuario:
                 logger.warning(f"⚠️ No se encontró código de CC para '{nombre_cc}' (mapeo_key: {mapeo_key}) en mapeo_cc: {mapeo_cc}")
@@ -1843,10 +1837,15 @@ def aplicar_reglas_tipo_33_3cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     
     # Mapeo de columnas a keys de mapeo (igual que en 2CC)
     columnas_cc_mapeo = {
-        'PyC': 'col10',   # PyC
-        'PS': 'col11',    # PS/EB (EB es equivalente a PS)
-        'CO': 'col12'     # CO
+        'PyC': 'PyC',
+        'PS': 'PS',
+        'CO': 'CO',
+        'RE': 'RE',
+        'TR': 'TR',
+        'CF': 'CF',
+        'LRC': 'LRC'
     }
+    legacy_map = {'PyC': 'col10', 'PS': 'col11', 'CO': 'col12'}
     
     for nombre_cc, ponderador in ponderadores_cc.items():
         if ponderador > 0:  # Solo crear línea si hay ponderador
@@ -1858,10 +1857,12 @@ def aplicar_reglas_tipo_33_3cc(fila, headers_entrada, mapeo_cc, headers_salida, 
             mapeo_key = columnas_cc_mapeo.get(nombre_cc, '')
             codigo_cc_usuario = ""
             
-            if mapeo_key and mapeo_key in mapeo_cc:
-                codigo_cc_usuario = mapeo_cc[mapeo_key]
-                if codigo_cc_usuario:
-                    codigo_cc_usuario = codigo_cc_usuario.strip()
+            if mapeo_key and mapeo_key in mapeo_cc and mapeo_cc[mapeo_key]:
+                codigo_cc_usuario = str(mapeo_cc[mapeo_key]).strip()
+            else:
+                legacy_key = legacy_map.get(nombre_cc)
+                if legacy_key and legacy_key in mapeo_cc and mapeo_cc[legacy_key]:
+                    codigo_cc_usuario = str(mapeo_cc[legacy_key]).strip()
             
             if not codigo_cc_usuario:
                 logger.warning(f"⚠️ No se encontró código de CC para '{nombre_cc}' (mapeo_key: {mapeo_key}) en mapeo_cc: {mapeo_cc}")
@@ -2058,10 +2059,15 @@ def aplicar_reglas_tipo_34_2cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     
     # Mapeo de columnas a keys de mapeo (igual que en tipo 33)
     columnas_cc_mapeo = {
-        'PyC': 'col10',   # PyC
-        'PS': 'col11',    # PS/EB (EB es equivalente a PS)
-        'CO': 'col12'     # CO
+        'PyC': 'PyC',
+        'PS': 'PS',
+        'CO': 'CO',
+        'RE': 'RE',
+        'TR': 'TR',
+        'CF': 'CF',
+        'LRC': 'LRC'
     }
+    legacy_map = {'PyC': 'col10', 'PS': 'col11', 'CO': 'col12'}
     
     for nombre_cc, ponderador in ponderadores_cc.items():
         if ponderador > 0:  # Solo crear línea si hay ponderador
@@ -2072,10 +2078,12 @@ def aplicar_reglas_tipo_34_2cc(fila, headers_entrada, mapeo_cc, headers_salida, 
             mapeo_key = columnas_cc_mapeo.get(nombre_cc, '')
             codigo_cc_usuario = ""
             
-            if mapeo_key and mapeo_key in mapeo_cc:
-                codigo_cc_usuario = mapeo_cc[mapeo_key]
-                if codigo_cc_usuario:
-                    codigo_cc_usuario = codigo_cc_usuario.strip()
+            if mapeo_key and mapeo_key in mapeo_cc and mapeo_cc[mapeo_key]:
+                codigo_cc_usuario = str(mapeo_cc[mapeo_key]).strip()
+            else:
+                legacy_key = legacy_map.get(nombre_cc)
+                if legacy_key and legacy_key in mapeo_cc and mapeo_cc[legacy_key]:
+                    codigo_cc_usuario = str(mapeo_cc[legacy_key]).strip()
             
             if not codigo_cc_usuario:
                 logger.warning(f"⚠️ No se encontró código de CC para '{nombre_cc}' (mapeo_key: {mapeo_key}) en mapeo_cc: {mapeo_cc}")
@@ -2196,10 +2204,15 @@ def aplicar_reglas_tipo_34_3cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     
     # Mapeo de columnas a keys de mapeo (igual que en tipo 33)
     columnas_cc_mapeo = {
-        'PyC': 'col10',   # PyC
-        'PS': 'col11',    # PS/EB (EB es equivalente a PS)
-        'CO': 'col12'     # CO
+        'PyC': 'PyC',
+        'PS': 'PS',
+        'CO': 'CO',
+        'RE': 'RE',
+        'TR': 'TR',
+        'CF': 'CF',
+        'LRC': 'LRC'
     }
+    legacy_map = {'PyC': 'col10', 'PS': 'col11', 'CO': 'col12'}
     
     for nombre_cc, ponderador in ponderadores_cc.items():
         if ponderador > 0:  # Solo crear línea si hay ponderador
@@ -2210,10 +2223,12 @@ def aplicar_reglas_tipo_34_3cc(fila, headers_entrada, mapeo_cc, headers_salida, 
             mapeo_key = columnas_cc_mapeo.get(nombre_cc, '')
             codigo_cc_usuario = ""
             
-            if mapeo_key and mapeo_key in mapeo_cc:
-                codigo_cc_usuario = mapeo_cc[mapeo_key]
-                if codigo_cc_usuario:
-                    codigo_cc_usuario = codigo_cc_usuario.strip()
+            if mapeo_key and mapeo_key in mapeo_cc and mapeo_cc[mapeo_key]:
+                codigo_cc_usuario = str(mapeo_cc[mapeo_key]).strip()
+            else:
+                legacy_key = legacy_map.get(nombre_cc)
+                if legacy_key and legacy_key in mapeo_cc and mapeo_cc[legacy_key]:
+                    codigo_cc_usuario = str(mapeo_cc[legacy_key]).strip()
             
             if not codigo_cc_usuario:
                 logger.warning(f"⚠️ No se encontró código de CC para '{nombre_cc}' (mapeo_key: {mapeo_key}) en mapeo_cc: {mapeo_cc}")
@@ -2491,10 +2506,15 @@ def aplicar_reglas_tipo_61_2cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     
     # Mapeo de columnas a keys de mapeo (igual que en tipo 33)
     columnas_cc_mapeo = {
-        'PyC': 'col10',   # PyC
-        'PS': 'col11',    # PS/EB (EB es equivalente a PS)
-        'CO': 'col12'     # CO
+        'PyC': 'PyC',
+        'PS': 'PS',
+        'CO': 'CO',
+        'RE': 'RE',
+        'TR': 'TR',
+        'CF': 'CF',
+        'LRC': 'LRC'
     }
+    legacy_map = {'PyC': 'col10', 'PS': 'col11', 'CO': 'col12'}
     
     for nombre_cc, ponderador in ponderadores_cc.items():
         if ponderador > 0:  # Solo crear línea si hay ponderador
@@ -2505,10 +2525,12 @@ def aplicar_reglas_tipo_61_2cc(fila, headers_entrada, mapeo_cc, headers_salida, 
             mapeo_key = columnas_cc_mapeo.get(nombre_cc, '')
             codigo_cc_usuario = ""
             
-            if mapeo_key and mapeo_key in mapeo_cc:
-                codigo_cc_usuario = mapeo_cc[mapeo_key]
-                if codigo_cc_usuario:
-                    codigo_cc_usuario = codigo_cc_usuario.strip()
+            if mapeo_key and mapeo_key in mapeo_cc and mapeo_cc[mapeo_key]:
+                codigo_cc_usuario = str(mapeo_cc[mapeo_key]).strip()
+            else:
+                legacy_key = legacy_map.get(nombre_cc)
+                if legacy_key and legacy_key in mapeo_cc and mapeo_cc[legacy_key]:
+                    codigo_cc_usuario = str(mapeo_cc[legacy_key]).strip()
             
             if not codigo_cc_usuario:
                 logger.warning(f"⚠️ No se encontró código de CC para '{nombre_cc}' (mapeo_key: {mapeo_key}) en mapeo_cc: {mapeo_cc}")
@@ -2676,10 +2698,15 @@ def aplicar_reglas_tipo_61_3cc(fila, headers_entrada, mapeo_cc, headers_salida, 
     
     # Mapeo de columnas a keys de mapeo (igual que en tipo 33)
     columnas_cc_mapeo = {
-        'PyC': 'col10',   # PyC
-        'PS': 'col11',    # PS/EB (EB es equivalente a PS)
-        'CO': 'col12'     # CO
+        'PyC': 'PyC',
+        'PS': 'PS',
+        'CO': 'CO',
+        'RE': 'RE',
+        'TR': 'TR',
+        'CF': 'CF',
+        'LRC': 'LRC'
     }
+    legacy_map = {'PyC': 'col10', 'PS': 'col11', 'CO': 'col12'}
     
     for nombre_cc, ponderador in ponderadores_cc.items():
         if ponderador > 0:  # Solo crear línea si hay ponderador
@@ -2690,10 +2717,12 @@ def aplicar_reglas_tipo_61_3cc(fila, headers_entrada, mapeo_cc, headers_salida, 
             mapeo_key = columnas_cc_mapeo.get(nombre_cc, '')
             codigo_cc_usuario = ""
             
-            if mapeo_key and mapeo_key in mapeo_cc:
-                codigo_cc_usuario = mapeo_cc[mapeo_key]
-                if codigo_cc_usuario:
-                    codigo_cc_usuario = codigo_cc_usuario.strip()
+            if mapeo_key and mapeo_key in mapeo_cc and mapeo_cc[mapeo_key]:
+                codigo_cc_usuario = str(mapeo_cc[mapeo_key]).strip()
+            else:
+                legacy_key = legacy_map.get(nombre_cc)
+                if legacy_key and legacy_key in mapeo_cc and mapeo_cc[legacy_key]:
+                    codigo_cc_usuario = str(mapeo_cc[legacy_key]).strip()
             
             if not codigo_cc_usuario:
                 logger.warning(f"⚠️ No se encontró código de CC para '{nombre_cc}' (mapeo_key: {mapeo_key}) en mapeo_cc: {mapeo_cc}")
@@ -3063,12 +3092,23 @@ def detectar_posiciones_centros_costo(headers):
     mapeo_dinamico = {}
     
     for i, header in enumerate(headers):
-        if header == 'PyC':
+        if header is None:
+            continue
+        h = str(header).strip()
+        if h == 'PyC':
             mapeo_dinamico['PyC'] = i
-        elif header in ['PS', 'EB']:  # PS y EB son equivalentes
+        elif h in ['PS', 'EB']:
             mapeo_dinamico['PS'] = i
-        elif header == 'CO':
+        elif h == 'CO':
             mapeo_dinamico['CO'] = i
+        elif h == 'RE':
+            mapeo_dinamico['RE'] = i
+        elif h == 'TR':
+            mapeo_dinamico['TR'] = i
+        elif h == 'CF':
+            mapeo_dinamico['CF'] = i
+        elif h == 'LRC':
+            mapeo_dinamico['LRC'] = i
     
     return mapeo_dinamico
 
@@ -3209,38 +3249,40 @@ def calcular_codigos_cc_para_fila(fila, headers, mapeo_cc):
     # Detectar posiciones dinámicamente
     posiciones_cc = detectar_posiciones_centros_costo(headers)
     
-    # Mapeo de columnas a keys de mapeo (mantenemos compatibilidad con frontend)
-    columnas_cc_mapeo = {
-        'PyC': 'col10',   # PyC
-        'PS': 'col11',    # PS/EB
-        'CO': 'col12'     # CO
-    }
+    # El frontend ahora envía mapeo por tipo lógico (PyC, PS, CO, RE, TR, CF, LRC)
+    # Mantener compatibilidad si llegan claves antiguas col10/col11/col12
+    legacy_map = {'PyC': 'col10', 'PS': 'col11', 'CO': 'col12'}
     
     codigos_aplicables = []
     
     # Buscar cada tipo de centro de costo
     for tipo_cc, posicion in posiciones_cc.items():
-        if tipo_cc in columnas_cc_mapeo:
-            mapeo_key = columnas_cc_mapeo[tipo_cc]
+        # Encuentra código desde mapeo lógico o claves legacy
+        codigo_cc = None
+        if tipo_cc in mapeo_cc and mapeo_cc[tipo_cc]:
+            codigo_cc = mapeo_cc[tipo_cc]
+        else:
+            legacy_key = legacy_map.get(tipo_cc)
+            if legacy_key and legacy_key in mapeo_cc:
+                codigo_cc = mapeo_cc.get(legacy_key)
+
+        if codigo_cc is None:
+            continue
+
+        header_name = headers[posicion]
+        valor = fila.get(header_name)
+        
+        # Un centro de costo es válido si NO es: None, "-", 0, "0" y tiene código mapeado
+        if (valor is not None and 
+            valor != "-" and 
+            valor != 0 and 
+            valor != "0" and 
+            str(valor).strip() != "" and
+            str(codigo_cc).strip() != ""):
             
-            # Verificar si existe el mapeo para esta columna
-            if mapeo_key in mapeo_cc:
-                codigo_cc = mapeo_cc[mapeo_key]
-                header_name = headers[posicion]
-                valor = fila.get(header_name)
-                
-                # Un centro de costo es válido si NO es: None, "-", 0, "0" y tiene código mapeado
-                if (valor is not None and 
-                    valor != "-" and 
-                    valor != 0 and 
-                    valor != "0" and 
-                    str(valor).strip() != "" and
-                    codigo_cc and 
-                    codigo_cc.strip() != ""):
-                    
-                    codigo_limpio = codigo_cc.strip()
-                    if codigo_limpio not in codigos_aplicables:
-                        codigos_aplicables.append(codigo_limpio)
+            codigo_limpio = str(codigo_cc).strip()
+            if codigo_limpio not in codigos_aplicables:
+                codigos_aplicables.append(codigo_limpio)
     
     # Retornar códigos separados por comas o string vacía si no hay ninguno
     return ", ".join(codigos_aplicables) if codigos_aplicables else ""

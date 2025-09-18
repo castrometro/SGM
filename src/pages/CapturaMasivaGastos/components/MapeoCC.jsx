@@ -28,42 +28,25 @@ const MapeoCC = ({
     console.log('🔍 Generando columnas detectadas:', centrosCostoDetectados);
     const columnas = [];
     
-    // PyC
-    if (centrosCostoDetectados.PyC) {
-      columnas.push({
-        key: 'col10',
-        label: `${centrosCostoDetectados.PyC.nombre}`,
-        subtitle: `Columna ${centrosCostoDetectados.PyC.posicion + 1}`,
-        placeholder: 'Código CC (ej: 01-003)'
-      });
-    }
-    
-    // PS/EB
-    if (centrosCostoDetectados.PS) {
-      columnas.push({
-        key: 'col11',
-        label: `${centrosCostoDetectados.PS.nombre}`,
-        subtitle: `Columna ${centrosCostoDetectados.PS.posicion + 1}`,
-        placeholder: 'Código CC (ej: 02-004)'
-      });
-    }
-    
-    // CO
-    if (centrosCostoDetectados.CO) {
-      columnas.push({
-        key: 'col12',
-        label: `${centrosCostoDetectados.CO.nombre}`,
-        subtitle: `Columna ${centrosCostoDetectados.CO.posicion + 1}`,
-        placeholder: 'Código CC (ej: 03-005)'
-      });
-    }
+    const tipos = ['PyC', 'PS', 'CO', 'RE', 'TR', 'CF', 'LRC'];
+    tipos.forEach((tipo) => {
+      if (centrosCostoDetectados[tipo]) {
+        columnas.push({
+          key: tipo,
+          label: `${centrosCostoDetectados[tipo].nombre}`,
+          subtitle: `Columna ${centrosCostoDetectados[tipo].posicion + 1}`,
+          placeholder: 'Código CC (ej: 01-003 o 001-003)'
+        });
+      }
+    });
     
     // Si no se detectaron centros de costo, usar configuración por defecto
     if (columnas.length === 0) {
       console.log('⚠️ No se detectaron centros de costo, usando configuración por defecto');
+      // Mostrar todos los tipos posibles, usando headersExcel como subtítulo si existe
       return config.columns.map(col => ({
         ...col,
-        subtitle: headersExcel[col.key === 'col10' ? 9 : col.key === 'col11' ? 10 : 11] || 'Sin nombre'
+        subtitle: 'Sin nombre'
       }));
     }
     

@@ -14,9 +14,13 @@ export const useCapturaGastos = () => {
   const [headersExcel, setHeadersExcel] = useState(null);
   const [centrosCostoDetectados, setCentrosCostoDetectados] = useState({});
   const [mapeoCC, setMapeoCC] = useState({
-    col10: '',
-    col11: '',
-    col12: ''
+    PyC: '',
+    PS: '',
+    CO: '',
+    RE: '',
+    TR: '',
+    CF: '',
+    LRC: ''
   });
   const [mostrarMapeoCC, setMostrarMapeoCC] = useState(false);
 
@@ -61,17 +65,14 @@ export const useCapturaGastos = () => {
     
     Object.entries(mapeo).forEach(([key, valor]) => {
       if (valor.trim() !== '' && !patron.test(valor.trim())) {
-        // Obtener el nombre real de la columna en lugar de posición fija
-        let nombreColumna = 'Desconocida';
-        if (key === 'col10' && centrosCostoDetectados.PyC) {
-          nombreColumna = `${centrosCostoDetectados.PyC.nombre} (columna ${centrosCostoDetectados.PyC.posicion + 1})`;
-        } else if (key === 'col11' && centrosCostoDetectados.PS) {
-          nombreColumna = `${centrosCostoDetectados.PS.nombre} (columna ${centrosCostoDetectados.PS.posicion + 1})`;
-        } else if (key === 'col12' && centrosCostoDetectados.CO) {
-          nombreColumna = `${centrosCostoDetectados.CO.nombre} (columna ${centrosCostoDetectados.CO.posicion + 1})`;
+        // Mostrar nombre dinámico de la columna si fue detectada
+        let nombreColumna = key;
+        if (centrosCostoDetectados[key]) {
+          const det = centrosCostoDetectados[key];
+          nombreColumna = `${det.nombre} (columna ${det.posicion + 1})`;
         }
         
-        errores.push(`${nombreColumna}: formato inválido (debe ser XX-XXX, ej: ${CAPTURA_CONFIG.mapeoCC.formatExample})`);
+  errores.push(`${nombreColumna}: formato inválido (debe ser XX-XXX o XXX-XXX, ej: ${CAPTURA_CONFIG.mapeoCC.formatExample})`);
       }
     });
     
@@ -107,7 +108,7 @@ export const useCapturaGastos = () => {
       const data = await response.json();
       console.log('📡 Respuesta del API leer-headers:', data);
       setHeadersExcel(data.headers);
-      setCentrosCostoDetectados(data.centros_costo || {});
+  setCentrosCostoDetectados(data.centros_costo || {});
       setMostrarMapeoCC(true);
       console.log('✅ Headers y centros de costo establecidos');
     } catch (error) {
@@ -198,7 +199,7 @@ export const useCapturaGastos = () => {
     setResultados(null);
     setMostrarMapeoCC(false);
     setHeadersExcel(null);
-    setMapeoCC({ col10: '', col11: '', col12: '' });
+  setMapeoCC({ PyC: '', PS: '', CO: '', RE: '', TR: '', CF: '', LRC: '' });
   };
 
   return {

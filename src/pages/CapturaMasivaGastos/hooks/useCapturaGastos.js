@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { subirArchivoGastos, consultarEstadoGastos, descargarResultadoGastos } from "../../../api/capturaGastos";
+import { rgLeerHeadersExcel } from "../../../api/rindeGastos";
 import { CAPTURA_CONFIG, UI_MESSAGES } from "../config/capturaConfig";
 
 /**
@@ -13,15 +14,8 @@ export const useCapturaGastos = () => {
   const [error, setError] = useState(null);
   const [headersExcel, setHeadersExcel] = useState(null);
   const [centrosCostoDetectados, setCentrosCostoDetectados] = useState({});
-  const [mapeoCC, setMapeoCC] = useState({
-    PyC: '',
-    PS: '',
-    CO: '',
-    RE: '',
-    TR: '',
-    CF: '',
-    LRC: ''
-  });
+  const [mapeoCC, setMapeoCC] = useState({}); // dinámico según detección RG
+  const [cuentasGlobales, setCuentasGlobales] = useState({ cuentaIVA: '', cuentaGasto: '', cuentaProveedores: '' });
   const [mostrarMapeoCC, setMostrarMapeoCC] = useState(false);
 
   // Polling para verificar estado de la tarea
@@ -89,28 +83,13 @@ export const useCapturaGastos = () => {
     
     // Leer headers del Excel para configurar mapeo de centros de costos
     try {
-      const formData = new FormData();
-      formData.append('archivo', archivoSeleccionado);
-      
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://172.17.11.18:8000/api/gastos/leer-headers/', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-        body: formData
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Error ${response.status}: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      console.log('📡 Respuesta del API leer-headers:', data);
+      // Usar la nueva API exclusiva RG
+      const data = await rgLeerHeadersExcel(archivoSeleccionado);
+      console.log('📡 [RG] Respuesta del API leer-headers:', data);
       setHeadersExcel(data.headers);
-  setCentrosCostoDetectados(data.centros_costo || {});
+      setCentrosCostoDetectados(data.centros_costo || {});
       setMostrarMapeoCC(true);
-      console.log('✅ Headers y centros de costo establecidos');
+      console.log('✅ [RG] Headers y centros de costo establecidos');
     } catch (error) {
       console.error('Error leyendo headers:', error);
       setError(`Error leyendo headers: ${error.message}`);
@@ -199,7 +178,8 @@ export const useCapturaGastos = () => {
     setResultados(null);
     setMostrarMapeoCC(false);
     setHeadersExcel(null);
-  setMapeoCC({ PyC: '', PS: '', CO: '', RE: '', TR: '', CF: '', LRC: '' });
+    setMapeoCC({});
+    setCuentasGlobales({ cuentaIVA: '', cuentaGasto: '', cuentaProveedores: '' });
   };
 
   return {
@@ -221,6 +201,8 @@ export const useCapturaGastos = () => {
     descargarPlantilla,
     limpiarArchivo,
     setMapeoCC,
+    cuentasGlobales,
+    setCuentasGlobales,
     setError
   };
 };

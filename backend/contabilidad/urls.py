@@ -151,6 +151,13 @@ from .views import (
     limpiar_archivos_temporales,
     estado_upload_log,
 )
+from .views.rindegastos import (
+     leer_headers_excel_rindegastos,
+     procesar_step1_rindegastos,
+     estado_step1_rindegastos,
+     descargar_step1_rindegastos,
+     procesar_step1_sync_rindegastos,
+)
 
 # Ya no necesitamos importar desde views_legacy
 
@@ -291,6 +298,16 @@ urlpatterns = [
     # Utilidades
     path("test-celery/", test_celery),
     path("limpiar-archivos-temporales/", limpiar_archivos_temporales),
+     # =============================
+     # RindeGastos (exclusivo)
+     # =============================
+     path("rindegastos/leer-headers/", leer_headers_excel_rindegastos, name="rg-leer-headers-conta"),
+     # Step1 asíncrono: iniciar/estado/descargar
+     path("rindegastos/step1/iniciar/", procesar_step1_rindegastos, name="rg-step1-iniciar"),
+     path("rindegastos/step1/estado/<str:task_id>/", estado_step1_rindegastos, name="rg-step1-estado"),
+     path("rindegastos/step1/descargar/<str:task_id>/", descargar_step1_rindegastos, name="rg-step1-descargar"),
+     # Fallback sincrónico temporal
+     path("rindegastos/procesar-step1/", procesar_step1_sync_rindegastos, name="rg-procesar-step1"),
     
     # Plantillas estáticas
     path("plantilla-tipo-doc/", serve, {

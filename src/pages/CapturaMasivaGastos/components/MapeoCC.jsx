@@ -25,33 +25,31 @@ const MapeoCC = ({
 
   // Generar configuración de columnas dinámicamente basada en centros de costo detectados
   const generarColumnasDetectadas = () => {
-    console.log('🔍 Generando columnas detectadas:', centrosCostoDetectados);
+    console.log('🔍 Generando columnas detectadas (dinámico RG):', centrosCostoDetectados);
     const columnas = [];
-    
-    const tipos = ['PyC', 'PS', 'CO', 'RE', 'TR', 'CF', 'LRC'];
-    tipos.forEach((tipo) => {
-      if (centrosCostoDetectados[tipo]) {
+
+    // Si tenemos detección RG, iterar todas las claves detectadas (nombres tal cual en header)
+    const keysDetectadas = Object.keys(centrosCostoDetectados || {});
+    if (keysDetectadas.length > 0) {
+      keysDetectadas.forEach((key) => {
+        const info = centrosCostoDetectados[key];
         columnas.push({
-          key: tipo,
-          label: `${centrosCostoDetectados[tipo].nombre}`,
-          subtitle: `Columna ${centrosCostoDetectados[tipo].posicion + 1}`,
+          key, // usaremos el nombre del header como key
+          label: `${info.nombre}`,
+          subtitle: `Columna ${info.posicion + 1}`,
           placeholder: 'Código CC (ej: 01-003 o 001-003)'
         });
-      }
-    });
-    
-    // Si no se detectaron centros de costo, usar configuración por defecto
-    if (columnas.length === 0) {
-      console.log('⚠️ No se detectaron centros de costo, usando configuración por defecto');
-      // Mostrar todos los tipos posibles, usando headersExcel como subtítulo si existe
-      return config.columns.map(col => ({
-        ...col,
-        subtitle: 'Sin nombre'
-      }));
+      });
+      console.log('✅ Columnas RG generadas:', columnas);
+      return columnas;
     }
-    
-    console.log('✅ Columnas generadas:', columnas);
-    return columnas;
+
+    // Fallback: configuración por defecto (PyC, PS/EB, ...)
+    console.log('⚠️ No se detectaron centros de costo (RG), usando configuración por defecto');
+    return config.columns.map(col => ({
+      ...col,
+      subtitle: 'Sin nombre'
+    }));
   };
 
   const columnasAMostrar = generarColumnasDetectadas();
@@ -81,7 +79,7 @@ const MapeoCC = ({
               <input
                 type="text"
                 placeholder={column.placeholder}
-                value={mapeoCC[column.key]}
+                value={mapeoCC[column.key] || ''}
                 onChange={(e) => handleInputChange(column.key, e.target.value)}
                 className="w-full bg-gray-700 border border-gray-600 text-white px-3 py-2 rounded-lg focus:outline-none focus:border-yellow-500"
               />

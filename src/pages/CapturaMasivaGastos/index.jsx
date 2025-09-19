@@ -4,6 +4,7 @@ import InstructionsSection from "./components/InstructionsSection";
 import DownloadTemplateSection from "./components/DownloadTemplateSection";
 import FileUploadSection from "./components/FileUploadSection";
 import MapeoCC from "./components/MapeoCC";
+import CuentasGlobalesSection from "./components/CuentasGlobalesSection";
 import ResultsSection from "./components/ResultsSection";
 import ErrorSection from "./components/ErrorSection";
 import { STYLES_CONFIG } from "./config/capturaConfig";
@@ -23,6 +24,8 @@ const CapturaMasivaGastos = () => {
     centrosCostoDetectados,
     mapeoCC,
     mostrarMapeoCC,
+  cuentasGlobales,
+  setCuentasGlobales,
     
     // Acciones
     handleArchivoSeleccionado,
@@ -64,6 +67,14 @@ const CapturaMasivaGastos = () => {
           mapeoCC={mapeoCC}
           setMapeoCC={setMapeoCC}
         />
+
+        {/* Cuentas Globales (placeholder) */}
+        {mostrarMapeoCC && (
+          <CuentasGlobalesSection 
+            cuentasGlobales={cuentasGlobales}
+            setCuentasGlobales={setCuentasGlobales}
+          />
+        )}
 
         {/* Error */}
         <ErrorSection error={error} />

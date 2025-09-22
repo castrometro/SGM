@@ -111,6 +111,8 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id):
     grupos_filas = {}  # clave -> lista de (tipo_doc, cc_count, fila_index)
     total_filas = 0
     debug_filas = []
+    # Guardar filas originales para cálculos posteriores
+    filas_originales = {}
     for row_idx, row in enumerate(ws_in.iter_rows(min_row=2, values_only=True), start=2):
         if not row or not any(row):
             continue
@@ -141,6 +143,7 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id):
         clave = f"{tipo_doc} con {cc_count}CC"
         grupos[clave] = grupos.get(clave, 0) + 1
         grupos_filas.setdefault(clave, []).append((tipo_doc, cc_count, row_idx))
+        filas_originales[row_idx] = row
         debug_filas.append({
             'fila_excel': row_idx,
             'tipo_doc': tipo_doc,
@@ -167,23 +170,135 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id):
         row_cursor = 2
 
         filas_grupo = grupos_filas.get(clave, [])
+        # Mapeo header salida -> índice para escribir
+        header_to_col = {h: i + 1 for i, h in enumerate(headers_salida)}
+
+        # Detectar índices de columnas relevantes en entrada (heurística case-insensitive)
+        headers_lower = [str(h).strip().lower() for h in headers]
+        def find_idx(posibles):
+            for nombre in headers_lower:
+                if nombre in posibles:
+                    return headers_lower.index(nombre)
+            return None
+
+        idx_monto_neto = find_idx({'monto neto', 'neto', 'monto_neto'})
+        idx_monto_iva_rec = find_idx({'monto iva recuperable', 'iva recuperable', 'monto iva', 'iva'})
+        idx_monto_total = find_idx({'monto total', 'total', 'monto_total'})
+        # Funciones auxiliares
+        def trunc(v):
+            try:
+                return int(float(v))
+            except Exception:
+                return 0
+
         for idx_fila, (tipo_doc_str, cc_count, fila_original_idx) in enumerate(filas_grupo, start=1):
-            def add_placeholder(texto):
+            row_in = filas_originales.get(fila_original_idx, [])
+            monto_neto = _parse_numeric(row_in[idx_monto_neto]) if idx_monto_neto is not None and idx_monto_neto < len(row_in) else 0.0
+            if monto_neto is None:
+                monto_neto = 0.0
+            monto_total_input = _parse_numeric(row_in[idx_monto_total]) if idx_monto_total is not None and idx_monto_total < len(row_in) else None
+            monto_iva_rec_input = _parse_numeric(row_in[idx_monto_iva_rec]) if idx_monto_iva_rec is not None and idx_monto_iva_rec < len(row_in) else None
+            # IVA: si no existe columna o valor, calcular 0.19 * neto (truncado)
+            iva_monto = monto_iva_rec_input if (monto_iva_rec_input is not None) else trunc(monto_neto * 0.19)
+            # Total: si no existe usar neto + iva
+            if monto_total_input is None:
+                monto_total = (monto_neto + (iva_monto if monto_iva_rec_input is None else iva_monto))
+            else:
+                monto_total = monto_total_input
+
+            # Recolectar montos por CC (cada fila de gasto corresponde a 1 CC)
+            gastos_rows = []  # lista de (descripcion, debe, codigo_cc)
+            if cc_count > 0:
+                if cc_start is not None and cc_end is not None:
+                    for col in range(cc_start, cc_end):
+                        if col >= len(row_in):
+                            continue
+                        val = row_in[col]
+                        perc = _parse_numeric(val)
+                        if perc is None:
+                            continue
+                        if abs(perc) > 0:
+                            debe = (perc / 100.0) * monto_neto
+                            codigo_cc = headers[col] if col < len(headers) else f'CC{col}'
+                            gastos_rows.append((f'Gasto {codigo_cc}', debe, codigo_cc))
+                else:
+                    for nombre, col in cc_indices_conocidos.items():
+                        if col >= len(row_in):
+                            continue
+                        val = row_in[col]
+                        perc = _parse_numeric(val)
+                        if perc is None:
+                            continue
+                        if abs(perc) > 0:
+                            debe = (perc / 100.0) * monto_neto
+                            gastos_rows.append((f'Gasto {nombre}', debe, nombre))
+
+            suma_debe_gastos = sum(g[1] for g in gastos_rows)
+
+            def write_row(descripcion, debe=None, haber=None, extra=None):
                 nonlocal row_cursor
-                ws.cell(row=row_cursor, column=1, value=texto)
+                if debe is not None:
+                    ws.cell(row=row_cursor, column=header_to_col.get('Monto al Debe Moneda Base', 3), value=debe)
+                if haber is not None:
+                    ws.cell(row=row_cursor, column=header_to_col.get('Monto al Haber Moneda Base', 4), value=haber)
+                ws.cell(row=row_cursor, column=header_to_col.get('Descripción Movimiento', 5), value=descripcion)
+                if extra:
+                    for hname, val in extra.items():
+                        col_idx_h = header_to_col.get(hname)
+                        if col_idx_h:
+                            ws.cell(row=row_cursor, column=col_idx_h, value=val)
                 row_cursor += 1
 
+            # Tipos 33 / 64: IVA + Proveedores + Gastos
             if tipo_doc_str in ['33', '64']:
-                add_placeholder(f'fila iva {idx_fila}')
-                add_placeholder(f'fila cuenta proveedores {idx_fila}')
-                for i in range(1, cc_count + 1):
-                    add_placeholder(f'fila cuenta gasto {idx_fila}.{i}')
+                # Fila IVA
+                write_row(
+                    descripcion=f'IVA Doc {fila_original_idx}',
+                    debe=None,
+                    haber=iva_monto,
+                )
+                # Fila Proveedores (usa IVA y suma gastos)
+                write_row(
+                    descripcion=f'Proveedor Doc {fila_original_idx}',
+                    debe=None,
+                    haber=monto_total,
+                    extra={
+                        'Monto 1 Detalle Libro': suma_debe_gastos,
+                        'Monto 3 Detalle Libro': iva_monto,
+                    }
+                )
+                # Filas de Gasto
+                for desc_gasto, debe_val, codigo_cc in gastos_rows:
+                    write_row(
+                        descripcion=desc_gasto,
+                        debe=debe_val,
+                        haber=None,
+                        extra={
+                            'Código Centro de Costo': codigo_cc
+                        }
+                    )
             elif tipo_doc_str == '34':
-                add_placeholder(f'fila cuenta proveedores {idx_fila}')
-                for i in range(1, cc_count + 1):
-                    add_placeholder(f'fila cuenta gasto {idx_fila}.{i}')
+                # Tipo 34 (exento) sólo Proveedores + Gastos, y Monto 3 = Monto 1
+                write_row(
+                    descripcion=f'Proveedor Doc {fila_original_idx}',
+                    debe=None,
+                    haber=monto_total if monto_total is not None else suma_debe_gastos,
+                    extra={
+                        'Monto 1 Detalle Libro': suma_debe_gastos,
+                        'Monto 3 Detalle Libro': suma_debe_gastos,
+                    }
+                )
+                for desc_gasto, debe_val, codigo_cc in gastos_rows:
+                    write_row(
+                        descripcion=desc_gasto,
+                        debe=debe_val,
+                        haber=None,
+                        extra={
+                            'Código Centro de Costo': codigo_cc
+                        }
+                    )
             else:
-                # Tipos desconocidos: dejar hoja creada con headers (sin filas) por ahora
+                # Tipos desconocidos: de momento no se generan movimientos (queda hoja vacía)
                 pass
 
     buffer = BytesIO()

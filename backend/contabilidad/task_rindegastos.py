@@ -297,6 +297,36 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id):
                             'Código Centro de Costo': codigo_cc
                         }
                     )
+            elif tipo_doc_str == '61':
+                # Tipo 61: espejo de 33 (incluye IVA) invirtiendo Debe/Haber.
+                # En 33: IVA (Haber), Proveedor (Haber), Gastos (Debe)
+                # En 61: IVA (Debe), Proveedor (Debe), Gastos (Haber)
+                # Fila IVA (invertido -> Debe)
+                write_row(
+                    descripcion=f'IVA Doc {fila_original_idx}',
+                    debe=iva_monto,
+                    haber=None,
+                )
+                # Fila Proveedores (invertido -> Debe)
+                write_row(
+                    descripcion=f'Proveedor Doc {fila_original_idx}',
+                    debe=monto_total if monto_total is not None else (suma_debe_gastos + iva_monto),
+                    haber=None,
+                    extra={
+                        'Monto 1 Detalle Libro': suma_debe_gastos,
+                        'Monto 3 Detalle Libro': iva_monto,
+                    }
+                )
+                # Filas Gasto (invertidas -> Haber)
+                for desc_gasto, debe_val, codigo_cc in gastos_rows:
+                    write_row(
+                        descripcion=desc_gasto,
+                        debe=None,
+                        haber=debe_val,
+                        extra={
+                            'Código Centro de Costo': codigo_cc
+                        }
+                    )
             else:
                 # Tipos desconocidos: de momento no se generan movimientos (queda hoja vacía)
                 pass

@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { AlertOctagon, ChevronDown, ChevronRight, Play, Loader2, CheckCircle, AlertTriangle, Users, Eye, Lock, TrendingUp, RefreshCw } from "lucide-react";
-import { formatearMonedaChilena } from "../../utils/formatters";
-import IncidenciasTable from "./IncidenciasEncontradas/IncidenciasTable";
+
 // Vista unificada (solo incidencias)
 import IncidenciasUnifiedTable from "./IncidenciasEncontradas/IncidenciasUnifiedTable";
 import IncidenciasKPIs from "./IncidenciasEncontradas/IncidenciasKPIs";

@@ -9,7 +9,7 @@ import { confirmarDesaparicionIncidencia } from "../../../api/nomina";
 // - individual (por empleado por ítem)
 // - suma_total (agregado por ítem del mes vs mes anterior)
 // Excluye: legacy y agregados por categoría (cuando vienen como 'categoria' en datos_adicionales)
-export default function IncidenciasUnifiedTable({ incidencias = [], onIncidenciaSeleccionada, onAfterAction }) {
+export default function IncidenciasUnifiedTable({ incidencias = [], onIncidenciaSeleccionada, onAfterAction, quickViews = false }) {
   const { user } = useAuth();
   const [sortKey, setSortKey] = useState("variacion_porcentual");
   const [sortDir, setSortDir] = useState("desc");
@@ -37,29 +37,7 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
       // Excluir incidencias informativas/ingreso de empleado en todas las vistas
       .filter(i => i?.tipo_incidencia !== 'ingreso_empleado' && !Boolean(i?.informativo) && !Boolean(i?.datos_adicionales?.informativo));
 
-    // Vistas rápidas
-    if (viewChip === 'topVar') {
-      filtradas = [...filtradas]
-        // Excluir ingresos informativos del Top N
-        .filter(i => i.tipo_incidencia !== 'ingreso_empleado')
-        .sort((a, b) => Math.abs((b.datos_adicionales?.variacion_porcentual ?? 0)) - Math.abs((a.datos_adicionales?.variacion_porcentual ?? 0)))
-        .slice(0, 50);
-    } else if (viewChip === 'topImpact') {
-      filtradas = [...filtradas]
-        // Excluir ingresos informativos del Top N
-        .filter(i => i.tipo_incidencia !== 'ingreso_empleado')
-        .sort((a, b) => Math.abs(Number(b.impacto_monetario ?? 0)) - Math.abs(Number(a.impacto_monetario ?? 0)))
-        .slice(0, 50);
-    } else if (viewChip === 'pendConf') {
-      filtradas = filtradas.filter(i => {
-        if (i?.estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE) return true;
-        try {
-          return obtenerEstadoReal(i).estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE;
-        } catch {
-          return false;
-        }
-      });
-    }
+    
     // Agrupar por concepto/tipo_concepto
     const byKey = new Map();
     for (const i of filtradas) {
@@ -156,7 +134,7 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
     });
 
     return groupsArr;
-  }, [incidencias, sortKey, sortDir, viewChip]);
+  }, [incidencias, sortKey, sortDir, viewChip, quickViews]);
 
   const onSort = (key) => {
     if (sortKey === key) {
@@ -240,25 +218,25 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <BarChart3 size={16} className="text-gray-400" />
-          <h4 className="text-sm font-medium text-gray-300">Incidencias (Individual + Suma Total)</h4>
+          <h4 className="text-sm font-medium text-gray-300">Incidencias</h4>
         </div>
         <div className="flex items-center gap-2">
-          {/* Chips de vista */}
-          <div className="flex items-center gap-1 bg-gray-800/70 rounded-lg p-1 border border-gray-700">
-            {[
-              { key: 'todos', label: 'Todos' },
-              { key: 'topVar', label: 'Top 50 Var%' },
-              { key: 'topImpact', label: 'Top 50 Impacto' },
-              { key: 'pendConf', label: 'Confirmación pendiente' },
-            ].map(ch => (
-              <button
-                key={ch.key}
-                onClick={() => { setViewChip(ch.key); setPage(1); }}
-                className={`text-xs px-2 py-1 rounded-md transition-colors ${viewChip === ch.key ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}
-              >{ch.label}</button>
-            ))}
-          </div>
-          {/* Densidad */}
+          {quickViews && (
+            <div className="flex items-center gap-1 bg-gray-800/70 rounded-lg p-1 border border-gray-700">
+              {[
+                { key: 'todos', label: 'Todos' },
+                { key: 'topVar', label: 'Top 50 Var%' },
+                { key: 'topImpact', label: 'Top 50 Impacto' },
+                { key: 'pendConf', label: 'Confirmación pendiente' },
+              ].map(ch => (
+                <button
+                  key={ch.key}
+                  onClick={() => { setViewChip(ch.key); setPage(1); }}
+                  className={`text-xs px-2 py-1 rounded-md transition-colors ${viewChip === ch.key ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}
+                >{ch.label}</button>
+              ))}
+            </div>
+          )}
           <button
             onClick={() => setDense(!dense)}
             className="flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:bg-gray-800"

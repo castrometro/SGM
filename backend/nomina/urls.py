@@ -264,4 +264,8 @@ urlpatterns = router.urls + [
     path('cierres/<int:cierre_id>/estado-incidencias/', 
          IncidenciaCierreViewSet.as_view({'get': 'estado_incidencias_cierre'}), 
          name='estado_incidencias_cierre'),
+    # === Ruta para limpiar incidencias ===
+    path('incidencias/limpiar/<int:cierre_id>/', 
+         IncidenciaCierreViewSet.as_view({'delete': 'limpiar_incidencias'}), 
+         name='limpiar_incidencias'),
 ]

@@ -48,6 +48,59 @@ def _buscar_cierre_anterior(cierre: CierreNomina):
             .order_by('-periodo')
             .first())
 
+
+def _obtener_clasificacion_concepto(nombre_concepto: str, cierre_id: int):
+    """Obtiene la clasificación de un concepto basado en los datos consolidados del cierre"""
+    try:
+        concepto = ConceptoConsolidado.objects.filter(
+            nomina_consolidada__cierre_id=cierre_id,
+            nombre_concepto=nombre_concepto
+        ).first()
+        
+        if concepto and concepto.tipo_concepto:
+            # Mapear el tipo_concepto interno a las clasificaciones que usa el frontend
+            mapeo_clasificaciones = {
+                'haber_imponible': 'haberes_imponibles',
+                'haber_no_imponible': 'haberes_no_imponibles', 
+                'descuento_legal': 'descuentos_legales',
+                'otro_descuento': 'otros_descuentos',
+                'aporte_patronal': 'aportes_patronales',
+                'impuesto': 'impuestos',
+                'informativo': 'informacion_adicional'
+            }
+            return mapeo_clasificaciones.get(concepto.tipo_concepto, 'otros_descuentos')
+        
+        # Si no se encuentra, intentar clasificar por nombre del concepto (fallback básico)
+        nombre_lower = nombre_concepto.lower()
+        if any(palabra in nombre_lower for palabra in ['sueldo', 'asignacion', 'bono', 'gratificacion']):
+            return 'haberes_imponibles'
+        elif any(palabra in nombre_lower for palabra in ['anticipo', 'descuento', 'prestamo']):
+            return 'otros_descuentos'
+        elif any(palabra in nombre_lower for palabra in ['seguro', 'prevision', 'salud']):
+            return 'descuentos_legales'
+        else:
+            return 'otros_descuentos'  # Clasificación por defecto
+            
+    except Exception:
+        return 'otros_descuentos'  # Fallback seguro
+
+
+def _obtener_usuario_analista_por_defecto():
+    """
+    Obtiene un usuario analista por defecto para asignar incidencias automáticamente.
+    NOTA: Se prefiere usar request.user cuando esté disponible.
+    """
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    
+    # Buscar usuarios que no sean staff (analistas)
+    analista = User.objects.filter(
+        is_active=True,
+        is_staff=False
+    ).first()
+    
+    return analista
+
 # ============================================================================
 # ViewSets para Gestión de Resoluciones de Incidencias
 # ============================================================================
@@ -690,6 +743,8 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
         # (Se ignoran conceptos nuevos y eliminados según requerimiento actual)
 
         # Variaciones significativas
+        usuario_asignado = request.user  # El usuario que genera las incidencias se asigna automáticamente
+        
         for nombre in comunes:
             monto_act = conceptos_actuales.get(nombre, 0.0) or 0.0
             monto_prev = conceptos_prev.get(nombre, 0.0) or 0.0
@@ -698,13 +753,17 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
             delta_abs = monto_act - monto_prev
             delta_pct = (delta_abs / monto_prev) * 100.0 if monto_prev else 0.0
             if abs(delta_pct) >= UMBRAL_PCT:
+                # Obtener clasificación del concepto
+                clasificacion = _obtener_clasificacion_concepto(nombre, cierre_id)
+                
                 incidencias.append({
                     'concepto': nombre,
                     'monto_actual': monto_act,
                     'monto_anterior': monto_prev,
                     'delta_abs': delta_abs,
                     'delta_pct': delta_pct,
-                    'tipo': 'variacion'
+                    'tipo': 'variacion',
+                    'clasificacion': clasificacion
                 })
                 incidencias_bulk.append(IncidenciaCierre(
                     cierre=cierre,
@@ -712,6 +771,8 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
                     tipo_comparacion='suma_total',
                     descripcion=f"Variación {delta_pct:.1f}% en {nombre} (Δ ${delta_abs:,.0f})",
                     concepto_afectado=nombre,
+                    clasificacion_concepto=clasificacion,  # ✅ Agregado
+                    asignado_a=usuario_asignado,  # ✅ Agregado
                     prioridad='alta' if abs(delta_abs) > 500000 else 'media',
                     impacto_monetario=abs(delta_abs),
                     datos_adicionales={
@@ -720,7 +781,7 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
                         'delta_abs': delta_abs,
                         'delta_pct': delta_pct,
                         'umbral_pct': UMBRAL_PCT,
-                        'tipo_concepto': None,
+                        'tipo_concepto': clasificacion,  # También aquí para compatibilidad
                         'tipo_comparacion': 'suma_total'
                     }
                 ))
@@ -761,7 +822,6 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
             'incidencias': incidencias
         }, status=status.HTTP_200_OK)
     
-    @action(detail=False, methods=['delete'], url_path='limpiar/(?P<cierre_id>[^/.]+)')
     def limpiar_incidencias(self, request, cierre_id=None):
         """
         🗑️ ENDPOINT: Limpiar incidencias de un cierre (función de debug)

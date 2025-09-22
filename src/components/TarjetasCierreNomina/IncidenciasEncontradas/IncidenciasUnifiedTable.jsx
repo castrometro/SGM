@@ -223,18 +223,7 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
     );
   };
 
-  const badgeEspecial = (tipo) => {
-    if (tipo === 'finiquito_no_aplicado') {
-      return <span className="ml-2 px-2 py-0.5 rounded text-xs bg-rose-900/50 text-rose-300 ring-1 ring-rose-700/40">Finiquito no aplicado</span>;
-    }
-    if (tipo === 'ingreso_no_informado') {
-      return <span className="ml-2 px-2 py-0.5 rounded text-xs bg-amber-900/50 text-amber-300 ring-1 ring-amber-700/40">Ingreso no informado</span>;
-    }
-    if (tipo === 'ingreso_empleado') {
-      return <span className="ml-2 px-2 py-0.5 rounded text-xs bg-emerald-900/50 text-emerald-300 ring-1 ring-emerald-700/40">Ingreso</span>;
-    }
-    return null;
-  };
+
 
   // Paginación por grupos
   const totalRows = groups.length;
@@ -285,26 +274,25 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
         <table className="w-full min-w-[1050px] md:min-w-[1100px] lg:min-w-[1200px] bg-gray-800 rounded-lg text-xs">
           <thead className="bg-gray-800/90 backdrop-blur sticky top-0 z-10 border-b border-gray-700">
             <tr>
-              <th onClick={() => onSort('concepto')} className={`${thPad} text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer`}>
+              <th onClick={() => onSort('concepto')} className={`${thPad} text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer w-1/4`}>
                 <SortHeader label="Concepto" sortKeyLocal="concepto" />
               </th>
-              {/* Columna Empleado / Detalle eliminada */}
-              <th onClick={() => onSort('variacion_porcentual')} className={`${thPad} text-right text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer`}>
+              <th onClick={() => onSort('variacion_porcentual')} className={`${thPad} text-right text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer w-20`}>
                 <SortHeader label="Δ %" sortKeyLocal="variacion_porcentual" />
               </th>
-              <th onClick={() => onSort('anterior')} className={`${thPad} text-right text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer`}>
+              <th onClick={() => onSort('anterior')} className={`${thPad} text-right text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer w-24`}>
                 <SortHeader label="Ant" sortKeyLocal="anterior" />
               </th>
-              <th onClick={() => onSort('actual')} className={`${thPad} text-right text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer`}>
+              <th onClick={() => onSort('actual')} className={`${thPad} text-right text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer w-24`}>
                 <SortHeader label="Act" sortKeyLocal="actual" />
               </th>
-              <th onClick={() => onSort('delta_abs')} className={`${thPad} text-right text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer`}>
+              <th onClick={() => onSort('delta_abs')} className={`${thPad} text-right text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer w-24`}>
                 <SortHeader label="Δ $" sortKeyLocal="delta_abs" />
               </th>
-              <th className={`${thPad} text-left text-xs font-medium text-gray-300 uppercase tracking-wider`}>Prioridad</th>
-              <th className={`${thPad} text-left text-xs font-medium text-gray-300 uppercase tracking-wider`}>Estado</th>
-              <th className={`${thPad} text-left text-xs font-medium text-gray-300 uppercase tracking-wider`}>Turno</th>
-              <th className={`${thPad} text-left text-xs font-medium text-gray-300 uppercase tracking-wider`}>Acciones</th>
+              <th className={`${thPad} text-center text-xs font-medium text-gray-300 uppercase tracking-wider w-20`}>Prioridad</th>
+              <th className={`${thPad} text-center text-xs font-medium text-gray-300 uppercase tracking-wider w-32`}>Estado</th>
+              <th className={`${thPad} text-center text-xs font-medium text-gray-300 uppercase tracking-wider w-24`}>Turno</th>
+              <th className={`${thPad} text-center text-xs font-medium text-gray-300 uppercase tracking-wider w-20`}>Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-700">
@@ -352,8 +340,8 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
                     <td className={`${tdPad} whitespace-nowrap text-sm text-gray-300 text-right ${g.resumen.delta_abs != null ? (g.resumen.delta_abs >= 0 ? 'text-green-400' : 'text-red-400') : ''}`}>
                       {g.resumen.delta_abs != null ? formatearMonedaChilena(g.resumen.delta_abs) : '—'}
                     </td>
-                    <td className={`${tdPad} whitespace-nowrap`}>{badgePrioridad(g.resumen.prioridad)}</td>
-                    <td className={`${tdPad} whitespace-nowrap`}>
+                    <td className={`${tdPad} whitespace-nowrap text-center`}>{badgePrioridad(g.resumen.prioridad)}</td>
+                    <td className={`${tdPad} whitespace-nowrap text-center`}>
                       {isExpandable ? '—' : (
                         (() => {
                           const estado = g.resumen?.raw ? obtenerEstadoReal(g.resumen.raw) : null;
@@ -361,7 +349,7 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
                         })()
                       )}
                     </td>
-                    <td className={`${tdPad} whitespace-nowrap`}>
+                    <td className={`${tdPad} whitespace-nowrap text-center`}>
                       {isExpandable ? '—' : (
                         (() => {
                           const estado = g.resumen?.raw ? obtenerEstadoReal(g.resumen.raw).estado : null;
@@ -380,7 +368,7 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
                         })()
                       )}
                     </td>
-                    <td className={`${tdPad} whitespace-nowrap text-sm text-gray-300`}>
+                    <td className={`${tdPad} whitespace-nowrap text-sm text-gray-300 text-center`}>
                       {g.resumen?.raw && (
                         <button
                           onClick={() => onIncidenciaSeleccionada && onIncidenciaSeleccionada(g.resumen.raw)}
@@ -416,15 +404,15 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
                       <td className={`${tdPad} whitespace-nowrap text-sm text-gray-300 text-right`}>{r.anterior != null ? formatearMonedaChilena(r.anterior) : '—'}</td>
                       <td className={`${tdPad} whitespace-nowrap text-sm text-gray-300 text-right`}>{r.actual != null ? formatearMonedaChilena(r.actual) : '—'}</td>
                       <td className={`${tdPad} whitespace-nowrap text-sm text-gray-300 text-right ${r.delta_abs != null ? (r.delta_abs >= 0 ? 'text-green-400' : 'text-red-400') : ''}`}>{r.delta_abs != null ? formatearMonedaChilena(r.delta_abs) : '—'}</td>
-                      <td className={`${tdPad} whitespace-nowrap`}>
+                      <td className={`${tdPad} whitespace-nowrap text-center`}>
                         {r.especial === 'ingreso_empleado' ? (
                           <span className="px-2 py-0.5 rounded text-xs bg-emerald-900/50 text-emerald-300 ring-1 ring-emerald-700/40">Informativo</span>
                         ) : (
                           badgePrioridad(r.prioridad)
                         )}
                       </td>
-                      <td className={`${tdPad} whitespace-nowrap`}>
-                        <div className="flex items-center">
+                      <td className={`${tdPad} whitespace-nowrap text-center`}>
+                        <div className="flex items-center justify-center">
                           {r.especial === 'ingreso_empleado' ? (
                             <span className="text-sm text-emerald-300 font-medium">Informativo</span>
                           ) : r.raw?.estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE ? (

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { AlertOctagon, ChevronDown, ChevronRight, Play, Loader2, CheckCircle, AlertTriangle, Users, Eye, Lock, TrendingUp, RefreshCw } from "lucide-react";
 import { formatearMonedaChilena } from "../../utils/formatters";
 import IncidenciasTable from "./IncidenciasEncontradas/IncidenciasTable";
@@ -64,6 +64,7 @@ const IncidenciasEncontradasSection = ({
   const [generando, setGenerando] = useState(false);
   const [error, setError] = useState("");
   const [filtros, setFiltros] = useState({});
+  const [filtroCategoria, setFiltroCategoria] = useState(''); // Nuevo filtro por categoría
   const [incidenciaSeleccionada, setIncidenciaSeleccionada] = useState(null);
   const [modalAbierto, setModalAbierto] = useState(false);
   const [estadoIncidencias, setEstadoIncidencias] = useState(null);
@@ -82,6 +83,16 @@ const IncidenciasEncontradasSection = ({
   const [solicitandoRecarga, setSolicitandoRecarga] = useState(false);
   const { usuario } = useAuth();
   const esSupervisor = (usuario?.tipo_usuario === 'supervisor' || usuario?.tipo_usuario === 'gerente');
+
+  // Filtrado local por categoría
+  const incidenciasFiltradas = useMemo(() => {
+    if (!filtroCategoria) return incidencias;
+    
+    return Array.isArray(incidencias) ? incidencias.filter(incidencia => {
+      const tipoConcepto = incidencia?.datos_adicionales?.tipo_concepto || incidencia?.tipo_concepto;
+      return tipoConcepto === filtroCategoria;
+    }) : [];
+  }, [incidencias, filtroCategoria]);
 
   // Fallback local para contadores (cuando el backend reporta 0 pero sí hay incidencias)
   const contadoresLocales = (() => {
@@ -1103,11 +1114,36 @@ const IncidenciasEncontradasSection = ({
                 </div>
               </div>
               <div className="p-4 space-y-6">
+                {/* Filtro por Categoría */}
+                <div className="flex items-center gap-4 p-3 bg-gray-800/40 rounded-lg border border-gray-700/50">
+                  <label className="text-sm font-medium text-gray-300">Filtrar por categoría:</label>
+                  <select
+                    value={filtroCategoria}
+                    onChange={(e) => setFiltroCategoria(e.target.value)}
+                    className="bg-gray-900/60 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="">Todas las categorías</option>
+                    {clasificacionesDisponibles.map(categoria => (
+                      <option key={categoria} value={categoria}>
+                        {nombresClasificaciones[categoria]}
+                      </option>
+                    ))}
+                  </select>
+                  {filtroCategoria && (
+                    <button
+                      onClick={() => setFiltroCategoria('')}
+                      className="text-xs text-gray-400 hover:text-gray-200 underline"
+                    >
+                      Limpiar filtro
+                    </button>
+                  )}
+                </div>
+
                 {/* KPIs estilo 'LibroRemuneraciones' */}
-                <IncidenciasKPIs incidencias={incidencias} />
+                <IncidenciasKPIs incidencias={incidenciasFiltradas} />
                 {/* Tabla unificada de incidencias (individual + suma_total por ítem) */}
                 <IncidenciasUnifiedTable
-                  incidencias={incidencias}
+                  incidencias={incidenciasFiltradas}
                   onIncidenciaSeleccionada={manejarIncidenciaSeleccionada}
                   onAfterAction={() => {
                     // Refrescar estado y lista tras acciones individuales

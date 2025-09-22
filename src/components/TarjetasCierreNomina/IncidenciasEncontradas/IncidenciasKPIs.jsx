@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { AlertOctagon, Users, TrendingUp, CheckCircle2, Clock, Layers } from 'lucide-react';
+import { AlertOctagon, CheckCircle2, XCircle, User, UserCheck, TrendingUp, Clock } from 'lucide-react';
 import { ESTADOS_INCIDENCIA, obtenerEstadoReal } from '../../../utils/incidenciaUtils';
 
 export default function IncidenciasKPIs({ incidencias = [] }) {
@@ -7,48 +7,58 @@ export default function IncidenciasKPIs({ incidencias = [] }) {
     const base = Array.isArray(incidencias) ? incidencias : [];
     // Excluir ingresos informativos de todos los KPIs
     const arr = base.filter(i => i.tipo_incidencia !== 'ingreso_empleado' && !i?.datos_adicionales?.informativo);
-    const individuales = arr.filter(i => i.tipo_comparacion === 'individual');
-    const agregadas = arr.filter(i => i.tipo_comparacion === 'suma_total' && !i?.datos_adicionales?.categoria);
 
-    let pendientes = 0;
     let aprobadas = 0;
-    let resueltasAnalista = 0;
+    let rechazadas = 0;
+    let turnoAnalista = 0;
+    let turnoSupervisor = 0;
+    let pendientes = 0;
     let mayorVar = null; // {valor, concepto, tipo}
 
     arr.forEach((i) => {
       const da = i.datos_adicionales || {};
-      const v = Number(da.variacion_porcentual ?? 0);
+      // Buscar variación porcentual en diferentes campos posibles
+      const v = Number(da.delta_pct ?? da.variacion_porcentual ?? 0);
       if (mayorVar === null || Math.abs(v) > Math.abs(mayorVar.valor)) {
-        mayorVar = { valor: v, concepto: da.concepto || i.concepto_afectado || '-', tipo: i.tipo_comparacion };
+        mayorVar = { 
+          valor: v, 
+          concepto: da.concepto || i.concepto_afectado || i.concepto_codigo || '-', 
+          tipo: i.tipo_comparacion 
+        };
       }
 
       const er = obtenerEstadoReal(i);
       switch (er.estado) {
         case ESTADOS_INCIDENCIA.APROBADA_SUPERVISOR:
-          aprobadas += 1; break;
+          aprobadas += 1; 
+          break;
+        case ESTADOS_INCIDENCIA.RECHAZADA_SUPERVISOR:
+          rechazadas += 1; 
+          break;
+        case ESTADOS_INCIDENCIA.PENDIENTE:
+        case ESTADOS_INCIDENCIA.RE_RESUELTA:
+          turnoAnalista += 1;
+          pendientes += 1; // También son pendientes
+          break;
         case ESTADOS_INCIDENCIA.RESUELTA_ANALISTA:
-          resueltasAnalista += 1; break;
+        case ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE:
+          turnoSupervisor += 1;
+          pendientes += 1; // También son pendientes
+          break;
         default:
-          // Pendientes: estados que aún requieren acción (no aprobadas ni rechazadas)
-          if (
-            er.estado === ESTADOS_INCIDENCIA.PENDIENTE ||
-            er.estado === ESTADOS_INCIDENCIA.RE_RESUELTA ||
-            er.estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE ||
-            er.estado === ESTADOS_INCIDENCIA.RESUELTA_ANALISTA
-          ) {
-            pendientes += 1;
-          }
+          // Estados desconocidos también son pendientes
+          pendientes += 1;
           break;
       }
     });
 
     return {
       total: arr.length,
-      individuales: individuales.length,
-      agregadas: agregadas.length,
-      pendientes,
       aprobadas,
-      resueltasAnalista,
+      rechazadas,
+      turnoAnalista,
+      turnoSupervisor,
+      pendientes,
       mayorVar,
     };
   }, [incidencias]);
@@ -69,33 +79,39 @@ export default function IncidenciasKPIs({ incidencias = [] }) {
   );
 
   const mayorVarColor = stats.mayorVar && stats.mayorVar.valor >= 0 ? 'text-green-400' : 'text-red-400';
-  const mayorVarDisp = stats.mayorVar ? `${stats.mayorVar.valor >= 0 ? '+' : ''}${Number(stats.mayorVar.valor).toFixed(2)}%` : '—';
+  const mayorVarDisp = stats.mayorVar ? 
+    `${stats.mayorVar.valor >= 0 ? '+' : ''}${Number(stats.mayorVar.valor).toFixed(2)}%` : 
+    '—';
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-3">
       {kpiCard({
-        icon: <AlertOctagon size={18} className="text-red-300" />, label: 'Total incidencias', value: stats.total,
+        icon: <AlertOctagon size={18} className="text-red-300" />, label: 'Total', value: stats.total,
         color: 'text-gray-100', ring: 'ring-red-700/40'
-      })}
-      {kpiCard({
-        icon: <Users size={18} className="text-blue-300" />, label: 'Individuales', value: stats.individuales,
-        color: 'text-blue-300', ring: 'ring-blue-700/40'
-      })}
-      {kpiCard({
-        icon: <Layers size={18} className="text-indigo-300" />, label: 'Agregadas (ítem)', value: stats.agregadas,
-        color: 'text-indigo-300', ring: 'ring-indigo-700/40'
-      })}
-      {kpiCard({
-        icon: <Clock size={18} className="text-yellow-300" />, label: 'Pendientes', value: stats.pendientes,
-        color: 'text-yellow-300', ring: 'ring-yellow-700/40'
       })}
       {kpiCard({
         icon: <CheckCircle2 size={18} className="text-green-300" />, label: 'Aprobadas', value: stats.aprobadas,
         color: 'text-green-300', ring: 'ring-green-700/40'
       })}
       {kpiCard({
+        icon: <XCircle size={18} className="text-red-300" />, label: 'Rechazadas', value: stats.rechazadas,
+        color: 'text-red-300', ring: 'ring-red-700/40'
+      })}
+      {kpiCard({
+        icon: <User size={18} className="text-blue-300" />, label: 'Turno analista', value: stats.turnoAnalista,
+        color: 'text-blue-300', ring: 'ring-blue-700/40'
+      })}
+      {kpiCard({
+        icon: <UserCheck size={18} className="text-purple-300" />, label: 'Turno supervisor', value: stats.turnoSupervisor,
+        color: 'text-purple-300', ring: 'ring-purple-700/40'
+      })}
+      {kpiCard({
         icon: <TrendingUp size={18} className={`${mayorVarColor.replace('text-', 'fill-')}`} />, label: 'Mayor variación',
         value: mayorVarDisp, subtitle: stats.mayorVar ? stats.mayorVar.concepto : '', color: mayorVarColor, ring: 'ring-teal-700/40'
+      })}
+      {kpiCard({
+        icon: <Clock size={18} className="text-yellow-300" />, label: 'Pendientes', value: stats.pendientes,
+        color: 'text-yellow-300', ring: 'ring-yellow-700/40'
       })}
     </div>
   );

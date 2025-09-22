@@ -81,8 +81,8 @@ from django.urls import path
 from django.conf import settings
 from django.views.static import serve
 from .views_nomina_consolidada import obtener_resumen_nomina_consolidada, obtener_detalle_nomina_consolidada
-from .views_libro_v2 import libro_resumen_v2
-from .views_movimientos_v3 import movimientos_personal_detalle_v3
+from .views_resumen_libro import libro_resumen_v2
+from .views_resumen_movimientos import movimientos_personal_detalle_v3
 
 router = routers.DefaultRouter()
 router.register(r'cierres', CierreNominaViewSet)

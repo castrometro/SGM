@@ -44,6 +44,219 @@ try:
     logger.debug("✅ Módulo de incidencias V2 importado para registro de Celery")
 except Exception as _e:
     logger.warning(f"⚠️ No se pudo importar incidencias V2 para registro de Celery: {_e}")
+
+# ==============================================================
+# 🆕 TAREA SIMPLE: Generación macro de incidencias por concepto
+# ==============================================================
+# Objetivo: versión mínima solicitada -> comparar totales por concepto
+# (suma de ConceptoConsolidado.monto_total) entre el cierre actual y el
+# último cierre FINALIZADO anterior del mismo cliente. Umbral fijo 30%.
+# Tipos de incidencia usados:
+#  - VARIACION_SUMA_TOTAL (delta porcentual >= 30%)
+#  - CONCEPTO_NUEVO_PERIODO (existe en actual, no en anterior y monto>0)
+#  - CONCEPTO_ELIMINADO_PERIODO (existía antes y ahora desapareció)
+# No se generan incidencias si delta < 30% para reducir ruido.
+# Si no hay cierre anterior finalizado => no genera incidencias, marca
+# estado como 'resueltas' (equivalente a sin incidencias).
+
+@shared_task
+def generar_incidencias_totales_simple(cierre_id):
+    """Genera incidencias agregadas por concepto con umbral fijo 30%.
+
+    Paso a paso:
+      1. Obtiene cierre actual y su cierre anterior finalizado.
+      2. Agrega montos por (nombre_concepto, tipo_concepto) en ambos períodos.
+      3. Detecta conceptos nuevos, eliminados y variaciones >= 30%.
+      4. Inserta incidencias en bulk.
+      5. Actualiza estado del cierre (detectadas / resueltas) reutilizando
+         helper central si existe (import dinámico para no romper dependencias).
+    """
+    from django.db.models import Sum
+    from .models import (
+        CierreNomina,
+        ConceptoConsolidado,
+        IncidenciaCierre,
+        TipoIncidencia,
+    )
+    import math
+    logger.info(f"[SIMPLE_INCIDENCIAS] Iniciando generación simple para cierre {cierre_id}")
+    try:
+        cierre = CierreNomina.objects.get(id=cierre_id)
+    except CierreNomina.DoesNotExist:
+        logger.error(f"[SIMPLE_INCIDENCIAS] Cierre {cierre_id} no existe")
+        return {"success": False, "error": "cierre_no_encontrado"}
+
+    # Buscar cierre anterior finalizado
+    cierre_anterior = (
+        CierreNomina.objects.filter(
+            cliente=cierre.cliente,
+            periodo__lt=cierre.periodo,
+            estado='finalizado'
+        ).order_by('-periodo').first()
+    )
+
+    if not cierre_anterior:
+        logger.info("[SIMPLE_INCIDENCIAS] No hay cierre anterior finalizado -> sin incidencias")
+        # Actualizar estado a 'resueltas' (sin incidencias) reutilizando lógica si disponible
+        try:
+            from .utils.DetectarIncidenciasConsolidadas import actualizar_estado_cierre_por_incidencias
+            actualizar_estado_cierre_por_incidencias(cierre, 0, es_primer_cierre=True)
+        except Exception:
+            cierre.estado_incidencias = 'resueltas'
+            if cierre.estado == 'datos_consolidados':
+                cierre.estado = 'incidencias_resueltas'
+            cierre.total_incidencias = 0
+            cierre.save()
+        return {"success": True, "total_incidencias": 0, "sin_cierre_anterior": True}
+
+    logger.info(f"[SIMPLE_INCIDENCIAS] Comparando {cierre.periodo} vs {cierre_anterior.periodo}")
+
+    # Agregar montos actuales
+    actuales_qs = ConceptoConsolidado.objects.filter(nomina_consolidada__cierre=cierre)
+    anteriores_qs = ConceptoConsolidado.objects.filter(nomina_consolidada__cierre=cierre_anterior)
+
+    def agrupar(qs):
+        return (
+            qs.values('nombre_concepto', 'tipo_concepto')
+              .annotate(monto=Sum('monto_total'))
+        )
+
+    actuales = list(agrupar(actuales_qs))
+    anteriores = list(agrupar(anteriores_qs))
+
+    mapa_actual = {
+        (r['nombre_concepto'], r['tipo_concepto']): r['monto'] for r in actuales
+    }
+    mapa_anterior = {
+        (r['nombre_concepto'], r['tipo_concepto']): r['monto'] for r in anteriores
+    }
+
+    claves_actual = set(mapa_actual.keys())
+    claves_anterior = set(mapa_anterior.keys())
+
+    nuevos = claves_actual - claves_anterior
+    eliminados = claves_anterior - claves_actual
+    comunes = claves_actual & claves_anterior
+
+    incidencias_bulk = []
+    UMBRAL = 30.0
+
+    # Conceptos nuevos
+    for nombre, tipo in nuevos:
+        monto_act = mapa_actual[(nombre, tipo)] or 0
+        if monto_act and float(monto_act) != 0.0:
+            incidencias_bulk.append(IncidenciaCierre(
+                cierre=cierre,
+                tipo_incidencia=TipoIncidencia.CONCEPTO_NUEVO_PERIODO,
+                tipo_comparacion='suma_total',
+                rut_empleado='-',
+                descripcion=f"Concepto nuevo en el período: {nombre}",
+                concepto_afectado=nombre,
+                prioridad='media',
+                impacto_monetario=monto_act,
+                datos_adicionales={
+                    'tipo_concepto': tipo,
+                    'monto_anterior': 0,
+                    'monto_actual': float(monto_act),
+                    'delta_pct': 100.0,
+                    'tipo_comparacion': 'suma_total',
+                    'informativo': False
+                }
+            ))
+
+    # Conceptos eliminados
+    for nombre, tipo in eliminados:
+        monto_prev = mapa_anterior[(nombre, tipo)] or 0
+        if monto_prev and float(monto_prev) != 0.0:
+            incidencias_bulk.append(IncidenciaCierre(
+                cierre=cierre,
+                tipo_incidencia=TipoIncidencia.CONCEPTO_ELIMINADO_PERIODO,
+                tipo_comparacion='suma_total',
+                rut_empleado='-',
+                descripcion=f"Concepto eliminado respecto al período anterior: {nombre}",
+                concepto_afectado=nombre,
+                prioridad='media',
+                impacto_monetario=monto_prev,
+                datos_adicionales={
+                    'tipo_concepto': tipo,
+                    'monto_anterior': float(monto_prev),
+                    'monto_actual': 0.0,
+                    'delta_pct': -100.0,
+                    'tipo_comparacion': 'suma_total',
+                    'informativo': False
+                }
+            ))
+
+    # Variaciones significativas en comunes
+    for nombre, tipo in comunes:
+        monto_act = float(mapa_actual[(nombre, tipo)] or 0)
+        monto_prev = float(mapa_anterior[(nombre, tipo)] or 0)
+        if math.isclose(monto_prev, 0.0):
+            continue  # ya cubierto por nuevo/eliminado
+        delta_abs = monto_act - monto_prev
+        delta_pct = (delta_abs / monto_prev) * 100.0 if monto_prev else 0.0
+        if abs(delta_pct) >= UMBRAL:
+            prioridad = 'alta' if abs(delta_abs) > 500000 else 'media'
+            incidencias_bulk.append(IncidenciaCierre(
+                cierre=cierre,
+                tipo_incidencia=TipoIncidencia.VARIACION_SUMA_TOTAL,
+                tipo_comparacion='suma_total',
+                rut_empleado='-',
+                descripcion=f"Variación {delta_pct:.1f}% en {nombre} (Δ ${delta_abs:,.0f})",
+                concepto_afectado=nombre,
+                prioridad=prioridad,
+                impacto_monetario=abs(delta_abs),
+                datos_adicionales={
+                    'tipo_concepto': tipo,
+                    'monto_anterior': monto_prev,
+                    'monto_actual': monto_act,
+                    'delta_abs': delta_abs,
+                    'delta_pct': delta_pct,
+                    'umbral_pct': UMBRAL,
+                    'tipo_comparacion': 'suma_total',
+                    'informativo': False
+                }
+            ))
+
+    # Limpiar incidencias previas SOLO de tipo suma_total simple? Para no mezclar con V2
+    # Opcional: podríamos filtrar por tipo_incidencia en el delete si queremos superponer.
+    IncidenciaCierre.objects.filter(
+        cierre=cierre,
+        tipo_comparacion='suma_total'
+    ).delete()
+
+    if incidencias_bulk:
+        IncidenciaCierre.objects.bulk_create(incidencias_bulk)
+    total = len(incidencias_bulk)
+    logger.info(f"[SIMPLE_INCIDENCIAS] Generadas {total} incidencias agregadas (umbral {UMBRAL}%)")
+
+    # Actualizar estado del cierre
+    try:
+        from .utils.DetectarIncidenciasConsolidadas import actualizar_estado_cierre_por_incidencias
+        actualizar_estado_cierre_por_incidencias(cierre, total, es_primer_cierre=False)
+    except Exception as e:
+        logger.warning(f"[SIMPLE_INCIDENCIAS] No se pudo usar helper central, actualizando estado básico: {e}")
+        cierre.total_incidencias = total
+        if total > 0:
+            cierre.estado_incidencias = 'detectadas'
+            cierre.estado = 'con_incidencias'
+        else:
+            cierre.estado_incidencias = 'resueltas'
+            if cierre.estado == 'datos_consolidados':
+                cierre.estado = 'incidencias_resueltas'
+        cierre.save()
+
+    return {
+        'success': True,
+        'total_incidencias': total,
+        'nuevos': len(nuevos),
+        'eliminados': len(eliminados),
+        'comparados': len(comunes),
+        'cierre_id': cierre_id,
+        'periodo_actual': cierre.periodo,
+        'periodo_anterior': cierre_anterior.periodo,
+        'umbral_pct': UMBRAL,
+    }
 def _json_safe(value):
     """Convierte estructuras anidadas a tipos serializables por JSON (psycopg2 json).
     - Decimal -> float

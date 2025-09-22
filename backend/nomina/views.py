@@ -2092,6 +2092,40 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
             "logger": "nomina.incidencias"
         }, status=202)
 
+    @action(detail=False, methods=['post'], url_path='generar-simple/(?P<cierre_id>[^/.]+)')
+    def generar_incidencias_simple(self, request, cierre_id=None):
+        """🆕 ENDPOINT SIMPLE: Generar SOLO incidencias agregadas por concepto (umbral 30%).
+
+        Usa la tarea Celery generar_incidencias_totales_simple. No crea incidencias
+        por empleado ni variaciones individuales. Ideal para flujos rápidos.
+        """
+        from .models import CierreNomina
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({"error": "Cierre no encontrado"}, status=404)
+
+        # Validar estado mínimo (igual que endpoint principal, pero más laxo se podría permitir)
+        estados_validos = ['datos_consolidados', 'con_incidencias', 'incidencias_resueltas']
+        if cierre.estado not in estados_validos:
+            return Response({
+                "error": "Estado incorrecto",
+                "message": f"El cierre debe estar en estado válido para generar incidencias simples. Estado actual: {cierre.estado}",
+                "estado_actual": cierre.estado,
+                "estados_validos": estados_validos
+            }, status=400)
+
+        # Lanzar tarea
+        from .tasks import generar_incidencias_totales_simple
+        task = generar_incidencias_totales_simple.delay(cierre.id)
+        return Response({
+            "message": "Generación simple de incidencias iniciada",
+            "task_id": task.id,
+            "cierre_id": cierre_id,
+            "modo_procesamiento": "suma_total_simple",
+            "descripcion": "Comparación de totales por concepto vs período anterior (umbral 30%)"
+        }, status=202)
+
     @action(detail=True, methods=['post'], url_path='confirmar-desaparicion')
     def confirmar_desaparicion(self, request, pk=None):
         """Confirma como cerrada una incidencia marcada como resolucion_supervisor_pendiente (caso desaparecida)."""

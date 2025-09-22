@@ -30,16 +30,18 @@ from .views import (
     EmpleadoCierreNovedadesViewSet,
     ConceptoRemuneracionNovedadesViewSet,
     RegistroConceptoEmpleadoNovedadesViewSet,
-    # ViewSets para Sistema de Incidencias
-    IncidenciaCierreViewSet,
-    ResolucionIncidenciaViewSet,
-    CierreNominaIncidenciasViewSet,
     # ViewSets para Análisis de Datos
     AnalisisDatosCierreViewSet,
     IncidenciaVariacionSalarialViewSet,
     # ViewSets para Sistema de Discrepancias
     DiscrepanciaCierreViewSet,
     CierreNominaDiscrepanciasViewSet,
+)
+
+# Importar ViewSets de incidencias desde views_incidencias.py
+from .views_incidencias import (
+    IncidenciaCierreViewSet,
+    ResolucionIncidenciaViewSet,
 )
 from .views_libro_remuneraciones import LibroRemuneracionesUploadViewSet
 from .views_movimientos_mes import (
@@ -83,7 +85,7 @@ from django.views.static import serve
 from .views_nomina_consolidada import obtener_resumen_nomina_consolidada, obtener_detalle_nomina_consolidada
 from .views_resumen_libro import libro_resumen_v2
 from .views_resumen_movimientos import movimientos_personal_detalle_v3
-from .views_incidencias import incidencias_totales_variacion
+from .views_incidencias import IncidenciaCierreViewSet
 
 router = routers.DefaultRouter()
 router.register(r'cierres', CierreNominaViewSet)
@@ -113,7 +115,6 @@ router.register(r'registros-concepto-empleado-novedades', RegistroConceptoEmplea
 # ViewSets para Sistema de Incidencias
 router.register(r'incidencias', IncidenciaCierreViewSet)
 router.register(r'resoluciones-incidencias', ResolucionIncidenciaViewSet)
-router.register(r'cierres-incidencias', CierreNominaIncidenciasViewSet, basename='cierre-incidencias')
 
 # ViewSets para Análisis de Datos
 router.register(r'analisis-datos', AnalisisDatosCierreViewSet)
@@ -256,5 +257,11 @@ urlpatterns = router.urls + [
     # === Libro Remuneraciones V2 (simplificado) ===
     path('cierres/<int:cierre_id>/libro/v2/resumen/', libro_resumen_v2, name='libro_resumen_v2'),
     # === Incidencias simplificadas (ahora PERSISTEN en IncidenciaCierre; usar POST) ===
-    path('cierres/<int:cierre_id>/incidencias/totales-variacion/', incidencias_totales_variacion, name='incidencias_totales_variacion'),
+    path('cierres/<int:cierre_id>/incidencias/totales-variacion/', 
+         IncidenciaCierreViewSet.as_view({'post': 'totales_variacion', 'get': 'totales_variacion'}), 
+         name='incidencias_totales_variacion'),
+    # === Redirecciones a views_incidencias.py ===
+    path('cierres/<int:cierre_id>/estado-incidencias/', 
+         IncidenciaCierreViewSet.as_view({'get': 'estado_incidencias_cierre'}), 
+         name='estado_incidencias_cierre'),
 ]

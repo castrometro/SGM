@@ -658,7 +658,7 @@ class IncidenciaCierreAdmin(admin.ModelAdmin):
     list_display = (
         'id',
         'cierre_info',
-        'rut_empleado',
+        'concepto_afectado',
         'tipo_comparacion',
         'tipo_incidencia_display',
         'prioridad_display', 
@@ -677,24 +677,20 @@ class IncidenciaCierreAdmin(admin.ModelAdmin):
         'asignado_a'
     )
     search_fields = (
-        'rut_empleado',
         'descripcion',
         'concepto_afectado',
-        'empleado_libro__nombre',
-        'empleado_libro__apellido_paterno',
-        'empleado_novedades__nombre',
-        'empleado_novedades__apellido_paterno'
+        'comentario_resolucion',
+        'comentario_supervisor'
     )
     readonly_fields = (
         'fecha_detectada',
         'fecha_primera_resolucion',
+        'fecha_resolucion',
+        'fecha_resolucion_final',
         'cierre_info_detailed',
-        'valor_actual_display',
-        'valor_anterior_display',
-        'empleado_display',
-        'tipo_comparacion',
-        'firma_clave',
-        'firma_hash',
+        'concepto_datos_display',
+        'impacto_monetario',
+        'hash_deteccion',
         'version_detectada_primera',
         'version_detectada_ultima'
     )
@@ -705,8 +701,8 @@ class IncidenciaCierreAdmin(admin.ModelAdmin):
                 'cierre_info_detailed',
                 'tipo_incidencia',
                 'tipo_comparacion',
-                'rut_empleado',
-                'empleado_display',
+                'concepto_afectado',
+                'clasificacion_concepto',
                 'descripcion'
             )
         }),
@@ -714,32 +710,29 @@ class IncidenciaCierreAdmin(admin.ModelAdmin):
             'fields': (
                 'prioridad',
                 'estado', 
-                'asignado_a',
-                'concepto_afectado'
+                'asignado_a'
             )
         }),
-        ('Valores Comparados', {
+        ('Datos de Variación', {
             'fields': (
-                'valor_actual_display',
-                'valor_anterior_display',
-                'impacto_monetario'
+                'concepto_datos_display',
+                'impacto_monetario',
+                'datos_adicionales'
             )
         }),
-        ('Valores Legacy (compatibilidad)', {
+        ('Resolución Colaborativa', {
             'fields': (
-                'valor_libro',
-                'valor_novedades',
-                'valor_movimientos',
-                'valor_analista',
-            ),
-            'classes': ('collapse',)
+                'resuelto_por',
+                'fecha_resolucion',
+                'comentario_resolucion',
+                'supervisor_revisor',
+                'fecha_resolucion_final',
+                'comentario_supervisor'
+            )
         }),
-        ('Referencias', {
+        ('Trazabilidad', {
             'fields': (
-                'empleado_libro',
-                'empleado_novedades',
-                'firma_clave',
-                'firma_hash',
+                'hash_deteccion',
                 'version_detectada_primera',
                 'version_detectada_ultima'
             ),
@@ -839,14 +832,36 @@ class IncidenciaCierreAdmin(admin.ModelAdmin):
         return '-'
     empleado_display.short_description = 'Empleado'
     
+    def concepto_datos_display(self, obj):
+        """Display de los datos del concepto y variación"""
+        monto_actual = obj.get_monto_actual()
+        monto_anterior = obj.get_monto_anterior() 
+        delta_abs = obj.get_delta_absoluto()
+        delta_pct = obj.get_delta_porcentual()
+        
+        texto = f"Concepto: {obj.concepto_afectado}\n"
+        if monto_actual is not None:
+            texto += f"Actual: ${monto_actual:,.0f}\n"
+        if monto_anterior is not None:
+            texto += f"Anterior: ${monto_anterior:,.0f}\n"
+        if delta_abs is not None:
+            signo = '+' if delta_abs >= 0 else ''
+            texto += f"Delta: {signo}${delta_abs:,.0f}"
+        if delta_pct is not None:
+            signo = '+' if delta_pct >= 0 else ''
+            texto += f" ({signo}{delta_pct:.1f}%)"
+            
+        return texto
+    concepto_datos_display.short_description = 'Datos del Concepto'
+    
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
             'cierre',
             'cierre__cliente',
             'cierre__usuario_analista',
-            'empleado_libro',
-            'empleado_novedades',
-            'asignado_a'
+            'asignado_a',
+            'resuelto_por',
+            'supervisor_revisor'
         )
 
 

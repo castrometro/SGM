@@ -858,42 +858,18 @@ class EstadoCierreIncidencias(models.TextChoices):
     CIERRE_COMPLETADO = 'cierre_completado', 'Cierre Completado'
 
 class TipoIncidencia(models.TextChoices):
-    # Tipos base para comparación entre períodos consolidados
-    VARIACION_CONCEPTO = 'variacion_concepto', 'Variación de Concepto (>30%)'
-    CONCEPTO_NUEVO = 'concepto_nuevo', 'Concepto Nuevo'
-    CONCEPTO_PERDIDO = 'concepto_perdido', 'Concepto Perdido'
-    EMPLEADO_DEBERIA_INGRESAR = 'empleado_deberia_ingresar', 'Empleado que Debería Ingresar'
-    EMPLEADO_NO_DEBERIA_ESTAR = 'empleado_no_deberia_estar', 'Empleado que No Debería Estar'
-    AUSENTISMO_CONTINUO = 'ausentismo_continuo', 'Ausentismo Continuo'
-    
-    # NUEVOS TIPOS ESPECÍFICOS DEL SISTEMA DUAL
-    # Comparación Individual (elemento a elemento)
-    VARIACION_CONCEPTO_INDIVIDUAL = 'variacion_concepto_individual', 'Variación Individual en Concepto'
-    CONCEPTO_NUEVO_EMPLEADO = 'concepto_nuevo_empleado', 'Concepto Nuevo para Empleado'
-    CONCEPTO_ELIMINADO_EMPLEADO = 'concepto_eliminado_empleado', 'Concepto Eliminado de Empleado'
-    EMPLEADO_NUEVO = 'empleado_nuevo', 'Empleado Nuevo sin Período Anterior'
-    
-    # Comparación Agregada (suma total)
-    VARIACION_SUMA_TOTAL = 'variacion_suma_total', 'Variación en Suma Total de Concepto'
+    """Tipos de incidencia simplificados - solo totales por concepto"""
+    # Únicamente variaciones de conceptos (agregados) - SISTEMA SIMPLIFICADO
+    VARIACION_SUMA_TOTAL = 'variacion_suma_total', 'Variación en Suma Total de Concepto (≥30%)'
     CONCEPTO_NUEVO_PERIODO = 'concepto_nuevo_periodo', 'Concepto Nuevo en Período'
     CONCEPTO_ELIMINADO_PERIODO = 'concepto_eliminado_periodo', 'Concepto Eliminado del Período'
-    
-    # Casos especiales de personal detectados en consolidación
-    FINIQUITO_NO_APLICADO = 'finiquito_no_aplicado', 'Finiquito no aplicado'
-    INGRESO_NO_INFORMADO = 'ingreso_no_informado', 'Ingreso no informado'
-    INGRESO_EMPLEADO = 'ingreso_empleado', 'Ingreso de empleado (Informativo)'
-    
-    # Validaciones de Reglas de Negocio
-    REGLA_NEGOCIO_VIOLADA = 'regla_negocio_violada', 'Violación de Regla de Negocio'
-    CALCULO_INCORRECTO = 'calculo_incorrecto', 'Error en Cálculo'
 
 class EstadoIncidencia(models.TextChoices):
-    PENDIENTE = 'pendiente', 'Pendiente de Resolución'
-    RESUELTA_ANALISTA = 'resuelta_analista', 'Resuelta por Analista'
+    """Estados de resolución simplificados manteniendo flujo colaborativo"""
+    PENDIENTE = 'pendiente', 'Pendiente de Análisis'
+    RESUELTA_ANALISTA = 'resuelta_analista', 'Justificada por Analista'
     APROBADA_SUPERVISOR = 'aprobada_supervisor', 'Aprobada por Supervisor'
     RECHAZADA_SUPERVISOR = 'rechazada_supervisor', 'Rechazada por Supervisor'
-    RE_RESUELTA = 're_resuelta', 'Re-resuelta por Analista'
-    RESOLUCION_SUPERVISOR_PENDIENTE = 'resolucion_supervisor_pendiente', 'Resolución de Supervisor Pendiente'
 
 def resolucion_upload_to(instance, filename):
     now = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -901,52 +877,53 @@ def resolucion_upload_to(instance, filename):
 
 class IncidenciaCierre(models.Model):
     """
-    Incidencias detectadas en la comparación de archivos de un cierre
-    VERSIÓN 2.0: Sistema Dual con soporte para comparación individual y suma total
+    🎯 INCIDENCIAS SIMPLIFICADAS - SOLO TOTALES POR CONCEPTO
+    
+    Sistema simplificado enfocado únicamente en variaciones de totales por concepto
+    entre períodos, sin manejo de empleados individuales.
+    Mantiene flujo colaborativo analista-supervisor.
     """
+    # === RELACIÓN BÁSICA ===
     cierre = models.ForeignKey(CierreNomina, on_delete=models.CASCADE, related_name='incidencias')
     tipo_incidencia = models.CharField(max_length=50, choices=TipoIncidencia.choices)
     
-    # NUEVO: Tipo de comparación que generó la incidencia
+    # === TIPO DE COMPARACIÓN SIMPLIFICADO ===
     TIPO_COMPARACION_CHOICES = [
-        ('individual', 'Comparación Individual (Elemento a Elemento)'),
         ('suma_total', 'Comparación Suma Total (Agregada)'),
-        ('regla_negocio', 'Validación Regla de Negocio'),
         ('legacy', 'Sistema Legacy (Compatibilidad)'),
     ]
     tipo_comparacion = models.CharField(
         max_length=20, 
         choices=TIPO_COMPARACION_CHOICES, 
-        default='legacy',
+        default='suma_total',
         help_text="Tipo de análisis que detectó esta incidencia"
     )
     
-    # Empleado afectado (campos existentes para compatibilidad)
-    empleado_libro = models.ForeignKey(EmpleadoCierre, on_delete=models.CASCADE, null=True, blank=True)
-    empleado_novedades = models.ForeignKey('EmpleadoCierreNovedades', on_delete=models.CASCADE, null=True, blank=True)
-    rut_empleado = models.CharField(max_length=20, db_index=True)
-    
-    # NUEVO: Información del empleado para sistema consolidado
-    empleado_nombre = models.CharField(max_length=200, null=True, blank=True, help_text="Nombre del empleado (desde consolidación)")
-    
-    # Detalles de la incidencia
-    descripcion = models.TextField()
-    valor_libro = models.CharField(max_length=500, null=True, blank=True)
-    valor_novedades = models.CharField(max_length=500, null=True, blank=True)
-    valor_movimientos = models.CharField(max_length=500, null=True, blank=True)
-    valor_analista = models.CharField(max_length=500, null=True, blank=True)
-    
-    # Contexto adicional
-    concepto_afectado = models.CharField(max_length=200, null=True, blank=True)
-    fecha_detectada = models.DateTimeField(auto_now_add=True)
-    
-    # NUEVO: Datos adicionales específicos del sistema dual
-    datos_adicionales = models.JSONField(
-        default=dict, 
-        help_text="Datos específicos según tipo de incidencia y comparación"
+    # === CONCEPTO AFECTADO (SIN EMPLEADOS) ===
+    concepto_afectado = models.CharField(
+        max_length=200, 
+        db_index=True,
+        help_text="Nombre del concepto que presenta la incidencia"
     )
     
-    # CAMPOS PARA RESOLUCIÓN COLABORATIVA
+    clasificacion_concepto = models.CharField(
+        max_length=30,
+        null=True,
+        blank=True,
+        help_text="Clasificación del concepto (haberes_imponibles, descuentos_legales, etc.)"
+    )
+    
+    # === DESCRIPCIÓN Y DETALLES ===
+    descripcion = models.TextField(help_text="Descripción automática de la incidencia")
+    fecha_detectada = models.DateTimeField(auto_now_add=True)
+    
+    # === DATOS DE VARIACIÓN ===
+    datos_adicionales = models.JSONField(
+        default=dict, 
+        help_text="Datos de variación: monto_actual, monto_anterior, delta_abs, delta_pct, etc."
+    )
+    
+    # === RESOLUCIÓN COLABORATIVA (MANTENIDO) ===
     estado = models.CharField(max_length=40, choices=EstadoIncidencia.choices, default='pendiente')
     prioridad = models.CharField(max_length=10, choices=[
         ('baja', 'Baja'),
@@ -958,6 +935,7 @@ class IncidenciaCierre(models.Model):
     # Impacto monetario calculado
     impacto_monetario = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     
+    # === FLUJO COLABORATIVO ANALISTA-SUPERVISOR ===
     # Usuario asignado para resolución
     asignado_a = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='incidencias_asignadas')
     
@@ -965,25 +943,17 @@ class IncidenciaCierre(models.Model):
     fecha_primera_resolucion = models.DateTimeField(null=True, blank=True)
     fecha_ultima_accion = models.DateTimeField(auto_now=True)
     
-    # NUEVO: Resolución específica del sistema dual
+    # Resolución por analista
     resuelto_por = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='incidencias_resueltas')
     fecha_resolucion = models.DateTimeField(null=True, blank=True)
-    comentario_resolucion = models.TextField(blank=True)
+    comentario_resolucion = models.TextField(blank=True, help_text="Justificación del analista")
+    
+    # Resolución por supervisor
+    supervisor_revisor = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='incidencias_supervisadas')
+    comentario_supervisor = models.TextField(blank=True, help_text="Comentario del supervisor (aprobación/rechazo)")
+    fecha_resolucion_final = models.DateTimeField(null=True, blank=True)
 
-    # Firma estable y tracking de versiones (para reconciliación vN)
-    firma_clave = models.CharField(
-        max_length=300,
-        null=True,
-        blank=True,
-        help_text="Clave legible de firma: ej. por_item_total|<item>|- o por_empleado_item|<item>|<rut>"
-    )
-    firma_hash = models.CharField(
-        max_length=64,
-        null=True,
-        blank=True,
-        db_index=True,
-        help_text="Hash SHA1 hex de la firma_clave para búsquedas rápidas"
-    )
+    # === TRAZABILIDAD Y VERSIONES ===
     version_detectada_primera = models.PositiveIntegerField(
         null=True,
         blank=True,
@@ -995,174 +965,184 @@ class IncidenciaCierre(models.Model):
         help_text="Última versión de datos donde fue recalculada/detectada"
     )
     
+    hash_deteccion = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Hash único para evitar duplicados en re-detecciones"
+    )
+    
     class Meta:
+        constraints = [
+            # Evitar duplicados por concepto en el mismo cierre
+            models.UniqueConstraint(
+                fields=['cierre', 'concepto_afectado', 'tipo_incidencia'],
+                name='unique_incidencia_por_concepto_cierre'
+            ),
+        ]
+        
         indexes = [
             models.Index(fields=['cierre', 'tipo_incidencia']),
             models.Index(fields=['cierre', 'estado']),
-            models.Index(fields=['rut_empleado', 'cierre']),
+            models.Index(fields=['concepto_afectado']),
             models.Index(fields=['estado', 'prioridad']),
             models.Index(fields=['asignado_a', 'estado']),
-            # NUEVOS ÍNDICES para sistema dual
             models.Index(fields=['cierre', 'tipo_comparacion']),
-            models.Index(fields=['tipo_comparacion', 'estado']),
             models.Index(fields=['prioridad', 'fecha_detectada']),
-            # Índices para reconciliación por firma
-            models.Index(fields=['cierre', 'firma_hash']),
-            models.Index(fields=['firma_clave']),
+            models.Index(fields=['hash_deteccion']),
         ]
         ordering = ['-fecha_detectada', '-impacto_monetario']
     
     def __str__(self):
-        tipo_comp = f"[{self.get_tipo_comparacion_display()}]" if self.tipo_comparacion != 'legacy' else ""
-        empleado_info = self.empleado_nombre or self.rut_empleado
-        return f"{tipo_comp} {self.get_tipo_incidencia_display()} - {empleado_info}"
+        signo = '+' if self.get_delta_absoluto() >= 0 else ''
+        delta_pct = self.get_delta_porcentual()
+        if delta_pct is not None:
+            return f"{self.concepto_afectado}: {signo}{delta_pct:.1f}% (${self.get_delta_absoluto():,.0f})"
+        return f"{self.get_tipo_incidencia_display()} - {self.concepto_afectado}"
+
+    def save(self, *args, **kwargs):
+        """Auto-cálculo de campos derivados antes de guardar"""
+        
+        # Calcular impacto monetario automáticamente
+        if not self.impacto_monetario:
+            self.impacto_monetario = abs(self.get_delta_absoluto() or 0)
+        
+        # Calcular prioridad automáticamente si no está definida
+        if not self.prioridad or self.prioridad == 'media':
+            self.prioridad = self.calcular_prioridad_automatica()
+        
+        # Generar hash de detección para evitar duplicados
+        if not self.hash_deteccion:
+            self.hash_deteccion = self.generar_hash_deteccion()
+        
+        super().save(*args, **kwargs)
 
     def calcular_impacto_monetario(self):
         """
-        Calcula el impacto monetario de la incidencia
-        ACTUALIZADO: Soporte para sistema dual con datos_adicionales
+        Calcula el impacto monetario de la incidencia (valor absoluto del delta)
         """
-        try:
-            # SISTEMA DUAL: Usar datos_adicionales si están disponibles
-            if self.datos_adicionales and self.tipo_comparacion in ['individual', 'suma_total']:
-                if 'variacion_absoluta' in self.datos_adicionales:
-                    return abs(float(self.datos_adicionales['variacion_absoluta']))
-                elif 'monto_actual' in self.datos_adicionales:
-                    monto_actual = float(self.datos_adicionales['monto_actual'])
-                    monto_anterior = float(self.datos_adicionales.get('monto_anterior', 0))
-                    return abs(monto_actual - monto_anterior)
-                elif 'suma_actual' in self.datos_adicionales:
-                    suma_actual = float(self.datos_adicionales['suma_actual'])
-                    suma_anterior = float(self.datos_adicionales.get('suma_anterior', 0))
-                    return abs(suma_actual - suma_anterior)
-            
-            # SISTEMA LEGACY: Lógica original para compatibilidad
-            if self.tipo_incidencia == TipoIncidencia.VARIACION_CONCEPTO:
-                if self.valor_libro and self.valor_novedades:
-                    # Limpiar y convertir valores
-                    monto_actual = float(str(self.valor_libro).replace(',', '').replace('$', '').strip())
-                    monto_anterior = float(str(self.valor_novedades).replace(',', '').replace('$', '').strip())
-                    return abs(monto_actual - monto_anterior)
-            elif self.tipo_incidencia in [TipoIncidencia.CONCEPTO_NUEVO, TipoIncidencia.CONCEPTO_PERDIDO]:
-                if self.valor_libro:
-                    monto = float(str(self.valor_libro).replace(',', '').replace('$', '').strip())
-                    return abs(monto)
-            elif self.tipo_incidencia in [TipoIncidencia.EMPLEADO_DEBERIA_INGRESAR, TipoIncidencia.EMPLEADO_NO_DEBERIA_ESTAR]:
-                # Para movimientos de personal, el impacto podría ser el líquido a pagar
-                if self.valor_libro:
-                    liquido = float(str(self.valor_libro).replace(',', '').replace('$', '').strip())
-                    return abs(liquido)
-        except (ValueError, TypeError, KeyError):
-            pass
-        return 0
+        delta_abs = self.get_delta_absoluto()
+        return abs(delta_abs) if delta_abs is not None else 0
     
-    def get_contexto_comparacion(self):
-        """
-        Retorna información contextual específica del tipo de comparación
-        """
-        if self.tipo_comparacion == 'individual':
-            return {
-                'tipo': 'Análisis Individual',
-                'descripcion': 'Comparación elemento a elemento por empleado',
-                'alcance': 'Solo conceptos seleccionados',
-                'precision': 'Alta granularidad'
-            }
-        elif self.tipo_comparacion == 'suma_total':
-            return {
-                'tipo': 'Análisis Agregado',
-                'descripcion': 'Comparación de sumas totales por concepto',
-                'alcance': 'Todos los conceptos',
-                'precision': 'Tendencias generales'
-            }
-        elif self.tipo_comparacion == 'regla_negocio':
-            return {
-                'tipo': 'Validación de Reglas',
-                'descripcion': 'Verificación de reglas de negocio',
-                'alcance': 'Validaciones específicas',
-                'precision': 'Cumplimiento normativo'
-            }
-        else:
-            return {
-                'tipo': 'Sistema Legacy',
-                'descripcion': 'Detección tradicional',
-                'alcance': 'Comparación general',
-                'precision': 'Estándar'
-            }
+    def get_delta_absoluto(self):
+        """Obtiene el delta absoluto desde datos_adicionales"""
+        if 'delta_abs' in self.datos_adicionales:
+            return float(self.datos_adicionales['delta_abs'])
+        elif 'monto_actual' in self.datos_adicionales and 'monto_anterior' in self.datos_adicionales:
+            return float(self.datos_adicionales['monto_actual']) - float(self.datos_adicionales['monto_anterior'])
+        return None
     
-    def es_incidencia_critica(self):
-        """Determina si la incidencia es crítica basada en múltiples factores"""
-        return (
-            self.prioridad == 'critica' or
-            (self.impacto_monetario and self.impacto_monetario >= 10000000) or  # 10M+
-            self.tipo_incidencia in [
-                TipoIncidencia.EMPLEADO_NO_DEBERIA_ESTAR,
-                TipoIncidencia.CONCEPTO_PERDIDO
-            ]
-        )
+    def get_delta_porcentual(self):
+        """Obtiene el delta porcentual desde datos_adicionales"""
+        if 'delta_pct' in self.datos_adicionales:
+            return float(self.datos_adicionales['delta_pct'])
+        elif 'variacion_porcentual' in self.datos_adicionales:
+            return float(self.datos_adicionales['variacion_porcentual'])
+        return None
     
-    def get_variacion_porcentual(self):
-        """Obtiene la variación porcentual si está disponible"""
-        if (self.datos_adicionales and 
-            'variacion_porcentual' in self.datos_adicionales):
-            return self.datos_adicionales['variacion_porcentual']
+    def get_monto_actual(self):
+        """Obtiene el monto actual desde datos_adicionales"""
+        if 'monto_actual' in self.datos_adicionales:
+            return float(self.datos_adicionales['monto_actual'])
+        return None
+    
+    def get_monto_anterior(self):
+        """Obtiene el monto anterior desde datos_adicionales"""
+        if 'monto_anterior' in self.datos_adicionales:
+            return float(self.datos_adicionales['monto_anterior'])
         return None
 
-    def save(self, *args, **kwargs):
-        # Calcular impacto monetario automáticamente
-        if not self.impacto_monetario:
-            self.impacto_monetario = self.calcular_impacto_monetario()
-        # Generar firma y actualizar versiones para sistema dual
-        try:
-            if self.tipo_comparacion in ['individual', 'suma_total']:
-                if not self.firma_clave or not self.firma_hash:
-                    clave, h = self.generar_firma()
-                    self.firma_clave = self.firma_clave or clave
-                    self.firma_hash = self.firma_hash or h
-                # Tracking de versiones basado en cierre.version_datos
-                if self.cierre and getattr(self.cierre, 'version_datos', None) is not None:
-                    self.actualizar_firma_y_versiones(self.cierre.version_datos)
-        except Exception:
-            # No bloquear guardado si hay algún problema no crítico con la firma
-            pass
-        super().save(*args, **kwargs)
-
-    # ===== Métodos de firma y versiones =====
-    @staticmethod
-    def _normalizar_item(nombre: str) -> str:
-        if not nombre:
-            return ''
-        # a minúsculas, trim, colapsar espacios y quitar acentos
-        s = unicodedata.normalize('NFKD', nombre).encode('ascii', 'ignore').decode('ascii')
-        s = ' '.join(s.strip().lower().split())
-        return s
-
-    def generar_firma(self):
-        """
-        Genera (firma_clave, firma_hash) según reglas acordadas:
-        - suma_total: por_item_total|<item_normalizado>|-
-        - individual: por_empleado_item|<item_normalizado>|<rut>
-        No aplica para 'legacy' o 'regla_negocio'.
-        """
-        if self.tipo_comparacion == 'suma_total':
-            item = self._normalizar_item(self.concepto_afectado or '')
-            clave = f"por_item_total|{item}|-"
-        elif self.tipo_comparacion == 'individual':
-            item = self._normalizar_item(self.concepto_afectado or '')
-            rut = (self.rut_empleado or '').strip()
-            clave = f"por_empleado_item|{item}|{rut}"
+    def calcular_prioridad_automatica(self):
+        """Calcula prioridad basada en impacto monetario y porcentaje"""
+        delta_abs = abs(self.get_delta_absoluto() or 0)
+        delta_pct = abs(self.get_delta_porcentual() or 0)
+        
+        # Criterios de prioridad
+        if delta_abs >= 1000000 or delta_pct >= 100:  # $1M+ o 100%+
+            return 'critica'
+        elif delta_abs >= 500000 or delta_pct >= 75:   # $500K+ o 75%+
+            return 'alta'
+        elif delta_abs >= 100000 or delta_pct >= 50:   # $100K+ o 50%+
+            return 'media'
         else:
-            # Sin firma para otros tipos
-            return None, None
-        h = hashlib.sha1(clave.encode('utf-8')).hexdigest()
-        return clave, h
+            return 'baja'
+    
+    def generar_hash_deteccion(self):
+        """Genera hash único para esta detección específica"""
+        import hashlib
+        
+        contenido = f"{self.cierre.id}|{self.concepto_afectado}|{self.tipo_incidencia}|{self.get_monto_actual()}|{self.get_monto_anterior()}"
+        return hashlib.sha256(contenido.encode()).hexdigest()[:32]
+    
+    # === MÉTODOS PARA FLUJO COLABORATIVO ===
+    def puede_justificar(self, usuario):
+        """Verifica si un usuario puede justificar esta incidencia"""
+        return (
+            self.estado == 'pendiente' and
+            (not self.asignado_a or self.asignado_a == usuario) and
+            hasattr(usuario, 'tipo_usuario') and usuario.tipo_usuario in ['analista', 'gerente']
+        )
+    
+    def puede_aprobar_rechazar(self, usuario):
+        """Verifica si un usuario puede aprobar/rechazar esta incidencia"""
+        return (
+            self.estado == 'resuelta_analista' and
+            hasattr(usuario, 'tipo_usuario') and usuario.tipo_usuario in ['supervisor', 'gerente']
+        )
+    
+    def justificar(self, usuario, justificacion):
+        """Marca la incidencia como justificada por el analista"""
+        from django.utils import timezone
+        
+        if not self.puede_justificar(usuario):
+            raise ValueError("Usuario no puede justificar esta incidencia")
+        
+        self.estado = 'resuelta_analista'
+        self.asignado_a = usuario
+        self.resuelto_por = usuario
+        self.comentario_resolucion = justificacion
+        self.fecha_resolucion = timezone.now()
+        self.save(update_fields=['estado', 'asignado_a', 'resuelto_por', 'comentario_resolucion', 'fecha_resolucion'])
+    
+    def aprobar(self, supervisor, comentario=""):
+        """Aprueba la incidencia"""
+        from django.utils import timezone
+        
+        if not self.puede_aprobar_rechazar(supervisor):
+            raise ValueError("Usuario no puede aprobar esta incidencia")
+        
+        self.estado = 'aprobada_supervisor'
+        self.supervisor_revisor = supervisor
+        self.comentario_supervisor = comentario
+        self.fecha_resolucion_final = timezone.now()
+        self.save(update_fields=['estado', 'supervisor_revisor', 'comentario_supervisor', 'fecha_resolucion_final'])
+    
+    def rechazar(self, supervisor, comentario):
+        """Rechaza la incidencia (vuelve a pendiente)"""
+        from django.utils import timezone
+        
+        if not self.puede_aprobar_rechazar(supervisor):
+            raise ValueError("Usuario no puede rechazar esta incidencia")
+        
+        self.estado = 'rechazada_supervisor'
+        self.supervisor_revisor = supervisor
+        self.comentario_supervisor = comentario
+        self.fecha_resolucion_final = timezone.now()
+        self.save(update_fields=['estado', 'supervisor_revisor', 'comentario_supervisor', 'fecha_resolucion_final'])
+    
+    # === PROPIEDADES DE COMPATIBILIDAD ===
+    @property
+    def es_variacion_positiva(self):
+        """True si es un aumento, False si es disminución"""
+        delta = self.get_delta_absoluto()
+        return delta > 0 if delta is not None else False
+    
+    @property
+    def es_incidencia_critica(self):
+        """True si la incidencia es de prioridad crítica"""
+        return self.prioridad == 'critica'
 
-    def actualizar_firma_y_versiones(self, cierre_version: int):
-        """Actualiza version_detectada_primera y version_detectada_ultima si corresponde"""
-        if cierre_version is None:
-            return
-        if not self.version_detectada_primera:
-            self.version_detectada_primera = cierre_version
-        self.version_detectada_ultima = cierre_version
 
 class ResolucionIncidencia(models.Model):
     """Historial de resoluciones de una incidencia (conversación simplificada)"""

@@ -2001,6 +2001,13 @@ class RegistroConceptoEmpleadoNovedadesViewSet(viewsets.ModelViewSet):
         return queryset
 
 # ======== VIEWSETS PARA SISTEMA DE INCIDENCIAS ========
+# ⚠️ MIGRADO A views_incidencias.py ⚠️
+# Las siguientes clases han sido migradas a views_incidencias.py:
+# - IncidenciaCierreViewSet
+# - ResolucionIncidenciaViewSet  
+# - CierreNominaIncidenciasViewSet (integrado en IncidenciaCierreViewSet)
+# 
+# TODO: Eliminar las clases duplicadas de este archivo después de verificar que todo funciona correctamente
 
 class IncidenciaCierreViewSet(viewsets.ModelViewSet):
     """ViewSet para gestionar incidencias de cierre de nómina"""
@@ -2037,7 +2044,7 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
         if tipo_comparacion:
             queryset = queryset.filter(tipo_comparacion=tipo_comparacion)
             
-        return queryset.select_related('cierre', 'empleado_libro', 'empleado_novedades', 'asignado_a')
+        return queryset.select_related('cierre', 'asignado_a', 'resuelto_por', 'supervisor_revisor')
     
     @action(detail=False, methods=['post'], url_path='generar/(?P<cierre_id>[^/.]+)')
     def generar_incidencias(self, request, cierre_id=None):
@@ -3385,7 +3392,7 @@ class DiscrepanciaCierreViewSet(viewsets.ModelViewSet):
             elif grupo == 'movimientos_vs_analista':
                 queryset = queryset.exclude(tipo_discrepancia__in=libro_vs_novedades)
             
-        return queryset.select_related('cierre', 'empleado_libro', 'empleado_novedades').order_by('-fecha_detectada')
+        return queryset.select_related('cierre').order_by('-fecha_detectada')
     
     @action(detail=False, methods=['post'], url_path='generar/(?P<cierre_id>[^/.]+)')
     def generar_discrepancias(self, request, cierre_id=None):

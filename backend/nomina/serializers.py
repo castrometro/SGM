@@ -235,44 +235,59 @@ class ResolucionIncidenciaSerializer(serializers.ModelSerializer):
         read_only_fields = ['usuario', 'fecha_resolucion']
 
 class IncidenciaCierreSerializer(serializers.ModelSerializer):
-    empleado_libro_nombre = serializers.SerializerMethodField()
-    empleado_novedades_nombre = serializers.SerializerMethodField()
     tipo_incidencia_display = serializers.CharField(source='get_tipo_incidencia_display', read_only=True)
     tipo_comparacion_display = serializers.CharField(source='get_tipo_comparacion_display', read_only=True)
     estado_display = serializers.CharField(source='get_estado_display', read_only=True)
     prioridad_display = serializers.CharField(source='get_prioridad_display', read_only=True)
     resoluciones = ResolucionIncidenciaSerializer(many=True, read_only=True)
     asignado_a_nombre = serializers.CharField(source='asignado_a.get_full_name', read_only=True)
+    resuelto_por_nombre = serializers.CharField(source='resuelto_por.get_full_name', read_only=True)
+    supervisor_revisor_nombre = serializers.CharField(source='supervisor_revisor.get_full_name', read_only=True)
     tiempo_sin_resolver = serializers.SerializerMethodField()
+    
+    # Campos calculados desde datos_adicionales
+    delta_absoluto = serializers.SerializerMethodField()
+    delta_porcentual = serializers.SerializerMethodField()
+    monto_actual = serializers.SerializerMethodField()
+    monto_anterior = serializers.SerializerMethodField()
     
     class Meta:
         model = IncidenciaCierre
         fields = [
-            'id', 'tipo_incidencia', 'tipo_incidencia_display', 'rut_empleado',
-            'descripcion', 'valor_libro', 'valor_novedades', 'valor_movimientos',
-            'valor_analista', 'concepto_afectado', 'fecha_detectada',
-            'estado', 'estado_display', 'prioridad', 'prioridad_display',
-            'impacto_monetario', 'asignado_a', 'asignado_a_nombre',
+            'id', 'tipo_incidencia', 'tipo_incidencia_display', 
+            'descripcion', 'concepto_afectado', 'clasificacion_concepto',
+            'fecha_detectada', 'estado', 'estado_display', 
+            'prioridad', 'prioridad_display', 'impacto_monetario',
+            'asignado_a', 'asignado_a_nombre',
+            'resuelto_por', 'resuelto_por_nombre',
+            'supervisor_revisor', 'supervisor_revisor_nombre',
             'fecha_primera_resolucion', 'fecha_ultima_accion',
-            'empleado_libro', 'empleado_novedades', 'empleado_libro_nombre',
-            'empleado_novedades_nombre', 'resoluciones', 'tiempo_sin_resolver',
-            # Sistema dual
-            'tipo_comparacion', 'tipo_comparacion_display', 'datos_adicionales', 'empleado_nombre'
+            'fecha_resolucion', 'fecha_resolucion_final',
+            'comentario_resolucion', 'comentario_supervisor',
+            'resoluciones', 'tiempo_sin_resolver',
+            'tipo_comparacion', 'tipo_comparacion_display', 
+            'datos_adicionales', 'hash_deteccion',
+            'version_detectada_primera', 'version_detectada_ultima',
+            # Campos calculados
+            'delta_absoluto', 'delta_porcentual', 'monto_actual', 'monto_anterior'
         ]
         read_only_fields = [
             'fecha_detectada', 'fecha_primera_resolucion', 'fecha_ultima_accion',
-            'tiempo_sin_resolver'
+            'tiempo_sin_resolver', 'hash_deteccion', 'impacto_monetario',
+            'delta_absoluto', 'delta_porcentual', 'monto_actual', 'monto_anterior'
         ]
     
-    def get_empleado_libro_nombre(self, obj):
-        if obj.empleado_libro:
-            return f"{obj.empleado_libro.nombre} {obj.empleado_libro.apellido_paterno}"
-        return None
+    def get_delta_absoluto(self, obj):
+        return obj.get_delta_absoluto()
     
-    def get_empleado_novedades_nombre(self, obj):
-        if obj.empleado_novedades:
-            return f"{obj.empleado_novedades.nombre} {obj.empleado_novedades.apellido_paterno}"
-        return None
+    def get_delta_porcentual(self, obj):
+        return obj.get_delta_porcentual()
+    
+    def get_monto_actual(self, obj):
+        return obj.get_monto_actual()
+    
+    def get_monto_anterior(self, obj):
+        return obj.get_monto_anterior()
     
     def get_tiempo_sin_resolver(self, obj):
         if obj.estado == 'pendiente':

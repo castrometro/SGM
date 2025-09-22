@@ -193,6 +193,7 @@ def procesar_step1_sync_rindegastos(request):
         cc_indices_conocidos = {str(h).strip(): i for i, h in enumerate(headers) if str(h).strip() in conocidos}
 
         grupos = {}
+        grupos_filas = {}
         # Recorrer filas
         for row in ws_in.iter_rows(min_row=2, values_only=True):
             if not row or not any(row):
@@ -223,6 +224,7 @@ def procesar_step1_sync_rindegastos(request):
 
             clave = f"{tipo_doc} con {cc_count}CC"
             grupos[clave] = grupos.get(clave, 0) + 1
+            grupos_filas.setdefault(clave, []).append((tipo_doc, cc_count))
 
         wb_in.close()
 
@@ -233,10 +235,29 @@ def procesar_step1_sync_rindegastos(request):
         wb_out.remove(default_sheet)
 
         headers_salida = get_headers_salida_contabilidad()
+        # Ahora generamos placeholders por cada fila fuente del grupo
         for clave in sorted(grupos.keys()):
             ws = wb_out.create_sheet(title=_sanitize_sheet_name(clave))
             for col_idx, h in enumerate(headers_salida, start=1):
                 ws.cell(row=1, column=col_idx, value=h)
+            row_cursor = 2
+            filas_grupo = grupos_filas.get(clave, [])
+            for idx_fila, (tipo_doc_str, cc_count) in enumerate(filas_grupo, start=1):
+                def add_placeholder(texto):
+                    nonlocal row_cursor
+                    ws.cell(row=row_cursor, column=1, value=texto)
+                    row_cursor += 1
+                if tipo_doc_str in ['33', '64']:
+                    add_placeholder(f'fila iva {idx_fila}')
+                    add_placeholder(f'fila cuenta proveedores {idx_fila}')
+                    for i in range(1, cc_count + 1):
+                        add_placeholder(f'fila cuenta gasto {idx_fila}.{i}')
+                elif tipo_doc_str == '34':
+                    add_placeholder(f'fila cuenta proveedores {idx_fila}')
+                    for i in range(1, cc_count + 1):
+                        add_placeholder(f'fila cuenta gasto {idx_fila}.{i}')
+                else:
+                    continue
 
         buffer = BytesIO()
         wb_out.save(buffer)

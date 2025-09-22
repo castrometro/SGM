@@ -15,7 +15,8 @@ import {
   finalizarCierre,
   consultarEstadoTarea,
   obtenerAnalisisCompletoTemporal,
-  limpiarIncidenciasCierre
+  limpiarIncidenciasCierre,
+  generarIncidenciasTotalesVariacion
 } from "../../api/nomina";
 // import { actualizarEstadoCierreNomina } from "../../api/nomina";
 import { solicitarRecargaArchivosAnalista } from "../../api/nomina";
@@ -259,85 +260,43 @@ const IncidenciasEncontradasSection = ({
 
   const manejarGenerarIncidencias = async () => {
     if (!cierre?.id) return;
-    
     setGenerando(true);
     setError("");
-    
     try {
-      console.log("🔄 Iniciando generación de incidencias con configuración automática de Pablo...");
-      console.log("📋 Análisis detallado: haberes imponibles, haberes no imponibles y descuentos");
-      console.log("📋 Solo resumen: descuentos legales, aportes patronales, información adicional, impuestos, horas extras");
-      
-      // Usar configuración automática del backend (sin clasificaciones manuales)
-      const resultado = await generarIncidenciasCierre(cierre.id);
-
-      // Si el backend ejecuta en background, hacer polling hasta SUCCESS antes de refrescar
-      const taskId = resultado?.task_id || resultado?.taskId || resultado?.task || resultado?.id;
-      if (taskId) {
-        console.log(`🚀 Generación de incidencias en background. Task: ${taskId}. Iniciando polling...`);
-        const inicio = Date.now();
-        const timeoutMs = 10 * 60 * 1000; // 10 minutos
-        const intervaloMs = 2000;
-        let exito = false;
-        while (Date.now() - inicio < timeoutMs) {
-          try {
-            // eslint-disable-next-line no-await-in-loop
-            const estado = await consultarEstadoTarea(cierre.id, taskId);
-            const state = estado?.state || estado?.status;
-            if (state === 'SUCCESS') {
-              exito = true;
-              break;
-            }
-            if (state === 'FAILURE') {
-              console.error('❌ Error en generación de incidencias:', estado?.result);
-              break;
-            }
-          } catch (pollErr) {
-            // eslint-disable-next-line no-console
-            console.warn('Polling estado tarea falló, reintentando...', pollErr?.message || pollErr);
-          }
-          // eslint-disable-next-line no-await-in-loop
-          await new Promise((r) => setTimeout(r, intervaloMs));
-        }
-        if (!exito) {
-          console.warn('⚠️ Polling de generación de incidencias terminó por timeout o error. Se continuará con refresco best-effort.');
-        }
+      console.log("🚀 Generando incidencias simplificadas (variación totales ±30%)...");
+      const resultado = await generarIncidenciasTotalesVariacion(cierre.id);
+      console.log("✅ Resultado generación variaciones:", resultado);
+      // Actualización optimista inmediata usando respuesta
+      if (resultado?.incidencias) {
+        const adaptadas = resultado.incidencias.map((i, idx) => ({
+          id: `temp-${idx}`,
+          tipo_comparacion: 'suma_total',
+          concepto_afectado: i.concepto,
+          descripcion: `${i.tipo.toUpperCase()} ${i.concepto} Δ ${i.delta_pct?.toFixed ? i.delta_pct.toFixed(1) : i.delta_pct}%`,
+          impacto_monetario: Math.abs(i.delta_abs || 0),
+          datos_adicionales: {
+            monto_actual: i.monto_actual,
+            monto_anterior: i.monto_anterior,
+            delta_abs: i.delta_abs,
+            delta_pct: i.delta_pct,
+            tipo_generado: i.tipo,
+            umbral_pct: resultado?.parametros?.umbral_pct,
+            informativo: false
+          },
+          estado: 'pendiente'
+        }));
+        setIncidencias(adaptadas);
       }
-
-      // Dar un pequeño margen y refrescar el cierre (el backend suele actualizar estado por su cuenta)
+      // Refrescar estado de cierre / incidencias desde backend para IDs reales
       if (onCierreActualizado) {
-        await new Promise((r) => setTimeout(r, 700));
         await onCierreActualizado();
       }
-      
-      console.log("✅ Incidencias generadas, limpiando cache y recargando datos...");
-      
-      // Limpiar estados para forzar recarga completa
-      setIncidencias([]);
-      setResumen(null);
-      setEstadoIncidencias(null);
-      
-      // Recargar estados inmediatamente y después con delay
-      setTimeout(async () => {
-        await cargarEstadoIncidencias();
-        await cargarDatos();
-        console.log("🔄 Primera recarga completada");
-      }, 1000);
-      
-      // Segunda recarga para asegurar sincronización
-      setTimeout(async () => {
-        await cargarEstadoIncidencias();
-        await cargarDatos();
-        // Intento adicional de refrescar el cierre tras los datos
-        if (onCierreActualizado) {
-          await onCierreActualizado();
-        }
-        console.log("🔄 Segunda recarga completada");
-      }, 3000);
-      
+      await cargarEstadoIncidencias();
+      await cargarDatos();
     } catch (err) {
-      console.error("Error generando incidencias:", err);
-      setError("Error al generar incidencias");
+      console.error("Error generando incidencias (variaciones):", err);
+      setError("Error al generar incidencias de variaciones");
+      alert("❌ Error generando incidencias de variaciones");
     } finally {
       setGenerando(false);
     }
@@ -543,7 +502,7 @@ const IncidenciasEncontradasSection = ({
   return (
     <section className="space-y-6">
       <div
-        className={`flex items-center justify-between cursor-pointer hover:bg-gray-800/50 p-3 -m-3 rounded-lg transition-colors ${
+        className={`flex items-center justify-between cursor-pointer hover:bg-gray-800/50 p-3 -m-3 rounded-lg transition-colores ${
           disabled ? 'opacity-60' : ''
         }`}
         onClick={() => onToggleExpansion && onToggleExpansion()}
@@ -692,7 +651,7 @@ const IncidenciasEncontradasSection = ({
                 <button
                   onClick={manejarGenerarIncidencias}
                   disabled={generando || !puedeGenerarIncidencias()}
-                  className="flex items-center px-6 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                  className="flex items-center px-6 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colores font-medium"
                 >
                   {generando ? (
                     <>
@@ -718,7 +677,7 @@ const IncidenciasEncontradasSection = ({
                     disabled={finalizandoCierre || (
                       !estadoIncidencias?.puede_finalizar && cierre?.estado !== 'incidencias_resueltas' && cierre?.estado_incidencias !== 'resueltas'
                     )}
-                    className="flex items-center px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                    className="flex items-center px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colores font-medium"
                   >
                     {finalizandoCierre ? (
                       <>

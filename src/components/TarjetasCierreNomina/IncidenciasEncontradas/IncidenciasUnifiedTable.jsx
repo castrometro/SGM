@@ -71,11 +71,21 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
       if (!byKey.has(key)) byKey.set(key, { key, concepto, tipo_concepto, resumen: null, indiv: [] });
       const g = byKey.get(key);
       if (i.tipo_comparacion === 'suma_total') {
-        const anterior = da.suma_anterior != null ? Number(da.suma_anterior) : null;
-        const actual = da.suma_actual != null ? Number(da.suma_actual) : null;
-        const variacion = da.variacion_porcentual != null ? Number(da.variacion_porcentual) : null;
+        // Compatibilidad: backend nuevo usa monto_anterior/monto_actual/delta_abs/delta_pct y antes suma_anterior/suma_actual/variacion_porcentual.
+        const anterior = da.suma_anterior != null ? Number(da.suma_anterior) : (da.monto_anterior != null ? Number(da.monto_anterior) : null);
+        const actual = da.suma_actual != null ? Number(da.suma_actual) : (da.monto_actual != null ? Number(da.monto_actual) : null);
+        let variacion = null;
+        if (da.variacion_porcentual != null) {
+          variacion = Number(da.variacion_porcentual);
+        } else if (da.delta_pct != null) {
+          variacion = Number(da.delta_pct);
+        } else if (anterior != null && anterior !== 0 && actual != null) {
+          variacion = ((actual - anterior) / anterior) * 100;
+        }
+        const delta_abs = da.delta_abs != null ? Number(da.delta_abs) : (anterior != null && actual != null ? (actual - anterior) : null);
         g.resumen = {
           anterior, actual, variacion_porcentual: variacion,
+          delta_abs,
           prioridad: i.prioridad || 'baja',
           impacto_monetario: Math.abs(Number(i.impacto_monetario ?? 0)),
           fecha: i.fecha_detectada,
@@ -87,14 +97,19 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
           id: i.id,
           empleado_rut: i.rut_empleado || null,
           empleado_nombre: i.empleado_nombre || i.empleado_libro?.nombre || null,
-          anterior: da.monto_anterior != null ? Number(da.monto_anterior) : null,
-          actual: da.monto_actual != null ? Number(da.monto_actual) : null,
-          variacion_porcentual: da.variacion_porcentual != null ? Number(da.variacion_porcentual) : null,
+          anterior: da.monto_anterior != null ? Number(da.monto_anterior) : (da.suma_anterior != null ? Number(da.suma_anterior) : null),
+          actual: da.monto_actual != null ? Number(da.monto_actual) : (da.suma_actual != null ? Number(da.suma_actual) : null),
+          variacion_porcentual: da.variacion_porcentual != null ? Number(da.variacion_porcentual) : (da.delta_pct != null ? Number(da.delta_pct) : null),
           prioridad: i.prioridad || 'baja',
           estadoReal: obtenerEstadoReal(i),
           fecha: i.fecha_detectada,
           raw: i,
           especial: especialBadge,
+          delta_abs: da.delta_abs != null ? Number(da.delta_abs) : (
+            (da.monto_anterior != null && da.monto_actual != null)
+              ? Number(da.monto_actual) - Number(da.monto_anterior)
+              : null
+          ),
         });
       }
     }
@@ -111,6 +126,7 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
           anterior: sumAnt,
           actual: sumAct,
           variacion_porcentual: variacion,
+          delta_abs: sumAct - sumAnt,
           prioridad,
           impacto_monetario: Math.abs(sumAct - sumAnt),
           fecha: g.indiv[0]?.fecha || null,
@@ -126,6 +142,7 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
         case 'variacion_porcentual': return g.resumen.variacion_porcentual ?? -Infinity;
         case 'anterior': return g.resumen.anterior ?? -Infinity;
         case 'actual': return g.resumen.actual ?? -Infinity;
+        case 'delta_abs': return g.resumen.delta_abs ?? -Infinity;
         case 'concepto': return g.concepto || '';
         case 'fecha': return g.resumen.fecha ? new Date(g.resumen.fecha).getTime() : 0;
         default: return 0;
@@ -264,21 +281,25 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1300px] md:min-w-[1400px] lg:min-w-[1600px] bg-gray-800 rounded-lg">
+        {/* Ajuste: reducimos min-width para que quepan todas las columnas en viewport medianos */}
+        <table className="w-full min-w-[1050px] md:min-w-[1100px] lg:min-w-[1200px] bg-gray-800 rounded-lg text-xs">
           <thead className="bg-gray-800/90 backdrop-blur sticky top-0 z-10 border-b border-gray-700">
             <tr>
               <th onClick={() => onSort('concepto')} className={`${thPad} text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer`}>
-                <SortHeader label="Concepto / Ítem" sortKeyLocal="concepto" />
+                <SortHeader label="Concepto" sortKeyLocal="concepto" />
               </th>
-              <th className={`${thPad} text-left text-xs font-medium text-gray-300 uppercase tracking-wider`}>Empleado / Detalle</th>
+              {/* Columna Empleado / Detalle eliminada */}
               <th onClick={() => onSort('variacion_porcentual')} className={`${thPad} text-right text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer`}>
-                <SortHeader label="Variación %" sortKeyLocal="variacion_porcentual" />
+                <SortHeader label="Δ %" sortKeyLocal="variacion_porcentual" />
               </th>
               <th onClick={() => onSort('anterior')} className={`${thPad} text-right text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer`}>
-                <SortHeader label="Anterior" sortKeyLocal="anterior" />
+                <SortHeader label="Ant" sortKeyLocal="anterior" />
               </th>
               <th onClick={() => onSort('actual')} className={`${thPad} text-right text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer`}>
-                <SortHeader label="Actual" sortKeyLocal="actual" />
+                <SortHeader label="Act" sortKeyLocal="actual" />
+              </th>
+              <th onClick={() => onSort('delta_abs')} className={`${thPad} text-right text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer`}>
+                <SortHeader label="Δ $" sortKeyLocal="delta_abs" />
               </th>
               <th className={`${thPad} text-left text-xs font-medium text-gray-300 uppercase tracking-wider`}>Prioridad</th>
               <th className={`${thPad} text-left text-xs font-medium text-gray-300 uppercase tracking-wider`}>Estado</th>
@@ -313,9 +334,7 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
                         </div>
                       </div>
                     </td>
-                    <td className={`${tdPad} whitespace-nowrap text-sm text-gray-300`}>
-                      {g.indiv.length > 0 ? (<span className="text-gray-300">{g.indiv.length} individuales</span>) : (<span className="text-gray-500">—</span>)}
-                    </td>
+                    {/* Celda de conteo de individuales eliminada */}
                     <td className={`${tdPad} whitespace-nowrap text-sm font-medium ${varCls} text-right`}>
                       {g.resumen.variacion_porcentual != null ? (
                         <span className="inline-flex items-center gap-1 justify-end w-full">
@@ -329,6 +348,9 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
                     </td>
                     <td className={`${tdPad} whitespace-nowrap text-sm text-gray-300 text-right`}>
                       {g.resumen.actual != null ? formatearMonedaChilena(g.resumen.actual) : '—'}
+                    </td>
+                    <td className={`${tdPad} whitespace-nowrap text-sm text-gray-300 text-right ${g.resumen.delta_abs != null ? (g.resumen.delta_abs >= 0 ? 'text-green-400' : 'text-red-400') : ''}`}>
+                      {g.resumen.delta_abs != null ? formatearMonedaChilena(g.resumen.delta_abs) : '—'}
                     </td>
                     <td className={`${tdPad} whitespace-nowrap`}>{badgePrioridad(g.resumen.prioridad)}</td>
                     <td className={`${tdPad} whitespace-nowrap`}>
@@ -382,15 +404,7 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
                           </div>
                         </div>
                       </td>
-                      <td className={`${tdPad} whitespace-nowrap text-sm text-gray-300`}>
-                        <div>
-                          <div className="text-white font-medium flex items-center">
-                            <span>{r.empleado_rut || '-'}</span>
-                            {r.especial && badgeEspecial(r.especial)}
-                          </div>
-                          {r.empleado_nombre && <div className="text-xs text-gray-400">{r.empleado_nombre}</div>}
-                        </div>
-                      </td>
+                      {/* Celda detalle empleado eliminada */}
                       <td className={`${tdPad} whitespace-nowrap text-sm font-medium ${ (r.variacion_porcentual ?? 0) >= 0 ? 'text-green-400' : 'text-red-400' } text-right`}>
                         {r.variacion_porcentual != null ? (
                           <span className="inline-flex items-center gap-1 justify-end w-full">
@@ -401,6 +415,7 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
                       </td>
                       <td className={`${tdPad} whitespace-nowrap text-sm text-gray-300 text-right`}>{r.anterior != null ? formatearMonedaChilena(r.anterior) : '—'}</td>
                       <td className={`${tdPad} whitespace-nowrap text-sm text-gray-300 text-right`}>{r.actual != null ? formatearMonedaChilena(r.actual) : '—'}</td>
+                      <td className={`${tdPad} whitespace-nowrap text-sm text-gray-300 text-right ${r.delta_abs != null ? (r.delta_abs >= 0 ? 'text-green-400' : 'text-red-400') : ''}`}>{r.delta_abs != null ? formatearMonedaChilena(r.delta_abs) : '—'}</td>
                       <td className={`${tdPad} whitespace-nowrap`}>
                         {r.especial === 'ingreso_empleado' ? (
                           <span className="px-2 py-0.5 rounded text-xs bg-emerald-900/50 text-emerald-300 ring-1 ring-emerald-700/40">Informativo</span>

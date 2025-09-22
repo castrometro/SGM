@@ -805,3 +805,16 @@ export const eliminarAusentismos = async (archivoId) => {
 //   const response = await api.post(`/nomina/archivos-novedades/${novedadesId}/procesar/`);
 //   return response.data;
 // };
+export const generarIncidenciasTotalesVariacion = async (cierreId) => {
+  try {
+    const response = await api.post(`/nomina/cierres/${cierreId}/incidencias/totales-variacion/`);
+    return response.data;
+  } catch (err) {
+    if (err?.response?.status === 405) {
+      console.warn('[API] POST no permitido, intentando GET (modo compat) ...');
+      const respGet = await api.get(`/nomina/cierres/${cierreId}/incidencias/totales-variacion/`);
+      return respGet.data;
+    }
+    throw err;
+  }
+};

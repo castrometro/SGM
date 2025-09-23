@@ -4,7 +4,7 @@ import CierreInfoBar from "../components/InfoCards/CierreInfoBar"; // Puedes cre
 import { obtenerCierreNominaPorId } from "../api/nomina";
 import { obtenerCliente } from "../api/clientes";
 import CierreProgresoNomina from "../components/TarjetasCierreNomina/CierreProgresoNomina"; // Asegúrate de crear este componente
-
+import CierreProgresoNomina_v2 from "../components/TarjetasCierreNomina/CierreProgresoNomina_v2";
 const CierreDetalleNomina = () => {
   const { cierreId } = useParams();
   const [cierre, setCierre] = useState(null);
@@ -60,7 +60,14 @@ const CierreDetalleNomina = () => {
       </div>
 
 
-      <CierreProgresoNomina
+     {/*  <CierreProgresoNomina
+        cierre={cierre}
+        cliente={cliente}
+        onCierreActualizado={refrescarCierre}
+        className="grid grid-cols-1 md:grid-cols-3 gap-4"
+      /> */}
+
+      <CierreProgresoNomina_v2
         cierre={cierre}
         cliente={cliente}
         onCierreActualizado={refrescarCierre}

@@ -10,7 +10,8 @@ const Layout = () => {
     const isLibroRemuneraciones = fullWidthRe.test(location.pathname) && location.pathname.includes('libro-remuneraciones');
     const isMovimientosMes = fullWidthRe.test(location.pathname) && location.pathname.includes('movimientos');
     const isGestionCobranza = location.pathname.startsWith('/menu/gestion-cobranza');
-    const mainClass = (isLibroRemuneraciones || isMovimientosMes || isGestionCobranza)
+    const isProyectosBDO = location.pathname.startsWith('/menu/proyectos-bdo-latam');
+    const mainClass = (isLibroRemuneraciones || isMovimientosMes || isGestionCobranza || isProyectosBDO)
         ? 'flex-grow w-full p-0'
         : 'flex-grow container mx-auto p-6';
     return (

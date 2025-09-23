@@ -45,13 +45,13 @@ const MenuUsuario = () => {
     );
     
     // Dashboard del Gerente - Nuevo
-    opciones.push({
-      label: "Dashboard Gerencial", 
-      descripcion: "Dashboard avanzado con métricas, alertas y reportes", 
-      icon: Activity, 
-      color: "#EF4444", 
-      path: "/menu/dashboard-gerente"
-    });
+    //opciones.push({
+      //label: "Dashboard Gerencial", 
+      //descripcion: "Dashboard avanzado con métricas, alertas y reportes", 
+      //icon: Activity, 
+     // color: "#EF4444", 
+    //  path: "/menu/dashboard-gerente"
+    //});
     
     // Analytics específicos por área
     if (tieneContabilidad || tieneNomina) {
@@ -64,13 +64,13 @@ const MenuUsuario = () => {
         descripcionAnalytics += "nómina y remuneraciones";
       }
       
-      opciones.push({
-        label: "Analytics de Performance", 
-        descripcion: descripcionAnalytics, 
-        icon: BarChart3, 
-        color: "#8B5CF6", 
-        path: "/menu/analytics"
-      });
+      //opciones.push({
+        //label: "Analytics de Performance", 
+        //descripcion: descripcionAnalytics, 
+        //icon: BarChart3, 
+        //color: "#8B5CF6", 
+        //path: "/menu/analytics"
+      //});
     }
     
     // Funcionalidades específicas de Contabilidad para Gerentes
@@ -78,8 +78,8 @@ const MenuUsuario = () => {
       opciones.push(
         { label: "Gestión de Cobranza", descripcion: "Seguimiento y gestión de cobros a clientes", icon: CreditCard, color: "#059669", path: "/menu/gestion-cobranza-v2" },
         { label: "Logs y Actividad", descripcion: "Auditoría y logs de actividades de usuarios", icon: FileText, color: "#F97316", path: "/menu/gerente/logs-actividad" },
-        { label: "Estados de Cierres", descripcion: "Monitoreo en tiempo real de estados de cierres", icon: Monitor, color: "#06B6D4", path: "/menu/gerente/estados-cierres" },
-        { label: "Cache Redis", descripcion: "Estado y gestión del cache Redis de cierres", icon: Database, color: "#10B981", path: "/menu/gerente/cache-redis" },
+        //{ label: "Estados de Cierres", descripcion: "Monitoreo en tiempo real de estados de cierres", icon: Monitor, color: "#06B6D4", path: "/menu/gerente/estados-cierres" },
+       // { label: "Cache Redis", descripcion: "Estado y gestión del cache Redis de cierres", icon: Database, color: "#10B981", path: "/menu/gerente/cache-redis" },
         { label: "Proyectos BDO Latam", descripcion: "Gestión de proyectos BDO en Latinoamérica", icon: Users, color: "#3B82F6", path: "/menu/proyectos-bdo-latam" }
       );
     }
@@ -94,7 +94,7 @@ const MenuUsuario = () => {
     }
     
     opciones.push(
-      { label: "Gestión de Analistas", descripcion: "Gestión de analistas y asignaciones", icon: UserCog, color: "#EC4899", path: "/menu/analistas" },
+      //{ label: "Gestión de Analistas", descripcion: "Gestión de analistas y asignaciones", icon: UserCog, color: "#EC4899", path: "/menu/analistas" },
       { label: "Herramientas", descripcion: "Utilidades del sistema", icon: Wrench, color: "#10B981", path: "/menu/tools" }
     );
 
@@ -122,6 +122,7 @@ const MenuUsuario = () => {
       color: "#059669", 
       path: "/menu/gestion-cobranza-v2"
     });
+   
   }
 
   // Variable para controlar la transparencia de las tarjetas

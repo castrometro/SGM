@@ -405,12 +405,7 @@ export default function ImplementacionBDODashboard() {
             <p className="text-slate-400 text-sm mt-1">Vista general y detalle por país. El dashboard expone todas las columnas del Excel.</p>
           </div>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={handleExcel}
-              className="block text-sm file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500"
-            />
+            
             <select
               value={selectedCountry}
               onChange={(e) => setSelectedCountry(e.target.value)}

@@ -12,6 +12,7 @@ from contabilidad.tasks import (
     get_redis_client_db1,
     get_redis_client_db1_binary,
 )
+## Endpoint sincrónico eliminado: se fuerza uso de Celery
 from contabilidad.task_rindegastos import rg_procesar_step1_task
 
 
@@ -132,146 +133,60 @@ def _sanitize_sheet_name(name: str) -> str:
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def procesar_step1_rindegastos(request):
-    """
-    Inicia Step1 de forma asíncrona: sube archivo, dispara Celery y retorna task_id.
-    """
+    """Inicia Step1 (asíncrono) exigiendo parametros_contables (JSON o campos sueltos)."""
     try:
         if 'archivo' not in request.FILES:
             return Response({'error': 'No se encontró archivo en la petición'}, status=400)
-
         archivo = request.FILES['archivo']
         if not archivo.name.lower().endswith(('.xlsx', '.xls')):
             return Response({'error': 'El archivo debe ser un Excel (.xlsx o .xls)'}, status=400)
 
-        contenido = archivo.read()
+        # Parse parametros contables obligatorios
+        raw_param = request.data.get('parametros_contables')
+        parametros_contables = None
+        if raw_param:
+            try:
+                parametros_contables = json.loads(raw_param)
+            except Exception:
+                return Response({'error': 'parametros_contables no es JSON válido'}, status=400)
+        else:
+            # Fallback: construir desde campos sueltos
+            cuenta_iva = request.data.get('cuentaIva') or request.data.get('cuenta_iva')
+            cuenta_prov = request.data.get('cuentaProveedores') or request.data.get('cuenta_proveedores')
+            cuenta_gasto = request.data.get('cuentaGasto') or request.data.get('cuenta_gasto')
+            # CC: prefijo cc_*
+            mapeo_cc = {}
+            for k, v in request.data.items():
+                if k.startswith('cc_') and v:
+                    nombre = k[3:]
+                    mapeo_cc[nombre] = v
+            if any([cuenta_iva, cuenta_prov, cuenta_gasto]) or mapeo_cc:
+                parametros_contables = {
+                    'cuentasGlobales': {
+                        'iva': cuenta_iva,
+                        'proveedores': cuenta_prov,
+                        'gasto_default': cuenta_gasto,
+                    },
+                    'mapeoCC': mapeo_cc
+                }
+        if not parametros_contables:
+            return Response({'error': 'Se requieren parametros_contables (JSON) o campos individuales de cuentas y CC.'}, status=400)
+        cg = parametros_contables.get('cuentasGlobales') or {}
+        requeridas = ['iva', 'proveedores', 'gasto_default']
+        faltantes = [r for r in requeridas if not cg.get(r)]
+        if faltantes:
+            return Response({'error': f'Faltan cuentasGlobales requeridas: {", ".join(faltantes)}'}, status=400)
 
-        task = rg_procesar_step1_task.delay(contenido, archivo.name, request.user.id)
+        contenido = archivo.read()
+        task = rg_procesar_step1_task.delay(contenido, archivo.name, request.user.id, parametros_contables)
         return Response({
             'task_id': task.id,
             'estado': 'procesando',
             'archivo_nombre': archivo.name,
-            'mensaje': 'Archivo enviado para Step1 (RG)'
+            'mensaje': 'Archivo enviado para Step1 (RG) con parametros contables'
         }, status=202)
     except Exception as e:
         return Response({'error': f'Error iniciando Step1: {str(e)}'}, status=500)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def procesar_step1_sync_rindegastos(request):
-    """
-    Fallback sincrónico: genera y devuelve el Excel de Step1 directamente.
-    """
-    try:
-        if 'archivo' not in request.FILES:
-            return Response({'error': 'No se encontró archivo en la petición'}, status=400)
-
-        archivo = request.FILES['archivo']
-        if not archivo.name.lower().endswith(('.xlsx', '.xls')):
-            return Response({'error': 'El archivo debe ser un Excel (.xlsx o .xls)'}, status=400)
-
-        contenido = archivo.read()
-        wb_in = load_workbook(BytesIO(contenido), read_only=True)
-        ws_in = wb_in.active
-
-        headers = [(v if v is not None else '') for v in next(ws_in.iter_rows(min_row=1, max_row=1, values_only=True))]
-
-        # Ubicar columna Tipo Doc
-        idx_tipo_doc = None
-        for i, h in enumerate(headers):
-            if _normalize(h) == 'tipo doc':
-                idx_tipo_doc = i
-                break
-        if idx_tipo_doc is None:
-            return Response({'error': "No se encontró la columna 'Tipo Doc'"}, status=400)
-
-        # Rango de CC por regla dinámica
-        cc_start, cc_end = _find_cc_range(headers)
-
-        # Fallback: CC conocidos si no hay rango
-        conocidos = ['PyC', 'PS', 'EB', 'CO', 'RE', 'TR', 'CF', 'LRC']
-        cc_indices_conocidos = {str(h).strip(): i for i, h in enumerate(headers) if str(h).strip() in conocidos}
-
-        grupos = {}
-        grupos_filas = {}
-        # Recorrer filas
-        for row in ws_in.iter_rows(min_row=2, values_only=True):
-            if not row or not any(row):
-                continue
-            tipo_doc = row[idx_tipo_doc] if idx_tipo_doc < len(row) else None
-            tipo_doc = str(tipo_doc) if tipo_doc is not None else 'Sin Tipo'
-
-            # Contar CC válidos
-            cc_count = 0
-            if cc_start is not None and cc_end is not None:
-                for col in range(cc_start, cc_end):
-                    val = row[col] if col < len(row) else None
-                    num = _parse_numeric(val)
-                    if num is not None and abs(num) > 0:
-                        cc_count += 1
-            else:
-                # Fallback por nombres conocidos
-                vistos = set()
-                for nombre, col in cc_indices_conocidos.items():
-                    if nombre == 'EB' and 'PS' in cc_indices_conocidos:
-                        # evitar duplicar PS/EB equivalentes si ambos estuvieran
-                        continue
-                    val = row[col] if col < len(row) else None
-                    num = _parse_numeric(val)
-                    if num is not None and abs(num) > 0 and nombre not in vistos:
-                        cc_count += 1
-                        vistos.add(nombre)
-
-            clave = f"{tipo_doc} con {cc_count}CC"
-            grupos[clave] = grupos.get(clave, 0) + 1
-            grupos_filas.setdefault(clave, []).append((tipo_doc, cc_count))
-
-        wb_in.close()
-
-        # Crear workbook de salida con una hoja por grupo y headers contables
-        wb_out = Workbook()
-        # Remover sheet por defecto
-        default_sheet = wb_out.active
-        wb_out.remove(default_sheet)
-
-        headers_salida = get_headers_salida_contabilidad()
-        # Ahora generamos placeholders por cada fila fuente del grupo
-        for clave in sorted(grupos.keys()):
-            ws = wb_out.create_sheet(title=_sanitize_sheet_name(clave))
-            for col_idx, h in enumerate(headers_salida, start=1):
-                ws.cell(row=1, column=col_idx, value=h)
-            row_cursor = 2
-            filas_grupo = grupos_filas.get(clave, [])
-            for idx_fila, (tipo_doc_str, cc_count) in enumerate(filas_grupo, start=1):
-                def add_placeholder(texto):
-                    nonlocal row_cursor
-                    ws.cell(row=row_cursor, column=1, value=texto)
-                    row_cursor += 1
-                if tipo_doc_str in ['33', '64']:
-                    add_placeholder(f'fila iva {idx_fila}')
-                    add_placeholder(f'fila cuenta proveedores {idx_fila}')
-                    for i in range(1, cc_count + 1):
-                        add_placeholder(f'fila cuenta gasto {idx_fila}.{i}')
-                elif tipo_doc_str == '34':
-                    add_placeholder(f'fila cuenta proveedores {idx_fila}')
-                    for i in range(1, cc_count + 1):
-                        add_placeholder(f'fila cuenta gasto {idx_fila}.{i}')
-                else:
-                    continue
-
-        buffer = BytesIO()
-        wb_out.save(buffer)
-        data = buffer.getvalue()
-
-        response = HttpResponse(
-            data,
-            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-        response['Content-Disposition'] = f'attachment; filename="rg_step1_{request.user.id}.xlsx"'
-        return response
-
-    except Exception as e:
-        return Response({'error': f'Error en procesamiento step1 (sync): {str(e)}'}, status=500)
 
 
 @api_view(['GET'])

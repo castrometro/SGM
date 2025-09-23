@@ -65,13 +65,23 @@ def rg_procesar_archivo_task(self, archivo_content, archivo_nombre, usuario_id, 
 
 
 @shared_task(bind=True)
-def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id):
+def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, parametros_contables=None):
     """
     Genera Excel con hojas por grupo (Tipo Doc + cantidad de CC > 0) y guarda en Redis.
     Guarda metadatos en rg_step1_meta:{usuario_id}:{task_id} y el archivo en rg_step1_excel:{usuario_id}:{task_id}
     """
     task_id = self.request.id
     redis_client = get_redis_client_db1()
+
+    # Validar parametros contables obligatorios
+    if not parametros_contables:
+        raise ValueError("parametros_contables es obligatorio (cuentasGlobales y mapeoCC)")
+    cuentas_globales = parametros_contables.get('cuentasGlobales') or {}
+    mapeo_cc_param = parametros_contables.get('mapeoCC') or {}
+    requeridas = ['iva', 'proveedores', 'gasto_default']
+    faltantes = [r for r in requeridas if not cuentas_globales.get(r)]
+    if faltantes:
+        raise ValueError(f"Faltan cuentasGlobales requeridas: {', '.join(faltantes)}")
 
     # Meta inicial
     metadata = {
@@ -82,6 +92,7 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id):
         'estado': 'procesando',
         'grupos': [],
         'archivo_excel_disponible': False,
+        'cuentas_globales_usadas': list(cuentas_globales.keys()),
     }
     redis_client.setex(
         f"rg_step1_meta:{usuario_id}:{task_id}", 300, json.dumps(metadata, ensure_ascii=False)
@@ -256,6 +267,9 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id):
                     descripcion=f'IVA Doc {fila_original_idx}',
                     debe=None,
                     haber=iva_monto,
+                    extra={
+                        'Código Plan de Cuenta': cuentas_globales.get('iva')
+                    }
                 )
                 # Fila Proveedores (usa IVA y suma gastos)
                 write_row(
@@ -265,16 +279,19 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id):
                     extra={
                         'Monto 1 Detalle Libro': suma_debe_gastos,
                         'Monto 3 Detalle Libro': iva_monto,
+                        'Código Plan de Cuenta': cuentas_globales.get('proveedores')
                     }
                 )
                 # Filas de Gasto
                 for desc_gasto, debe_val, codigo_cc in gastos_rows:
+                    codigo_cc_final = mapeo_cc_param.get(codigo_cc, codigo_cc)
                     write_row(
                         descripcion=desc_gasto,
                         debe=debe_val,
                         haber=None,
                         extra={
-                            'Código Centro de Costo': codigo_cc
+                            'Código Centro de Costo': codigo_cc_final,
+                            'Código Plan de Cuenta': cuentas_globales.get('gasto_default')
                         }
                     )
             elif tipo_doc_str == '34':
@@ -286,15 +303,18 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id):
                     extra={
                         'Monto 1 Detalle Libro': suma_debe_gastos,
                         'Monto 3 Detalle Libro': suma_debe_gastos,
+                        'Código Plan de Cuenta': cuentas_globales.get('proveedores')
                     }
                 )
                 for desc_gasto, debe_val, codigo_cc in gastos_rows:
+                    codigo_cc_final = mapeo_cc_param.get(codigo_cc, codigo_cc)
                     write_row(
                         descripcion=desc_gasto,
                         debe=debe_val,
                         haber=None,
                         extra={
-                            'Código Centro de Costo': codigo_cc
+                            'Código Centro de Costo': codigo_cc_final,
+                            'Código Plan de Cuenta': cuentas_globales.get('gasto_default')
                         }
                     )
             elif tipo_doc_str == '61':
@@ -306,6 +326,9 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id):
                     descripcion=f'IVA Doc {fila_original_idx}',
                     debe=iva_monto,
                     haber=None,
+                    extra={
+                        'Código Plan de Cuenta': cuentas_globales.get('iva')
+                    }
                 )
                 # Fila Proveedores (invertido -> Debe)
                 write_row(
@@ -315,16 +338,19 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id):
                     extra={
                         'Monto 1 Detalle Libro': suma_debe_gastos,
                         'Monto 3 Detalle Libro': iva_monto,
+                        'Código Plan de Cuenta': cuentas_globales.get('proveedores')
                     }
                 )
                 # Filas Gasto (invertidas -> Haber)
                 for desc_gasto, debe_val, codigo_cc in gastos_rows:
+                    codigo_cc_final = mapeo_cc_param.get(codigo_cc, codigo_cc)
                     write_row(
                         descripcion=desc_gasto,
                         debe=None,
                         haber=debe_val,
                         extra={
-                            'Código Centro de Costo': codigo_cc
+                            'Código Centro de Costo': codigo_cc_final,
+                            'Código Plan de Cuenta': cuentas_globales.get('gasto_default')
                         }
                     )
             else:

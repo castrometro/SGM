@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
+// Import original (legacy) captura masiva endpoints (podrían seguir usándose para otro flujo)
 import { subirArchivoGastos, consultarEstadoGastos, descargarResultadoGastos } from "../../../api/capturaGastos";
-import { rgLeerHeadersExcel } from "../../../api/rindeGastos";
+// Import nuevos endpoints exclusivos RindeGastos (asíncrono con parametros_contables)
+import { rgLeerHeadersExcel, rgIniciarStep1, rgEstadoStep1, rgDescargarStep1 } from "../../../api/rindeGastos";
 import { CAPTURA_CONFIG, UI_MESSAGES } from "../config/capturaConfig";
 
 /**
@@ -19,12 +21,12 @@ export const useCapturaGastos = () => {
   const [mostrarMapeoCC, setMostrarMapeoCC] = useState(false);
 
   // Polling para verificar estado de la tarea
+  // Polling adaptado al flujo RG (usa rgEstadoStep1). Si se quisiera soportar ambos, se podría parametrizar.
   useEffect(() => {
     if (taskId && procesando) {
       const interval = setInterval(async () => {
         try {
-          const estado = await consultarEstadoGastos(taskId);
-          
+          const estado = await rgEstadoStep1(taskId);
           if (estado.estado === 'completado') {
             setResultados({
               total: estado.total_filas || 0,
@@ -41,13 +43,12 @@ export const useCapturaGastos = () => {
             clearInterval(interval);
           }
         } catch (error) {
-          console.error('Error consultando estado:', error);
+          console.error('Error consultando estado (RG):', error);
           setError(`Error consultando estado: ${error.message}`);
           setProcesando(false);
           clearInterval(interval);
         }
       }, 3000);
-
       return () => clearInterval(interval);
     }
   }, [taskId, procesando]);
@@ -135,14 +136,25 @@ export const useCapturaGastos = () => {
       return;
     }
     
-    console.log('📤 Iniciando procesamiento...');
+    // Validar cuentas globales obligatorias (iva, proveedores, gasto_default)
+    const faltan = [];
+    if (!cuentasGlobales.cuentaIVA?.trim()) faltan.push('IVA');
+    if (!cuentasGlobales.cuentaProveedores?.trim()) faltan.push('Proveedores');
+    if (!cuentasGlobales.cuentaGasto?.trim()) faltan.push('Gasto Default');
+    if (faltan.length) {
+      setError(`Faltan cuentas globales requeridas: ${faltan.join(', ')}`);
+      return;
+    }
+
+    console.log('📤 Iniciando procesamiento (RG Step1 asíncrono)...');
     setProcesando(true);
     setError(null);
     
     try {
-      const respuesta = await subirArchivoGastos(archivo, mapeoCC);
+      // Llamar al endpoint RG asíncrono que exige parametros_contables
+      const respuesta = await rgIniciarStep1(archivo, cuentasGlobales, mapeoCC);
       setTaskId(respuesta.task_id);
-      console.log('✅ Archivo enviado, task_id:', respuesta.task_id);
+      console.log('✅ Step1 RG iniciado, task_id:', respuesta.task_id);
     } catch (error) {
       console.error("❌ Error procesando archivo:", error);
       setError(`${UI_MESSAGES.errors.processing} ${error.message}`);
@@ -153,11 +165,10 @@ export const useCapturaGastos = () => {
   // Descargar archivo de resultados
   const descargarArchivo = async () => {
     if (!taskId) return;
-    
     try {
-      await descargarResultadoGastos(taskId);
+      await rgDescargarStep1(taskId);
     } catch (error) {
-      console.error("Error descargando archivo:", error);
+      console.error("Error descargando archivo (RG):", error);
       setError(`${UI_MESSAGES.errors.download} ${error.message}`);
     }
   };

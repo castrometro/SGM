@@ -81,9 +81,28 @@ export const rgProcesarStep1 = async (archivo) => {
 };
 
 // === Flujo asíncrono Step1 (Redis) ===
-export const rgIniciarStep1 = async (archivo) => {
+export const rgIniciarStep1 = async (archivo, cuentasGlobales = {}, mapeoCC = {}) => {
   const formData = new FormData();
   formData.append('archivo', archivo);
+  // Backend espera 'parametros_contables' como JSON string
+  const payloadParam = {
+    cuentasGlobales: {
+      iva: cuentasGlobales.cuentaIVA || cuentasGlobales.iva || '',
+      proveedores: cuentasGlobales.cuentaProveedores || cuentasGlobales.proveedores || '',
+      gasto_default: cuentasGlobales.cuentaGasto || cuentasGlobales.gasto_default || ''
+    },
+    mapeoCC: mapeoCC || {}
+  };
+  console.log('[RG API] Enviando parametros_contables:', payloadParam);
+  formData.append('parametros_contables', JSON.stringify(payloadParam));
+  // Fallback: enviar también campos individuales para compatibilidad / depuración
+  formData.append('cuentaIva', cuentasGlobales.cuentaIVA || '');
+  formData.append('cuentaProveedores', cuentasGlobales.cuentaProveedores || '');
+  formData.append('cuentaGasto', cuentasGlobales.cuentaGasto || '');
+  // Variante con otros nombres por si el backend cambia (defensivo)
+  formData.append('cuenta_iva', cuentasGlobales.cuentaIVA || '');
+  formData.append('cuenta_proveedores', cuentasGlobales.cuentaProveedores || '');
+  formData.append('cuenta_gasto', cuentasGlobales.cuentaGasto || '');
 
   const token = localStorage.getItem('token');
   const response = await fetch(`${API_BASE_URL}/rindegastos/step1/iniciar/`, {

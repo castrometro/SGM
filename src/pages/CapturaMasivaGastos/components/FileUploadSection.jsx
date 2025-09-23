@@ -1,16 +1,15 @@
 import { FileSpreadsheet, X, Clock } from "lucide-react";
 import { CAPTURA_CONFIG, STYLES_CONFIG, UI_MESSAGES } from "../config/capturaConfig";
-import { rgProcesarStep1, rgIniciarStep1, rgEstadoStep1, rgDescargarStep1 } from "../../../api/rindeGastos";
 
 /**
  * Componente para subir archivos Excel
  */
-const FileUploadSection = ({ 
-  archivo, 
-  procesando, 
-  onArchivoSeleccionado, 
-  onLimpiarArchivo, 
-  onProcesar 
+const FileUploadSection = ({
+  archivo,
+  procesando,
+  onArchivoSeleccionado,
+  onLimpiarArchivo,
+  onProcesar
 }) => {
   const { steps, fileConfig } = CAPTURA_CONFIG;
   const { containers, buttons } = STYLES_CONFIG;
@@ -71,41 +70,9 @@ const FileUploadSection = ({
 
       {archivo && (
         <button
-          onClick={async () => {
-            try {
-              console.log('🖱️ [RG] Iniciar Step1 (async)');
-              const { task_id } = await rgIniciarStep1(archivo);
-              console.log('� [RG] Step1 iniciado, task_id:', task_id);
-
-              // Polling simple cada 1.5s hasta completado o error
-              const startTs = Date.now();
-              const timeoutMs = 1000 * 60 * 4; // 4 minutos
-              let estado = 'procesando';
-              while (estado === 'procesando') {
-                if (Date.now() - startTs > timeoutMs) {
-                  throw new Error('Timeout esperando Step1');
-                }
-                await new Promise(r => setTimeout(r, 1500));
-                const meta = await rgEstadoStep1(task_id);
-                estado = meta?.estado || 'desconocido';
-                console.log('[RG] Estado actual:', meta);
-                if (estado === 'error') {
-                  throw new Error(meta?.error || 'Error en tarea Step1');
-                }
-              }
-
-              if (estado === 'completado') {
-                await rgDescargarStep1(task_id);
-              } else {
-                alert(`Estado inesperado: ${estado}`);
-              }
-            } catch (e) {
-              console.error('[RG] Error en flujo async Step1:', e);
-              alert(`Error Step1 (async): ${e.message}`);
-            }
-          }}
+          onClick={onProcesar}
           disabled={procesando}
-          className={`mt-4 w-full ${buttons.secondary} ${buttons.disabled}`}
+          className={`mt-4 w-full ${buttons.secondary} ${procesando ? buttons.disabled : ''}`}
         >
           {procesando ? (
             <>
@@ -115,23 +82,6 @@ const FileUploadSection = ({
           ) : (
             'Procesar (Step 1 RG)'
           )}
-        </button>
-      )}
-
-      {archivo && (
-        <button
-          onClick={async () => {
-            try {
-              console.log('🖱️ [RG] Procesar Step1 clic');
-              await rgProcesarStep1(archivo);
-            } catch (e) {
-              console.error('[RG] Error step1:', e);
-              alert(`Error step1: ${e.message}`);
-            }
-          }}
-          className={`mt-2 w-full ${buttons.primary}`}
-        >
-          Descargar agrupación (Step 1 RG)
         </button>
       )}
     </div>

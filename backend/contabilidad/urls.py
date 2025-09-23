@@ -156,7 +156,6 @@ from .views.rindegastos import (
      procesar_step1_rindegastos,
      estado_step1_rindegastos,
      descargar_step1_rindegastos,
-     procesar_step1_sync_rindegastos,
 )
 
 # Ya no necesitamos importar desde views_legacy
@@ -307,7 +306,7 @@ urlpatterns = [
      path("rindegastos/step1/estado/<str:task_id>/", estado_step1_rindegastos, name="rg-step1-estado"),
      path("rindegastos/step1/descargar/<str:task_id>/", descargar_step1_rindegastos, name="rg-step1-descargar"),
      # Fallback sincrónico temporal
-     path("rindegastos/procesar-step1/", procesar_step1_sync_rindegastos, name="rg-procesar-step1"),
+     # Endpoint sincrónico eliminado: se fuerza uso sólo del flujo asíncrono
     
     # Plantillas estáticas
     path("plantilla-tipo-doc/", serve, {

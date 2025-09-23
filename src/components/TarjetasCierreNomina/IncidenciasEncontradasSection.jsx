@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { AlertOctagon, ChevronDown, ChevronRight, Play, Loader2, CheckCircle, AlertTriangle, Users, Eye, Lock, TrendingUp, RefreshCw } from "lucide-react";
+import { AlertOctagon, ChevronDown, ChevronRight, Loader2, CheckCircle, AlertTriangle, Users, Eye, Lock, TrendingUp, RefreshCw } from "lucide-react";
 
 // Vista unificada (solo incidencias)
 import IncidenciasUnifiedTable from "./IncidenciasEncontradas/IncidenciasUnifiedTable";
@@ -8,12 +8,9 @@ import ModalResolucionIncidencia from "./IncidenciasEncontradas/ModalResolucionI
 import { 
   obtenerIncidenciasCierre, 
   obtenerResumenIncidencias, 
-  generarIncidenciasCierre,
   obtenerEstadoIncidenciasCierre,
-  previewIncidenciasCierre,
   finalizarCierre,
   consultarEstadoTarea,
-  obtenerAnalisisCompletoTemporal,
   limpiarIncidenciasCierre,
   generarIncidenciasTotalesVariacion
 } from "../../api/nomina";
@@ -58,7 +55,6 @@ const IncidenciasEncontradasSection = ({
   // Remover estado interno de expandido ya que ahora viene como prop
   // const [expandido, setExpandido] = useState(true); // ← ELIMINADO
   const [incidencias, setIncidencias] = useState([]);
-  const [resumen, setResumen] = useState(null);
   const [cargando, setCargando] = useState(false);
   const [generando, setGenerando] = useState(false);
   const [error, setError] = useState("");
@@ -78,7 +74,6 @@ const IncidenciasEncontradasSection = ({
   const [finalizandoCierre, setFinalizandoCierre] = useState(false);
   const [analisisCompleto, setAnalisisCompleto] = useState(null);
   const [mostrandoAnalisisCompleto, setMostrandoAnalisisCompleto] = useState(false);
-  const [cargandoAnalisis, setCargandoAnalisis] = useState(false);
   const [solicitandoRecarga, setSolicitandoRecarga] = useState(false);
   const { usuario } = useAuth();
   const esSupervisor = (usuario?.tipo_usuario === 'supervisor' || usuario?.tipo_usuario === 'gerente');
@@ -312,45 +307,8 @@ const IncidenciasEncontradasSection = ({
     }
   };
 
-  const manejarVistaPrevia = async () => {
-    if (!cierre?.id) return;
-    
-    setCargando(true);
-    setError("");
-    
-    try {
-      const preview = await previewIncidenciasCierre(cierre.id);
-      setVistaPrevia(preview);
-      setMostrandoPreview(true);
-    } catch (err) {
-      console.error("Error generando vista previa:", err);
-      setError("Error al generar vista previa de incidencias");
-    } finally {
-      setCargando(false);
-    }
-  };
 
-  const manejarAnalisisCompleto = async () => {
-    if (!cierre?.id) return;
-    
-    setCargandoAnalisis(true);
-    setError("");
-    
-    try {
-      const response = await obtenerAnalisisCompletoTemporal(cierre.id);
-      setAnalisisCompleto(response.analisis);
-      setMostrandoAnalisisCompleto(true);
-    } catch (err) {
-      console.error("Error generando análisis completo:", err);
-      setError("Error al generar análisis completo temporal");
-    } finally {
-      setCargandoAnalisis(false);
-    }
-  };
 
-  const manejarFiltroChange = (nuevosFiltros) => {
-    setFiltros({ ...filtros, ...nuevosFiltros });
-  };
 
   const manejarIncidenciaSeleccionada = (incidencia) => {
     setIncidenciaSeleccionada(incidencia);
@@ -720,384 +678,9 @@ const IncidenciasEncontradasSection = ({
 
           
 
-          {/* Vista previa */}
-          {mostrandoPreview && vistaPrevia && (
-            <div className="bg-yellow-900/20 border border-yellow-500/30 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-lg font-medium text-yellow-400">Vista Previa de Incidencias</h3>
-                <button
-                  onClick={() => setMostrandoPreview(false)}
-                  className="text-gray-400 hover:text-white"
-                >
-                  ×
-                </button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                <div className="bg-gray-800 rounded p-3">
-                  <p className="text-sm text-gray-400">Total a generar</p>
-                  <p className="text-xl font-bold text-white">{vistaPrevia.total_incidencias}</p>
-                </div>
-                <div className="bg-gray-800 rounded p-3">
-                  <p className="text-sm text-gray-400">Libro vs Novedades</p>
-                  <p className="text-xl font-bold text-blue-400">{vistaPrevia.libro_vs_novedades}</p>
-                </div>
-                <div className="bg-gray-800 rounded p-3">
-                  <p className="text-sm text-gray-400">Movimientos vs Analista</p>
-                  <p className="text-xl font-bold text-green-400">{vistaPrevia.movimientos_vs_analista}</p>
-                </div>
-              </div>
-              <p className="text-sm text-yellow-300">
-                {vistaPrevia.mensaje}
-              </p>
-            </div>
-          )}
+        
 
-          {/* Análisis Completo Temporal */}
-          {mostrandoAnalisisCompleto && analisisCompleto && (
-            <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xl font-medium text-blue-400">
-                  📊 Análisis Completo: Comparación Temporal
-                </h3>
-                <button
-                  onClick={() => setMostrandoAnalisisCompleto(false)}
-                  className="text-gray-400 hover:text-white text-xl"
-                >
-                  ×
-                </button>
-              </div>
-
-              <div className="space-y-6">
-                {/* Información del período */}
-                <div className="bg-gray-800 rounded-lg p-4">
-                  <h4 className="text-lg font-medium text-white mb-2">Períodos Comparados</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-400">Cliente</p>
-                      <p className="text-white font-medium">{analisisCompleto.cliente}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-400">Período Actual</p>
-                      <p className="text-blue-400 font-medium">{analisisCompleto.periodo_actual}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-400">Período Anterior</p>
-                      <p className="text-gray-300 font-medium">{analisisCompleto.periodo_anterior}</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Resumen estadístico */}
-                {analisisCompleto.resumen && (
-                  <div className="bg-gray-800 rounded-lg p-4">
-                    <h4 className="text-lg font-medium text-white mb-3">Resumen General</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-white">
-                          {analisisCompleto.resumen.total_comparaciones}
-                        </div>
-                        <p className="text-sm text-gray-400">Total Comparaciones</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-red-400">
-                          {analisisCompleto.resumen.total_incidencias}
-                        </div>
-                        <p className="text-sm text-gray-400">Incidencias Detectadas</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-green-400">
-                          {analisisCompleto.resumen.total_validaciones_ok}
-                        </div>
-                        <p className="text-sm text-gray-400">Validaciones OK</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-blue-400">
-                          {analisisCompleto.resumen.porcentaje_cumplimiento}%
-                        </div>
-                        <p className="text-sm text-gray-400">% Cumplimiento</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* REGLA 1: Variaciones de Conceptos */}
-                {analisisCompleto.variaciones_conceptos && (
-                  <div className="bg-gray-800 rounded-lg p-4">
-                    <h4 className="text-lg font-medium text-white mb-3">
-                      📈 Regla 1: Variaciones de Conceptos (Todas)
-                    </h4>
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
-                      <div className="text-center">
-                        <div className="text-xl font-bold text-white">
-                          {analisisCompleto.variaciones_conceptos.total_comparaciones}
-                        </div>
-                        <p className="text-xs text-gray-400">Total</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-xl font-bold text-red-400">
-                          {analisisCompleto.variaciones_conceptos.incidencias_detectadas}
-                        </div>
-                        <p className="text-xs text-gray-400">Incidencias (≥30%)</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-xl font-bold text-yellow-400">
-                          {analisisCompleto.variaciones_conceptos.variaciones_menores}
-                        </div>
-                        <p className="text-xs text-gray-400">Var. Menores (&lt;30%)</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-xl font-bold text-green-400">
-                          {analisisCompleto.variaciones_conceptos.sin_cambios}
-                        </div>
-                        <p className="text-xs text-gray-400">Sin Cambios</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-xl font-bold text-blue-400">
-                          {analisisCompleto.variaciones_conceptos.con_variacion}
-                        </div>
-                        <p className="text-xs text-gray-400">Con Variación</p>
-                      </div>
-                    </div>
-
-                    {/* Tabla de variaciones más importantes */}
-                    {analisisCompleto.variaciones_conceptos.detalle && 
-                     analisisCompleto.variaciones_conceptos.detalle.length > 0 && (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-gray-700">
-                              <th className="text-left p-2 text-gray-400">Empleado</th>
-                              <th className="text-left p-2 text-gray-400">Concepto</th>
-                              <th className="text-right p-2 text-gray-400">Actual</th>
-                              <th className="text-right p-2 text-gray-400">Anterior</th>
-                              <th className="text-right p-2 text-gray-400">Variación %</th>
-                              <th className="text-center p-2 text-gray-400">Estado</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {analisisCompleto.variaciones_conceptos.detalle.slice(0, 10).map((item, index) => (
-                              <tr key={index} className="border-b border-gray-700/50">
-                                <td className="p-2 text-white">
-                                  <div>
-                                    <p className="font-medium">{item.nombre_empleado}</p>
-                                    <p className="text-xs text-gray-400">{item.rut_empleado}</p>
-                                  </div>
-                                </td>
-                                <td className="p-2 text-gray-300">{item.concepto}</td>
-                                <td className="p-2 text-right text-white">
-                                  ${item.monto_actual.toLocaleString('es-CL')}
-                                </td>
-                                <td className="p-2 text-right text-gray-300">
-                                  ${item.monto_anterior.toLocaleString('es-CL')}
-                                </td>
-                                <td className={`p-2 text-right font-medium ${
-                                  item.es_incidencia ? 'text-red-400' : 
-                                  Math.abs(item.variacion_pct) > 0.01 ? 'text-yellow-400' : 'text-green-400'
-                                }`}>
-                                  {item.variacion_pct.toFixed(1)}%
-                                </td>
-                                <td className="p-2 text-center">
-                                  <span className={`px-2 py-1 rounded text-xs ${
-                                    item.es_incidencia ? 'bg-red-900 text-red-200' :
-                                    Math.abs(item.variacion_pct) > 0.01 ? 'bg-yellow-900 text-yellow-200' :
-                                    'bg-green-900 text-green-200'
-                                  }`}>
-                                    {item.estado}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                        {analisisCompleto.variaciones_conceptos.detalle.length > 10 && (
-                          <p className="text-center text-gray-400 text-sm mt-2">
-                            ... y {analisisCompleto.variaciones_conceptos.detalle.length - 10} más
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* REGLA 3: Ingresos del Mes Anterior */}
-                {analisisCompleto.ingresos_mes_anterior && (
-                  <div className="bg-gray-800 rounded-lg p-4">
-                    <h4 className="text-lg font-medium text-white mb-3">
-                      👤 Regla 3: Ingresos del Mes Anterior
-                    </h4>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                      <div className="text-center">
-                        <div className="text-xl font-bold text-white">
-                          {analisisCompleto.ingresos_mes_anterior.total_ingresos_anteriores}
-                        </div>
-                        <p className="text-xs text-gray-400">Total Ingresos</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-xl font-bold text-green-400">
-                          {analisisCompleto.ingresos_mes_anterior.estan_presentes}
-                        </div>
-                        <p className="text-xs text-gray-400">Presentes</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-xl font-bold text-red-400">
-                          {analisisCompleto.ingresos_mes_anterior.no_estan_presentes}
-                        </div>
-                        <p className="text-xs text-gray-400">Ausentes</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-xl font-bold text-red-400">
-                          {analisisCompleto.ingresos_mes_anterior.incidencias_detectadas}
-                        </div>
-                        <p className="text-xs text-gray-400">Incidencias</p>
-                      </div>
-                    </div>
-
-                    {/* Lista de ingresos */}
-                    {analisisCompleto.ingresos_mes_anterior.detalle && 
-                     analisisCompleto.ingresos_mes_anterior.detalle.length > 0 && (
-                      <div className="space-y-2">
-                        {analisisCompleto.ingresos_mes_anterior.detalle.map((item, index) => (
-                          <div key={index} className={`p-3 rounded-lg ${
-                            item.es_incidencia ? 'bg-red-900/20 border border-red-500/30' : 
-                            'bg-green-900/20 border border-green-500/30'
-                          }`}>
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <p className="font-medium text-white">{item.nombre_empleado}</p>
-                                <p className="text-sm text-gray-400">{item.rut_empleado}</p>
-                                <p className="text-xs text-gray-500">
-                                  Ingreso detectado: {item.ingreso_detectado_en}
-                                </p>
-                              </div>
-                              <span className={`px-3 py-1 rounded text-sm ${
-                                item.es_incidencia ? 'bg-red-700 text-red-200' : 'bg-green-700 text-green-200'
-                              }`}>
-                                {item.estado}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* REGLA 4: Finiquitos del Mes Anterior */}
-                {analisisCompleto.finiquitos_mes_anterior && (
-                  <div className="bg-gray-800 rounded-lg p-4">
-                    <h4 className="text-lg font-medium text-white mb-3">
-                      🚪 Regla 4: Finiquitos del Mes Anterior
-                    </h4>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                      <div className="text-center">
-                        <div className="text-xl font-bold text-white">
-                          {analisisCompleto.finiquitos_mes_anterior.total_finiquitos_anteriores}
-                        </div>
-                        <p className="text-xs text-gray-400">Total Finiquitos</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-xl font-bold text-green-400">
-                          {analisisCompleto.finiquitos_mes_anterior.correctamente_ausentes}
-                        </div>
-                        <p className="text-xs text-gray-400">Correctamente Ausentes</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-xl font-bold text-red-400">
-                          {analisisCompleto.finiquitos_mes_anterior.aun_presentes}
-                        </div>
-                        <p className="text-xs text-gray-400">Aún Presentes</p>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-xl font-bold text-red-400">
-                          {analisisCompleto.finiquitos_mes_anterior.incidencias_detectadas}
-                        </div>
-                        <p className="text-xs text-gray-400">Incidencias</p>
-                      </div>
-                    </div>
-
-                    {/* Lista de finiquitos */}
-                    {analisisCompleto.finiquitos_mes_anterior.detalle && 
-                     analisisCompleto.finiquitos_mes_anterior.detalle.length > 0 && (
-                      <div className="space-y-2">
-                        {analisisCompleto.finiquitos_mes_anterior.detalle.map((item, index) => (
-                          <div key={index} className={`p-3 rounded-lg ${
-                            item.es_incidencia ? 'bg-red-900/20 border border-red-500/30' : 
-                            'bg-green-900/20 border border-green-500/30'
-                          }`}>
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <p className="font-medium text-white">{item.nombre_empleado}</p>
-                                <p className="text-sm text-gray-400">{item.rut_empleado}</p>
-                                <p className="text-xs text-gray-500">
-                                  Finiquito detectado: {item.finiquito_detectado_en}
-                                </p>
-                              </div>
-                              <span className={`px-3 py-1 rounded text-sm ${
-                                item.es_incidencia ? 'bg-red-700 text-red-200' : 'bg-green-700 text-green-200'
-                              }`}>
-                                {item.estado}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Mensaje si no hay período anterior */}
-                {!analisisCompleto.tiene_periodo_anterior && (
-                  <div className="bg-yellow-900/20 border border-yellow-500/30 rounded-lg p-4">
-                    <div className="flex items-start gap-3">
-                      <AlertTriangle className="w-5 h-5 text-yellow-400 mt-0.5" />
-                      <div>
-                        <p className="text-yellow-300 font-medium mb-2">Sin Período Anterior para Comparación</p>
-                        <p className="text-yellow-200 text-sm mb-3">{analisisCompleto.mensaje}</p>
-                        
-                        {/* Información adicional si se encontró un período pero no es válido */}
-                        {analisisCompleto.periodo_anterior_encontrado && (
-                          <div className="bg-yellow-800/30 rounded p-3 text-sm">
-                            <p className="text-yellow-100">
-                              <strong>Período encontrado:</strong> {analisisCompleto.periodo_anterior_encontrado}
-                            </p>
-                            <p className="text-yellow-100">
-                              <strong>Estado actual:</strong> {analisisCompleto.estado_periodo_anterior}
-                            </p>
-                            <p className="text-yellow-200 mt-2">
-                              💡 <strong>Solución:</strong> Para realizar el análisis temporal, el período anterior debe estar
-                              <code className="bg-yellow-700/50 px-1 rounded ml-1">finalizado</code>.
-                              Este es un comparativo directo solo con cierres anteriores finalizados.
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Botón para mostrar información del período actual */}
-                        <div className="mt-4">
-                          <p className="text-yellow-200 text-sm">
-                            📊 <strong>Alternativa:</strong> Puedes generar incidencias normalmente para revisar la consistencia interna de los datos del período actual.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Bloque informativo “¿Cómo resolver las incidencias?” eliminado por requerimiento */}
-
-          {/* Bloque de filtros eliminado por requerimiento */}
-
-          {/* Error */}
-          {error && (
-            <div className="bg-red-900/20 border border-red-500 rounded-lg p-4">
-              <div className="flex items-center text-red-400">
-                <AlertTriangle className="w-5 h-5 mr-2" />
-                {error}
-              </div>
-            </div>
-          )}
+    
 
           {/* Tabla de incidencias: mostrar si hay incidencias cargadas (aunque total backend sea 0) */}
           {Array.isArray(incidencias) && incidencias.length > 0 ? (

@@ -170,6 +170,15 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
     wb_out.remove(default_sheet)
     headers_salida = get_headers_salida_contabilidad()
 
+    # Asegurar incorporación de la nueva columna requerida si aún no existe.
+    # Se intenta colocar inmediatamente después de 'Monto 3 Detalle Libro' para mantener coherencia.
+    if 'Monto Suma Detalle Libro' not in headers_salida:
+        if 'Monto 3 Detalle Libro' in headers_salida:
+            idx_m3 = headers_salida.index('Monto 3 Detalle Libro')
+            headers_salida.insert(idx_m3 + 1, 'Monto Suma Detalle Libro')
+        else:
+            headers_salida.append('Monto Suma Detalle Libro')
+
     def sanitize(name: str) -> str:
         s = str(name).replace(':', '-').replace('/', '-').replace('\\', '-')
         return s[:31] if len(s) > 31 else s
@@ -246,18 +255,27 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
 
             suma_debe_gastos = sum(g[1] for g in gastos_rows)
 
+            def _truncate_number(v):
+                """Trunca (corta decimales) hacia cero cualquier número convertible a float."""
+                if v is None:
+                    return None
+                try:
+                    return int(float(v))
+                except Exception:
+                    return v
+
             def write_row(descripcion, debe=None, haber=None, extra=None):
                 nonlocal row_cursor
                 if debe is not None:
-                    ws.cell(row=row_cursor, column=header_to_col.get('Monto al Debe Moneda Base', 3), value=debe)
+                    ws.cell(row=row_cursor, column=header_to_col.get('Monto al Debe Moneda Base', 3), value=_truncate_number(debe))
                 if haber is not None:
-                    ws.cell(row=row_cursor, column=header_to_col.get('Monto al Haber Moneda Base', 4), value=haber)
+                    ws.cell(row=row_cursor, column=header_to_col.get('Monto al Haber Moneda Base', 4), value=_truncate_number(haber))
                 ws.cell(row=row_cursor, column=header_to_col.get('Descripción Movimiento', 5), value=descripcion)
                 if extra:
                     for hname, val in extra.items():
                         col_idx_h = header_to_col.get(hname)
                         if col_idx_h:
-                            ws.cell(row=row_cursor, column=col_idx_h, value=val)
+                            ws.cell(row=row_cursor, column=col_idx_h, value=_truncate_number(val))
                 row_cursor += 1
 
             # Tipos 33 / 64: IVA + Proveedores + Gastos
@@ -272,13 +290,16 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                     }
                 )
                 # Fila Proveedores (usa IVA y suma gastos)
+                monto1 = suma_debe_gastos
+                monto3 = iva_monto
                 write_row(
                     descripcion=f'Proveedor Doc {fila_original_idx}',
                     debe=None,
                     haber=monto_total,
                     extra={
-                        'Monto 1 Detalle Libro': suma_debe_gastos,
-                        'Monto 3 Detalle Libro': iva_monto,
+                        'Monto 1 Detalle Libro': monto1,
+                        'Monto 3 Detalle Libro': monto3,
+                        'Monto Suma Detalle Libro': (monto1 if monto1 is not None else 0) + (monto3 if monto3 is not None else 0),
                         'Código Plan de Cuenta': cuentas_globales.get('proveedores')
                     }
                 )
@@ -296,13 +317,16 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                     )
             elif tipo_doc_str == '34':
                 # Tipo 34 (exento) sólo Proveedores + Gastos, y Monto 3 = Monto 1
+                monto1 = suma_debe_gastos
+                # Para tipo 34 la suma solicitada es copiar Monto 1 (no sumatoria de 1+3 ya que son iguales)
                 write_row(
                     descripcion=f'Proveedor Doc {fila_original_idx}',
                     debe=None,
                     haber=monto_total if monto_total is not None else suma_debe_gastos,
                     extra={
-                        'Monto 1 Detalle Libro': suma_debe_gastos,
-                        'Monto 3 Detalle Libro': suma_debe_gastos,
+                        'Monto 1 Detalle Libro': monto1,
+                        'Monto 3 Detalle Libro': monto1,  # se mantiene compatibilidad actual
+                        'Monto Suma Detalle Libro': monto1,
                         'Código Plan de Cuenta': cuentas_globales.get('proveedores')
                     }
                 )
@@ -331,13 +355,16 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                     }
                 )
                 # Fila Proveedores (invertido -> Debe)
+                monto1 = suma_debe_gastos
+                monto3 = iva_monto
                 write_row(
                     descripcion=f'Proveedor Doc {fila_original_idx}',
-                    debe=monto_total if monto_total is not None else (suma_debe_gastos + iva_monto),
+                    debe=monto_total if monto_total is not None else (monto1 + monto3),
                     haber=None,
                     extra={
-                        'Monto 1 Detalle Libro': suma_debe_gastos,
-                        'Monto 3 Detalle Libro': iva_monto,
+                        'Monto 1 Detalle Libro': monto1,
+                        'Monto 3 Detalle Libro': monto3,
+                        'Monto Suma Detalle Libro': (monto1 if monto1 is not None else 0) + (monto3 if monto3 is not None else 0),
                         'Código Plan de Cuenta': cuentas_globales.get('proveedores')
                     }
                 )

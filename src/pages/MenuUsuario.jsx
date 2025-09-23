@@ -79,7 +79,8 @@ const MenuUsuario = () => {
         { label: "Gestión de Cobranza", descripcion: "Seguimiento y gestión de cobros a clientes", icon: CreditCard, color: "#059669", path: "/menu/gestion-cobranza-v2" },
         { label: "Logs y Actividad", descripcion: "Auditoría y logs de actividades de usuarios", icon: FileText, color: "#F97316", path: "/menu/gerente/logs-actividad" },
         { label: "Estados de Cierres", descripcion: "Monitoreo en tiempo real de estados de cierres", icon: Monitor, color: "#06B6D4", path: "/menu/gerente/estados-cierres" },
-        { label: "Cache Redis", descripcion: "Estado y gestión del cache Redis de cierres", icon: Database, color: "#10B981", path: "/menu/gerente/cache-redis" }
+        { label: "Cache Redis", descripcion: "Estado y gestión del cache Redis de cierres", icon: Database, color: "#10B981", path: "/menu/gerente/cache-redis" },
+        { label: "Proyectos BDO Latam", descripcion: "Gestión de proyectos BDO en Latinoamérica", icon: Users, color: "#3B82F6", path: "/menu/proyectos-bdo-latam" }
       );
     }
 

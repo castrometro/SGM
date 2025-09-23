@@ -44,6 +44,7 @@ import CapturaMasivaGastos from "./pages/CapturaMasivaGastos";
 
 import GestionCobranzav2 from "./pages/GestionCobranzav2";
 import CobranzaFacturas from "./pages/CobranzaFacturas";
+import ImplementacionBDODashboard from "./pages/ProyectosBDOLatam";
 
 function App() {
   return (
@@ -101,6 +102,7 @@ function App() {
           <Route path="gerente/estados-cierres" element={<EstadosCierres />} />
           <Route path="gerente/cache-redis" element={<CacheRedis />} />
           <Route path="gerente/admin-sistema" element={<AdminSistema />} />
+          <Route path="proyectos-bdo-latam" element={<ImplementacionBDODashboard />} />
 
           {/* ----------- ÁREA: GERENTE NÓMINA - FUNCIONES AVANZADAS ------------- */}
           <Route path="gerente/logs-actividad-nomina" element={<LogsActividadNomina />} />

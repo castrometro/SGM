@@ -19,6 +19,7 @@ from django.db.models import Q, Sum, Count
 from django.contrib.auth.models import User
 from django.utils import timezone
 from celery import shared_task, chord
+from ..cache_redis import get_cache_system_nomina
 from ..models import (
     CierreNomina, 
     NominaConsolidada, 
@@ -217,6 +218,39 @@ def obtener_cierre_anterior_finalizado(cierre_actual):
         periodo__lt=cierre_actual.periodo,
         estado='finalizado'
     ).order_by('-periodo').first()
+
+def obtener_totales_por_concepto_desde_cache(cliente_id: int, periodo: str):
+    """
+    Intenta obtener desde Redis (InformeNomina) los totales agregados por concepto
+    del período indicado. Retorna dict { (nombre, categoria) -> Decimal(total) } o None si no hay cache.
+    """
+    try:
+        cache = get_cache_system_nomina()
+        informe = cache.get_informe_nomina(cliente_id, periodo)
+        if not informe:
+            return None
+        bloque = None
+        # El informe puede estar anidado directo o bajo 'datos_cierre'
+        if isinstance(informe, dict):
+            bloque = informe.get('libro_resumen_v2') or (
+                informe.get('datos_cierre', {}).get('libro_resumen_v2') if isinstance(informe.get('datos_cierre'), dict) else None
+            )
+        if not isinstance(bloque, dict):
+            return None
+        conceptos = bloque.get('conceptos') or []
+        mapa = {}
+        for c in conceptos:
+            try:
+                nombre = c.get('nombre')
+                categoria = c.get('categoria')
+                total = c.get('total') or 0
+                if nombre and categoria is not None:
+                    mapa[(nombre, categoria)] = Decimal(str(total))
+            except Exception:
+                continue
+        return mapa
+    except Exception:
+        return None
 
 # ================================
 # 🔍 COMPARACIÓN INDIVIDUAL
@@ -598,10 +632,18 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
             conceptos_actuales = ConceptoConsolidado.objects.filter(
                 nomina_consolidada__cierre_id=cierre_actual_id,
             ).values('nombre_concepto', 'tipo_concepto').distinct()
-
-            conceptos_anteriores = ConceptoConsolidado.objects.filter(
-                nomina_consolidada__cierre_id=cierre_anterior_id,
-            ).values('nombre_concepto', 'tipo_concepto').distinct()
+            # Intentar obtener conjunto y totales del periodo anterior desde Redis (InformeNomina)
+            cierre_actual = CierreNomina.objects.get(id=cierre_actual_id)
+            cierre_anterior = CierreNomina.objects.get(id=cierre_anterior_id)
+            mapa_prev_cache = obtener_totales_por_concepto_desde_cache(cierre_anterior.cliente_id, cierre_anterior.periodo)
+            if mapa_prev_cache is None:
+                conceptos_anteriores = ConceptoConsolidado.objects.filter(
+                    nomina_consolidada__cierre_id=cierre_anterior_id,
+                ).values('nombre_concepto', 'tipo_concepto').distinct()
+            else:
+                conceptos_anteriores = (
+                    {'nombre_concepto': n, 'tipo_concepto': t} for (n, t) in mapa_prev_cache.keys()
+                )
 
             for c in conceptos_actuales:
                 conceptos_unicos.add((c['nombre_concepto'], c['tipo_concepto']))
@@ -621,12 +663,15 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
                     nombre_concepto=nombre_concepto,
                     tipo_concepto=tipo_concepto
                 ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
-
-                suma_anterior = ConceptoConsolidado.objects.filter(
-                    nomina_consolidada__cierre_id=cierre_anterior_id,
-                    nombre_concepto=nombre_concepto,
-                    tipo_concepto=tipo_concepto
-                ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
+                # Anterior: preferir cache del InformeNomina del período anterior
+                if mapa_prev_cache is not None:
+                    suma_anterior = mapa_prev_cache.get((nombre_concepto, tipo_concepto), Decimal('0'))
+                else:
+                    suma_anterior = ConceptoConsolidado.objects.filter(
+                        nomina_consolidada__cierre_id=cierre_anterior_id,
+                        nombre_concepto=nombre_concepto,
+                        tipo_concepto=tipo_concepto
+                    ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
 
                 variacion_pct = calcular_variacion_porcentual(suma_actual, suma_anterior)
                 umbral_suma = obtener_umbral_suma_total(tipo_concepto)

@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from .models import CierreNomina, MovimientoPersonal
+from .cache_redis import get_cache_system_nomina
 
 
 @api_view(["GET"])
@@ -24,6 +25,26 @@ def movimientos_personal_detalle_v3(request, cierre_id: int):
     """
     try:
         cierre = CierreNomina.objects.get(id=cierre_id)
+        # Fast path: si existe informe con bloque movimientos_v3
+        try:
+            informe = getattr(cierre, 'informe', None)
+            if informe and isinstance(informe.datos_cierre, dict):
+                bloque = informe.datos_cierre.get('movimientos_v3')
+                if isinstance(bloque, dict) and bloque.get('cierre', {}).get('id') == cierre.id:
+                    return Response(bloque, status=status.HTTP_200_OK)
+        except Exception:
+            pass
+        # Intentar cache temporal (TTL corto) si no hay informe guardado
+        try:
+            cache = get_cache_system_nomina()
+            cached = cache.get_datos_consolidados(cierre.cliente_id, cierre.periodo)
+            if isinstance(cached, dict):
+                bloque = cached.get('movimientos_v3') or cached.get('movimientos')
+                if isinstance(bloque, dict) and bloque.get('cierre', {}).get('id') == cierre.id:
+                    return Response(bloque, status=status.HTTP_200_OK)
+        except Exception:
+            pass
+
         if not cierre.nomina_consolidada.exists():
             return Response({'error': 'No hay datos consolidados para este cierre'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -132,6 +153,19 @@ def movimientos_personal_detalle_v3(request, cierre_id: int):
                 'api_version': '3'
             }
         }
+        # Guardar en cache temporal si el cierre aún no está finalizado
+        try:
+            if cierre.estado != 'finalizado':
+                cache_payload = {
+                    'movimientos_v3': data,
+                    'estado_cierre': cierre.estado,
+                    'cached_at': timezone.now().isoformat()
+                }
+                cache = cache if 'cache' in locals() else get_cache_system_nomina()
+                ttl = getattr(cache, 'short_ttl', 300)
+                cache.set_datos_consolidados(cierre.cliente_id, cierre.periodo, cache_payload, ttl=ttl)
+        except Exception:
+            pass
         return Response(data, status=status.HTTP_200_OK)
     except CierreNomina.DoesNotExist:
         return Response({'error': 'Cierre no encontrado'}, status=status.HTTP_404_NOT_FOUND)

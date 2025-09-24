@@ -2252,8 +2252,8 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
                 "message": f"Error generando análisis completo: {str(e)}"
             }, status=500)
     
-    @action(detail=False, methods=['post'], url_path='finalizar/(?P<cierre_id>[^/.]+)')
-    def finalizar_cierre(self, request, cierre_id=None):
+    @action(detail=True, methods=['post'], url_path='finalizar')
+    def finalizar_cierre(self, request, pk=None):
         """
         🎯 ENDPOINT: Finalizar cierre y generar informes (vía Celery chord)
 
@@ -2261,6 +2261,7 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
         - Dispara chord: [build_informe_libro, build_informe_movimientos] -> unir_y_guardar_informe -> finalizar_cierre_post_informe
         - Devuelve 202 con task_id para seguimiento
         """
+        cierre_id = pk
         try:
             cierre = CierreNomina.objects.get(id=cierre_id)
         except CierreNomina.DoesNotExist:
@@ -2320,12 +2321,11 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
                 build_informe_movimientos.s(cierre_id),
             ]
             callback_guardar = unir_y_guardar_informe.s(cierre_id)
-            callback_kpis = calcular_kpis_cierre.s(cierre_id)
             callback_en_redis = enviar_informe_redis_task.s(cierre_id)
             callback_final = finalizar_cierre_post_informe.s(cierre_id, getattr(request.user, 'id', None))
 
-            # Encadenar: chord(tasks)(unir -> kpis -> enviar a redis -> finalizar)
-            result = chord(tasks)(callback_guardar | callback_kpis | callback_en_redis | callback_final)
+            # Encadenar: chord(tasks)(guardar informe unificado -> enviar a redis -> finalizar)
+            result = chord(tasks)(callback_guardar | callback_en_redis | callback_final)
 
             return Response(
                 {

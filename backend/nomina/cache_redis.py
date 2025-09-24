@@ -274,6 +274,31 @@ class SGMCacheSystemNomina:
         except Exception as e:
             logger.error(f"Error guardando datos consolidados: {e}")
             return False
+
+    def get_datos_consolidados(self, cliente_id: int, periodo: str) -> Optional[Dict[str, Any]]:
+        """
+        Obtener datos consolidados de nómina desde el cache (TTL corto)
+
+        Args:
+            cliente_id: ID del cliente
+            periodo: Período del cierre
+
+        Returns:
+            Dict con datos consolidados o None si no existe en cache
+        """
+        key = self._get_key(cliente_id, periodo, "consolidados")
+        try:
+            data = self.redis_client.get(key)
+            if data:
+                self._increment_stat("cache_hits")
+                return self._deserialize_data(data)
+            else:
+                self._increment_stat("cache_misses")
+                return None
+        except Exception as e:
+            logger.error(f"Error obteniendo datos consolidados: {e}")
+            self._increment_stat("cache_errors")
+            return None
     
     # ========== GESTIÓN DE CACHE ==========
     def invalidate_cliente_periodo(self, cliente_id: int, periodo: str) -> int:

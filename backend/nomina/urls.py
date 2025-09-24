@@ -86,6 +86,7 @@ from .views_nomina_consolidada import obtener_resumen_nomina_consolidada, obtene
 from .views_resumen_libro import libro_resumen_v2
 from .views_resumen_movimientos import movimientos_personal_detalle_v3
 from .views_incidencias import IncidenciaCierreViewSet
+from .views_finalizacion import finalizar_cierre_view
 
 router = routers.DefaultRouter()
 router.register(r'cierres', CierreNominaViewSet)
@@ -268,4 +269,19 @@ urlpatterns = router.urls + [
     path('incidencias/limpiar/<int:cierre_id>/', 
          IncidenciaCierreViewSet.as_view({'delete': 'limpiar_incidencias'}), 
          name='limpiar_incidencias'),
+
+    # === Compatibilidad: ruta antigua para finalizar a través de 'incidencias/finalizar/<id>/' ===
+    # Redirige al mismo action que hoy vive en CierreNominaViewSet (detail=True)
+    path('incidencias/finalizar/<int:pk>/',
+        CierreNominaViewSet.as_view({'post': 'finalizar_cierre'}),
+        name='finalizar_cierre_compat'),
+
+    # === Compatibilidad: ruta antigua con orden invertido 'cierres/finalizar/<id>/' ===
+    # La ruta oficial es 'cierres/<id>/finalizar/' (detail=True), pero mantenemos soporte a la anterior
+    path('cierres/finalizar/<int:pk>/',
+        CierreNominaViewSet.as_view({'post': 'finalizar_cierre'}),
+        name='finalizar_cierre_compat_cierres'),
+
+    # === Ruta explícita oficial para finalizar (función directa) ===
+    path('cierres/<int:pk>/finalizar/', finalizar_cierre_view, name='finalizar_cierre_explicita'),
 ]

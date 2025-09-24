@@ -121,7 +121,8 @@ export const limpiarIncidenciasCierre = async (cierreId) => {
 
 // Finalizar cierre (cuando no hay incidencias o todas están resueltas)
 export const finalizarCierre = async (cierreId) => {
-  const response = await api.post(`/nomina/incidencias/finalizar/${cierreId}/`);
+  // Ruta correcta (detail=True): /nomina/cierres/:cierreId/finalizar/
+  const response = await api.post(`/nomina/cierres/${cierreId}/finalizar/`);
   return response.data;
 };
 

@@ -8,6 +8,7 @@ from rest_framework import status
 from django.utils import timezone
 
 from .models import CierreNomina, ConceptoConsolidado, NominaConsolidada
+from .cache_redis import get_cache_system_nomina
 
 
 @api_view(["GET"])
@@ -23,7 +24,28 @@ def libro_resumen_v2(request, cierre_id: int):
     """
     cierre = get_object_or_404(CierreNomina, pk=cierre_id)
 
-    # Query base de conceptos consolidados para el cierre
+    # Si existe informe con bloque libro_resumen_v2, retornarlo (fast path)
+    try:
+        informe = getattr(cierre, 'informe', None)
+        if informe and isinstance(informe.datos_cierre, dict):
+            bloque = informe.datos_cierre.get('libro_resumen_v2')
+            if isinstance(bloque, dict) and bloque.get('cierre', {}).get('id') == cierre.id:
+                return Response(bloque, status=status.HTTP_200_OK)
+    except Exception:
+        pass
+
+    # 1) Intentar cache temporal (TTL corto) si no hay informe guardado
+    try:
+        cache = get_cache_system_nomina()
+        cached = cache.get_datos_consolidados(cierre.cliente_id, cierre.periodo)
+        if isinstance(cached, dict):
+            bloque = cached.get('libro_resumen_v2') or cached.get('libro')  # compat
+            if isinstance(bloque, dict) and bloque.get('cierre', {}).get('id') == cierre.id:
+                return Response(bloque, status=status.HTTP_200_OK)
+    except Exception:
+        pass
+
+    # 2) Query base de conceptos consolidados para el cierre
     conceptos_qs = ConceptoConsolidado.objects.filter(
         nomina_consolidada__cierre_id=cierre_id
     )
@@ -91,5 +113,20 @@ def libro_resumen_v2(request, cierre_id: int):
             'api_version': '2'
         }
     }
+
+    # 3) Guardar en cache temporal si el cierre aún no está finalizado
+    try:
+        if cierre.estado != 'finalizado':
+            cache_payload = {
+                'libro_resumen_v2': data,
+                'estado_cierre': cierre.estado,
+                'cached_at': timezone.now().isoformat()
+            }
+            # TTL corto (5-10 minutos); usamos el short_ttl configurado en el sistema
+            cache = cache if 'cache' in locals() else get_cache_system_nomina()
+            ttl = getattr(cache, 'short_ttl', 300)
+            cache.set_datos_consolidados(cierre.cliente_id, cierre.periodo, cache_payload, ttl=ttl)
+    except Exception:
+        pass
 
     return Response(data, status=status.HTTP_200_OK)

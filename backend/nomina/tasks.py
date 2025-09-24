@@ -4696,40 +4696,54 @@ def build_informe_libro(cierre_id: int) -> dict:
         .order_by('-total_cantidad')
     )
 
-    resumen_payload = {
+    # Formato esperado por LibroRemuneraciones.jsx (libro_resumen_v2)
+    # Calcular empleados por concepto (distinct nomina_consolidada con monto != 0)
+    empleados_aggr = (
+        ConceptoConsolidado.objects
+        .filter(nomina_consolidada__cierre=cierre)
+        .values('tipo_concepto', 'nombre_concepto')
+        .annotate(empleados=Count('nomina_consolidada', distinct=True, filter=~Q(monto_total=0)))
+    )
+    emp_map = {(e['tipo_concepto'], e['nombre_concepto']): int(e['empleados'] or 0) for e in empleados_aggr}
+
+    conceptos_serializados = []
+    for tipo in ['haber_imponible','haber_no_imponible','descuento_legal','otro_descuento','impuesto','aporte_patronal']:
+        for it in conceptos_base:
+            if it['tipo_concepto'] == tipo:
+                conceptos_serializados.append({
+                    'nombre': it['nombre_concepto'],
+                    'categoria': tipo,
+                    'total': float(it['total_monto'] or 0),
+                    'empleados': emp_map.get((tipo, it['nombre_concepto']), 0),
+                })
+
+    totales_categorias = {
+        'haber_imponible': float(resumen_agg['total_haberes_imponibles'] or 0),
+        'haber_no_imponible': float(resumen_agg['total_haberes_no_imponibles'] or 0),
+        'descuento_legal': float(resumen_agg['total_dctos_legales'] or 0),
+        'otro_descuento': float(resumen_agg['total_otros_dctos'] or 0),
+        'impuesto': float(resumen_agg['total_impuestos'] or 0),
+        'aporte_patronal': float(resumen_agg['total_aportes_patronales'] or 0),
+    }
+    total_empleados = int(resumen_agg['total_empleados'] or 0)
+
+    libro_v2 = {
         'cierre': {
             'id': cierre.id,
-            'cliente_id': cierre.cliente.id,
             'cliente': getattr(cierre.cliente, 'nombre', str(cierre.cliente)),
             'periodo': cierre.periodo,
+            'total_empleados': total_empleados,
         },
-    # Mantener compatibilidad: 'resumen' conserva los totales con claves previas
-    'resumen': resumen_agg,
-    'totales': {
-            'empleados': resumen_agg['total_empleados'],
-            'haberes_imponibles': resumen_agg['total_haberes_imponibles'],
-            'haberes_no_imponibles': resumen_agg['total_haberes_no_imponibles'],
-            'descuentos_legales': resumen_agg['total_dctos_legales'],
-            'otros_descuentos': resumen_agg['total_otros_dctos'],
-            'impuestos': resumen_agg['total_impuestos'],
-            'aportes_patronales': resumen_agg['total_aportes_patronales'],
-            'horas_extras_cantidad': resumen_agg['horas_extras_cantidad_total'],
-        },
-        'desglose_por_concepto': {
-            'haberes_imponibles': _lista_categoria('haber_imponible'),
-            'haberes_no_imponibles': _lista_categoria('haber_no_imponible'),
-            'descuentos_legales': _lista_categoria('descuento_legal'),
-            'otros_descuentos': _lista_categoria('otro_descuento'),
-            'impuestos': _lista_categoria('impuesto'),
-            'aportes_patronales': _lista_categoria('aporte_patronal'),
-            'horas_extras': [
-                {'concepto': it['nombre_concepto'], 'cantidad': it['total_cantidad']} for it in horas_extras_det
-            ],
+        'totales_categorias': totales_categorias,
+        'conceptos': conceptos_serializados,
+        'meta': {
+            'conceptos_count': len(conceptos_serializados),
+            'generated_at': timezone.now().isoformat(),
+            'api_version': '2',
         },
     }
 
-    # No incluimos detalle por empleado para mantener JSON liviano
-    return {'detalle': None, 'resumen': resumen_payload}
+    return libro_v2
 
 
 @shared_task(name='nomina.build_informe_movimientos')
@@ -4785,78 +4799,119 @@ def build_informe_movimientos(cierre_id: int) -> dict:
     cambios_list = list(cambios_map.values())
     cambios_list.sort(key=lambda x: x['eventos'], reverse=True)
 
+    # Serialización de movimientos como en movimientos_personal_detalle_v3
+    movimientos_serializados = []
+    for mv in movimientos:
+        nc = mv.nomina_consolidada
+        liquido = 0
+        if nc:
+            try:
+                liquido = ((nc.haberes_imponibles or 0) + (nc.haberes_no_imponibles or 0)) - ((nc.dctos_legales or 0) + (nc.otros_dctos or 0) + (nc.impuestos or 0))
+            except Exception:
+                liquido = 0
+        movimientos_serializados.append({
+            'id': mv.id,
+            'categoria': mv.categoria,
+            'subtipo': mv.subtipo,
+            'descripcion': mv.descripcion,
+            'fecha_inicio': mv.fecha_inicio,
+            'fecha_fin': mv.fecha_fin,
+            'dias_evento': mv.dias_evento,
+            'dias_en_periodo': mv.dias_en_periodo,
+            'multi_mes': mv.multi_mes,
+            'hash_evento': mv.hash_evento,
+            'hash_registro_periodo': mv.hash_registro_periodo,
+            'empleado': {
+                'rut': nc.rut_empleado if nc else None,
+                'nombre': nc.nombre_empleado if nc else None,
+                'cargo': nc.cargo if nc else None,
+                'centro_costo': nc.centro_costo if nc else None,
+                'estado': nc.estado_empleado if nc else None,
+                'liquido_pagar': float(liquido),
+            },
+            'observaciones': mv.observaciones,
+            'fecha_deteccion': mv.fecha_deteccion,
+            'detectado_por_sistema': mv.detectado_por_sistema,
+        })
+
+    # Formato esperado por MovimientosMes.jsx (movimientos_personal_detalle_v3)
     payload = {
         'cierre': {
             'id': cierre.id,
             'cliente': getattr(cierre.cliente, 'nombre', str(cierre.cliente)),
             'periodo': cierre.periodo,
-            'estado': cierre.estado,
         },
         'resumen': {
             'total_movimientos': movimientos.count(),
-            'por_categoria': por_categoria_fmt,
-            'ausentismo': {
+            'por_tipo': por_categoria_fmt,
+            'ausentismo_metricas': {
                 'eventos': len(aus_qs),
                 'total_dias': total_dias_aus,
                 'promedio_dias': round(total_dias_aus / len(aus_qs), 1) if aus_qs else 0.0,
                 'subtipos': aus_subtipos_list,
             },
-            'cambios': cambios_list,
+            'cambios_metricas': cambios_list,
         },
-        'movimientos': [],  # Compacto
+        'movimientos': movimientos_serializados,
+        'meta': {
+            'generated_at': timezone.now().isoformat(),
+            'api_version': '3',
+        }
     }
     return payload
 
 
 @shared_task(name='nomina.unir_y_guardar_informe')
-def unir_y_guardar_informe(resultados: list, cierre_id: int, version: str = 'v2-compact') -> dict:
+def unir_y_guardar_informe(resultados: list, cierre_id: int, version: str = 'sgm-v1') -> dict:
     """
-    Callback del chord: une resultados de libro y movimientos, guarda InformeNomina
-    con una estructura compacta en la raíz.
+    Construye y guarda un JSON unificado que contiene exactamente lo que necesitan
+    las vistas LibroRemuneraciones.jsx y MovimientosMes.jsx, más metadatos.
+
+    Estructura final en InformeNomina.datos_cierre:
+    {
+      meta: {...},
+      libro_resumen_v2: {...},
+      movimientos_v3: {...}
+    }
     """
     from .models import CierreNomina
     from .models_informe import InformeNomina
 
     cierre = CierreNomina.objects.get(id=cierre_id)
-    libro, movimientos = resultados
-    # Sanitizar versión para cumplir con max_length=10 del modelo
-    raw_version = str(version) if version is not None else '1.0'
+    libro, movimientos = resultados or [{}, {}]
+
+    # Sanitizar versión (max length 10)
+    raw_version = str(version) if version is not None else 'sgm-v1'
     safe_version = raw_version[:10]
     if raw_version != safe_version:
         logger.warning(f"version_calculo '{raw_version}' truncada a '{safe_version}' (max 10)")
 
-    # Extraer totales desde subtareas (manteniendo robustez ante None)
-    resumen_libro = (libro or {}).get('resumen') or {}
-    totales_libro = resumen_libro.get('totales') or {}
-
-    resumen_mov = (movimientos or {}).get('resumen') or {}
-    totales_mov = resumen_mov.get('totales') or {}
-    desglose_libro = resumen_libro.get('desglose_por_concepto') or {}
-
-    # Formato de periodo AAAAMM a partir de 'YYYY-MM'
-    periodo_aaaamm = (cierre.periodo or '').replace('-', '')
-
-    # Estructura compacta solicitada
-    payload = {
+    # Metadatos del cierre
+    meta = {
         'cierre_id': cierre.id,
+        'cliente_id': getattr(cierre.cliente, 'id', None),
         'cliente_nombre': getattr(cierre.cliente, 'nombre', None),
-        'cliente_rut': getattr(cierre.cliente, 'rut', None),
-        'periodo': periodo_aaaamm,
-        'totales_libro': totales_libro,
-        'totales_movimientos': totales_mov,
-        'desglose_libro': desglose_libro,
-        # Los KPIs se agregan en la task siguiente (calcular_kpis_cierre)
-        'kpis': {},
+        'periodo': cierre.periodo,  # YYYY-MM
+        'generated_at': timezone.now().isoformat(),
+        'version_datos': getattr(cierre, 'version_datos', None),
+        'version_calculo': safe_version,
     }
 
-    # Asegurar que el JSON no contenga tipos no serializables (Decimal, Timestamp, etc.)
-    payload = _json_safe(payload)
+    # Normalizar bloques esperados por frontend
+    libro_payload = libro if isinstance(libro, dict) else {}
+    movs_payload = movimientos if isinstance(movimientos, dict) else {}
+
+    payload = {
+        'meta': _json_safe(meta),
+        'libro_resumen_v2': _json_safe(libro_payload),
+        'movimientos_v3': _json_safe(movs_payload),
+    }
 
     informe, _ = InformeNomina.objects.get_or_create(
         cierre=cierre,
         defaults={'datos_cierre': payload, 'version_calculo': safe_version}
     )
-    # actualizar siempre con la última versión
+
     inicio = timezone.now()
     informe.datos_cierre = payload
     informe.version_calculo = safe_version

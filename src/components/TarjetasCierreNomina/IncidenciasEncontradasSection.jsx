@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { AlertOctagon, ChevronDown, ChevronRight, Loader2, CheckCircle, AlertTriangle, Users, Eye, Lock, TrendingUp, RefreshCw } from "lucide-react";
 
 // Vista unificada (solo incidencias)
@@ -64,6 +64,14 @@ const IncidenciasEncontradasSection = ({
   const [modalAbierto, setModalAbierto] = useState(false);
   const [estadoIncidencias, setEstadoIncidencias] = useState(null);
   const [vistaPrevia, setVistaPrevia] = useState(null);
+  // Guardar si el componente sigue montado para cortar polling en desmontaje
+  const montadoRef = useRef(true);
+  useEffect(() => {
+    montadoRef.current = true;
+    return () => {
+      montadoRef.current = false;
+    };
+  }, []);
   
   // 🎯 CONFIGURACIÓN PABLO - SIN CHECKBOXES
   // Los conceptos están configurados automáticamente en el backend:
@@ -343,17 +351,16 @@ const IncidenciasEncontradasSection = ({
 
       // Si hay task_id, hacer polling hasta que termine la finalización
       if (taskId) {
-        const inicio = Date.now();
-        const timeoutMs = 10 * 60 * 1000; // 10 minutos
-        const intervaloMs = 2000;
-
-        while (Date.now() - inicio < timeoutMs) {
+        // Polling sin límite de tiempo mientras el componente esté montado
+        const intervaloMs = 5000;
+        // Bucle de espera hasta SUCCESS o FAILURE
+        // Se corta automáticamente si el componente se desmonta
+        while (montadoRef.current) {
           try {
             const estado = await consultarEstadoTarea(cierre.id, taskId);
             const state = estado?.state || estado?.status;
 
             if (state === 'SUCCESS') {
-              // Actualizar datos del cierre al completar
               if (onCierreActualizado) {
                 await onCierreActualizado();
               }
@@ -361,14 +368,13 @@ const IncidenciasEncontradasSection = ({
               break;
             }
             if (state === 'FAILURE') {
-              const detalle = (estado?.result && (estado.result.detail || estado.result.message)) || '';
+              const detalle = (estado?.result && (estado.result.detail || estado.result.message)) || estado?.error || '';
               const msg = `Error al finalizar cierre${detalle ? `: ${detalle}` : ''}`;
               setError(msg);
               alert(`❌ ${msg}`);
               break;
             }
           } catch (pollErr) {
-            // Continuar reintentando a menos que sea un 4xx persistente
             // eslint-disable-next-line no-console
             console.warn('Polling estado tarea falló, reintentando...', pollErr?.message || pollErr);
           }

@@ -269,7 +269,9 @@ LOGGING = {
 }
 
 # ✅ CONFIGURACIONES PARA MANEJAR MUCHOS REGISTROS EN DJANGO ADMIN
-DATA_UPLOAD_MAX_NUMBER_FIELDS = 10000  # Aumentar límite de campos (default: 1000)
+# Aumentamos fuertemente el límite de campos para admitir formularios masivos en admin.
+# Nota: mantener este valor razonable para evitar DoS; ajustar según cardinalidad real.
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 200000  # default: 1000
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5242880  # 5MB para uploads grandes
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5242880  # 5MB para archivos
 

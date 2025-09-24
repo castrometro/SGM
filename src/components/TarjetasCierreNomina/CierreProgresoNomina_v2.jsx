@@ -1,6 +1,58 @@
-import React from 'react';
+import React, { useState } from 'react';
+import ArchivosTalanaSection_v2 from './ArchivosTalanaSection/ArchivosTalanaSection_v2';
+import ArchivosAnalistaSection_v2 from './ArchivosAnalistaSection/ArchivosAnalistaSection_v2';
 
 const CierreProgresoNomina_v2 = ({ cierre, cliente, onCierreActualizado, className }) => {
+  // 🎯 Estados para manejar acordeón (solo una sección expandida a la vez)
+  const [seccionExpandida, setSeccionExpandida] = useState('archivosTalana');
+  
+  // 🎯 Estados para tracking de progreso de las secciones
+  const [estadosSeccion, setEstadosSeccion] = useState({
+    archivosTalana: 'pendiente',
+    archivosAnalista: 'pendiente', 
+    verificadorDatos: 'pendiente',
+    incidencias: 'pendiente'
+  });
+
+  // 🎯 Función para manejar expansión de acordeón
+  const manejarExpansionSeccion = (nombreSeccion) => {
+    setSeccionExpandida(prev => prev === nombreSeccion ? null : nombreSeccion);
+  };
+
+  // 🎯 Determinar qué secciones mostrar según el estado del cierre
+  const deberiaRenderizarSeccion = (seccion) => {
+    const estado = cierre?.estado;
+    
+    switch (seccion) {
+      case 'archivosTalana':
+        // Mostrar en estados iniciales hasta consolidación
+        return ['pendiente', 'archivos_completos', 'verificacion_datos'].includes(estado);
+        
+      case 'archivosAnalista':
+        // Mostrar junto con Talana en estados iniciales
+        return ['pendiente', 'archivos_completos', 'verificacion_datos'].includes(estado);
+        
+      case 'verificadorDatos':
+        // Mostrar cuando los archivos están listos
+        return ['archivos_completos', 'verificacion_datos', 'con_discrepancias', 'verificado_sin_discrepancias'].includes(estado);
+        
+      case 'incidencias':
+        // Mostrar desde consolidación en adelante
+        return ['datos_consolidados', 'con_incidencias', 'incidencias_resueltas'].includes(estado);
+        
+      default:
+        return false;
+    }
+  };
+
+  // 🎯 Handlers de estado de las secciones
+  const handleEstadoChange = (seccion, nuevoEstado) => {
+    console.log(`📊 [CierreProgresoNomina_v2] ${seccion}: ${nuevoEstado}`);
+    setEstadosSeccion(prev => ({
+      ...prev,
+      [seccion]: nuevoEstado
+    }));
+  };
   // Validación básica de props
   if (!cierre || !cliente) {
     return (
@@ -11,43 +63,30 @@ const CierreProgresoNomina_v2 = ({ cierre, cliente, onCierreActualizado, classNa
   }
 
   return (
-    <div className={`space-y-6 ${className || ''}`}>
-      {/* Header temporal para debug */}
-      <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-        <h2 className="text-xl font-semibold text-white mb-4">
-          🚧 Cierre Progreso V2 - En Construcción
-        </h2>
-        <div className="grid grid-cols-2 gap-4 text-sm">
-          <div>
-            <span className="text-gray-400">Cliente:</span>
-            <span className="text-white ml-2">{cliente.nombre}</span>
-          </div>
-          <div>
-            <span className="text-gray-400">Estado:</span>
-            <span className="text-blue-400 ml-2">{cierre.estado}</span>
-          </div>
-          <div>
-            <span className="text-gray-400">Período:</span>
-            <span className="text-white ml-2">{cierre.periodo}</span>
-          </div>
-          <div>
-            <span className="text-gray-400">ID:</span>
-            <span className="text-gray-300 ml-2">{cierre.id}</span>
-          </div>
-        </div>
-      </div>
+    <div className={`w-full max-w-none space-y-6 ${className || ''}`}>
+      {/* 🎯 SECCIÓN 1: Archivos Talana - Solo si debe renderizarse */}
+      {deberiaRenderizarSeccion('archivosTalana') && (
+        <ArchivosTalanaSection_v2
+          cierreId={cierre.id}
+          cliente={cliente}
+          disabled={false} // Por ahora siempre habilitado cuando se renderiza
+          onEstadoChange={(estado) => handleEstadoChange('archivosTalana', estado)}
+          expandido={seccionExpandida === 'archivosTalana'}
+          onToggleExpansion={() => manejarExpansionSeccion('archivosTalana')}
+        />
+      )}
 
-      {/* Placeholder para futuras secciones */}
-      <div className="bg-gray-900/50 rounded-lg p-8 border border-gray-600 border-dashed text-center">
-        <div className="text-gray-400 text-lg mb-2">
-          🎯 Próximas implementaciones:
-        </div>
-        <ul className="text-gray-500 text-sm space-y-1">
-          <li>• Lógica de mostrar/ocultar secciones según estado</li>
-          <li>• Dashboard de incidencias para estados avanzados</li>
-          <li>• Secciones básicas para estados iniciales</li>
-        </ul>
-      </div>
+      {/* 🎯 SECCIÓN 2: Archivos del Analista - Solo si debe renderizarse */}
+      {deberiaRenderizarSeccion('archivosAnalista') && (
+        <ArchivosAnalistaSection_v2
+          cierreId={cierre.id}
+          cliente={cliente}
+          disabled={false} // Por ahora siempre habilitado cuando se renderiza
+          onEstadoChange={(estado) => handleEstadoChange('archivosAnalista', estado)}
+          expandido={seccionExpandida === 'archivosAnalista'}
+          onToggleExpansion={() => manejarExpansionSeccion('archivosAnalista')}
+        />
+      )}
     </div>
   );
 };

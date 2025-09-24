@@ -4,6 +4,7 @@ import ArchivosTalanaSection from "./ArchivosTalanaSection";
 import ArchivosAnalistaSection from "./ArchivosAnalistaSection";
 import VerificadorDatosSection from "./VerificadorDatosSection";
 import IncidenciasEncontradasSection from "./IncidenciasEncontradasSection";
+import IncidenciasDashboard from "./IncidenciasDashboard";
 import ResumenCierreSection from "./ResumenCierreSection";
 import ModalClasificacionHeaders from "../ModalClasificacionHeaders";
 import {
@@ -215,6 +216,8 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     actualizarEstadoSeccion('archivosAnalista', nuevoEstado);
   }, [actualizarEstadoSeccion]);
 
+  // 🎯 ELIMINADO: estaSeccionBloqueada - ahora usamos estaSeccionVisible
+
   const onEstadoChangeVerificador = useCallback((nuevoEstado) => {
     console.log('🔄 [onEstadoChangeVerificador] CALLBACK EJECUTADO para:', nuevoEstado);
     actualizarEstadoSeccion('verificadorDatos', nuevoEstado);
@@ -225,45 +228,44 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
     actualizarEstadoSeccion('incidencias', nuevoEstado);
   }, [actualizarEstadoSeccion]);
 
-  // 🎯 Función para determinar si una sección debe estar bloqueada
-  const estaSeccionBloqueada = (seccion) => {
-    // Si el cierre está finalizado, todo está bloqueado
+  // 🎯 Función para determinar si una sección debe estar visible
+  const estaSeccionVisible = (seccion) => {
+    // Si el cierre está finalizado, solo mostrar resumen
     if (esEstadoFinalizado(cierre?.estado)) {
-      return true;
+      return false;
     }
     
-    // Determinar bloqueo según estado del cierre
+    // Determinar visibilidad según estado del cierre
     switch (cierre?.estado) {
       case 'pendiente':
-        // Habilitar: Talana + Analista
-        return !['archivosTalana', 'archivosAnalista'].includes(seccion);
+        // Mostrar: Talana + Analista
+        return ['archivosTalana', 'archivosAnalista'].includes(seccion);
         
       case 'archivos_completos':
       case 'verificacion_datos':
-        // Habilitar: Talana + Analista + Verificación de datos
-        return !['archivosTalana', 'archivosAnalista', 'verificadorDatos'].includes(seccion);
+        // Mostrar: Talana + Analista + Verificación de datos
+        return ['archivosTalana', 'archivosAnalista', 'verificadorDatos'].includes(seccion);
 
       case 'verificado_sin_discrepancias':
-        // Habilitar: solo Verificación de datos
-        return seccion !== 'verificadorDatos';
+        // Mostrar: solo Verificación de datos
+        return seccion === 'verificadorDatos';
       
       case 'con_discrepancias':
-        // Habilitar: Talana + Analista + Verificación de datos
-        return !['archivosTalana', 'archivosAnalista', 'verificadorDatos'].includes(seccion);
+        // Mostrar: Talana + Analista + Verificación de datos
+        return ['archivosTalana', 'archivosAnalista', 'verificadorDatos'].includes(seccion);
         
       case 'datos_consolidados':
-  // Cuando el estado es 'datos_consolidados' solo permitimos la sección de incidencias
-  // Bloqueamos todo lo demás para evitar cambios posteriores a la consolidación
-  return seccion !== 'incidencias';
+        // Mostrar: solo Incidencias
+        return seccion === 'incidencias';
         
       case 'con_incidencias':
       case 'incidencias_resueltas':
-        // Habilitar: solo Incidencias
-        return seccion !== 'incidencias';
+        // Mostrar: solo Incidencias
+        return seccion === 'incidencias';
         
       default:
-        // Por defecto: bloquear todo si no está mapeado explícitamente
-        return true;
+        // Por defecto: no mostrar nada si no está mapeado explícitamente
+        return false;
     }
   };
 
@@ -849,74 +851,76 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
       ) : (
         <>
           {/* Sección 1: Archivos Talana */}
-          <ArchivosTalanaSection
-            libro={libro}
-            subiendo={subiendo}
-            onSubirArchivo={handleSubirArchivo}
-            onVerClasificacion={handleVerClasificacion}
-            onProcesarLibro={handleProcesarLibro}
-            onActualizarEstado={handleActualizarEstado}
-            headersSinClasificar={headersSinClasificar}
-            mensajeLibro={mensajeLibro}
-            libroListo={libroListo}
-            movimientos={movimientos}
-            subiendoMov={subiendoMov}
-            onSubirMovimientos={handleSubirMovimientos}
-            onActualizarEstadoMovimientos={handleActualizarEstadoMovimientos}
-            onEliminarLibro={handleEliminarLibro}
-            onEliminarMovimientos={handleEliminarMovimientos}
-            disabled={estaSeccionBloqueada('archivosTalana')}
-            deberiaDetenerPolling={deberiaDetenerPolling}
-            cierreId={cierre?.id}
-            // 🎯 Props para acordeón
-            expandido={estaSeccionExpandida('archivosTalana')}
-            onToggleExpansion={() => manejarExpansionSeccion('archivosTalana')}
-          />
+          {estaSeccionVisible('archivosTalana') && (
+            <ArchivosTalanaSection
+              libro={libro}
+              subiendo={subiendo}
+              onSubirArchivo={handleSubirArchivo}
+              onVerClasificacion={handleVerClasificacion}
+              onProcesarLibro={handleProcesarLibro}
+              onActualizarEstado={handleActualizarEstado}
+              headersSinClasificar={headersSinClasificar}
+              mensajeLibro={mensajeLibro}
+              libroListo={libroListo}
+              movimientos={movimientos}
+              subiendoMov={subiendoMov}
+              onSubirMovimientos={handleSubirMovimientos}
+              onActualizarEstadoMovimientos={handleActualizarEstadoMovimientos}
+              onEliminarLibro={handleEliminarLibro}
+              onEliminarMovimientos={handleEliminarMovimientos}
+              deberiaDetenerPolling={deberiaDetenerPolling}
+              cierreId={cierre?.id}
+              // 🎯 Props para acordeón
+              expandido={estaSeccionExpandida('archivosTalana')}
+              onToggleExpansion={() => manejarExpansionSeccion('archivosTalana')}
+            />
+          )}
           
           {/* Sección 2: Archivos del Analista */}
-          <ArchivosAnalistaSection
-            // Props para Ingresos
-            ingresos={ingresos}
-            subiendoIngresos={subiendoIngresos}
-            onSubirIngresos={handleSubirIngresos}
-            onActualizarEstadoIngresos={handleActualizarEstadoIngresos}
-            onEliminarIngresos={handleEliminarIngresos}
-            
-            // Props para Finiquitos
-            finiquitos={finiquitos}
-            subiendoFiniquitos={subiendoFiniquitos}
-            onSubirFiniquitos={handleSubirFiniquitos}
-            onActualizarEstadoFiniquitos={handleActualizarEstadoFiniquitos}
-            onEliminarFiniquitos={handleEliminarFiniquitos}
-            
-            // Props para Ausentismos
-            ausentismos={ausentismos}
-            subiendoAusentismos={subiendoAusentismos}
-            onSubirAusentismos={handleSubirAusentismos}
-            onActualizarEstadoAusentismos={handleActualizarEstadoAusentismos}
-            onEliminarAusentismos={handleEliminarAusentismos}
-            
-            // Props para Novedades
-            novedades={novedades}
-            subiendoNovedades={subiendoNovedades}
-            onSubirNovedades={handleSubirNovedades}
-            onVerClasificacionNovedades={handleVerClasificacionNovedades}
-            onProcesarNovedades={handleProcesarNovedades}
-            onActualizarEstadoNovedades={handleActualizarEstadoNovedades}
-            onEliminarNovedades={handleEliminarNovedades}
-            headersSinClasificarNovedades={novedades?.header_json?.headers_sin_clasificar || []}
-            mensajeNovedades={mensajeNovedades}
-            novedadesListo={novedadesListo}
-            
-            // Props de control
-            disabled={estaSeccionBloqueada('archivosAnalista')}
-            deberiaDetenerPolling={deberiaDetenerPolling}
-            cierreId={cierre?.id}
-            
-            // Props para acordeón
-            expandido={estaSeccionExpandida('archivosAnalista')}
-            onToggleExpansion={() => manejarExpansionSeccion('archivosAnalista')}
-          />
+          {estaSeccionVisible('archivosAnalista') && (
+            <ArchivosAnalistaSection
+              // Props para Ingresos
+              ingresos={ingresos}
+              subiendoIngresos={subiendoIngresos}
+              onSubirIngresos={handleSubirIngresos}
+              onActualizarEstadoIngresos={handleActualizarEstadoIngresos}
+              onEliminarIngresos={handleEliminarIngresos}
+              
+              // Props para Finiquitos
+              finiquitos={finiquitos}
+              subiendoFiniquitos={subiendoFiniquitos}
+              onSubirFiniquitos={handleSubirFiniquitos}
+              onActualizarEstadoFiniquitos={handleActualizarEstadoFiniquitos}
+              onEliminarFiniquitos={handleEliminarFiniquitos}
+              
+              // Props para Ausentismos
+              ausentismos={ausentismos}
+              subiendoAusentismos={subiendoAusentismos}
+              onSubirAusentismos={handleSubirAusentismos}
+              onActualizarEstadoAusentismos={handleActualizarEstadoAusentismos}
+              onEliminarAusentismos={handleEliminarAusentismos}
+              
+              // Props para Novedades
+              novedades={novedades}
+              subiendoNovedades={subiendoNovedades}
+              onSubirNovedades={handleSubirNovedades}
+              onVerClasificacionNovedades={handleVerClasificacionNovedades}
+              onProcesarNovedades={handleProcesarNovedades}
+              onActualizarEstadoNovedades={handleActualizarEstadoNovedades}
+              onEliminarNovedades={handleEliminarNovedades}
+              headersSinClasificarNovedades={novedades?.header_json?.headers_sin_clasificar || []}
+              mensajeNovedades={mensajeNovedades}
+              novedadesListo={novedadesListo}
+              
+              // Props de control
+              deberiaDetenerPolling={deberiaDetenerPolling}
+              cierreId={cierre?.id}
+              
+              // Props para acordeón
+              expandido={estaSeccionExpandida('archivosAnalista')}
+              onToggleExpansion={() => manejarExpansionSeccion('archivosAnalista')}
+            />
+          )}
 
           {/* 🎯 BOTÓN "CONTINUAR" - Solo cuando secciones 1 y 2 están procesadas */}
           {mostrarBotonContinuar() && (
@@ -960,36 +964,53 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
           )}
 
           {/* Sección 3: Verificación de Datos (Discrepancias) */}
-          <VerificadorDatosSection 
-            cierre={cierre} 
-            disabled={estaSeccionBloqueada('verificadorDatos')}
-            onCierreActualizado={async () => {
-              // 🔄 Callback para actualizar el cierre en el componente padre
-              console.log('🔄 [CierreProgresoNomina] Actualizando cierre desde verificador...');
-              if (onCierreActualizado) {
-                await onCierreActualizado();
-                console.log('✅ [CierreProgresoNomina] Cierre actualizado exitosamente desde verificador');
-              } else {
-                console.log('⚠️ [CierreProgresoNomina] No hay callback onCierreActualizado disponible');
-              }
-            }}
-            onEstadoChange={onEstadoChangeVerificador}
-            deberiaDetenerPolling={deberiaDetenerPolling}
-            // 🎯 Props para acordeón
-            expandido={estaSeccionExpandida('verificadorDatos')}
-            onToggleExpansion={() => manejarExpansionSeccion('verificadorDatos')}
-          />
+          {estaSeccionVisible('verificadorDatos') && (
+            <VerificadorDatosSection 
+              cierre={cierre} 
+              onCierreActualizado={async () => {
+                // 🔄 Callback para actualizar el cierre en el componente padre
+                console.log('🔄 [CierreProgresoNomina] Actualizando cierre desde verificador...');
+                if (onCierreActualizado) {
+                  await onCierreActualizado();
+                  console.log('✅ [CierreProgresoNomina] Cierre actualizado exitosamente desde verificador');
+                } else {
+                  console.log('⚠️ [CierreProgresoNomina] No hay callback onCierreActualizado disponible');
+                }
+              }}
+              onEstadoChange={onEstadoChangeVerificador}
+              deberiaDetenerPolling={deberiaDetenerPolling}
+              // 🎯 Props para acordeón
+              expandido={estaSeccionExpandida('verificadorDatos')}
+              onToggleExpansion={() => manejarExpansionSeccion('verificadorDatos')}
+            />
+          )}
 
           {/* Sección 4: Sistema de Incidencias */}
-          <IncidenciasEncontradasSection 
-            cierre={cierre} 
-            disabled={estaSeccionBloqueada('incidencias')}
-            onCierreActualizado={onCierreActualizado}
-            onEstadoChange={onEstadoChangeIncidencias}
-            // 🎯 Props para acordeón
-            expandido={estaSeccionExpandida('incidencias')}
-            onToggleExpansion={() => manejarExpansionSeccion('incidencias')}
-          />
+          {estaSeccionVisible('incidencias') && (
+            // Si está en datos_consolidados o posterior, mostrar dashboard
+            cierre?.estado === 'datos_consolidados' || 
+            cierre?.estado === 'con_incidencias' || 
+            cierre?.estado === 'incidencias_resueltas' ? (
+              <IncidenciasDashboard 
+                cierre={cierre} 
+                onCierreActualizado={onCierreActualizado}
+                onEstadoChange={onEstadoChangeIncidencias}
+                // 🎯 Props para acordeón
+                expandido={estaSeccionExpandida('incidencias')}
+                onToggleExpansion={() => manejarExpansionSeccion('incidencias')}
+              />
+            ) : (
+              // Antes de consolidación, mostrar la sección simple actual
+              <IncidenciasEncontradasSection 
+                cierre={cierre} 
+                onCierreActualizado={onCierreActualizado}
+                onEstadoChange={onEstadoChangeIncidencias}
+                // 🎯 Props para acordeón
+                expandido={estaSeccionExpandida('incidencias')}
+                onToggleExpansion={() => manejarExpansionSeccion('incidencias')}
+              />
+            )
+          )}
         </>
       )}
 

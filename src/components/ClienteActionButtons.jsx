@@ -4,9 +4,6 @@ import {
   FilePlus,
   BookOpenCheck,
   FolderOpen,
-  FileText,
-  Users,
-  ListChecks,
   BarChart3
 } from "lucide-react";
 
@@ -54,16 +51,7 @@ const ClienteActionButtons = ({ clienteId, areaActiva }) => {
         label: "Dashboard Nómina",
         icon: BarChart3,
         color: "#10B981",
-        action: () => {
-          const streamlitUrl = `http://172.17.11.18:8503/?cliente_id=${clienteId}`;
-          window.open(streamlitUrl, '_blank');
-        },
-      },
-      {
-        label: "Historial de Cierres",
-        icon: History,
-        color: "#60A5FA",
-        action: () => navigate(`/menu/clientes/${clienteId}/cierres`),
+        action: () => navigate(`/menu/nomina/clientes/${clienteId}/dashboard`),
       },
       {
         label: "Crear Cierre",
@@ -72,23 +60,11 @@ const ClienteActionButtons = ({ clienteId, areaActiva }) => {
         action: () => navigate(`/menu/clientes/${clienteId}/crear-cierre`),
       },
       {
-        label: "Libro de Remuneraciones",
-        icon: FileText,
-        color: "#FBBF24",
-        action: () => navigate(`/menu/nomina/clientes/${clienteId}/libro-remuneraciones`),
+        label: "Historial de Cierres",
+        icon: History,
+        color: "#60A5FA",
+        action: () => navigate(`/menu/clientes/${clienteId}/cierres`),
       },
-      {
-        label: "Movimientos del Mes",
-        icon: Users,
-        color: "#C084FC",
-        action: () => navigate(`/menu/nomina/clientes/${clienteId}/movimientos-mes`),
-      },
-      {
-        label: "Checklists",
-        icon: ListChecks,
-        color: "#F472B6",
-        action: () => navigate(`/menu/nomina/clientes/${clienteId}/checklists`),
-      }
       // Puedes agregar más según lo que se use en Nómina
     ],
   };

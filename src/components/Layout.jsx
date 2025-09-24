@@ -9,9 +9,11 @@ const Layout = () => {
     const fullWidthRe = /\/menu\/cierres-nomina\/[^/]+\/(libro-remuneraciones|movimientos)(\/)??$/;
     const isLibroRemuneraciones = fullWidthRe.test(location.pathname) && location.pathname.includes('libro-remuneraciones');
     const isMovimientosMes = fullWidthRe.test(location.pathname) && location.pathname.includes('movimientos');
+    // Dashboard Nómina a ancho completo
+    const isNominaDashboard = location.pathname.startsWith('/menu/nomina/clientes/') && location.pathname.endsWith('/dashboard');
     const isGestionCobranza = location.pathname.startsWith('/menu/gestion-cobranza');
     const isProyectosBDO = location.pathname.startsWith('/menu/proyectos-bdo-latam');
-    const mainClass = (isLibroRemuneraciones || isMovimientosMes || isGestionCobranza || isProyectosBDO)
+    const mainClass = (isLibroRemuneraciones || isMovimientosMes || isNominaDashboard || isGestionCobranza || isProyectosBDO)
         ? 'flex-grow w-full p-0'
         : 'flex-grow container mx-auto p-6';
     return (

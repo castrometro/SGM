@@ -14,6 +14,12 @@ export const obtenerCierreMensual = async (clienteId, periodo) => {
   return res.data.length > 0 ? res.data[0] : null;
 };
 
+// Obtener informe completo de un cierre finalizado (solo lectura, sin cálculos)
+export const obtenerInformeCierre = async (cierreId) => {
+  const res = await api.get(`/nomina/cierres/${cierreId}/informe/`);
+  return res.data; // { id, cierre_id, cliente, periodo, fecha_generacion, estado_cierre, datos_cierre }
+};
+
 export const crearCierreMensual = async (clienteId, periodo, checklist) => {
   
   const payload = {
@@ -66,8 +72,11 @@ export const aprobarRecargaArchivos = async (cierreId) => {
 };
 
 // Consolidar datos de Talana (Libro + Novedades)
-export const consolidarDatosTalana = async (cierreId) => {
-  const res = await api.post(`/nomina/cierres/${cierreId}/consolidar-datos/`);
+export const consolidarDatosTalana = async (cierreId, opciones = {}) => {
+  // Permite pasar modo de consolidación u opciones futuras
+  const payload = {};
+  if (opciones?.modo) payload.modo = opciones.modo;
+  const res = await api.post(`/nomina/cierres/${cierreId}/consolidar-datos/`, payload);
   return res.data;
 };
 
@@ -75,6 +84,25 @@ export const consolidarDatosTalana = async (cierreId) => {
 export const consultarEstadoTarea = async (cierreId, taskId) => {
   const res = await api.get(`/nomina/cierres/${cierreId}/task-status/${taskId}/`);
   return res.data;
+};
+
+// Estado de cache (informe/consolidados) para un cierre
+export const obtenerEstadoCacheCierre = async (cierreId) => {
+  const res = await api.get(`/nomina/cierres/${cierreId}/estado-cache/`);
+  const data = res.data;
+  try {
+    const bloques = data?.informe_metadata?.bloques || data?.informe_metadata?.blocks || null;
+    const bloquesKeys = bloques ? Object.keys(bloques) : null;
+    console.log("🧠 [CACHE] Estado cache para cierre:", cierreId, {
+      informe_en_cache: data?.informe_en_cache,
+      consolidados_en_cache: data?.consolidados_en_cache,
+      bloques_disponibles: bloquesKeys,
+      stats: data?.stats,
+    });
+  } catch (e) {
+    console.log("🧠 [CACHE] Estado cache (raw) para cierre:", cierreId, data);
+  }
+  return data;
 };
 
 // ========== SISTEMA DE INCIDENCIAS ==========
@@ -110,7 +138,13 @@ export const generarIncidenciasCierre = async (cierreId, clasificacionesSeleccio
   }
   
   const response = await api.post(`/nomina/incidencias/generar/${cierreId}/`, payload);
-  return response.data;
+  const data = response.data;
+  // Log amigable sobre uso de caché del período anterior si viene expuesto por el backend
+  const usadoCachePrev = data?.prev_period_cache_used ?? data?.diagnosticos?.prev_period_cache_used;
+  if (typeof usadoCachePrev !== 'undefined') {
+    console.log("🧠 [CACHE] Generación de incidencias - ¿Usó caché del período anterior?:", usadoCachePrev);
+  }
+  return data;
 };
 
 // Limpiar incidencias de un cierre (función de debug)
@@ -121,9 +155,119 @@ export const limpiarIncidenciasCierre = async (cierreId) => {
 
 // Finalizar cierre (cuando no hay incidencias o todas están resueltas)
 export const finalizarCierre = async (cierreId) => {
-  // Ruta correcta (detail=True): /nomina/cierres/:cierreId/finalizar/
-  const response = await api.post(`/nomina/cierres/${cierreId}/finalizar/`);
-  return response.data;
+  // Intenta rutas conocidas en orden de preferencia para máxima compatibilidad
+  const rutas = [
+    `/nomina/cierres/${cierreId}/finalizar/`, // oficial (detail=True)
+    `/nomina/cierres/finalizar/${cierreId}/`, // compat 1
+    `/nomina/incidencias/finalizar/${cierreId}/`, // compat 2 histórica
+  ];
+
+  let ultimaError;
+  for (const path of rutas) {
+    try {
+      const response = await api.post(path);
+      return response.data;
+    } catch (err) {
+      ultimaError = err;
+      const status = err?.response?.status;
+      // En 404/405 probamos siguiente ruta; en 500 también probamos por si es endpoint inválido en esa versión
+      if (![404, 405, 500].includes(status)) {
+        throw err;
+      }
+      // Continúa a siguiente ruta
+    }
+  }
+  // Si llegamos aquí, todas fallaron
+  throw ultimaError || new Error('No fue posible finalizar el cierre: todas las rutas fallaron');
+};
+
+// Utilidad: esperar una tarea Celery hasta finalizar (SUCCESS/FAILURE/REVOKED)
+export const esperarTarea = async (cierreId, taskId, { intervalMs = 2000, timeoutMs = 0 } = {}) => {
+  const inicio = Date.now();
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const estado = await consultarEstadoTarea(cierreId, taskId);
+    const status = estado?.estado || estado?.status || estado?.state;
+    if (["SUCCESS", "FAILURE", "REVOKED"].includes(String(status || '').toUpperCase())) {
+      return estado;
+    }
+    if (timeoutMs > 0 && Date.now() - inicio > timeoutMs) {
+      const e = new Error(`Timeout esperando tarea ${taskId}`);
+      e.partial = estado;
+      throw e;
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+};
+
+// Utilidad: esperar a que el cierre termine de consolidar según su estado en BD
+// Condición de término: estado_consolidacion === 'consolidado' OR estado === 'datos_consolidados'
+export const esperarConsolidacionCierre = async (
+  cierreId,
+  { intervalMs = 3000, timeoutMs = 0 } = {}
+) => {
+  const inicio = Date.now();
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      const cierre = await obtenerCierreNominaPorId(cierreId);
+      const estadoConsol = cierre?.estado_consolidacion;
+      const estado = cierre?.estado;
+      if (estadoConsol === 'consolidado' || estado === 'datos_consolidados') {
+        return cierre;
+      }
+      // Si el backend marca explícitamente error
+      if (estadoConsol === 'error_consolidacion') {
+        const e = new Error('Consolidación fallida (estado_consolidacion=error_consolidacion)');
+        e.cierre = cierre;
+        throw e;
+      }
+    } catch (err) {
+      // Si falla la lectura del cierre, reintentar salvo que se supere el timeout
+      if (timeoutMs > 0 && Date.now() - inicio > timeoutMs) throw err;
+    }
+    if (timeoutMs > 0 && Date.now() - inicio > timeoutMs) {
+      const e = new Error('Timeout esperando consolidación del cierre');
+      throw e;
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+};
+
+// Azúcar: finalizar cierre y esperar a que complete si retorna task_id
+export const finalizarCierreYEsperar = async (cierreId, { intervalMs = 2000, timeoutMs = 0 } = {}) => {
+  const res = await finalizarCierre(cierreId);
+  const taskId = res?.task_id || res?.taskId || res?.celery_task_id;
+  if (!taskId) return res; // si el backend finaliza sin background, devolver respuesta directa
+  const estadoFinal = await esperarTarea(cierreId, taskId, { intervalMs, timeoutMs });
+  return { inicio: res, fin: estadoFinal };
+};
+
+// Azúcar: consolidar datos y esperar a que finalice
+export const consolidarDatosTalanaYEsperar = async (cierreId, opciones = {}, { intervalMs = 2000, timeoutMs = 0 } = {}) => {
+  const res = await consolidarDatosTalana(cierreId, opciones);
+  const taskId = res?.task_id || res?.taskId || res?.celery_task_id;
+  const chainId = res?.chain_id || res?.chainId;
+
+  // 1) Si hay taskId, podemos consultar estado de la tarea orquestadora
+  //    PERO este "SUCCESS" puede ocurrir al inicio (cuando lanza la chain).
+  //    Por robustez, siempre complementamos esperando el estado del cierre.
+  if (taskId) {
+    try {
+      await esperarTarea(cierreId, taskId, { intervalMs, timeoutMs });
+    } catch (e) {
+      // Si la tarea falla temprano, igual continuamos a verificar estado del cierre para mostrar info real
+    }
+  }
+
+  // 2) Si el backend expone un chainId, no necesariamente refleja el último eslabón.
+  //    La fuente de verdad será el estado del cierre en BD.
+  const cierreFinal = await esperarConsolidacionCierre(cierreId, {
+    intervalMs: Math.max(2000, intervalMs),
+    timeoutMs,
+  });
+
+  return { inicio: res, cierre: cierreFinal };
 };
 
 // Obtener resumen de incidencias de un cierre
@@ -807,15 +951,17 @@ export const eliminarAusentismos = async (archivoId) => {
 //   return response.data;
 // };
 export const generarIncidenciasTotalesVariacion = async (cierreId) => {
+  // Preferimos GET (actual backend), con fallback a POST por compatibilidad histórica
   try {
-    const response = await api.post(`/nomina/cierres/${cierreId}/incidencias/totales-variacion/`);
-    return response.data;
-  } catch (err) {
-    if (err?.response?.status === 405) {
-      console.warn('[API] POST no permitido, intentando GET (modo compat) ...');
-      const respGet = await api.get(`/nomina/cierres/${cierreId}/incidencias/totales-variacion/`);
-      return respGet.data;
+    const respGet = await api.get(`/nomina/cierres/${cierreId}/incidencias/totales-variacion/`);
+    return respGet.data;
+  } catch (errGet) {
+    // Si GET no está permitido en alguna versión antigua, probamos POST
+    if (errGet?.response?.status === 405 || errGet?.response?.status === 404) {
+      console.warn('[API] GET no permitido/encontrado, intentando POST (modo compat) ...');
+      const respPost = await api.post(`/nomina/cierres/${cierreId}/incidencias/totales-variacion/`);
+      return respPost.data;
     }
-    throw err;
+    throw errGet;
   }
 };

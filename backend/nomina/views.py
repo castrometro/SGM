@@ -363,6 +363,37 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
                 "error": f"Error consultando estado de tarea: {str(e)}"
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=True, methods=['get'], url_path='estado-cache')
+    def estado_cache_cierre(self, request, pk=None):
+        """
+        🔎 ESTADO DE CACHE PARA UN CIERRE
+        Devuelve si existen datos en Redis para este cliente/periodo (informe/consolidados)
+        y los contadores de hits/misses del sistema.
+        """
+        try:
+            from .cache_redis import get_cache_system_nomina
+            cierre = self.get_object()
+            cache = get_cache_system_nomina()
+            informe = cache.get_informe_nomina(cierre.cliente_id, cierre.periodo)
+            consolidados = cache.get_datos_consolidados(cierre.cliente_id, cierre.periodo)
+
+            # Obtener stats generales
+            stats = cache.get_cache_stats()
+
+            return Response({
+                'cliente_id': cierre.cliente_id,
+                'periodo': cierre.periodo,
+                'informe_en_cache': bool(informe),
+                'consolidados_en_cache': bool(consolidados),
+                'informe_metadata': (informe.get('_metadata') if isinstance(informe, dict) and informe.get('_metadata') else None),
+                'stats': stats.get('nomina_counters', stats)
+            })
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=True, methods=['post'], url_path='generar-incidencias-consolidadas')
     def generar_incidencias_consolidadas(self, request, pk=None):
         """

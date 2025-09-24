@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ShieldCheck, ChevronDown, ChevronRight, Lock } from "lucide-react";
+import { ShieldCheck, ChevronDown, ChevronRight, Lock, Loader2 } from "lucide-react";
 import VerificacionControl from "./VerificadorDatos/VerificacionControl";
 import DiscrepanciasViewer from "./VerificadorDatos/DiscrepanciasViewer";
 
@@ -41,6 +41,10 @@ const VerificadorDatosSection = ({
   };
 
   const obtenerMensajeDescriptivo = () => {
+    // Prioridad: si el backend reporta consolidación en curso, mostrarlo explícitamente
+    if (cierre?.estado_consolidacion === 'consolidando') {
+      return 'Consolidando datos de nómina...';
+    }
     if (!estadoDiscrepancias) {
       // Mensajes según el estado del cierre cuando no hay verificación
       if (cierre?.estado === 'creado' || cierre?.estado === 'archivos_pendientes') {
@@ -89,7 +93,10 @@ const VerificadorDatosSection = ({
               )}
             </h2>
             <div className="flex items-center gap-2 text-sm">
-              <p className="text-gray-400">
+              <p className="text-gray-400 flex items-center gap-2">
+                {cierre?.estado_consolidacion === 'consolidando' && (
+                  <Loader2 size={16} className="animate-spin text-yellow-400" />
+                )}
                 {disabled 
                   ? 'La verificación está bloqueada porque los datos ya han sido consolidados'
                   : obtenerMensajeDescriptivo()

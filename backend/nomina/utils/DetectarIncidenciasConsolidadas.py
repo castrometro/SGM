@@ -228,6 +228,10 @@ def obtener_totales_por_concepto_desde_cache(cliente_id: int, periodo: str):
         cache = get_cache_system_nomina()
         informe = cache.get_informe_nomina(cliente_id, periodo)
         if not informe:
+            try:
+                logger.info(f"🔎 [CACHE] MISS InformeNomina para cliente={cliente_id}, periodo={periodo}")
+            except Exception:
+                pass
             return None
         bloque = None
         # El informe puede estar anidado directo o bajo 'datos_cierre'
@@ -236,6 +240,10 @@ def obtener_totales_por_concepto_desde_cache(cliente_id: int, periodo: str):
                 informe.get('datos_cierre', {}).get('libro_resumen_v2') if isinstance(informe.get('datos_cierre'), dict) else None
             )
         if not isinstance(bloque, dict):
+            try:
+                logger.info(f"🔎 [CACHE] InformeNomina encontrado pero sin bloque libro_resumen_v2 para cliente={cliente_id}, periodo={periodo}")
+            except Exception:
+                pass
             return None
         conceptos = bloque.get('conceptos') or []
         mapa = {}
@@ -248,6 +256,10 @@ def obtener_totales_por_concepto_desde_cache(cliente_id: int, periodo: str):
                     mapa[(nombre, categoria)] = Decimal(str(total))
             except Exception:
                 continue
+        try:
+            logger.info(f"✅ [CACHE] HIT InformeNomina para cliente={cliente_id}, periodo={periodo} (conceptos={len(conceptos)})")
+        except Exception:
+            pass
         return mapa
     except Exception:
         return None
@@ -636,6 +648,12 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
             cierre_actual = CierreNomina.objects.get(id=cierre_actual_id)
             cierre_anterior = CierreNomina.objects.get(id=cierre_anterior_id)
             mapa_prev_cache = obtener_totales_por_concepto_desde_cache(cierre_anterior.cliente_id, cierre_anterior.periodo)
+            prev_period_cache_used = mapa_prev_cache is not None
+            if prev_period_cache_used:
+                try:
+                    logger.info(f"🧠 [CACHE] Usando totales del periodo anterior desde cache para {cierre_anterior.periodo}")
+                except Exception:
+                    pass
             if mapa_prev_cache is None:
                 conceptos_anteriores = ConceptoConsolidado.objects.filter(
                     nomina_consolidada__cierre_id=cierre_anterior_id,
@@ -816,6 +834,7 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
             'conceptos_nuevos': len(conceptos_solo_actual),
             'conceptos_eliminados': len(conceptos_solo_anterior),
             'tiempo_procesamiento': round(tiempo_procesamiento, 2),
+            'prev_period_cache_used': prev_period_cache_used,
             'diag': {
                 'comparaciones_realizadas': conceptos_analizados,
                 'variaciones_sobre_umbral': variaciones_sobre_umbral,
@@ -835,6 +854,10 @@ def procesar_comparacion_suma_total(cierre_actual_id, cierre_anterior_id, task_i
         )
         if GENERAR_INCIDENCIAS_SUMA_TOTAL_POR_CONCEPTO:
             logger.info(f"   📊 {len(conceptos_unicos)} ítems únicos analizados (todas las categorías)")
+            try:
+                logger.info(f"   🧠 Cache periodo anterior utilizado: {prev_period_cache_used}")
+            except Exception:
+                pass
 
         return resultado
 

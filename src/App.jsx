@@ -35,6 +35,7 @@ import CacheRedisNomina from "./components/Gerente/CacheRedisNomina";
 // Importar nuevos componentes de Nómina
 import LibroRemuneracionesPage from "./pages/DashboardsNomina/LibroRemuneraciones";
 import MovimientosMesPage from "./pages/DashboardsNomina/MovimientosMes";
+import NominaDashboard from "./pages/DashboardsNomina/NominaDashboard";
 
 // Importar componentes de Captura Masiva de Gastos
 import CapturaMasivaGastos from "./pages/CapturaMasivaGastos";
@@ -86,6 +87,8 @@ function App() {
           <Route path="nomina/cierres/:cierreId" element={<CierreDetalleNomina />} />
           <Route path="cierres-nomina/:id/libro-remuneraciones" element={<LibroRemuneracionesPage />} />
           <Route path="cierres-nomina/:id/movimientos" element={<MovimientosMesPage />} />          {/* ----------- ÁREA: GESTIÓN DE ANALISTAS ------------- */}
+          {/* Dashboard Nómina (solo informes y cierres finalizados) */}
+          <Route path="nomina/clientes/:clienteId/dashboard" element={<NominaDashboard />} />
           <Route path="analistas" element={<GestionAnalistas />} />
           
           {/* ----------- ÁREA: MIS ANALISTAS (SUPERVISOR) ------------- */}

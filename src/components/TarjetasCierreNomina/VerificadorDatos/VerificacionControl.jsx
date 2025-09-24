@@ -7,6 +7,7 @@ import {
   limpiarDiscrepanciasCierre,
   actualizarEstadoCierreNomina,
   consolidarDatosTalana,
+  consolidarDatosTalanaYEsperar,
   consultarEstadoTarea
 } from "../../../api/nomina";
 
@@ -345,7 +346,21 @@ const VerificacionControl = ({
     
     try {
       console.log(`🎯 Iniciando consolidación de datos para cierre ${cierre.id}...`);
-      const resultado = await consolidarDatosTalana(cierre.id);
+      // Intentar usar helper que espera si el backend entrega task_id; si falla, caer al flujo anterior
+      let resultado;
+      try {
+        const res = await consolidarDatosTalanaYEsperar(cierre.id, { modo: 'optimizado' }, { intervalMs: 3000, timeoutMs: 0 });
+        // Si hay estructura {inicio, fin}, considerar operativo completo
+        if (res && res.inicio) {
+          resultado = res.inicio; // para compatibilidad con lógica actual
+          console.log('🟢 consolidarDatosTalanaYEsperar completó. Estado final:', res.fin);
+        } else {
+          resultado = res; // podría ser respuesta directa
+        }
+      } catch (e) {
+        console.warn('⚠️ No se pudo esperar desde helper, usando inicio + polling manual:', e?.message);
+        resultado = await consolidarDatosTalana(cierre.id);
+      }
       console.log('📋 Respuesta del servidor:', resultado);
       
       if (resultado.success && resultado.task_id) {
@@ -356,7 +371,16 @@ const VerificacionControl = ({
         iniciarPollingEstado(resultado.task_id, 'consolidacion');
         
       } else {
-        throw new Error(resultado.error || "Error desconocido al iniciar consolidación");
+        // Puede que el helper ya haya esperado y el estado esté actualizado; refrescar UI
+        await Promise.all([
+          cargarEstadoDiscrepancias(),
+          actualizarEstadoCierre()
+        ]);
+        setConsolidando(false);
+        setMostrarModalConsolidacion(false);
+        if (!resultado?.success) {
+          throw new Error(resultado?.error || "Error desconocido al iniciar consolidación");
+        }
       }
       
     } catch (error) {
@@ -525,6 +549,13 @@ const VerificacionControl = ({
     <>
       {/* Panel principal de verificación */}
       <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+        {/* Banner de estado consolidando (local o reportado por backend) */}
+        {(consolidando || cierre?.estado_consolidacion === 'consolidando') && (
+          <div className="mb-4 px-3 py-2 bg-yellow-900/30 border border-yellow-600/30 rounded-md text-yellow-200 flex items-center">
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            Consolidando datos de nómina... Esta operación puede tardar varios minutos. Puedes seguir trabajando en otras secciones.
+          </div>
+        )}
         <div className="flex items-center justify-between">
           {/* Lado izquierdo - Estado y contadores */}
           <div className="flex items-center gap-6">
@@ -565,6 +596,13 @@ const VerificacionControl = ({
 
           {/* Lado derecho - Botones de acción */}
           <div className="flex gap-3">
+            {/* Indicador de consolidación en curso (estado backend) */}
+            {cierre?.estado_consolidacion === 'consolidando' && (
+              <div className="hidden md:flex items-center px-3 py-2 bg-yellow-900/30 border border-yellow-600/40 rounded-lg text-yellow-300 mr-2">
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Consolidando datos...
+              </div>
+            )}
             <button
               onClick={manejarGenerarDiscrepancias}
               disabled={generando || !puedeGenerarDiscrepancias()}
@@ -673,10 +711,16 @@ const VerificacionControl = ({
           {console.log('🎭 Modal de consolidación renderizándose...')}
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-lg">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">Actualizar Consolidación</h3>
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                {consolidando && <Loader2 className="w-4 h-4 mr-2 animate-spin text-green-600" />}
+                Actualizar Consolidación
+              </h3>
               <button
-                onClick={() => setMostrarModalConsolidacion(false)}
-                className="text-gray-400 hover:text-gray-600"
+                onClick={() => !consolidando && setMostrarModalConsolidacion(false)}
+                className={`text-gray-400 ${consolidando ? 'opacity-40 cursor-not-allowed' : 'hover:text-gray-600'}`}
+                disabled={consolidando}
+                aria-disabled={consolidando}
+                title={consolidando ? 'Consolidación en curso' : 'Cerrar'}
               >
                 <X className="w-5 h-5" />
               </button>
@@ -697,12 +741,21 @@ const VerificacionControl = ({
                 <li>• Incluirá cualquier archivo nuevo subido después de la consolidación anterior</li>
                 <li>• El proceso no se puede deshacer una vez iniciado</li>
               </ul>
+              {consolidando && (
+                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded">
+                  <div className="flex items-center text-blue-700">
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Iniciando/ejecutando consolidación... No cierres esta ventana hasta que finalice.
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end space-x-3">
               <button
-                onClick={() => setMostrarModalConsolidacion(false)}
-                className="px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition-colors"
+                onClick={() => !consolidando && setMostrarModalConsolidacion(false)}
+                disabled={consolidando}
+                className={`px-4 py-2 text-gray-700 bg-gray-200 rounded-lg transition-colors ${consolidando ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-300'}`}
               >
                 Cancelar
               </button>

@@ -12,7 +12,9 @@ import {
   finalizarCierre,
   consultarEstadoTarea,
   limpiarIncidenciasCierre,
-  generarIncidenciasTotalesVariacion
+  generarIncidenciasTotalesVariacion,
+  obtenerEstadoCacheCierre,
+  obtenerCierreMensual
 } from "../../api/nomina";
 // import { actualizarEstadoCierreNomina } from "../../api/nomina";
 import { solicitarRecargaArchivosAnalista } from "../../api/nomina";
@@ -55,6 +57,7 @@ const IncidenciasEncontradasSection = ({
   // Remover estado interno de expandido ya que ahora viene como prop
   // const [expandido, setExpandido] = useState(true); // ← ELIMINADO
   const [incidencias, setIncidencias] = useState([]);
+  const [resumen, setResumen] = useState(null);
   const [cargando, setCargando] = useState(false);
   const [generando, setGenerando] = useState(false);
   const [error, setError] = useState("");
@@ -85,6 +88,46 @@ const IncidenciasEncontradasSection = ({
   const [solicitandoRecarga, setSolicitandoRecarga] = useState(false);
   const { usuario } = useAuth();
   const esSupervisor = (usuario?.tipo_usuario === 'supervisor' || usuario?.tipo_usuario === 'gerente');
+
+  // --- Helpers de período ---
+  const getPeriodoAnterior = (periodo) => {
+    // periodo esperado: 'YYYY-MM'
+    if (!periodo || typeof periodo !== 'string' || !/^[0-9]{4}-[0-9]{2}$/.test(periodo)) return null;
+    const [yStr, mStr] = periodo.split('-');
+    let y = parseInt(yStr, 10);
+    let m = parseInt(mStr, 10);
+    m -= 1;
+    if (m === 0) { m = 12; y -= 1; }
+    const mm = String(m).padStart(2, '0');
+    return `${y}-${mm}`;
+  };
+
+  // Diagnóstico: consulta explícita al estado de caché del cierre actual y el anterior
+  const diagnosticarCache = async () => {
+    try {
+      if (!cierre?.id) return;
+      console.log('🧠 [CACHE][DIAG] Consultando estado-cache (cierre actual):', cierre?.id, cierre?.periodo);
+      const cacheActual = await obtenerEstadoCacheCierre(cierre.id);
+      console.log('🧠 [CACHE][DIAG] Resultado cierre actual:', cacheActual);
+
+      const periodoAnterior = getPeriodoAnterior(cierre?.periodo);
+      if (periodoAnterior && cierre?.cliente) {
+        console.log('🧠 [CACHE][DIAG] Buscando cierre anterior por período:', periodoAnterior, 'cliente:', cierre.cliente);
+        const cierreAnterior = await obtenerCierreMensual(cierre.cliente, periodoAnterior);
+        if (cierreAnterior?.id) {
+          console.log('🧠 [CACHE][DIAG] Consultando estado-cache (cierre anterior):', cierreAnterior.id, cierreAnterior.periodo);
+          const cacheAnterior = await obtenerEstadoCacheCierre(cierreAnterior.id);
+          console.log('🧠 [CACHE][DIAG] Resultado cierre anterior:', cacheAnterior);
+        } else {
+          console.warn('🧠 [CACHE][DIAG] No se encontró cierre anterior en BD para', periodoAnterior);
+        }
+      } else {
+        console.warn('🧠 [CACHE][DIAG] No se pudo determinar período/cliente para cierre anterior');
+      }
+    } catch (e) {
+      console.warn('🧠 [CACHE][DIAG] Error consultando estado de cache:', e?.message || e);
+    }
+  };
 
   // Filtrado local por categoría
   const incidenciasFiltradas = useMemo(() => {
@@ -124,6 +167,8 @@ const IncidenciasEncontradasSection = ({
     if (cierre?.id) {
       console.log("✅ [useEffect Init] Llamando cargarEstadoIncidencias para cierre:", cierre.id);
       cargarEstadoIncidencias();
+      // Ejecutar diagnóstico de caché al iniciar
+      diagnosticarCache();
     } else {
       console.warn("⚠️ [useEffect Init] No se puede cargar estado - cierre.id no disponible");
     }
@@ -276,6 +321,8 @@ const IncidenciasEncontradasSection = ({
     setGenerando(true);
     setError("");
     try {
+      // Diagnóstico previo a generación
+      await diagnosticarCache();
       console.log("🚀 Generando incidencias simplificadas (variación totales ±30%)...");
       const resultado = await generarIncidenciasTotalesVariacion(cierre.id);
       console.log("✅ Resultado generación variaciones:", resultado);
@@ -696,9 +743,7 @@ const IncidenciasEncontradasSection = ({
                   <h3 className="text-lg font-medium text-white">
                     Lista de Incidencias
                   </h3>
-                  <div className="flex items-center gap-2 text-sm text-gray-400">
-                    <span>Análisis temporal - Corrección vía resubida de archivos Talana si necesario</span>
-                  </div>
+                  
                 </div>
               </div>
               <div className="p-4 space-y-6">

@@ -987,29 +987,14 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
 
           {/* Sección 4: Sistema de Incidencias */}
           {estaSeccionVisible('incidencias') && (
-            // Si está en datos_consolidados o posterior, mostrar dashboard
-            cierre?.estado === 'datos_consolidados' || 
-            cierre?.estado === 'con_incidencias' || 
-            cierre?.estado === 'incidencias_resueltas' ? (
-              <IncidenciasDashboard 
-                cierre={cierre} 
-                onCierreActualizado={onCierreActualizado}
-                onEstadoChange={onEstadoChangeIncidencias}
-                // 🎯 Props para acordeón
-                expandido={estaSeccionExpandida('incidencias')}
-                onToggleExpansion={() => manejarExpansionSeccion('incidencias')}
-              />
-            ) : (
-              // Antes de consolidación, mostrar la sección simple actual
-              <IncidenciasEncontradasSection 
-                cierre={cierre} 
-                onCierreActualizado={onCierreActualizado}
-                onEstadoChange={onEstadoChangeIncidencias}
-                // 🎯 Props para acordeón
-                expandido={estaSeccionExpandida('incidencias')}
-                onToggleExpansion={() => manejarExpansionSeccion('incidencias')}
-              />
-            )
+            <IncidenciasEncontradasSection 
+              cierre={cierre} 
+              onCierreActualizado={onCierreActualizado}
+              onEstadoChange={onEstadoChangeIncidencias}
+              // 🎯 Props para acordeón
+              expandido={estaSeccionExpandida('incidencias')}
+              onToggleExpansion={() => manejarExpansionSeccion('incidencias')}
+            />
           )}
         </>
       )}

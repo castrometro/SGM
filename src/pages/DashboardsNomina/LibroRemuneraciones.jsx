@@ -173,7 +173,7 @@ const LibroRemuneraciones = () => {
           legendData={legendData}
           formatearNumero={formatearNumero}
         />
-        <div className="flex flex-col lg:flex-row gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 xl:gap-10">
           <TablaConceptosLibro
             conceptosOrdenadosPaginados={conceptosOrdenadosPaginados}
             conceptQuery={conceptQuery}

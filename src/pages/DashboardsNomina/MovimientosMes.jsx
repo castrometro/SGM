@@ -210,7 +210,7 @@ const MovimientosMes = () => {
   // Al hacer click en una tarjeta togglear selección y reiniciar slices
   const handleSelectCard = (key) => {
     setCompareSelected(new Set()); // limpiar comparador al cambiar métrica base
-    setHiddenSlices(new Set());
+    resetSlices();
     setSelectedCard(prev => prev === key ? '' : key);
     setSelectedTipo(prev => prev === key ? null : key);
   };

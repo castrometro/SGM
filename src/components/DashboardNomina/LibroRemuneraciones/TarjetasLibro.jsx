@@ -1,21 +1,20 @@
 import React from 'react';
 import { Users, Calendar } from 'lucide-react';
-import { formatearMonedaChilena } from '../../../utils/formatters';
 
 const TarjetasLibro = ({ resumen, selectedCat, setSelectedCat, formatearMonto }) => {
   const tot = resumen?.totales_categorias || {};
-  const cardBase = 'group flex-1 cursor-pointer bg-gray-900/60 rounded-lg px-5 py-4 border transition-colors flex flex-col gap-1';
+  const cardBase = 'group inline-flex cursor-pointer bg-gray-900/60 rounded-lg px-5 py-4 border transition-colors flex-col gap-1 w-full sm:w-auto';
   const toggle = key => setSelectedCat(prev => prev === key ? '' : key);
   return (
     <div className="flex flex-wrap gap-4">
-      <div className="group flex-1 bg-gray-900/60 rounded-lg px-5 py-4 border border-gray-800 hover:border-teal-700/60 transition-colors flex flex-col gap-1">
+      <div className="group inline-flex bg-gray-900/60 rounded-lg px-5 py-4 border border-gray-800 hover:border-teal-700/60 transition-colors flex-col gap-1 w-full sm:w-auto">
         <div className="flex items-center justify-between mb-1">
           <p className="text-[11px] font-medium tracking-wide text-gray-400 group-hover:text-teal-300/90 uppercase">Total Empleados</p>
           <Users className="w-5 h-5 text-teal-500" />
         </div>
         <p className="text-2xl font-semibold text-white leading-snug tabular-nums whitespace-nowrap">{resumen?.cierre?.total_empleados || 0}</p>
       </div>
-      <div className="group flex-1 bg-gray-900/60 rounded-lg px-5 py-4 border border-gray-800 hover:border-teal-700/60 transition-colors flex flex-col gap-1">
+      <div className="group inline-flex bg-gray-900/60 rounded-lg px-5 py-4 border border-gray-800 hover:border-teal-700/60 transition-colors flex-col gap-1 w-full sm:w-auto">
         <div className="flex items-center justify-between mb-1">
           <p className="text-[11px] font-medium tracking-wide text-gray-400 group-hover:text-teal-300/90 uppercase">Mes Cierre</p>
           <Calendar className="w-5 h-5 text-teal-500" />

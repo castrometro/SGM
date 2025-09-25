@@ -6,7 +6,8 @@ import {
   obtenerEstadoLibroRemuneraciones,
   obtenerEstadoMovimientosMes,
   obtenerEstadoArchivoAnalista,
-  obtenerEstadoArchivoNovedades
+  obtenerEstadoArchivoNovedades,
+  obtenerKpisCierreNomina
 } from "../../api/nomina";
 
 const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
@@ -23,17 +24,23 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
   const cargarArchivosUsados = async () => {
     setCargando(true);
     try {
-      // Usar el endpoint existente del libro de remuneraciones que ya tiene las estadísticas
-      const libroData = await obtenerLibroRemuneraciones(cierre.id);
-      
-      // Transformar los datos del libro a la estructura esperada
+      // 1) KPIs unificados (cache/informe/libro_resumen_v2)
+      const kpisPayload = await obtenerKpisCierreNomina(cierre.id);
+      const libroData = kpisPayload?.raw?.libro ? { resumen: { total_empleados: kpisPayload.kpis?.total_empleados }, cierre: { periodo: kpisPayload.periodo } } : await obtenerLibroRemuneraciones(cierre.id);
+
+      // Derivar stats de empleados desde libro completo sólo si fue necesario fallback.
+      let totalIngresos = 0, totalFiniquitos = 0, totalAusentismos = 0;
+      if (libroData?.empleados) {
+        totalIngresos = libroData.empleados.filter(emp => emp.estado_empleado === 'nueva_incorporacion').length;
+        totalFiniquitos = libroData.empleados.filter(emp => emp.estado_empleado === 'finiquito').length;
+        totalAusentismos = libroData.empleados.filter(emp => ['ausente_total','ausente_parcial'].includes(emp.estado_empleado)).length;
+      }
+
       const estadisticas = {
-        total_empleados: libroData.resumen?.total_empleados || 0,
-        total_ingresos: libroData.empleados?.filter(emp => emp.estado_empleado === 'nueva_incorporacion').length || 0,
-        total_finiquitos: libroData.empleados?.filter(emp => emp.estado_empleado === 'finiquito').length || 0,
-        total_ausentismos: libroData.empleados?.filter(emp => 
-          emp.estado_empleado === 'ausente_total' || emp.estado_empleado === 'ausente_parcial'
-        ).length || 0
+        total_empleados: kpisPayload?.kpis?.total_empleados ?? libroData?.resumen?.total_empleados ?? 0,
+        total_ingresos: totalIngresos,
+        total_finiquitos: totalFiniquitos,
+        total_ausentismos: totalAusentismos
       };
       
       // ========== OBTENER DATOS REALES DE ARCHIVOS TALANA ==========
@@ -171,10 +178,11 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
         talana: archivos_talana,
         analista: archivos_analista,
         resumen_libro: {
-          total_haberes: libroData.resumen?.total_haberes || 0,
-          total_descuentos: libroData.resumen?.total_descuentos || 0,
-          liquido_total: libroData.resumen?.liquido_total || 0
-        }
+          total_haberes: kpisPayload?.kpis?.total_haberes ?? libroData?.resumen?.total_haberes ?? 0,
+          total_descuentos: kpisPayload?.kpis?.total_descuentos ?? libroData?.resumen?.total_descuentos ?? 0,
+          liquido_total: kpisPayload?.kpis?.liquido_estimado ?? libroData?.resumen?.liquido_total ?? 0
+        },
+        kpis: kpisPayload?.kpis || {}
       });
     } catch (err) {
       console.error("Error cargando datos del libro de remuneraciones:", err);

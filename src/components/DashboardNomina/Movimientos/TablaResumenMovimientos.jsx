@@ -12,7 +12,8 @@ const TablaResumenMovimientos = ({
   prettifyEtiqueta,
   datos,
   obtenerClaseColorEmpleado,
-  obtenerIndiceColorEmpleado
+  obtenerIndiceColorEmpleado,
+  comparativoTarjetas
 }) => {
   const formatRut = (rut) => {
     if (!rut) return '-';
@@ -32,16 +33,20 @@ const TablaResumenMovimientos = ({
     { key: 'ausencias_sin_justificar', name: 'Ausencias sin justificar', value: tarjetasMetrics.ausSinJustificar, empleados: tarjetasMetrics.ausSinJustEmp, tipo: 'count' },
   ];
   const rows = selectedCard ? rowsBase.filter(r=> r.key === selectedCard) : rowsBase;
+  const showComparativo = !!comparativoTarjetas;
 
   return (
-    <div ref={tablaRef} className="bg-gray-900/60 rounded-xl p-5 border border-gray-800 max-w-4xl flex-shrink-0 w-full lg:w-[840px]">
+    <div ref={tablaRef} className="bg-gray-900/60 rounded-xl p-6 border border-gray-800 w-full flex flex-col min-h-[420px]">
       <div className="bg-gray-900/60 rounded-xl border border-gray-800 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gray-800/80 border-b border-gray-700">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Tipo / Métrica</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-300 uppercase tracking-wider">Valor</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-300 uppercase tracking-wider">Actual</th>
+                {showComparativo && <th className="px-4 py-3 text-right text-xs font-medium text-gray-300 uppercase tracking-wider">Anterior</th>}
+                {showComparativo && <th className="px-4 py-3 text-right text-xs font-medium text-gray-300 uppercase tracking-wider">Δ</th>}
+                {showComparativo && <th className="px-4 py-3 text-right text-xs font-medium text-gray-300 uppercase tracking-wider">Δ%</th>}
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-300 uppercase tracking-wider">Empleados</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-300 uppercase tracking-wider">Comparar</th>
               </tr>
@@ -49,11 +54,16 @@ const TablaResumenMovimientos = ({
             <tbody className="divide-y divide-gray-800">
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-gray-500">Sin datos</td>
+                  <td colSpan={showComparativo? 7 : 4} className="px-4 py-8 text-center text-gray-500">Sin datos</td>
                 </tr>
               )}
               {rows.map(r => {
                 const selected = selectedTipo === r.key;
+                const comp = comparativoTarjetas?.[r.key] || null;
+                const anterior = comp ? comp.anterior : null;
+                const delta = comp ? comp.delta : null;
+                const pct = comp ? comp.pct : null;
+                const deltaCls = delta === null || delta === 0 ? 'text-gray-400' : (delta > 0 ? 'text-emerald-400':'text-rose-400');
                 return (
                   <React.Fragment key={r.key}>
                     <tr
@@ -65,7 +75,10 @@ const TablaResumenMovimientos = ({
                           {obtenerIconoTipo(r.key.includes('ausencia') || r.key==='vacaciones' ? 'ausencia' : (r.key==='ausencias_sin_justificar' ? 'ausencia' : r.key))} {prettifyEtiqueta(r.name.toLowerCase().replace(/\s+/g,'_'))}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right text-gray-300">{r.value}</td>
+                      <td className="px-4 py-3 text-right text-gray-300 tabular-nums font-medium">{r.value}</td>
+                      {showComparativo && <td className="px-4 py-3 text-right text-gray-400 tabular-nums">{anterior !== null ? anterior : '--'}</td>}
+                      {showComparativo && <td className={`px-4 py-3 text-right tabular-nums font-medium ${deltaCls}`}>{delta===null? '--': (delta>0? '+':'')+delta}</td>}
+                      {showComparativo && <td className={`px-4 py-3 text-right tabular-nums ${deltaCls}`}>{pct===null? '--': (pct>0?'+':'')+pct.toFixed(1)+'%'}</td>}
                       <td className="px-4 py-3 text-right text-gray-300">{r.empleados ?? '-'}</td>
                       <td className="px-4 py-3 text-right text-gray-300">
                         <button
@@ -77,7 +90,7 @@ const TablaResumenMovimientos = ({
                     </tr>
                     {selected && (
                       <tr>
-                        <td colSpan={4} className="px-4 py-3 bg-gray-900/50">
+                        <td colSpan={showComparativo? 7 : 4} className="px-4 py-3 bg-gray-900/50">
                           <div className="overflow-y-auto max-h-96 rounded-lg border border-gray-800">
                             <table className="w-full">
                               <thead className="bg-gray-800/80 border-b border-gray-700 sticky top-0 z-10">

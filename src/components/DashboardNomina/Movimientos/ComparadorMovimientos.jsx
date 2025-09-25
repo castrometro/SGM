@@ -15,7 +15,7 @@ const ComparadorMovimientos = ({
   CompareTooltip
 }) => {
   return (
-    <div className="bg-gray-900/60 rounded-xl p-5 border border-gray-800 flex-1 min-h-[400px] flex flex-col">
+  <div className="bg-gray-900/60 rounded-xl p-6 border border-gray-800 flex-1 min-h-[420px] min-w-[320px] flex flex-col">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-medium text-gray-300">Comparador</h3>
         <div className="flex items-center gap-2">

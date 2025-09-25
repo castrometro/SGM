@@ -172,6 +172,12 @@ const LibroRemuneraciones = () => {
           resetSlices={resetSlices}
           legendData={legendData}
           formatearNumero={formatearNumero}
+          /* Props adicionales necesarios para vista detallada (sin comparativo previo) */
+          categoriasChartData={categoriasChartData}
+          categoriasChartDataAnterior={null}
+          conceptosDeCategoriaDataActual={conceptosDeCategoriaData}
+          conceptosDeCategoriaDataAnterior={[]}
+          tieneAnterior={false}
         />
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 xl:gap-10">
           <TablaConceptosLibro

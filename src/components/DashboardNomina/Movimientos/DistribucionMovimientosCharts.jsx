@@ -12,7 +12,13 @@ const DistribucionMovimientosCharts = ({
   totalChartVisible,
   activeChartData,
   BarTooltipMain,
-  PieTooltipMain
+  PieTooltipMain,
+  comparacionBarras,
+  barEmphasis,
+  setBarEmphasis,
+  tieneAnterior,
+  pieDataset,
+  setPieDataset
 }) => {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
@@ -25,25 +31,48 @@ const DistribucionMovimientosCharts = ({
               {selectedCard ? 'Detalle seleccionado' : 'Distribución general'}
             </h3>
           </div>
+          {!selectedCard && tieneAnterior && comparacionBarras && (
+            <div className="flex items-center gap-1 bg-gray-800/60 rounded-md p-1 text-[11px]">
+              {['actual','anterior'].map(k => (
+                <button key={k} onClick={()=>setBarEmphasis(k)} className={`px-2 py-0.5 rounded ${barEmphasis===k? 'bg-teal-600 text-white':'text-gray-400 hover:text-gray-200'}`}>{k==='actual' ? 'Actual':'Anterior'}</button>
+              ))}
+            </div>
+          )}
           {hiddenSlices.size>0 && (
             <button onClick={resetSlices} className="text-xs text-teal-400 hover:underline">Mostrar todo</button>
           )}
         </div>
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={visibleChartData} layout="vertical" margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-              <XAxis type="number" stroke="#9ca3af" tick={{ fontSize: 11 }} />
-              <YAxis type="category" dataKey="name" stroke="#9ca3af" width={210} tick={{ fontSize: 11 }} />
-              <RTooltip content={<BarTooltipMain />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} wrapperStyle={{ outline:'none' }} />
-              <Bar dataKey="value" radius={[0,6,6,0]}>
-                {visibleChartData
-                  .sort((a,b)=> b.value - a.value)
-                  .map((entry,i) => (
-                    <Cell key={`bar-${entry.key||i}`} fill={colorMapOrdenado[entry.key||entry.name]} className="cursor-pointer" onClick={() => toggleSlice(entry.name)} />
-                  ))}
-              </Bar>
-            </BarChart>
+            {(!selectedCard && comparacionBarras) ? (
+              <BarChart data={comparacionBarras} layout="vertical" margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <XAxis type="number" stroke="#9ca3af" tick={{ fontSize: 11 }} />
+                <YAxis type="category" dataKey="name" stroke="#9ca3af" width={210} tick={{ fontSize: 11 }} />
+                <RTooltip content={<BarTooltipMain />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} wrapperStyle={{ outline:'none' }} />
+                {barEmphasis==='anterior' && (
+                  <Bar dataKey="value_actual" radius={[0,6,6,0]} fill="#14b8a6" fillOpacity={0.25} />
+                )}
+                <Bar dataKey={barEmphasis==='actual'? 'value_actual':'value_anterior'} radius={[0,6,6,0]} fill={barEmphasis==='actual'? '#14b8a6':'#6366f1'} />
+                {barEmphasis==='actual' && (
+                  <Bar dataKey="value_anterior" radius={[0,6,6,0]} fill="#6366f1" fillOpacity={0.3} />
+                )}
+              </BarChart>
+            ) : (
+              <BarChart data={visibleChartData} layout="vertical" margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <XAxis type="number" stroke="#9ca3af" tick={{ fontSize: 11 }} />
+                <YAxis type="category" dataKey="name" stroke="#9ca3af" width={210} tick={{ fontSize: 11 }} />
+                <RTooltip content={<BarTooltipMain />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} wrapperStyle={{ outline:'none' }} />
+                <Bar dataKey="value" radius={[0,6,6,0]}>
+                  {visibleChartData
+                    .sort((a,b)=> b.value - a.value)
+                    .map((entry,i) => (
+                      <Cell key={`bar-${entry.key||i}`} fill={colorMapOrdenado[entry.key||entry.name]} className="cursor-pointer" onClick={() => toggleSlice(entry.name)} />
+                    ))}
+                </Bar>
+              </BarChart>
+            )}
           </ResponsiveContainer>
         </div>
         <div className="pt-2 text-xs text-gray-400">Total visible: {totalChartVisible}</div>
@@ -55,6 +84,13 @@ const DistribucionMovimientosCharts = ({
             <BarChart3 size={16} className="text-gray-400" />
             <h3 className="text-sm font-medium text-gray-300">{selectedCard ? 'Porción seleccionada' : 'Distribución porcentual'}</h3>
           </div>
+          {tieneAnterior && (
+            <div className="flex items-center gap-1 bg-gray-800/60 rounded-md p-1 text-[11px]">
+              {['actual','anterior'].map(k => (
+                <button key={k} onClick={() => { setPieDataset(k); resetSlices(); }} className={`px-2 py-0.5 rounded ${pieDataset===k? 'bg-teal-600 text-white':'text-gray-400 hover:text-gray-200'}`}>{k==='actual'? 'Actual':'Anterior'}</button>
+              ))}
+            </div>
+          )}
         </div>
         <div className="flex-1 flex items-center justify-center">
           <ResponsiveContainer width="100%" height={300}>

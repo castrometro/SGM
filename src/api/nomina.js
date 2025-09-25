@@ -6,6 +6,135 @@ export const obtenerResumenNomina = async (clienteId) => {
   return response.data;
 };
 
+/**
+ * Obtener KPIs compuestos de Nómina para un cliente tomando el último cierre disponible.
+ * Deriva métricas a partir de:
+ *  - /nomina/cierres/resumen/{clienteId}/          (para saber periodo último cierre)
+ *  - /nomina/cierres/?cliente= & periodo=          (para obtener id y estado del cierre)
+ *  - /nomina/cierres/{cierreId}/libro/v2/resumen/  (totales por categoría y empleados)
+ *  - /nomina/cierres/{cierreId}/movimientos/       (conteo de movimientos por categoría)
+ *
+ * NOTA: Todo esto ya existe en backend; si se vuelve crítico performance se puede crear
+ * un endpoint unificado (p.ej. kpis_cliente/{cliente_id}/) que agregue en servidor.
+ */
+export const obtenerKpisNominaCliente = async (clienteId) => {
+  try {
+    const resumen = await obtenerResumenNomina(clienteId);
+    const periodo = resumen?.ultimo_cierre;
+    if (!periodo) {
+      return { tieneCierre: false, clienteId, kpis: {}, raw: {}, motivo: 'sin_cierres' };
+    }
+
+    // Obtener el objeto de cierre (nos da id y estado). Reutilizamos helper existente.
+    const cierre = await obtenerCierreMensual(clienteId, periodo);
+    if (!cierre || !cierre.id) {
+      return { tieneCierre: false, clienteId, periodo, kpis: {}, raw: {}, motivo: 'cierre_no_encontrado' };
+    }
+    const cierreId = cierre.id;
+
+    // Pedimos en paralelo libro y movimientos (fallos aislados no rompen todo)
+    const [libro, movimientos] = await Promise.all([
+      (async () => { try { return await obtenerLibroResumenV2(cierreId); } catch { return null; } })(),
+      (async () => { try { return await obtenerMovimientosMes(cierreId); } catch { return null; } })(),
+    ]);
+
+    const totCat = libro?.totales_categorias || {};
+    const totalEmpleados = libro?.cierre?.total_empleados ?? 0;
+    const haberImp = Number(totCat.haber_imponible || 0);
+    const haberNoImp = Number(totCat.haber_no_imponible || 0);
+    const descuentosLeg = Number(totCat.descuento_legal || 0);
+    const otrosDesc = Number(totCat.otro_descuento || 0);
+    const impuestos = Number(totCat.impuesto || 0);
+    const aportePatronal = Number(totCat.aporte_patronal || 0);
+
+    const totalHaberes = haberImp + haberNoImp;
+    const totalDescuentos = descuentosLeg + otrosDesc + impuestos;
+    const liquidoEstimado = totalHaberes - totalDescuentos; // No incluye aportes patronales
+    const promedioLiquido = totalEmpleados > 0 ? liquidoEstimado / totalEmpleados : 0;
+    const porcentajeDescuentos = totalHaberes > 0 ? (totalDescuentos / totalHaberes) : 0;
+
+    const movimientosResumen = movimientos?.resumen || {};
+    const movimientosTotales = movimientosResumen.total_movimientos || 0;
+    const movimientosPorCategoria = movimientosResumen.por_categoria || {};
+
+    const kpis = {
+      total_empleados: totalEmpleados,
+      total_haberes_imponibles: haberImp,
+      total_haberes_no_imponibles: haberNoImp,
+      total_haberes: totalHaberes,
+      total_descuentos: totalDescuentos,
+      aporte_patronal: aportePatronal,
+      liquido_estimado: liquidoEstimado,
+      promedio_liquido: promedioLiquido,
+      porcentaje_descuentos: porcentajeDescuentos, // valor 0-1
+      movimientos_totales: movimientosTotales,
+      movimientos_por_categoria: movimientosPorCategoria,
+    };
+
+    return {
+      tieneCierre: true,
+      clienteId,
+      periodo,
+      cierreId,
+      estado_cierre: cierre.estado,
+      kpis,
+      raw: { libro, movimientos },
+    };
+  } catch (e) {
+    // No propagamos excepción dura para que el caller pueda decidir fallback
+    return { tieneCierre: false, clienteId, kpis: {}, raw: {}, error: e?.message || 'error_desconocido' };
+  }
+};
+
+// KPIs directos para un cierre específico (usa mismo flujo cache/informe de libro_resumen_v2)
+export const obtenerKpisCierreNomina = async (cierreId) => {
+  try {
+    // Libro resumido (intenta fast path informe/redis)
+    const libro = await obtenerLibroResumenV2(cierreId);
+    const totCat = libro?.totales_categorias || {};
+    const totalEmpleados = libro?.cierre?.total_empleados ?? 0;
+    const haberImp = Number(totCat.haber_imponible || 0);
+    const haberNoImp = Number(totCat.haber_no_imponible || 0);
+    const descuentosLeg = Number(totCat.descuento_legal || 0);
+    const otrosDesc = Number(totCat.otro_descuento || 0);
+    const impuestos = Number(totCat.impuesto || 0);
+    const aportePatronal = Number(totCat.aporte_patronal || 0);
+    const totalHaberes = haberImp + haberNoImp;
+    const totalDescuentos = descuentosLeg + otrosDesc + impuestos;
+    const liquidoEstimado = totalHaberes - totalDescuentos;
+    const promedioLiquido = totalEmpleados > 0 ? liquidoEstimado / totalEmpleados : 0;
+    const porcentajeDescuentos = totalHaberes > 0 ? (totalDescuentos / totalHaberes) : 0;
+
+    // Movimientos (opcional, si falla no rompe)
+    let movimientosTotales = null;
+    try {
+      const movimientos = await obtenerMovimientosMes(cierreId);
+      movimientosTotales = movimientos?.resumen?.total_movimientos ?? null;
+    } catch { /* noop */ }
+
+    return {
+      cierreId,
+      periodo: libro?.cierre?.periodo ?? null,
+      kpis: {
+        total_empleados: totalEmpleados,
+        total_haberes_imponibles: haberImp,
+        total_haberes_no_imponibles: haberNoImp,
+        total_haberes: totalHaberes,
+        total_descuentos: totalDescuentos,
+        aporte_patronal: aportePatronal,
+        liquido_estimado: liquidoEstimado,
+        promedio_liquido: promedioLiquido,
+        porcentaje_descuentos: porcentajeDescuentos,
+        movimientos_totales: movimientosTotales,
+      },
+      raw: { libro },
+      source: 'libro_resumen_v2'
+    };
+  } catch (e) {
+    return { cierreId, error: e?.message || 'error_desconocido', kpis: {}, raw: {} };
+  }
+};
+
 
 export const obtenerCierreMensual = async (clienteId, periodo) => {
   // Normaliza siempre el periodo

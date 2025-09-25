@@ -9,6 +9,8 @@ import {
 import { ArrowLeft, Calendar, BookOpen, Users2 } from 'lucide-react';
 import LibroEmbed from '../../components/DashboardNomina/Embeds/LibroEmbed';
 import MovimientosEmbed from '../../components/DashboardNomina/Embeds/MovimientosEmbed';
+import ComparativoLibro from '../../components/DashboardNomina/LibroRemuneraciones/ComparativoLibro';
+import ComparativoMovimientos from '../../components/DashboardNomina/Movimientos/ComparativoMovimientos';
 
 // Util: calcula periodo anterior YYYY-MM
 function periodoAnterior(periodo) {
@@ -275,11 +277,14 @@ const NominaDashboard = () => {
               {cargandoDatos && <div className="text-gray-400">Cargando libro...</div>}
               {!cargandoDatos && cierreActual?.estado === 'finalizado' && resumenLibroActual ? (
                 <div className="bg-gray-900/60 border border-gray-800 rounded-lg p-4">
-                  <LibroEmbed resumenV2={resumenLibroActual} />
+                  <LibroEmbed resumenV2={resumenLibroActual} resumenAnterior={resumenLibroAnterior} />
                   {resumenLibroAnterior && (
-                    <div className="mt-6">
-                      <div className="text-sm text-gray-300 mb-2">Comparativo vs {cierreAnterior?.periodo}</div>
-                      {/* Aquí podríamos renderizar un comparador específico si se requiere */}
+                    <div className="mt-8 border-t border-gray-800 pt-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-sm font-semibold text-gray-200">Comparativo vs {cierreAnterior?.periodo}</h3>
+                        <span className="text-[10px] text-gray-500">Solo se muestran diferencias monetarias y porcentaje.</span>
+                      </div>
+                      <ComparativoLibro showCategorias={false} actual={resumenLibroActual} anterior={resumenLibroAnterior} periodoAnterior={cierreAnterior?.periodo} />
                     </div>
                   )}
                 </div>
@@ -296,8 +301,12 @@ const NominaDashboard = () => {
                 <div className="bg-gray-900/60 border border-gray-800 rounded-lg p-4">
                   <MovimientosEmbed bloque={movsActual} />
                   {movsAnterior && (
-                    <div className="mt-6">
-                      <div className="text-sm text-gray-300 mb-2">Comparativo vs {cierreAnterior?.periodo}</div>
+                    <div className="mt-8 border-t border-gray-800 pt-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-sm font-semibold text-gray-200">Comparativo vs {cierreAnterior?.periodo}</h3>
+                        <span className="text-[10px] text-gray-500">Variaciones de conteos y días.</span>
+                      </div>
+                      <ComparativoMovimientos actual={movsActual} anterior={movsAnterior} periodoAnterior={cierreAnterior?.periodo} />
                     </div>
                   )}
                 </div>

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import TarjetasLibro from '../../DashboardNomina/LibroRemuneraciones/TarjetasLibro';
+import TarjetasLibroComparativo from '../../DashboardNomina/LibroRemuneraciones/TarjetasLibroComparativo';
 import ChartsLibro from '../../DashboardNomina/LibroRemuneraciones/ChartsLibro';
 import TablaConceptosLibro from '../../DashboardNomina/LibroRemuneraciones/TablaConceptosLibro';
 import ComparadorLibro from '../../DashboardNomina/LibroRemuneraciones/ComparadorLibro';
@@ -8,7 +9,7 @@ import { buildOrderedColorMap, BASE_PALETTE } from '../../../utils/dashboard/col
 const formatearMoneda = (v) => new Intl.NumberFormat('es-CL').format(Number(v || 0));
 
 // Embed completo del Libro, recibe bloque libro_resumen_v2 ya cargado
-const LibroEmbed = ({ resumenV2 }) => {
+const LibroEmbed = ({ resumenV2, resumenAnterior }) => {
   const [selectedCat, setSelectedCat] = useState('');
   const [conceptQuery, setConceptQuery] = useState('');
   const [conceptSort, setConceptSort] = useState({ key: 'total', dir: 'desc' });
@@ -67,6 +68,18 @@ const LibroEmbed = ({ resumenV2 }) => {
       { name: 'Aportes Patronales', key: 'aporte_patronal', value: Number(t.aporte_patronal||0) }
     ];
   }, [resumenV2]);
+  const categoriasChartDataAnterior = useMemo(()=> {
+    if (!resumenAnterior) return null;
+    const t = resumenAnterior?.totales_categorias || {};
+    return [
+      { name: 'Haberes Imponibles', key: 'haber_imponible', value: Number(t.haber_imponible||0) },
+      { name: 'Haberes No Imponibles', key: 'haber_no_imponible', value: Number(t.haber_no_imponible||0) },
+      { name: 'Descuentos Legales', key: 'descuento_legal', value: Number(t.descuento_legal||0) },
+      { name: 'Otros Descuentos', key: 'otro_descuento', value: Number(t.otro_descuento||0) },
+      { name: 'Impuestos', key: 'impuesto', value: Number(t.impuesto||0) },
+      { name: 'Aportes Patronales', key: 'aporte_patronal', value: Number(t.aporte_patronal||0) }
+    ];
+  }, [resumenAnterior]);
   const conceptosDeCategoriaData = useMemo(()=> {
     if (!selectedCat) return [];
     return conceptosData
@@ -74,6 +87,14 @@ const LibroEmbed = ({ resumenV2 }) => {
       .map(c=> ({ name: c.nombre, value: Number(c.total||0) }))
       .sort((a,b)=> b.value - a.value);
   }, [conceptosData, selectedCat]);
+  const conceptosDeCategoriaDataAnterior = useMemo(()=> {
+    if (!selectedCat || !resumenAnterior) return [];
+    const prevConceptos = resumenAnterior?.conceptos || [];
+    return prevConceptos
+      .filter(c=> c.categoria === selectedCat)
+      .map(c=> ({ name: c.nombre, value: Number(c.total||0) }))
+      .sort((a,b)=> b.value - a.value);
+  }, [resumenAnterior, selectedCat]);
   const donutData = selectedCat ? conceptosDeCategoriaData : categoriasChartData;
   const filteredDonutData = useMemo(()=> donutData.filter(d=> d.value !== 0), [donutData]);
   const [hiddenSlices, setHiddenSlices] = useState(()=> new Set());
@@ -107,7 +128,11 @@ const LibroEmbed = ({ resumenV2 }) => {
 
   return (
     <div className="w-full space-y-6">
-      <TarjetasLibro resumen={resumenV2} selectedCat={selectedCat} setSelectedCat={setSelectedCat} formatearMonto={formatearMoneda} />
+      {resumenAnterior ? (
+        <TarjetasLibroComparativo actual={resumenV2} anterior={resumenAnterior} selectedCat={selectedCat} setSelectedCat={setSelectedCat} />
+      ) : (
+        <TarjetasLibro resumen={resumenV2} selectedCat={selectedCat} setSelectedCat={setSelectedCat} formatearMonto={formatearMoneda} />
+      )}
       <ChartsLibro
         chartsEntered={chartsEntered}
         selectedCat={selectedCat}
@@ -120,6 +145,11 @@ const LibroEmbed = ({ resumenV2 }) => {
         resetSlices={resetSlices}
         legendData={legendData}
         formatearNumero={(v)=>new Intl.NumberFormat('es-CL').format(Number(v||0))}
+        categoriasChartData={categoriasChartData}
+        categoriasChartDataAnterior={categoriasChartDataAnterior}
+        conceptosDeCategoriaDataActual={conceptosDeCategoriaData}
+        conceptosDeCategoriaDataAnterior={conceptosDeCategoriaDataAnterior}
+        tieneAnterior={!!resumenAnterior}
       />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 xl:gap-10">
         <TablaConceptosLibro
@@ -135,6 +165,9 @@ const LibroEmbed = ({ resumenV2 }) => {
           compareSelected={compareSelected}
           toggleCompare={toggleCompare}
           selectedCat={selectedCat}
+          resumenAnterior={resumenAnterior}
+          resumenActual={resumenV2}
+          allowReclasificar={false}
         />
         <ComparadorLibro
           selectedCat={selectedCat}

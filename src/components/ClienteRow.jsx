@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { obtenerResumenContable } from "../api/contabilidad";
 import { obtenerResumenNomina } from "../api/nomina";
 import EstadoBadge from "./EstadoBadge";
@@ -9,6 +9,7 @@ const ClienteRow = ({ cliente, areaActiva }) => {
     ultimo_cierre: null,
     estado_cierre_actual: null,
   });
+  const navigate = useNavigate();
 
   // Determinar el estado del cierre según el área activa
   const getEstadoCierre = () => {
@@ -88,16 +89,17 @@ const ClienteRow = ({ cliente, areaActiva }) => {
           {areaActiva === "Nomina" && (
             <button
               onClick={() => {
-                const streamlitUrl = `http://172.17.11.18:8503/?cliente_id=${cliente.id}`;
-                window.open(streamlitUrl, '_blank');
+                // Navegar al dashboard interno de nómina (ajusta la ruta si difiere)
+                navigate(`/menu/nomina/clientes/${cliente.id}/dashboard`);
               }}
-              className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded font-medium text-sm transition-colors flex items-center gap-1"
-              title="Ver Dashboard Nómina"
+              className="relative group px-3 py-1.5 rounded-md text-sm font-medium bg-gradient-to-r from-teal-500/80 to-emerald-500/80 hover:from-teal-500 hover:to-emerald-500 text-white shadow-sm shadow-teal-700/30 border border-teal-400/30 hover:border-teal-300/50 focus:outline-none focus:ring-2 focus:ring-teal-400/50 transition flex items-center gap-1"
+              title="Abrir Dashboard Nómina"
             >
-              <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              <span className="absolute inset-0 rounded-md opacity-0 group-hover:opacity-100 transition bg-white/10" />
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 13h2l2 6 4-14 3 8h6" />
               </svg>
-              Dashboard
+              <span>Dashboard</span>
             </button>
           )}
         </div>

@@ -487,12 +487,26 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
             incidencia.save(update_fields=['estado', 'asignado_a', 'fecha_ultima_accion'])
             
             logger.info(f"✅ Incidencia {incidencia.id} aprobada por {request.user.correo_bdo}")
+
+            # Verificar si todas las incidencias del cierre están aprobadas
+            cierre = incidencia.cierre
+            pendientes = cierre.incidencias.exclude(estado='aprobada_supervisor').exists()
+            if not pendientes:
+                # Actualizar estado global del cierre
+                cierre.estado_incidencias = 'resueltas'
+                # Solo escalar estado principal si todavía no está finalizado
+                if cierre.estado in ['con_incidencias', 'datos_consolidados']:
+                    cierre.estado = 'incidencias_resueltas'
+                cierre.save(update_fields=['estado_incidencias', 'estado'])
+                logger.info(f"🧩 Todas las incidencias aprobadas: cierre {cierre.id} -> incidencias_resueltas")
             
             return Response({
                 "message": "Incidencia aprobada correctamente",
                 "estado": incidencia.estado,
                 "fecha_aprobacion": incidencia.fecha_ultima_accion,
-                "resolucion_id": resolucion.id
+                "resolucion_id": resolucion.id,
+                "cierre_estado": incidencia.cierre.estado,
+                "cierre_estado_incidencias": incidencia.cierre.estado_incidencias
             })
             
         except Exception as e:
@@ -601,6 +615,56 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
             })
         except Exception as e:
             return Response({'error': f'Error marcando como corregida: {e}'}, status=500)
+
+    # ================== CIERRE GLOBAL DE INCIDENCIAS (FORZAR SIN APROBAR UNA A UNA) ==================
+    @action(detail=False, methods=['post'], url_path='cerrar/(?P<cierre_id>[^/.]+)')
+    def cerrar_incidencias_cierre(self, request, cierre_id=None):
+        """Forzar transición a 'incidencias_resueltas' si todas las incidencias están aprobadas.
+
+        Uso: POST /nomina/incidencias/cerrar/<cierre_id>/
+        Responde con estado actualizado o error si aún hay incidencias no aprobadas.
+        """
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+        except CierreNomina.DoesNotExist:
+            return Response({'error': 'Cierre no encontrado'}, status=404)
+
+        # Obtener incidencias del cierre
+        qs = cierre.incidencias.all()
+        total = qs.count()
+        if total == 0:
+            # No hay incidencias -> si estaba en datos_consolidados se puede marcar como resueltas directamente
+            if cierre.estado in ['datos_consolidados']:
+                cierre.estado = 'incidencias_resueltas'
+            cierre.estado_incidencias = 'resueltas'
+            cierre.save(update_fields=['estado', 'estado_incidencias'])
+            return Response({
+                'mensaje': 'Sin incidencias. Cierre marcado como incidencias_resueltas.',
+                'cierre_estado': cierre.estado,
+                'cierre_estado_incidencias': cierre.estado_incidencias,
+                'total_incidencias': 0
+            })
+
+        # Verificar si alguna NO está aprobada
+        no_aprobadas = qs.exclude(estado='aprobada_supervisor').values_list('id', 'estado')
+        if no_aprobadas.exists():
+            return Response({
+                'error': 'Aún existen incidencias no aprobadas',
+                'pendientes': [{'id': i, 'estado': e} for i, e in no_aprobadas]
+            }, status=400)
+
+        # Todas aprobadas -> marcar cierre
+        cierre.estado_incidencias = 'resueltas'
+        if cierre.estado in ['con_incidencias', 'datos_consolidados']:
+            cierre.estado = 'incidencias_resueltas'
+        cierre.save(update_fields=['estado_incidencias', 'estado'])
+
+        return Response({
+            'mensaje': 'Incidencias del cierre marcadas como resueltas',
+            'cierre_estado': cierre.estado,
+            'cierre_estado_incidencias': cierre.estado_incidencias,
+            'total_incidencias': total
+        })
     
     # ============================================================================
     # Métodos para Operaciones a Nivel de Cierre

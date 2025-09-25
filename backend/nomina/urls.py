@@ -84,6 +84,7 @@ from django.conf import settings
 from django.views.static import serve
 from .views_nomina_consolidada import obtener_resumen_nomina_consolidada, obtener_detalle_nomina_consolidada
 from .views_resumen_libro import libro_resumen_v2
+from .views_reclasificacion import reclasificar_concepto_consolidado
 from .views_resumen_movimientos import movimientos_personal_detalle_v3
 from .views_incidencias import IncidenciaCierreViewSet
 from .views_finalizacion import finalizar_cierre_view
@@ -257,6 +258,10 @@ urlpatterns = router.urls + [
     path('cierres/<int:cierre_id>/nomina-consolidada/detalle/', obtener_detalle_nomina_consolidada, name='detalle_nomina_consolidada'),
     # === Libro Remuneraciones V2 (simplificado) ===
     path('cierres/<int:cierre_id>/libro/v2/resumen/', libro_resumen_v2, name='libro_resumen_v2'),
+    # === Reclasificación de conceptos consolidados ===
+    path('cierres/<int:cierre_id>/conceptos/reclasificar/',
+        reclasificar_concepto_consolidado,
+        name='reclasificar_concepto_consolidado'),
     # === Incidencias simplificadas (ahora PERSISTEN en IncidenciaCierre; usar POST) ===
     path('cierres/<int:cierre_id>/incidencias/totales-variacion/', 
          IncidenciaCierreViewSet.as_view({'post': 'totales_variacion', 'get': 'totales_variacion'}), 

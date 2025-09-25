@@ -371,7 +371,8 @@ const IncidenciasEncontradasSection = ({
   };
 
   const manejarResolucionCreada = () => {
-    cargarDatos(); // Recargar datos después de crear una resolución
+    // Refrescar lista y estado para actualizar turno_actual inmediatamente
+    cargarDatos();
     cargarEstadoIncidencias();
   };
 

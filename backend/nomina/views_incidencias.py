@@ -133,8 +133,59 @@ class ResolucionIncidenciaViewSet(viewsets.ModelViewSet):
         """
         Crear una nueva resolución con arquitectura simplificada
         """
-        # Con el nuevo serializer, la validación se hace automáticamente
-        serializer.save(usuario=self.request.user)
+        from django.utils import timezone
+        resolucion = serializer.save(usuario=self.request.user)
+
+        # === Actualización automática del estado de la incidencia según tipo_resolucion ===
+        incidencia = resolucion.incidencia
+        tipo = resolucion.tipo_resolucion
+        usuario = self.request.user
+
+        # Guardar referencia si es la primera resolución
+        if not incidencia.fecha_primera_resolucion:
+            incidencia.fecha_primera_resolucion = timezone.now()
+
+        # Turnos / flujo:
+        #  - justificacion (analista) => estado -> resuelta_analista
+        #  - aprobacion (supervisor)  => estado -> aprobada_supervisor
+        #  - rechazo (supervisor)     => estado -> rechazada_supervisor (vuelve turno analista)
+        #  - consulta (supervisor)    => NO cambia estado; mantiene resuelta_analista si estaba, o pendiente; turno vuelve al analista
+        cambios = []
+        if tipo == 'justificacion':
+            incidencia.estado = 'resuelta_analista'
+            incidencia.resuelto_por = usuario
+            incidencia.comentario_resolucion = resolucion.comentario
+            incidencia.fecha_resolucion = timezone.now()
+            incidencia.asignado_a = usuario
+            cambios.extend(['estado','resuelto_por','comentario_resolucion','fecha_resolucion','asignado_a'])
+        elif tipo == 'aprobacion':
+            # Sólo supervisor debería hacer esto; no reforzamos aquí por simplicidad (ya validable en permisos de endpoint dedicado si se usa)
+            incidencia.estado = 'aprobada_supervisor'
+            incidencia.supervisor_revisor = usuario
+            incidencia.comentario_supervisor = resolucion.comentario or 'Aprobado'
+            incidencia.fecha_resolucion_final = timezone.now()
+            incidencia.asignado_a = usuario  # se queda con supervisor al cerrar
+            cambios.extend(['estado','supervisor_revisor','comentario_supervisor','fecha_resolucion_final','asignado_a'])
+        elif tipo == 'rechazo':
+            incidencia.estado = 'rechazada_supervisor'
+            incidencia.supervisor_revisor = usuario
+            incidencia.comentario_supervisor = resolucion.comentario
+            incidencia.fecha_resolucion_final = timezone.now()
+            incidencia.asignado_a = None  # liberar para que el analista re-trabaje
+            cambios.extend(['estado','supervisor_revisor','comentario_supervisor','fecha_resolucion_final','asignado_a'])
+        elif tipo == 'consulta':
+            # No cambia estado. Si estaba resuelta_analista se mantiene; devolvemos turno implícito al analista
+            # Para facilitar bandejas, re-asignamos al analista original si existe
+            if incidencia.resuelto_por:
+                incidencia.asignado_a = incidencia.resuelto_por
+                cambios.append('asignado_a')
+
+        incidencia.fecha_ultima_accion = timezone.now()
+        cambios.append('fecha_ultima_accion')
+        if 'fecha_primera_resolucion' not in cambios and incidencia.fecha_primera_resolucion:
+            # Asegurar persistencia si recién seteamos
+            cambios.append('fecha_primera_resolucion')
+        incidencia.save(update_fields=list(set(cambios)))
     
     @action(detail=False, methods=['get'], url_path='historial/(?P<incidencia_id>[^/.]+)')
     def historial_incidencia(self, request, incidencia_id=None):
@@ -489,6 +540,67 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Error rechazando incidencia {pk}: {e}")
             return Response({"error": f"Error rechazando incidencia: {str(e)}"}, status=500)
+
+    # ================== NUEVAS ACCIONES PARA MANEJO DE RECHAZADAS ==================
+    @action(detail=True, methods=['post'])
+    def reanudar(self, request, pk=None):
+        """Reabrir una incidencia rechazada para nueva justificación.
+
+        Transiciones permitidas:
+          rechazada_supervisor -> pendiente
+        Crea una resolución de tipo 'reanudar'.
+        """
+        incidencia = self.get_object()
+        if incidencia.estado != 'rechazada_supervisor':
+            return Response({
+                'error': 'Solo se pueden reanudar incidencias en estado rechazada_supervisor',
+                'estado_actual': incidencia.estado
+            }, status=400)
+        try:
+            ResolucionIncidencia.objects.create(
+                incidencia=incidencia,
+                usuario=request.user,
+                tipo_resolucion='reanudar',
+                comentario='Reapertura para nueva justificación'
+            )
+            incidencia.estado = 'pendiente'
+            incidencia.fecha_ultima_accion = timezone.now()
+            incidencia.save(update_fields=['estado', 'fecha_ultima_accion'])
+            return Response({
+                'mensaje': 'Incidencia reanudada. Ahora puede justificarse nuevamente.',
+                'estado': incidencia.estado
+            })
+        except Exception as e:
+            return Response({'error': f'Error reanudando: {e}'}, status=500)
+
+    @action(detail=True, methods=['post'])
+    def marcar_corregida(self, request, pk=None):
+        """Marca una incidencia (pendiente o rechazada) como resuelta por corrección externa.
+
+        Uso típico: el analista ajustó datos (ej: reclasificación / corrección upstream) y ya no aplica la variación.
+        No requiere aprobación inmediata; queda en estado resuelta_analista.
+        """
+        incidencia = self.get_object()
+        if incidencia.estado not in ['pendiente', 'rechazada_supervisor']:
+            return Response({'error': 'Solo incidencias pendientes o rechazadas pueden marcarse como corregidas'}, status=400)
+        comentario = request.data.get('comentario', '').strip() or 'Marcada como corregida por el analista'
+        try:
+            ResolucionIncidencia.objects.create(
+                incidencia=incidencia,
+                usuario=request.user,
+                tipo_resolucion='correccion',
+                comentario=comentario
+            )
+            incidencia.estado = 'resuelta_analista'
+            incidencia.asignado_a = request.user
+            incidencia.fecha_ultima_accion = timezone.now()
+            incidencia.save(update_fields=['estado', 'asignado_a', 'fecha_ultima_accion'])
+            return Response({
+                'mensaje': 'Incidencia marcada como corregida (resuelta por analista).',
+                'estado': incidencia.estado
+            })
+        except Exception as e:
+            return Response({'error': f'Error marcando como corregida: {e}'}, status=500)
     
     # ============================================================================
     # Métodos para Operaciones a Nivel de Cierre
@@ -755,6 +867,9 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
             if abs(delta_pct) >= UMBRAL_PCT:
                 # Obtener clasificación del concepto
                 clasificacion = _obtener_clasificacion_concepto(nombre, cierre_id)
+                # Excluir concepto si su clasificación cae en 'informacion_adicional'
+                if clasificacion == 'informacion_adicional':
+                    continue
                 
                 incidencias.append({
                     'concepto': nombre,

@@ -322,26 +322,31 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
                     <td className={`${tdPad} whitespace-nowrap text-center`}>
                       {isExpandable ? '—' : (
                         (() => {
-                          const estado = g.resumen?.raw ? obtenerEstadoReal(g.resumen.raw) : null;
-                          return estado ? <span className="text-sm text-gray-300">{estado.display}</span> : '—';
+                          const estadoObj = g.resumen?.raw ? obtenerEstadoReal(g.resumen.raw) : null;
+                          if (!estadoObj) return '—';
+                          const esAprobada = estadoObj.estado === ESTADOS_INCIDENCIA.APROBADA_SUPERVISOR;
+                          const esRechazada = estadoObj.estado === ESTADOS_INCIDENCIA.RECHAZADA_SUPERVISOR;
+                          const cls = esAprobada
+                            ? 'text-green-400'
+                            : esRechazada
+                              ? 'text-red-400'
+                              : 'text-gray-300';
+                          return <span className={`text-sm font-medium ${cls}`}>{estadoObj.display}</span>;
                         })()
                       )}
                     </td>
                     <td className={`${tdPad} whitespace-nowrap text-center`}>
                       {isExpandable ? '—' : (
                         (() => {
+                          const turno = g.resumen?.raw?.turno_actual;
+                          if (turno === 'supervisor') return <span className="text-sm font-medium text-gray-400">Supervisor</span>;
+                          if (turno === 'analista') return <span className="text-sm font-medium text-yellow-400">Analista</span>;
+                          if (turno === 'cerrado') return <span className="text-sm font-medium text-green-400">Aprobada</span>;
+                          // Fallback previo si backend antiguo
                           const estado = g.resumen?.raw ? obtenerEstadoReal(g.resumen.raw).estado : null;
                           if (!estado) return <span className="text-sm font-medium text-gray-400">Analista</span>;
-                          if (estado === ESTADOS_INCIDENCIA.APROBADA_SUPERVISOR) {
-                            return <span className="text-sm font-medium text-green-400">Aprobada</span>;
-                          }
-                          if (estado === ESTADOS_INCIDENCIA.RECHAZADA_SUPERVISOR) {
-                            return <span className="text-sm font-medium text-yellow-400">Analista</span>;
-                          }
-                          if (estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE || estado === ESTADOS_INCIDENCIA.RESUELTA_ANALISTA) {
-                            return <span className="text-sm font-medium text-gray-400">Supervisor</span>;
-                          }
-                          // pendiente o re_resuelta
+                          if (estado === ESTADOS_INCIDENCIA.APROBADA_SUPERVISOR) return <span className="text-sm font-medium text-green-400">Aprobada</span>;
+                          if (estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE || estado === ESTADOS_INCIDENCIA.RESUELTA_ANALISTA) return <span className="text-sm font-medium text-gray-400">Supervisor</span>;
                           return <span className="text-sm font-medium text-yellow-400">Analista</span>;
                         })()
                       )}
@@ -395,9 +400,16 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
                             <span className="text-sm text-emerald-300 font-medium">Informativo</span>
                           ) : r.raw?.estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE ? (
                             <span className="text-sm text-yellow-300">Confirmación pendiente</span>
-                          ) : (
-                            <span className="text-sm text-gray-300">{r.estadoReal.display}</span>
-                          )}
+                          ) : (() => {
+                            const esAprobada = r.estadoReal?.estado === ESTADOS_INCIDENCIA.APROBADA_SUPERVISOR;
+                            const esRechazada = r.estadoReal?.estado === ESTADOS_INCIDENCIA.RECHAZADA_SUPERVISOR;
+                            const cls = esAprobada
+                              ? 'text-green-400'
+                              : esRechazada
+                                ? 'text-red-400'
+                                : 'text-gray-300';
+                            return <span className={`text-sm font-medium ${cls}`}>{r.estadoReal.display}</span>;
+                          })()}
                         </div>
                       </td>
                       <td className={`${tdPad} whitespace-nowrap`}>
@@ -405,18 +417,13 @@ export default function IncidenciasUnifiedTable({ incidencias = [], onIncidencia
                           <span className="text-sm font-medium text-emerald-300">Informativo</span>
                         ) : (
                           (() => {
+                            const turno = r.raw?.turno_actual;
+                            if (turno === 'supervisor') return <span className="text-sm font-medium text-gray-400">Supervisor</span>;
+                            if (turno === 'analista') return <span className="text-sm font-medium text-yellow-400">Analista</span>;
+                            if (turno === 'cerrado') return <span className="text-sm font-medium text-green-400">Aprobada</span>;
                             const estado = r.raw ? obtenerEstadoReal(r.raw).estado : null;
-                            if (!estado) return <span className="text-sm font-medium text-gray-400">Analista</span>;
-                            if (estado === ESTADOS_INCIDENCIA.APROBADA_SUPERVISOR) {
-                              return <span className="text-sm font-medium text-green-400">Aprobada</span>;
-                            }
-                            if (estado === ESTADOS_INCIDENCIA.RECHAZADA_SUPERVISOR) {
-                              return <span className="text-sm font-medium text-yellow-400">Analista</span>;
-                            }
-                            if (estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE || estado === ESTADOS_INCIDENCIA.RESUELTA_ANALISTA) {
-                              return <span className="text-sm font-medium text-gray-400">Supervisor</span>;
-                            }
-                            // pendiente o re_resuelta
+                            if (estado === ESTADOS_INCIDENCIA.APROBADA_SUPERVISOR) return <span className="text-sm font-medium text-green-400">Aprobada</span>;
+                            if (estado === ESTADOS_INCIDENCIA.RESOLUCION_SUPERVISOR_PENDIENTE || estado === ESTADOS_INCIDENCIA.RESUELTA_ANALISTA) return <span className="text-sm font-medium text-gray-400">Supervisor</span>;
                             return <span className="text-sm font-medium text-yellow-400">Analista</span>;
                           })()
                         )}

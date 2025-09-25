@@ -1,4 +1,5 @@
 from rest_framework import serializers
+import os
 from .models import (
     CierreNomina, EmpleadoCierre, ConceptoRemuneracion, RegistroConceptoEmpleado,
     MovimientoAltaBaja, MovimientoAusentismo, MovimientoVacaciones,
@@ -244,6 +245,7 @@ class IncidenciaCierreSerializer(serializers.ModelSerializer):
     resuelto_por_nombre = serializers.CharField(source='resuelto_por.get_full_name', read_only=True)
     supervisor_revisor_nombre = serializers.CharField(source='supervisor_revisor.get_full_name', read_only=True)
     tiempo_sin_resolver = serializers.SerializerMethodField()
+    turno_actual = serializers.SerializerMethodField()
     
     # Campos calculados desde datos_adicionales
     delta_absoluto = serializers.SerializerMethodField()
@@ -269,7 +271,8 @@ class IncidenciaCierreSerializer(serializers.ModelSerializer):
             'datos_adicionales', 'hash_deteccion',
             'version_detectada_primera', 'version_detectada_ultima',
             # Campos calculados
-            'delta_absoluto', 'delta_porcentual', 'monto_actual', 'monto_anterior'
+            'delta_absoluto', 'delta_porcentual', 'monto_actual', 'monto_anterior',
+            'turno_actual'
         ]
         read_only_fields = [
             'fecha_detectada', 'fecha_primera_resolucion', 'fecha_ultima_accion',
@@ -296,6 +299,34 @@ class IncidenciaCierreSerializer(serializers.ModelSerializer):
             return diff.days
         return None
 
+    def get_turno_actual(self, obj):
+        """Determina el turno conversacional basándose en la última resolución.
+        Reglas:
+          - aprobada_supervisor => cerrado
+          - sin resoluciones => analista
+          - última justificacion (analista) => supervisor
+          - última consulta o rechazo (supervisor) => analista
+          - última aprobacion => cerrado
+          - fallback al estado histórico.
+        """
+        if obj.estado == 'aprobada_supervisor':
+            return 'cerrado'
+        ultima = obj.resoluciones.first()  # ordering en el modelo es desc por fecha
+        if not ultima:
+            return 'analista'
+        tipo = getattr(ultima, 'tipo_resolucion', None)
+        if tipo == 'justificacion':
+            return 'supervisor'
+        if tipo in ['consulta', 'rechazo']:
+            return 'analista'
+        if tipo == 'aprobacion':
+            return 'cerrado'
+        if obj.estado in ['pendiente', 'rechazada_supervisor']:
+            return 'analista'
+        if obj.estado == 'resuelta_analista':
+            return 'supervisor'
+        return 'analista'
+
 class CrearResolucionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ResolucionIncidencia
@@ -304,16 +335,20 @@ class CrearResolucionSerializer(serializers.ModelSerializer):
         ]
     
     def validate(self, data):
-        # Validaciones específicas según tipo de resolución
-        tipo = data.get('tipo_resolucion')
-        
-        # No necesitamos validación específica para correcciones en la nueva arquitectura
-        # Solo validamos que el comentario no esté vacío
+        # Validación de comentario obligatorio
         if not data.get('comentario', '').strip():
-            raise serializers.ValidationError({
-                'comentario': 'El comentario es requerido.'
-            })
-        
+            raise serializers.ValidationError({'comentario': 'El comentario es requerido.'})
+        # Validación de adjunto: solo imágenes y <=5MB
+        adjunto = self.initial_data.get('adjunto') if isinstance(self.initial_data, dict) else None
+        if adjunto:
+            nombre = getattr(adjunto, 'name', '')
+            ext = os.path.splitext(nombre)[1].lower()
+            permitidas = {'.png', '.jpg', '.jpeg', '.webp'}
+            if ext not in permitidas:
+                raise serializers.ValidationError({'adjunto': 'Formato no permitido. Solo imágenes (PNG, JPG, JPEG, WEBP).'})
+            size = getattr(adjunto, 'size', 0)
+            if size and size > 5 * 1024 * 1024:
+                raise serializers.ValidationError({'adjunto': 'El archivo supera 5MB.'})
         return data
 
 class ResumenIncidenciasSerializer(serializers.Serializer):

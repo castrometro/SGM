@@ -1,7 +1,21 @@
 import React, { useState, useEffect } from "react";
-import { X, Send, Upload, AlertTriangle, CheckCircle, MessageSquare, Clock, Eye, Lock } from "lucide-react";
+import { X, Send, Upload, AlertTriangle, CheckCircle, MessageSquare, Clock, Eye, Lock, Download, Image as ImageIcon } from "lucide-react";
 import { crearResolucionIncidencia, obtenerHistorialIncidencia, aprobarIncidencia, rechazarIncidencia, confirmarDesaparicionIncidencia } from "../../../api/nomina";
 import { ESTADOS_INCIDENCIA } from "../../../utils/incidenciaUtils";
+
+// Base de media: si la API está en 8000 y Vite en 5174, necesitamos apuntar al host backend
+const MEDIA_BASE = import.meta?.env?.VITE_MEDIA_BASE_URL || 'http://172.17.11.18:8000';
+
+const construirURLAdjunto = (urlRelativa) => {
+  if (!urlRelativa) return null;
+  // Si ya es absoluta devolver directamente
+  if (/^https?:\/\//i.test(urlRelativa)) return urlRelativa;
+  // Asegurar que empieza con /media/
+  const path = urlRelativa.startsWith('/media/') ? urlRelativa : (urlRelativa.startsWith('media/') ? '/' + urlRelativa : '/media/' + urlRelativa.replace(/^\/+/, ''));
+  return MEDIA_BASE.replace(/\/$/, '') + path;
+};
+
+const esImagen = (url) => /\.(png|jpe?g|webp)$/i.test(url || '');
 
 const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucionCreada }) => {
   const [comentario, setComentario] = useState('');
@@ -579,14 +593,45 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                     
                     <p className="text-gray-300 mb-3 whitespace-pre-wrap">{resolucion.comentario}</p>
                     
-                    {resolucion.adjunto && (
-                      <div className="flex items-center text-blue-400 text-sm">
-                        <Upload className="w-4 h-4 mr-1" />
-                        <a href={resolucion.adjunto} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                          Ver adjunto
-                        </a>
-                      </div>
-                    )}
+                    {resolucion.adjunto && (() => {
+                      const urlAbs = construirURLAdjunto(resolucion.adjunto);
+                      const imagen = esImagen(urlAbs);
+                      return (
+                        <div className="mt-2 space-y-2">
+                          <div className="flex items-center gap-2 text-blue-400 text-sm">
+                            <Upload className="w-4 h-4" />
+                            <a href={urlAbs} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                              Ver adjunto
+                            </a>
+                            <a
+                              href={urlAbs}
+                              download
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 text-xs"
+                              title="Descargar"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              Descargar
+                            </a>
+                          </div>
+                          {imagen && (
+                            <div className="border border-gray-700 rounded-lg p-2 bg-gray-900/40 max-w-xs">
+                              <div className="flex items-center gap-1 text-gray-400 text-xs mb-1">
+                                <ImageIcon className="w-3.5 h-3.5" /> Previsualización
+                              </div>
+                              <a href={urlAbs} target="_blank" rel="noopener noreferrer">
+                                <img
+                                  src={urlAbs}
+                                  alt="Adjunto"
+                                  className="max-h-48 rounded object-contain mx-auto"
+                                  loading="lazy"
+                                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                />
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                     
                     {/* Indicadores de estado específicos - SIMPLIFICADOS */}
                     {resolucion.tipo_resolucion === 'aprobacion' && (
@@ -658,7 +703,7 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                           <input
                             type="file"
                             onChange={manejarArchivoSeleccionado}
-                            accept=".pdf,.doc,.docx,.xlsx,.xls,.png,.jpg,.jpeg"
+                            accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
                             className="hidden"
                             id="adjunto-analista-input"
                           />
@@ -676,7 +721,7 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                           )}
                         </div>
                         <p className="text-xs text-gray-500 mt-1">
-                          Máximo 5MB. Formatos: PDF, Word, Excel, imágenes
+                          Máximo 5MB. Solo imágenes (PNG, JPG, JPEG, WEBP). PDFs y otros tipos han sido deshabilitados.
                         </p>
                       </div>
 
@@ -757,7 +802,7 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                           <input
                             type="file"
                             onChange={manejarArchivoSeleccionado}
-                            accept=".pdf,.doc,.docx,.xlsx,.xls,.png,.jpg,.jpeg"
+                            accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
                             className="hidden"
                             id="adjunto-supervisor-input"
                           />

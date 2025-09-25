@@ -20,6 +20,14 @@ export const obtenerInformeCierre = async (cierreId) => {
   return res.data; // { id, cierre_id, cliente, periodo, fecha_generacion, estado_cierre, datos_cierre }
 };
 
+// Reclasificar un concepto consolidado (post datos_consolidados)
+export const reclasificarConceptoConsolidado = async (cierreId, nombreConcepto, tipoNuevo, motivo = null) => {
+  const payload = { nombre_concepto: nombreConcepto, tipo_concepto_nuevo: tipoNuevo };
+  if (motivo) payload.motivo = motivo;
+  const res = await api.post(`/nomina/cierres/${cierreId}/conceptos/reclasificar/`, payload);
+  return res.data;
+};
+
 export const crearCierreMensual = async (clienteId, periodo, checklist) => {
   
   const payload = {
@@ -860,22 +868,42 @@ export const obtenerLibroResumenV2 = async (cierreId) => {
 
 // Aprobar incidencia (flujo de conversación) - Nueva arquitectura unificada
 export const aprobarIncidencia = async (incidenciaId, comentario = '') => {
-  const response = await api.post('/nomina/resoluciones-incidencias/', {
-    incidencia: incidenciaId,
-    tipo_resolucion: 'aprobacion',
-    comentario: comentario || 'Incidencia aprobada'
-  });
-  return response.data;
+  // Ruta preferida: resoluciones (crear registro + cambio de estado centralizado)
+  try {
+    const response = await api.post('/nomina/resoluciones-incidencias/', {
+      incidencia: incidenciaId,
+      tipo_resolucion: 'aprobacion',
+      comentario: comentario || 'Incidencia aprobada'
+    });
+    return response.data;
+  } catch (e) {
+    // Fallback a endpoint legacy directo si existe
+    try {
+      const res2 = await api.post(`/nomina/incidencias/${incidenciaId}/aprobar/`, { comentario });
+      return res2.data;
+    } catch (e2) {
+      throw e;
+    }
+  }
 };
 
 // Rechazar incidencia (flujo de conversación) - Nueva arquitectura unificada
 export const rechazarIncidencia = async (incidenciaId, comentario) => {
-  const response = await api.post('/nomina/resoluciones-incidencias/', {
-    incidencia: incidenciaId,
-    tipo_resolucion: 'rechazo',
-    comentario
-  });
-  return response.data;
+  try {
+    const response = await api.post('/nomina/resoluciones-incidencias/', {
+      incidencia: incidenciaId,
+      tipo_resolucion: 'rechazo',
+      comentario
+    });
+    return response.data;
+  } catch (e) {
+    try {
+      const res2 = await api.post(`/nomina/incidencias/${incidenciaId}/rechazar/`, { comentario });
+      return res2.data;
+    } catch (e2) {
+      throw e;
+    }
+  }
 };
 
 // Crear consulta sobre incidencia (supervisor) - Nueva arquitectura unificada
@@ -886,6 +914,25 @@ export const consultarIncidencia = async (incidenciaId, comentario) => {
     comentario
   });
   return response.data;
+};
+
+// Justificar incidencia (analista)
+export const justificarIncidencia = async (incidenciaId, comentario) => {
+  try {
+    const response = await api.post('/nomina/resoluciones-incidencias/', {
+      incidencia: incidenciaId,
+      tipo_resolucion: 'justificacion',
+      comentario
+    });
+    return response.data;
+  } catch (e) {
+    try {
+      const res2 = await api.post(`/nomina/incidencias/${incidenciaId}/justificar/`, { justificacion: comentario });
+      return res2.data;
+    } catch (e2) {
+      throw e;
+    }
+  }
 };
 
 // ========== FUNCIONES ESPECÍFICAS PARA ARCHIVOS DEL ANALISTA ==========

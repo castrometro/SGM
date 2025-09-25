@@ -885,7 +885,7 @@ class ResolucionIncidenciaAdmin(admin.ModelAdmin):
     )
     search_fields = (
         'comentario',
-        'incidencia__rut_empleado',
+        'incidencia__concepto_afectado',
         'incidencia__descripcion',
         'usuario__correo_bdo',
         'usuario__first_name',
@@ -912,8 +912,9 @@ class ResolucionIncidenciaAdmin(admin.ModelAdmin):
     list_per_page = 100
     
     def incidencia_info(self, obj):
-        """Info de la incidencia relacionada"""
-        return f"#{obj.incidencia.id} - {obj.incidencia.rut_empleado} ({obj.incidencia.get_prioridad_display()})"
+        """Info breve de la incidencia relacionada (sin empleado porque el modelo simplificado no lo tiene)."""
+        inc = obj.incidencia
+        return f"#{inc.id} - {inc.concepto_afectado} ({inc.get_prioridad_display()})"
     incidencia_info.short_description = 'Incidencia'
     
     def tipo_resolucion_display(self, obj):

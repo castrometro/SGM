@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Search, ArrowUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatearMonedaChilena } from '../../../utils/formatters';
+import { reclasificarConceptoConsolidado } from '../../../api/nomina';
 
 const TablaConceptosLibro = ({
   conceptosOrdenadosPaginados,
@@ -17,6 +18,25 @@ const TablaConceptosLibro = ({
   selectedCat
 }) => {
   const denseClasses = { rowText: dense ? 'text-xs' : 'text-sm', pad: dense ? 'px-3 py-2' : 'px-3 py-2' };
+  const [modal, setModal] = useState(null); // { nombre }
+  const [tipoNuevo, setTipoNuevo] = useState('');
+  const [motivo, setMotivo] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [feedback, setFeedback] = useState('');
+
+  async function onReclasificar(e){
+    e.preventDefault();
+    if(!modal) return;
+    try{
+      setLoading(true); setFeedback('');
+      await reclasificarConceptoConsolidado(modal.cierreId, modal.nombre, tipoNuevo, motivo||null);
+      setFeedback('Reclasificación aplicada. Recargando...');
+      // Señal básica: forzar reload página (padre debería volver a pedir resumen)
+      setTimeout(()=>{ window.location.reload(); }, 800);
+    }catch(err){
+      setFeedback(err?.response?.data?.error || 'Error al reclasificar');
+    }finally{ setLoading(false); }
+  }
   return (
     <div className="bg-gray-900/60 rounded-xl p-6 border border-gray-800 w-full min-h-[320px] flex flex-col">
       <div className="flex items-center justify-between mb-4">
@@ -55,8 +75,10 @@ const TablaConceptosLibro = ({
                   {conceptosOrdenadosPaginados.pageItems.map(c => {
                     const selected = compareSelected.has(c.nombre);
                     return (
-                      <tr key={c.nombre} onClick={()=>toggleCompare(c.nombre)} className={`cursor-pointer ${selected? 'bg-teal-900/30 hover:bg-teal-900/40':'hover:bg-gray-800'} ${dense? 'odd:bg-gray-900/10':'odd:bg-gray-900/20'}`} title={c.empleados>0 ? `${c.empleados} empleados con este concepto` : 'Sin empleados con este concepto'}>
-                        <td className={`${denseClasses.pad} ${denseClasses.rowText} text-white flex items-center gap-2 truncate`}>{selected && <span className="inline-block w-2 h-2 rounded-full bg-teal-400" />}<span className="truncate">{c.nombre}</span></td>
+                      <tr key={c.nombre} className={`group cursor-pointer ${selected? 'bg-teal-900/30 hover:bg-teal-900/40':'hover:bg-gray-800'} ${dense? 'odd:bg-gray-900/10':'odd:bg-gray-900/20'}`} title={c.empleados>0 ? `${c.empleados} empleados con este concepto` : 'Sin empleados con este concepto'}>
+                        <td className={`${denseClasses.pad} ${denseClasses.rowText} text-white flex items-center gap-2 truncate`} onClick={()=>toggleCompare(c.nombre)}>{selected && <span className="inline-block w-2 h-2 rounded-full bg-teal-400" />}<span className="truncate">{c.nombre}</span>
+                          <button onClick={(ev)=>{ev.stopPropagation(); setModal({ nombre: c.nombre, cierreId: window.location.pathname.split('/').filter(Boolean).at(-2) }); setTipoNuevo(''); setMotivo(''); setFeedback('');}} className="ml-auto opacity-0 group-hover:opacity-100 transition text-[10px] px-2 py-1 rounded bg-indigo-700/30 text-indigo-300 border border-indigo-600/40 hover:bg-indigo-700/50">Reclasificar</button>
+                        </td>
                         <td className={`px-2 ${dense? 'py-2':'py-3'} text-center ${denseClasses.rowText} text-gray-300 tabular-nums`}>{c.empleados>0 ? c.empleados : '-'}</td>
                         <td className={`${denseClasses.pad} text-right ${denseClasses.rowText} text-teal-400 font-medium`}>{formatearMonedaChilena(c.total)}</td>
                       </tr>
@@ -87,6 +109,36 @@ const TablaConceptosLibro = ({
           </table>
         </div>
       </div>
+    {modal && (
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+        <form onSubmit={onReclasificar} className="bg-gray-900 w-full max-w-md rounded-xl border border-gray-700 p-6 space-y-4">
+          <h4 className="text-sm font-semibold text-gray-200">Reclasificar concepto</h4>
+          <div className="text-xs text-gray-400">{modal.nombre}</div>
+          <div className="space-y-2">
+            <label className="block text-xs text-gray-300">Nuevo tipo</label>
+            <select value={tipoNuevo} onChange={e=>setTipoNuevo(e.target.value)} required className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600">
+              <option value="" disabled>Seleccionar...</option>
+              <option value="haber_imponible">Haber Imponible</option>
+              <option value="haber_no_imponible">Haber No Imponible</option>
+              <option value="descuento_legal">Descuento Legal</option>
+              <option value="otro_descuento">Otro Descuento</option>
+              <option value="impuesto">Impuesto</option>
+              <option value="aporte_patronal">Aporte Patronal</option>
+              <option value="informativo">Informativo</option>
+            </select>
+          </div>
+          <div className="space-y-2">
+            <label className="block text-xs text-gray-300">Motivo (opcional)</label>
+            <textarea value={motivo} onChange={e=>setMotivo(e.target.value)} rows={3} className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm resize-none" placeholder="Ej: Ajuste manual tras revisión" />
+          </div>
+            {feedback && <div className="text-xs text-indigo-300">{feedback}</div>}
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" disabled={loading} onClick={()=>setModal(null)} className="px-3 py-1.5 text-xs rounded border border-gray-600 text-gray-300 hover:bg-gray-800">Cancelar</button>
+            <button type="submit" disabled={loading || !tipoNuevo} className="px-3 py-1.5 text-xs rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50">{loading? 'Guardando...':'Aplicar'}</button>
+          </div>
+        </form>
+      </div>
+    )}
     </div>
   );
 };

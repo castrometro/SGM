@@ -5014,28 +5014,20 @@ def calcular_kpis_cierre(prev_result: dict, cierre_id: int) -> dict:
 
 @shared_task(name='nomina.enviar_informe_redis')
 def enviar_informe_redis_task(prev_result: dict, cierre_id: int, ttl_hours: int | None = None) -> dict:
-    """Envía el informe compacto a Redis DB2 en la ruta sgm:nomina:{cliente_id}:{periodo}:informe."""
+    """Envía el informe del cierre a Redis usando el wrapper oficial con metadatos."""
     from .models import CierreNomina
     from .models_informe import InformeNomina
-    from .cache_redis import get_cache_system_nomina
 
     cierre = CierreNomina.objects.get(id=cierre_id)
     informe = InformeNomina.objects.get(cierre=cierre)
 
-    # Copia defensiva y purga de keys no deseadas
-    payload = dict(informe.datos_cierre or {})
-    payload.pop('keys_order', None)
-    cliente_id = cierre.cliente.id
-    periodo_key = cierre.periodo  # Formato esperado 'YYYY-MM'
+    # Usar el método centralizado que construye el wrapper completo
+    res = informe.enviar_a_redis(ttl_hours=ttl_hours)
 
-    cache_system = get_cache_system_nomina()
-    ttl_seconds = None if (ttl_hours is None or ttl_hours <= 0) else int(ttl_hours) * 3600
-    ok = cache_system.set_informe_nomina(cliente_id, periodo_key, payload, ttl=ttl_seconds)
-
-    redis_key = f"sgm:nomina:{cliente_id}:{periodo_key}:informe"
     return {
         'informe_id': informe.id,
         'cierre_id': cierre_id,
-        'sent_to_redis': bool(ok),
-        'redis_key': redis_key,
+        'sent_to_redis': bool(res.get('success')),
+        'redis_key': res.get('clave_redis'),
+        'ttl_hours': res.get('ttl_hours'),
     }

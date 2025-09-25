@@ -50,15 +50,32 @@ def obtener_informe_cierre(request, cierre_id):
         except Exception:
             datos_redis = None
 
-        if datos_redis and isinstance(datos_redis, dict) and datos_redis.get('datos_cierre'):
+        # Soporte a dos formas de almacenamiento en Redis:
+        # A) Wrapper completo con 'datos_cierre' (forma oficial)
+        # B) JSON "raw" con los bloques directamente (legado)
+        if datos_redis and isinstance(datos_redis, dict):
+            if isinstance(datos_redis.get('datos_cierre'), dict):
+                datos_cierre_payload = datos_redis.get('datos_cierre')
+                informe_id = datos_redis.get('informe_id')
+                cliente_nombre = datos_redis.get('cliente_nombre')
+                periodo_resp = datos_redis.get('periodo') or cierre.periodo
+                fecha_gen = datos_redis.get('fecha_generacion')
+            else:
+                # Forma B (raw): asumimos que el dict es el propio datos_cierre
+                datos_cierre_payload = datos_redis
+                informe_id = None
+                cliente_nombre = getattr(cierre.cliente, 'nombre', None)
+                periodo_resp = cierre.periodo
+                fecha_gen = None
+
             response_data = {
-                'id': datos_redis.get('informe_id'),
+                'id': informe_id,
                 'cierre_id': cierre.id,
-                'cliente': datos_redis.get('cliente_nombre') or (cierre.cliente.nombre if cierre.cliente else None),
-                'periodo': datos_redis.get('periodo') or cierre.periodo,
-                'fecha_generacion': datos_redis.get('fecha_generacion'),
+                'cliente': cliente_nombre or (cierre.cliente.nombre if cierre.cliente else None),
+                'periodo': periodo_resp,
+                'fecha_generacion': fecha_gen,
                 'estado_cierre': cierre.estado,
-                'datos_cierre': datos_redis.get('datos_cierre'),
+                'datos_cierre': datos_cierre_payload,
                 'source': 'redis',
                 'en_cache': True,
             }

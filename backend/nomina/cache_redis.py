@@ -144,19 +144,75 @@ class SGMCacheSystemNomina:
         Returns:
             Dict con informe o None si no existe en cache
         """
-        key = self._get_key(cliente_id, periodo, "informe")
-        
+        # Normalizar periodo a YYYY-MM
+        def _norm_period(p: str) -> str:
+            try:
+                p = str(p).strip()
+                # YYYY-MM-DD -> YYYY-MM
+                if len(p) == 10 and p[4] == '-' and p[7] == '-':
+                    return p[:7]
+                # YYYY-M -> YYYY-MM
+                if len(p) == 7 and p[4] == '-' and p[5].isdigit() and p[6].isdigit():
+                    # ya está YYYY-MM
+                    return p
+                if len(p) == 6 and p[4] == '-' and p[5].isdigit():
+                    # YYYY-M (mes 1 dígito)
+                    return f"{p[:5]}0{p[5]}"
+                return p
+            except Exception:
+                return p
+
+        candidates = []
+        norm = _norm_period(periodo)
+        if norm not in candidates:
+            candidates.append(norm)
+        if periodo != norm and periodo not in candidates:
+            candidates.append(periodo)
+
         try:
-            data = self.redis_client.get(key)
+            # 1) Intento directo con claves estándar y variaciones comunes
+            for per in candidates:
+                # clave estándar singular
+                key = self._get_key(cliente_id, per, "informe")
+                data = self.redis_client.get(key)
+                if data:
+                    self._increment_stat("cache_hits")
+                    return self._deserialize_data(data)
+
+                # variante plural histórica
+                key_plural = self._get_key(cliente_id, per, "informes")
+                data = self.redis_client.get(key_plural)
+                if data:
+                    self._increment_stat("cache_hits")
+                    return self._deserialize_data(data)
+
+            # 2) Búsqueda por patrón limitada (compatibilidad)
+            # Evitar barridos grandes: buscamos solo por el período normalizado
+            pattern = f"sgm:nomina:{cliente_id}:{norm}:informe*"
+            keys = self.redis_client.keys(pattern)
+            for k in keys:
+                data = self.redis_client.get(k)
+                if data:
+                    self._increment_stat("cache_hits")
+                    return self._deserialize_data(data)
+
+            # 3) Último intento: clave base sin sufijo (algunos dumps guardaron el JSON crudo así)
+            base_key = f"sgm:nomina:{cliente_id}:{norm}"
+            data = self.redis_client.get(base_key)
             if data:
-                informe = self._deserialize_data(data)
-                self._increment_stat("cache_hits")
-                logger.debug(f"Informe de nómina obtenido desde Redis: cliente={cliente_id}, periodo={periodo}")
-                return informe
-            else:
-                self._increment_stat("cache_misses")
-                logger.debug(f"Informe de nómina no encontrado en Redis: cliente={cliente_id}, periodo={periodo}")
-                return None
+                obj = None
+                try:
+                    obj = self._deserialize_data(data)
+                except Exception:
+                    obj = None
+                if isinstance(obj, dict) and (obj.get('datos_cierre') or obj.get('libro_resumen_v2') or obj.get('movimientos_v3')):
+                    self._increment_stat("cache_hits")
+                    return obj if obj.get('datos_cierre') else obj
+
+            # No encontrado
+            self._increment_stat("cache_misses")
+            logger.debug(f"Informe de nómina no encontrado en Redis: cliente={cliente_id}, periodo={periodo} (norm={norm})")
+            return None
                 
         except Exception as e:
             logger.error(f"Error obteniendo informe de nómina: {e}")

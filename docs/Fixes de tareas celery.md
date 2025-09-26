@@ -1,5 +1,46 @@
 # Fixes de tareas Celery
 
+## Resumen ejecutivo (tablero)
+
+- Enfoque actual: estabilizar ingestión (libro, novedades, analista, movimientos) y coherencia de consolidación. Prioridades marcadas como P0/P1/P2.
+
+Prioridades rápidas
+
+- P0 (bloqueantes inmediatos):
+  - Encadenar chords empleados→registros (evitar solapamiento).
+  - Alinear semántica REPLACE vs upsert en modo optimizado.
+  - Movimientos Mes: fechas y días (desfase y recálculo inclusive).
+
+- P1 (alta):
+  - Estado final ante errores parciales (chunk fail → con_error).
+  - Persistir mapping de Novedades y aplicar automáticamente.
+  - Regenerar discrepancias tras reclasificación de Novedades.
+
+- P2 (media):
+  - Módulo de resolución de Incidencias (workflow de estados).
+  - UI: paginación/virtualización y responsive.
+
+Resumen de issues (vista compacta)
+
+- Fixes prioritarios (bloqueantes): P0
+  - [Encadenar chords](#fixes-prioritarios-bloqueantes) — Estado: pendiente
+  - [Alinear semántica REPLACE vs upsert](#fixes-prioritarios-bloqueantes) — Estado: pendiente
+  - [Estado final y errores por chunk](#fixes-prioritarios-bloqueantes) — Estado: pendiente (ver P1)
+
+- Bugs K-Users y mejoras clave:
+  - K-Users-005 — Movimientos Mes: fechas y días — P0 — Estado: analizado
+  - K-Users-006 — Persistencia de mapeo Novedades — P1 — Estado: analizado
+  - K-Users-009 — Discrepancias tras reclasificación — P1 — Estado: analizado
+  - K-Users-007 — Resolución de Incidencias — P2 — Estado: analizado
+  - K-Users-008 — UI responsive/virtualización — P2 — Estado: analizado
+
+KPIs de aceptación (por cada fix)
+
+- No duplicados ni datos obsoletos tras reprocesar un libro.
+- Discrepancias reflejan cambios en mapeos en < 1 min (post task Celery).
+- Movimientos Mes: 0 casos con fechas None por serial Excel y días recalculados coherentemente.
+- UI: listas grandes con interacción < 1.5s y scroll fluido.
+
 Fecha: 2025-09-26
 
 ## Objetivo

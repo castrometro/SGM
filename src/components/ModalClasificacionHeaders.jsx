@@ -496,7 +496,6 @@ const ModalClasificacionHeaders = ({
               onEliminarClasificacion={eliminarClasificacionConcepto}
               soloLectura={soloLectura}
               nombresCategorias={nombresCategorias}
-              categorias={categorias}
               modoSeleccionMultiple={modoSeleccionMultiple}
               conceptosSeleccionados={conceptosSeleccionados}
               onToggleSeleccion={toggleSeleccionConcepto}
@@ -675,7 +674,6 @@ const VistaCategorias = ({
   onEliminarClasificacion, 
   soloLectura, 
   nombresCategorias, 
-  categorias,
   modoSeleccionMultiple,
   conceptosSeleccionados,
   onToggleSeleccion 

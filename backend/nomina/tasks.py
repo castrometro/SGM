@@ -2434,7 +2434,7 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                     subtipo = subtipo[:40]
                 fecha_inicio = ausentismo.fecha_inicio_ausencia
                 fecha_fin = ausentismo.fecha_fin_ausencia
-                dias_evento = (fecha_fin - fecha_inicio).days + 1 if fecha_inicio and fecha_fin else ausentismo.dias
+                dias_evento = (fecha_fin - fecha_inicio).days + 1 if fecha_inicio and fecha_fin else (ausentismo.dias if ausentismo.dias else 1)
                 # Clipping al periodo
                 try:
                     year, month = map(int, cierre.periodo.split('-'))
@@ -2466,7 +2466,7 @@ def procesar_movimientos_personal_paralelo(cierre_id):
                     multi_mes=multi_mes_flag,
                     hash_evento=hash_evento,
                     hash_registro_periodo=hash_registro_periodo,
-                    observaciones=f"Desde: {ausentismo.fecha_inicio_ausencia} hasta: {ausentismo.fecha_fin_ausencia}",
+                    observaciones=f"Desde: {ausentismo.fecha_inicio_ausencia} hasta: {ausentismo.fecha_fin_ausencia or 'Indefinida'}",
                     fecha_deteccion=timezone.now(),
                     detectado_por_sistema='consolidacion_paralela_v2'
                 )
@@ -3265,7 +3265,7 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
                     fecha_inicio=ausentismo.fecha_inicio_ausencia,
                     fecha_fin=ausentismo.fecha_fin_ausencia,
                     dias_evento=int(ausentismo.dias) if getattr(ausentismo, 'dias', None) else None,
-                    observaciones=f"Desde: {ausentismo.fecha_inicio_ausencia} hasta: {ausentismo.fecha_fin_ausencia}. {ausentismo.observaciones}",
+                    observaciones=f"Desde: {ausentismo.fecha_inicio_ausencia} hasta: {ausentismo.fecha_fin_ausencia or 'Indefinida'}. {ausentismo.observaciones}",
                     detectado_por_sistema='consolidacion_automatica_v1'
                 )
                 

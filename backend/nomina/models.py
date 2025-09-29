@@ -463,7 +463,7 @@ class MovimientoAusentismo(models.Model):
     centro_de_costo = models.CharField(max_length=120)
     sucursal = models.CharField(max_length=120)
     fecha_inicio_ausencia = models.DateField()
-    fecha_fin_ausencia = models.DateField()
+    fecha_fin_ausencia = models.DateField(null=True, blank=True)
     dias = models.IntegerField()
     tipo = models.CharField(max_length=80)
     motivo = models.CharField(max_length=200, blank=True)
@@ -815,7 +815,7 @@ class AnalistaIncidencia(models.Model):
     rut = models.CharField(max_length=12)
     nombre = models.CharField(max_length=200)
     fecha_inicio_ausencia = models.DateField()
-    fecha_fin_ausencia = models.DateField()
+    fecha_fin_ausencia = models.DateField(null=True, blank=True)
     dias = models.IntegerField()
     tipo_ausentismo = models.CharField(max_length=80)
 

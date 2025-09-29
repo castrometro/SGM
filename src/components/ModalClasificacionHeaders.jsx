@@ -4,6 +4,7 @@ import { X, Hash, Check } from "lucide-react";
 import {
   obtenerClasificacionesCliente,
 } from "../api/nomina";
+import useModalHistoryBlock from "../hooks/useModalHistoryBlock";
 
 const categorias = [
   "haberes_imponibles",
@@ -63,6 +64,18 @@ const ModalClasificacionHeaders = ({
 
   const totalConceptos = conceptos.length;
   const conceptosClasificados = conceptos.filter(c => c.clasificacion && c.clasificacion !== 'pendiente').length;
+
+  // Hook para manejar navegación del navegador cuando el modal está abierto
+  const { closeModal } = useModalHistoryBlock(
+    isOpen,
+    onClose,
+    {
+      preventNavigation: true,
+      onNavigationAttempt: (event) => {
+        console.log('🔄 Usuario intentó navegar con modal de clasificación abierto', event);
+      }
+    }
+  );
 
   useEffect(() => {
     if (!isOpen || !clienteId) return;
@@ -250,7 +263,12 @@ const ModalClasificacionHeaders = ({
     });
 
     await onGuardarClasificaciones({ guardar: resultado, eliminar });
-    onClose();
+    closeModal(); // Usar closeModal en lugar de onClose directamente
+  };
+
+  // Función para cerrar el modal de forma controlada
+  const handleClose = () => {
+    closeModal(); // Esto manejará tanto el cierre del modal como la limpieza del historial
   };
 
   // Agrupar conceptos por categoría
@@ -365,7 +383,7 @@ const ModalClasificacionHeaders = ({
               </button>
             </div>
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="text-gray-400 hover:text-white transition-colors"
             >
               <X size={24} />
@@ -490,7 +508,7 @@ const ModalClasificacionHeaders = ({
         <div className="border-t border-gray-700 p-6 flex-shrink-0">
           <div className="flex justify-end gap-3">
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition"
             >
               {soloLectura ? "Cerrar" : "Cancelar"}

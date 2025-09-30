@@ -226,6 +226,20 @@ def generar_incidencias_totales_simple(cierre_id):
     ).delete()
 
     if incidencias_bulk:
+        # bulk_create no invoca save(); asegurar hash_deteccion y versionado antes de insertar
+        try:
+            version = getattr(cierre, 'version_datos', None) or 1
+            for inc in incidencias_bulk:
+                if not getattr(inc, 'hash_deteccion', None):
+                    try:
+                        inc.hash_deteccion = inc.generar_hash_deteccion()
+                    except Exception:
+                        pass
+                if not getattr(inc, 'version_detectada_primera', None):
+                    inc.version_detectada_primera = version
+                inc.version_detectada_ultima = version
+        except Exception:
+            pass
         IncidenciaCierre.objects.bulk_create(incidencias_bulk)
     total = len(incidencias_bulk)
     logger.info(f"[SIMPLE_INCIDENCIAS] Generadas {total} incidencias agregadas (umbral {UMBRAL}%)")

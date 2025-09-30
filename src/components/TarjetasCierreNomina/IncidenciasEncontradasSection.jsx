@@ -17,9 +17,17 @@ import {
   obtenerCierreMensual
 } from "../../api/nomina";
 // import { actualizarEstadoCierreNomina } from "../../api/nomina";
-import { solicitarRecargaArchivosAnalista } from "../../api/nomina";
+// import { solicitarRecargaArchivosAnalista } from "../../api/nomina";
+import { 
+  subirLibroRemuneraciones,
+  obtenerEstadoLibroRemuneraciones,
+  procesarLibroRemuneraciones,
+  eliminarLibroRemuneraciones
+} from "../../api/nomina";
 import { useAuth } from "../../hooks/useAuth";
 import { obtenerEstadoReal, ESTADOS_INCIDENCIA } from "../../utils/incidenciaUtils";
+import ModalCorreccionLibro from "./CorreccionLibro/ModalCorreccionLibro";
+import LibroRemuneracionesCardCorreccion from "./CorreccionLibro/LibroRemuneracionesCardCorreccion";
 
 // Clasificaciones disponibles para selección
 const clasificacionesDisponibles = [
@@ -85,7 +93,11 @@ const IncidenciasEncontradasSection = ({
   const [finalizandoCierre, setFinalizandoCierre] = useState(false);
   const [analisisCompleto, setAnalisisCompleto] = useState(null);
   const [mostrandoAnalisisCompleto, setMostrandoAnalisisCompleto] = useState(false);
-  const [solicitandoRecarga, setSolicitandoRecarga] = useState(false);
+  // const [solicitandoRecarga, setSolicitandoRecarga] = useState(false);
+  const [mostrarCorreccionLibro, setMostrarCorreccionLibro] = useState(false);
+  const [estadoLibro, setEstadoLibro] = useState('no_subido');
+  const [libroNombre, setLibroNombre] = useState('');
+  const [libroId, setLibroId] = useState(null);
   const { usuario } = useAuth();
   const esSupervisor = (usuario?.tipo_usuario === 'supervisor' || usuario?.tipo_usuario === 'gerente');
 
@@ -451,40 +463,7 @@ const IncidenciasEncontradasSection = ({
     }
   };
 
-  const manejarSolicitarRecarga = async (e) => {
-    // Evitar que el click colapse/expanda la sección
-    if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
-
-    if (!cierre?.id) return;
-
-    const motivo = prompt('Indique el motivo para recargar archivos (requerido):');
-    if (!motivo || motivo.trim() === '') {
-      alert('Debe proporcionar un motivo para la recarga');
-      return;
-    }
-
-    if (!window.confirm('¿Confirma que desea solicitar la recarga de archivos? Esto permitirá resubir archivos corregidos desde Talana.')) {
-      return;
-    }
-
-    setSolicitandoRecarga(true);
-    try {
-      const res = await solicitarRecargaArchivosAnalista(cierre.id, motivo.trim());
-      // Refrescar estado del cierre en el padre
-      if (onCierreActualizado) {
-        await onCierreActualizado();
-      }
-      // Refrescar estado local de incidencias
-      await cargarEstadoIncidencias();
-      alert('✅ Solicitud registrada. Pendiente de aprobación del supervisor.');
-    } catch (err) {
-      const msg = err?.response?.data?.error || err?.message || 'Error solicitando recarga';
-      setError(msg);
-      alert(`❌ ${msg}`);
-    } finally {
-      setSolicitandoRecarga(false);
-    }
-  };
+  // Eliminado: flujo antiguo de "Solicitar Recarga"
 
   const obtenerColorEstado = (estado) => {
     switch (estado) {
@@ -517,6 +496,48 @@ const IncidenciasEncontradasSection = ({
            cierre?.estado === 'sin_incidencias' ||
            cierre?.estado === 'incidencias_resueltas' ||
            cierre?.estado === 'finalizado';
+  };
+
+  // ==== Handlers Corrección Libro ====
+  const recargarEstadoLibro = async () => {
+    if (!cierre?.id) return;
+    try {
+      const est = await obtenerEstadoLibroRemuneraciones(cierre.id);
+      // Normalizar
+      setEstadoLibro(est?.estado || 'no_subido');
+      setLibroNombre(est?.archivo_nombre || '');
+      setLibroId(est?.libro_id || null);
+    } catch (e) {
+      // si no existe aún, mantener no_subido
+      setEstadoLibro('no_subido');
+      setLibroNombre('');
+      setLibroId(null);
+    }
+  };
+
+  const handleAbrirCorreccionLibro = async (e) => {
+    if (e?.stopPropagation) e.stopPropagation();
+    await recargarEstadoLibro();
+    setMostrarCorreccionLibro(true);
+  };
+
+  const handleSubirLibro = async (archivo) => {
+    const data = await subirLibroRemuneraciones(cierre.id, archivo);
+    await recargarEstadoLibro();
+    return data;
+  };
+
+  const handleProcesarLibro = async () => {
+    if (!libroId) return;
+    await procesarLibroRemuneraciones(libroId);
+    await recargarEstadoLibro();
+    // Opcional: regenerar incidencias luego del procesamiento si aplica (backend puede dispararlo)
+  };
+
+  const handleEliminarLibro = async () => {
+    if (!libroId) return;
+    await eliminarLibroRemuneraciones(libroId);
+    await recargarEstadoLibro();
   };
 
   // Funciones de selección de clasificaciones eliminadas - ahora usa configuración automática de Pablo
@@ -573,26 +594,16 @@ const IncidenciasEncontradasSection = ({
               </span>
             </div>
           )}
-          {/* Botón Solicitar Recarga (solo analista, y si no hay solicitud/recarga en curso) */}
-          {!disabled && !esSupervisor && cierre?.estado !== 'recarga_solicitud_pendiente' && cierre?.estado !== 'requiere_recarga_archivos' && cierre?.estado !== 'finalizado' && (
+          {/* Eliminado: botón "Solicitar Recarga" */}
+          {/* Nuevo botón: Corregir Libro de Remuneraciones */}
+          {!disabled && !esSupervisor && (
             <div onClick={(e) => e.stopPropagation()}>
               <button
-                onClick={manejarSolicitarRecarga}
-                disabled={solicitandoRecarga}
-                className="inline-flex items-center gap-2 px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm rounded-md disabled:opacity-60 disabled:cursor-not-allowed"
-                title="Solicitar recarga de archivos Talana"
+                onClick={handleAbrirCorreccionLibro}
+                className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md"
+                title="Subir un Libro de Remuneraciones corregido y procesarlo"
               >
-                {solicitandoRecarga ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    Solicitando...
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="w-4 h-4" />
-                    Solicitar Recarga
-                  </>
-                )}
+                Corregir Libro
               </button>
             </div>
           )}
@@ -812,6 +823,21 @@ const IncidenciasEncontradasSection = ({
         }}
         onResolucionCreada={manejarResolucionCreada}
       />
+
+      {/* Modal Corrección Libro */}
+      <ModalCorreccionLibro
+        abierto={mostrarCorreccionLibro}
+        onCerrar={() => setMostrarCorreccionLibro(false)}
+      >
+        <LibroRemuneracionesCardCorreccion
+          estado={estadoLibro}
+          archivoNombre={libroNombre}
+          onSubirArchivo={handleSubirLibro}
+          onProcesar={handleProcesarLibro}
+          onActualizarEstado={recargarEstadoLibro}
+          onEliminarArchivo={handleEliminarLibro}
+        />
+      </ModalCorreccionLibro>
     </section>
   );
 };

@@ -968,6 +968,25 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
         # Persistencia: limpiar anteriores tipo suma_total y crear nuevas
         IncidenciaCierre.objects.filter(cierre=cierre, tipo_comparacion='suma_total').delete()
         if incidencias_bulk:
+            # bulk_create no llama a save(); generar hash_deteccion y versionado manualmente
+            try:
+                version = getattr(cierre, 'version_datos', None) or 1
+                for inc in incidencias_bulk:
+                    # Hash único de detección para trazabilidad/deduplicación
+                    if not getattr(inc, 'hash_deteccion', None):
+                        try:
+                            inc.hash_deteccion = inc.generar_hash_deteccion()
+                        except Exception:
+                            # No bloquear por hash, continuar
+                            pass
+                    # Versionado de datos en que se detectó
+                    if not getattr(inc, 'version_detectada_primera', None):
+                        inc.version_detectada_primera = version
+                    inc.version_detectada_ultima = version
+            except Exception:
+                # Fallback silencioso si no se puede calcular
+                pass
+
             IncidenciaCierre.objects.bulk_create(incidencias_bulk)
 
         total = len(incidencias_bulk)

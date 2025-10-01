@@ -550,6 +550,47 @@ class SGMCacheSystemNomina:
                 'timestamp': datetime.now().isoformat()
             }
 
+    def clear_cierre_cache(self, cliente_id: int, periodo: str) -> bool:
+        """
+        Eliminar todo el cache relacionado a un cierre específico
+        
+        Args:
+            cliente_id: ID del cliente
+            periodo: Período del cierre
+            
+        Returns:
+            bool: True si se eliminó exitosamente
+        """
+        try:
+            # Normalizar período
+            periodo_norm = str(periodo).strip()
+            if len(periodo_norm) == 7 and '-' in periodo_norm:
+                # Ya está en formato YYYY-MM
+                norm = periodo_norm
+            else:
+                # Asumir formato YYYY-MM-DD o similar, extraer YYYY-MM
+                norm = periodo_norm[:7] if len(periodo_norm) >= 7 else periodo_norm
+
+            # Patrón base para todas las claves de este cierre
+            pattern = f"sgm:nomina:{cliente_id}:{norm}*"
+            
+            # Buscar todas las claves que coincidan
+            keys = self.redis_client.keys(pattern)
+            
+            if keys:
+                # Eliminar todas las claves encontradas
+                deleted_count = self.redis_client.delete(*keys)
+                logger.info(f"🗑️ Cache limpiado para cierre: cliente={cliente_id}, periodo={periodo} - {deleted_count} claves eliminadas")
+                self._increment_stat("cache_clears")
+                return True
+            else:
+                logger.info(f"🗑️ No se encontraron claves de cache para cierre: cliente={cliente_id}, periodo={periodo}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error limpiando cache del cierre {cliente_id}/{periodo}: {e}")
+            return False
+
 # Instancia global del sistema de cache de nómina
 # Se inicializa de forma lazy para evitar errores en import time
 _cache_system_nomina = None

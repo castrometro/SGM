@@ -265,6 +265,21 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
             return Response({
                 'error': 'El libro debe estar en estado "clasificado" para procesar'
             }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Limpiar cache de Redis antes de procesar
+        try:
+            from .cache_redis import get_cache_system_nomina
+            cache_system = get_cache_system_nomina()
+            cache_cleared = cache_system.clear_cierre_cache(
+                cliente_id=libro.cierre.cliente.id,
+                periodo=str(libro.cierre.periodo)  # Convertir a string directamente
+            )
+            if cache_cleared:
+                logger.info(f"🗑️ Cache de Redis limpiado para cierre {libro.cierre.id}")
+            else:
+                logger.warning(f"⚠️ No se pudo limpiar completamente el cache para cierre {libro.cierre.id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Error limpiando cache de Redis: {e}")
         
         # Cambiar estado a procesando
         libro.estado = 'procesando'
@@ -284,7 +299,8 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
             usuario=request.user,
             detalles={
                 "libro_id": libro.id,
-                "optimizado": usar_optimizacion
+                "optimizado": usar_optimizacion,
+                "cache_limpiado": True
             },
             ip_address=get_client_ip(request)
         )

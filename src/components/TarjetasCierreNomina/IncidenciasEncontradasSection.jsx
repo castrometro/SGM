@@ -95,7 +95,6 @@ const IncidenciasEncontradasSection = ({
   const [mostrandoAnalisisCompleto, setMostrandoAnalisisCompleto] = useState(false);
   // const [solicitandoRecarga, setSolicitandoRecarga] = useState(false);
   const [mostrarCorreccionLibro, setMostrarCorreccionLibro] = useState(false);
-  const [procesandoLibroCompleto, setProcesandoLibroCompleto] = useState(false);
   const [estadoLibro, setEstadoLibro] = useState('no_subido');
   const [libroNombre, setLibroNombre] = useState('');
   const [libroId, setLibroId] = useState(null);
@@ -532,23 +531,11 @@ const IncidenciasEncontradasSection = ({
   const handleProcesarLibro = async () => {
     if (!libroId) return;
     
-    // Bloquear toda la interfaz durante el procesamiento
-    setProcesandoLibroCompleto(true);
-    
     try {
       await procesarLibroRemuneraciones(libroId);
       await recargarEstadoLibro();
-      
-      // Esperar un momento para que termine el procesamiento de incidencias
-      // y luego hacer refresh completo de la página
-      setTimeout(() => {
-        window.location.reload();
-      }, 3000);
-      
     } catch (error) {
       console.error('Error procesando libro:', error);
-      setProcesandoLibroCompleto(false);
-      // En caso de error, no hacer refresh y permitir interacción
     }
   };
 
@@ -845,13 +832,7 @@ const IncidenciasEncontradasSection = ({
       {/* Modal Corrección Libro */}
       <ModalCorreccionLibro
         abierto={mostrarCorreccionLibro}
-        onCerrar={() => {
-          // Bloquear el cierre del modal si está procesando
-          if (!procesandoLibroCompleto) {
-            setMostrarCorreccionLibro(false);
-          }
-        }}
-        bloqueado={procesandoLibroCompleto}
+        onCerrar={() => setMostrarCorreccionLibro(false)}
       >
         <LibroRemuneracionesCardCorreccion
           cierreId={cierre?.id}
@@ -861,29 +842,7 @@ const IncidenciasEncontradasSection = ({
           onProcesar={handleProcesarLibro}
           onActualizarEstado={recargarEstadoLibro}
           onEliminarArchivo={handleEliminarLibro}
-          disabled={procesandoLibroCompleto}
         />
-        
-        {/* Overlay de bloqueo durante procesamiento */}
-        {procesandoLibroCompleto && (
-          <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50 rounded-xl">
-            <div className="bg-gray-800 p-6 rounded-lg border border-gray-600 text-center max-w-md">
-              <div className="flex items-center justify-center mb-4">
-                <Loader2 size={32} className="animate-spin text-blue-400" />
-              </div>
-              <h3 className="text-lg font-semibold text-white mb-2">
-                Procesando libro y generando incidencias
-              </h3>
-              <p className="text-gray-300 text-sm mb-4">
-                Por favor espera mientras se procesa el archivo y se generan las nuevas incidencias. 
-                Esta operación puede tomar varios minutos.
-              </p>
-              <p className="text-blue-400 text-xs">
-                La página se actualizará automáticamente cuando termine el proceso.
-              </p>
-            </div>
-          </div>
-        )}
       </ModalCorreccionLibro>
     </section>
   );

@@ -506,7 +506,8 @@ const IncidenciasEncontradasSection = ({
       // Normalizar
       setEstadoLibro(est?.estado || 'no_subido');
       setLibroNombre(est?.archivo_nombre || '');
-      setLibroId(est?.libro_id || null);
+      // El backend devuelve 'id' (no 'libro_id'); mantener fallback por compatibilidad
+      setLibroId((est && (est.id ?? est.libro_id)) || null);
     } catch (e) {
       // si no existe aún, mantener no_subido
       setEstadoLibro('no_subido');
@@ -830,6 +831,7 @@ const IncidenciasEncontradasSection = ({
         onCerrar={() => setMostrarCorreccionLibro(false)}
       >
         <LibroRemuneracionesCardCorreccion
+          cierreId={cierre?.id}
           estado={estadoLibro}
           archivoNombre={libroNombre}
           onSubirArchivo={handleSubirLibro}

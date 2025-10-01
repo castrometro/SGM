@@ -1,10 +1,13 @@
 import { useState, useRef, useEffect } from "react";
 import { Download, CheckCircle2, Loader2 } from "lucide-react";
 import { descargarPlantillaLibroRemuneraciones } from "../../../api/nomina";
+import { consolidarDatosTalana } from "../../../api/nomina";
 import EstadoBadge from "../../EstadoBadge";
+import { corregirLibroRemuneraciones } from "../../../api/nomina";
 
 // Copia del componente original con título y textos ajustados para "Corrección"
 const LibroRemuneracionesCardCorreccion = ({
+  cierreId,
   estado,
   archivoNombre,
   onSubirArchivo,
@@ -25,6 +28,10 @@ const LibroRemuneracionesCardCorreccion = ({
   const [selectedFile, setSelectedFile] = useState(null);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [libroBorradoFlag, setLibroBorradoFlag] = useState(false);
+  const [enviandoCorreccion, setEnviandoCorreccion] = useState(false);
+  // Flag para encadenar consolidación automática tras procesar
+  const [autoConsolidar, setAutoConsolidar] = useState(false);
+  const [mensajeConsolidacion, setMensajeConsolidacion] = useState("");
 
   useEffect(() => {
     return () => {
@@ -87,6 +94,8 @@ const LibroRemuneracionesCardCorreccion = ({
     setError("");
     try {
       await onProcesar();
+      // Marcar que, una vez termine y pase a "procesado", debemos consolidar datos
+      setAutoConsolidar(true);
     } catch (err) {
       setProcesandoLocal(false);
       setError("Error al procesar el archivo.");
@@ -99,6 +108,28 @@ const LibroRemuneracionesCardCorreccion = ({
   const puedeInteractuarConArchivo = !isDisabled && !isProcesando;
   const tieneArchivo = Boolean(archivoNombre) || Boolean(selectedFile);
   const puedeProcesar = tieneArchivo && estado === "clasificado" && !isProcesando && !isProcessed;
+
+  // Efecto: cuando el procesamiento termine y el estado pase a 'procesado', disparar consolidación
+  useEffect(() => {
+    const lanzarConsolidacion = async () => {
+      if (!cierreId) return;
+      try {
+        setMensajeConsolidacion("Iniciando consolidación de datos...");
+        await consolidarDatosTalana(cierreId, { modo: 'optimizado' });
+        setMensajeConsolidacion("Consolidación iniciada. Puedes seguir trabajando; el sistema actualizará el estado automáticamente.");
+      } catch (e) {
+        // No bloquear la UI por errores de consolidación; mostrar feedback
+        const msg = e?.response?.data?.error || e?.message || "No se pudo iniciar la consolidación";
+        setMensajeConsolidacion(`No se pudo iniciar la consolidación: ${msg}`);
+      } finally {
+        setAutoConsolidar(false);
+      }
+    };
+
+    if (autoConsolidar && estado === "procesado") {
+      lanzarConsolidacion();
+    }
+  }, [autoConsolidar, estado, cierreId]);
 
   return (
     <div className={`bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col gap-3 ${isDisabled ? "opacity-60 pointer-events-none" : ""}`}>
@@ -182,13 +213,53 @@ const LibroRemuneracionesCardCorreccion = ({
           <div className="flex gap-2">
             <button
               type="button"
-              className="px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-white text-sm"
-              onClick={() => {
-                setLibroBorradoFlag(true);
-                setShowConfirmDelete(false);
+              className="px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+              disabled={enviandoCorreccion}
+              onClick={async () => {
+                setError("");
+                if (!cierreId || !selectedFile) {
+                  setError("Falta el archivo o el cierre para continuar");
+                  return;
+                }
+                try {
+                  setEnviandoCorreccion(true);
+                  await corregirLibroRemuneraciones(cierreId, selectedFile);
+                  // Solo si valida OK, marcamos 'Libro borrado' y cerramos advertencia
+                  setLibroBorradoFlag(true);
+                  setShowConfirmDelete(false);
+                  // Iniciar flujo estándar: subir archivo para análisis de headers
+                  if (typeof onSubirArchivo === 'function') {
+                    try {
+                      await onSubirArchivo(selectedFile);
+                      if (typeof onActualizarEstado === 'function') {
+                        setTimeout(() => onActualizarEstado(), 500);
+                      }
+                    } catch (upErr) {
+                      let msgUp = "Error al subir el archivo tras la validación";
+                      const dataUp = upErr?.response?.data;
+                      if (dataUp) {
+                        msgUp = dataUp.detail || dataUp.message || dataUp.error || (Array.isArray(dataUp) ? dataUp[0] : (typeof dataUp === 'string' ? dataUp : msgUp));
+                      } else if (upErr?.message) {
+                        msgUp = upErr.message;
+                      }
+                      setError(msgUp);
+                    }
+                  }
+                } catch (err) {
+                  let msg = "Error enviando archivo";
+                  const data = err?.response?.data;
+                  if (data) {
+                    msg = data.detail || data.message || data.error || (Array.isArray(data) ? data[0] : (typeof data === 'string' ? data : msg));
+                  } else if (err?.message) {
+                    msg = err.message;
+                  }
+                  setError(msg);
+                } finally {
+                  setEnviandoCorreccion(false);
+                }
               }}
             >
-              Sí, borrar libro anterior
+              {enviandoCorreccion ? 'Enviando…' : 'Sí, borrar libro anterior'}
             </button>
             <button
               type="button"
@@ -249,6 +320,12 @@ const LibroRemuneracionesCardCorreccion = ({
 
       {mensaje && (
         <span className="text-xs text-gray-400 italic mt-2">{mensaje}</span>
+      )}
+
+      {mensajeConsolidacion && (
+        <div className="mt-2 text-xs text-blue-300 bg-blue-900/20 p-2 rounded border border-blue-700/40">
+          {mensajeConsolidacion}
+        </div>
       )}
 
       <span className="text-xs text-gray-400 italic mt-2">

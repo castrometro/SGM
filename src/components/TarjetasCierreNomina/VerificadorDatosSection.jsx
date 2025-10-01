@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ShieldCheck, ChevronDown, ChevronRight, Lock, Loader2 } from "lucide-react";
 import VerificacionControl from "./VerificadorDatos/VerificacionControl";
 import DiscrepanciasViewer from "./VerificadorDatos/DiscrepanciasViewer";
@@ -16,6 +16,23 @@ const VerificadorDatosSection = ({
 }) => {
   // 🎯 Estado local para recibir estadoDiscrepancias del componente hijo
   const [estadoDiscrepancias, setEstadoDiscrepancias] = useState(null);
+
+  // 🔄 Polling ligero: si la consolidación está en curso, refrescar el cierre aunque el acordeón esté colapsado
+  useEffect(() => {
+    if (disabled) return;
+    if (!onCierreActualizado) return;
+    if (cierre?.estado_consolidacion !== 'consolidando') return;
+
+    const id = setInterval(() => {
+      try {
+        onCierreActualizado();
+      } catch (e) {
+        // ignorar errores transitorios
+      }
+    }, 3000);
+
+    return () => clearInterval(id);
+  }, [cierre?.estado_consolidacion, disabled, onCierreActualizado]);
 
   // 🎯 Callback para recibir estadoDiscrepancias del componente hijo
   const handleEstadoDiscrepanciasChange = (estado) => {

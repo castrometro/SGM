@@ -1313,7 +1313,7 @@ def generar_incidencias_cierre_task(cierre_id):
     3. Personas que ingresaron el mes anterior y no están presentes  
     4. Personas que finiquitaron el mes anterior y siguen presentes
     """
-    from .utils.DetectarIncidenciasConsolidadas import generar_incidencias_consolidadas_task
+    from .utils.reconciliacion import reconciliar_cierre_suma_total as generar_incidencias_consolidadas_task
     from .models import CierreNomina
     
     logger.info(f"🔍 Iniciando generación de incidencias para cierre consolidado {cierre_id}")
@@ -1326,15 +1326,17 @@ def generar_incidencias_cierre_task(cierre_id):
         if cierre.estado not in estados_validos:
             raise ValueError(f"El cierre debe estar en estado válido para generar incidencias. Estado actual: {cierre.estado}, Estados válidos: {estados_validos}")
         
-        # Ejecutar detección de incidencias
-        resultado = generar_incidencias_consolidadas_task(cierre_id)
-        
-        if resultado['success']:
-            logger.info(f"✅ Incidencias generadas exitosamente para cierre {cierre_id}: {resultado['total_incidencias']} incidencias")
-            return resultado
-        else:
-            logger.error(f"❌ Error en detección de incidencias para cierre {cierre_id}: {resultado.get('error', 'Error desconocido')}")
-            return resultado
+        # Ejecutar generación simplificada (suma_total)
+        resumen = generar_incidencias_consolidadas_task(cierre_id)
+        logger.info(
+            f"✅ Incidencias (suma_total) para cierre {cierre_id}: creadas={resumen.get('creadas')}, "
+            f"actualizadas={resumen.get('actualizadas')}, resueltas={resumen.get('marcadas_resueltas')}, v={resumen.get('version')}"
+        )
+        return {
+            'success': True,
+            'cierre_id': cierre_id,
+            **resumen
+        }
         
     except Exception as e:
         logger.error(f"❌ Error crítico generando incidencias para cierre {cierre_id}: {e}")
@@ -2021,20 +2023,23 @@ def generar_incidencias_consolidadas_task(cierre_id):
     """
     Tarea para generar incidencias de un cierre consolidado
     """
-    from .utils.DetectarIncidenciasConsolidadas import generar_incidencias_consolidadas_task as detectar_incidencias
+    # Generación simplificada: SOLO suma_total por ítem (alineado al front actual)
+    from .utils.reconciliacion import reconciliar_cierre_suma_total
     
     logger.info(f"🔍 Iniciando detección de incidencias consolidadas para cierre {cierre_id}")
     
     try:
-        # Ejecutar detección de incidencias
-        resultado = detectar_incidencias(cierre_id)
-        
-        if resultado['success']:
-            logger.info(f"✅ Detección exitosa para cierre {cierre_id}: {resultado['total_incidencias']} incidencias")
-        else:
-            logger.error(f"❌ Error en detección para cierre {cierre_id}: {resultado.get('error', 'Error desconocido')}")
-        
-        return resultado
+        # Ejecutar reconciliación/generación de incidencias de suma_total
+        resumen = reconciliar_cierre_suma_total(cierre_id)
+        logger.info(
+            f"✅ Incidencias (suma_total) para cierre {cierre_id}: creadas={resumen.get('creadas')}, "
+            f"actualizadas={resumen.get('actualizadas')}, resueltas={resumen.get('marcadas_resueltas')}, v={resumen.get('version')}"
+        )
+        return {
+            'success': True,
+            'cierre_id': cierre_id,
+            **resumen
+        }
         
     except Exception as e:
         logger.error(f"❌ Error crítico en detección de incidencias para cierre {cierre_id}: {e}")
@@ -2068,9 +2073,12 @@ def consolidar_datos_nomina_task_optimizado(cierre_id):
         cierre = CierreNomina.objects.get(id=cierre_id)
         logger.info(f"📋 Cierre obtenido: {cierre} - Estado: {cierre.estado}")
         
-        # Verificar estado
-        if cierre.estado not in ['verificado_sin_discrepancias', 'datos_consolidados']:
-            raise ValueError(f"El cierre debe estar en 'verificado_sin_discrepancias' o 'datos_consolidados', actual: {cierre.estado}")
+        # Verificar estado (alineado con vista: permitir también 'con_incidencias')
+        if cierre.estado not in ['verificado_sin_discrepancias', 'datos_consolidados', 'con_incidencias']:
+            raise ValueError(
+                "El cierre debe estar en 'verificado_sin_discrepancias', 'datos_consolidados' o 'con_incidencias', "
+                f"actual: {cierre.estado}"
+            )
         
         # Marcar consolidación en progreso sin cambiar el estado visible del cierre
         # Mantener "verificado_sin_discrepancias" hasta que termine y pase a "datos_consolidados"
@@ -2843,16 +2851,30 @@ def finalizar_consolidacion_post_movimientos(cierre_id):
         else:
             logger.error(f"❌ [FINAL] Error procesando conceptos: {resultado_conceptos.get('error', 'Error desconocido')}")
 
-        # Poner estado final del cierre
+        # Poner estado final del cierre (preservar 'con_incidencias' si corresponde)
         cierre = CierreNomina.objects.get(id=cierre_id)
-        cierre.estado = 'datos_consolidados'
+        estado_anterior = cierre.estado
+        # Si el cierre estaba en 'con_incidencias', NO cambiar a 'datos_consolidados'
+        if estado_anterior != 'con_incidencias':
+            cierre.estado = 'datos_consolidados'
+            campos_estado = ['estado']
+        else:
+            campos_estado = []
         try:
             cierre.estado_consolidacion = 'consolidado'
-            update_fields = ['estado', 'fecha_consolidacion', 'estado_consolidacion']
+            update_fields = campos_estado + ['fecha_consolidacion', 'estado_consolidacion']
         except Exception:
-            update_fields = ['estado', 'fecha_consolidacion']
+            update_fields = campos_estado + ['fecha_consolidacion']
         cierre.fecha_consolidacion = timezone.now()
         cierre.save(update_fields=update_fields)
+
+        # Si preservamos 'con_incidencias', disparar generación de incidencias automáticamente
+        if estado_anterior == 'con_incidencias':
+            try:
+                generar_incidencias_consolidadas_task.delay(cierre_id)
+                logger.info(f"🧩 [FINAL] Cierre {cierre_id} en 'con_incidencias': incidencias consolidadas disparadas automáticamente")
+            except Exception as ex:
+                logger.error(f"⚠️ [FINAL] No se pudo disparar incidencias automáticamente para cierre {cierre_id}: {ex}")
 
         return {
             'success': True,
@@ -2973,15 +2995,27 @@ def consolidar_resultados_finales(resultados_paralelos, cierre_id):
             logger.error(f"❌ [FINAL] Error generando resumen por tipo_concepto: {e}")
             conceptos_consolidados = 0
         
-        # FINALIZAR CONSOLIDACIÓN EXITOSA
-        cierre.estado = 'datos_consolidados'
+        # FINALIZAR CONSOLIDACIÓN EXITOSA (preservar 'con_incidencias' si corresponde)
+        estado_anterior = cierre.estado
+        if estado_anterior != 'con_incidencias':
+            cierre.estado = 'datos_consolidados'
+            campos_estado = ['estado']
+        else:
+            campos_estado = []
         try:
             cierre.estado_consolidacion = 'consolidado'
-            update_fields = ['estado', 'fecha_consolidacion', 'estado_consolidacion']
+            update_fields = campos_estado + ['fecha_consolidacion', 'estado_consolidacion']
         except Exception:
-            update_fields = ['estado', 'fecha_consolidacion']
+            update_fields = campos_estado + ['fecha_consolidacion']
         cierre.fecha_consolidacion = timezone.now()
         cierre.save(update_fields=update_fields)
+
+        if estado_anterior == 'con_incidencias':
+            try:
+                generar_incidencias_consolidadas_task.delay(cierre_id)
+                logger.info(f"🧩 [FINAL] Cierre {cierre_id} en 'con_incidencias': incidencias consolidadas disparadas automáticamente")
+            except Exception as ex:
+                logger.error(f"⚠️ [FINAL] No se pudo disparar incidencias automáticamente para cierre {cierre_id}: {ex}")
         
         logger.info(f"✅ [FINAL] Consolidación OPTIMIZADA completada exitosamente:")
         logger.info(f"   📊 {empleados_consolidados} empleados consolidados")

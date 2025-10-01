@@ -690,6 +690,7 @@ export const procesarLibroRemuneraciones = async (libroId) => {
   );
   return res.data;
 };
+
 export const obtenerConceptosLibroRemuneraciones = async (clienteId, periodo) => {
   const response = await api.get(`/nomina/libro_remuneraciones/conceptos/${clienteId}/${periodo}/`);
   return response.data;
@@ -1140,4 +1141,16 @@ export const generarIncidenciasTotalesVariacion = async (cierreId) => {
     }
     throw errGet;
   }
+};
+
+// ========== CORRECCIÓN DE LIBRO (flujo exclusivo) ==========
+// Sube un libro corregido para un cierre, usando el endpoint exclusivo de corrección
+export const corregirLibroRemuneraciones = async (cierreId, archivo) => {
+  const formData = new FormData();
+  formData.append('archivo', archivo);
+  // Opcionalmente podríamos incluir metadatos (usuario, comentario, etc.)
+  const res = await api.post(`/nomina/cierres/${cierreId}/corregir-libro/`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return res.data;
 };

@@ -88,6 +88,7 @@ from .views_reclasificacion import reclasificar_concepto_consolidado
 from .views_resumen_movimientos import movimientos_personal_detalle_v3
 from .views_incidencias import IncidenciaCierreViewSet
 from .views_finalizacion import finalizar_cierre_view
+from .views_correcciones import corregir_libro_view
 
 router = routers.DefaultRouter()
 router.register(r'cierres', CierreNominaViewSet)
@@ -258,6 +259,8 @@ urlpatterns = router.urls + [
     path('cierres/<int:cierre_id>/nomina-consolidada/detalle/', obtener_detalle_nomina_consolidada, name='detalle_nomina_consolidada'),
     # === Libro Remuneraciones V2 (simplificado) ===
     path('cierres/<int:cierre_id>/libro/v2/resumen/', libro_resumen_v2, name='libro_resumen_v2'),
+    # === Corrección exclusiva de Libro de Remuneraciones (endpoint mínimo de prueba) ===
+    path('cierres/<int:cierre_id>/corregir-libro/', corregir_libro_view, name='corregir_libro'),
     # === Reclasificación de conceptos consolidados ===
     path('cierres/<int:cierre_id>/conceptos/reclasificar/',
         reclasificar_concepto_consolidado,

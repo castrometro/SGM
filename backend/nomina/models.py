@@ -995,10 +995,14 @@ class IncidenciaCierre(models.Model):
         ordering = ['-fecha_detectada', '-impacto_monetario']
     
     def __str__(self):
-        signo = '+' if self.get_delta_absoluto() >= 0 else ''
+        delta_abs = self.get_delta_absoluto()
+        signo = '+' if (delta_abs is not None and delta_abs >= 0) else ''
         delta_pct = self.get_delta_porcentual()
-        if delta_pct is not None:
-            return f"{self.concepto_afectado}: {signo}{delta_pct:.1f}% (${self.get_delta_absoluto():,.0f})"
+        if delta_pct is not None and delta_abs is not None:
+            try:
+                return f"{self.concepto_afectado}: {signo}{float(delta_pct):.1f}% (${float(delta_abs):,.0f})"
+            except Exception:
+                pass
         return f"{self.get_tipo_incidencia_display()} - {self.concepto_afectado}"
 
     def save(self, *args, **kwargs):

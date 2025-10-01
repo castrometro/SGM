@@ -248,10 +248,16 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         estado_anterior = cierre.estado
         
         # Verificar estado válido para consolidación
-        if cierre.estado not in ['verificado_sin_discrepancias', 'datos_consolidados']:
+        # Estados permitidos: verificado_sin_discrepancias, datos_consolidados (reconsolidación) y con_incidencias
+        estados_permitidos = ['verificado_sin_discrepancias', 'datos_consolidados', 'con_incidencias']
+        if cierre.estado not in estados_permitidos:
             return Response({
                 "success": False,
-                "error": f"El cierre debe estar en estado 'verificado_sin_discrepancias' o 'datos_consolidados' para consolidar datos. Estado actual: {cierre.estado}"
+                "error": (
+                    "El cierre debe estar en estado 'verificado_sin_discrepancias', "
+                    "'datos_consolidados' o 'con_incidencias' para consolidar datos. "
+                    f"Estado actual: {cierre.estado}"
+                )
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
@@ -401,8 +407,7 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         """
         from .models_logging import registrar_actividad_tarjeta_nomina
         from .utils.clientes import get_client_ip
-        from .utils.DetectarIncidenciasConsolidadas import generar_incidencias_consolidadas_task
-        from celery import current_app
+    # La detección usa el orquestador V2 a través de la task generar_incidencias_consolidadas_task
         
         cierre = self.get_object()
         
@@ -421,36 +426,28 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Ejecutar la tarea de detección de incidencias usando Celery
+            # Ejecutar generación simplificada sin background (respuesta inmediata con resumen)
             from .tasks import generar_incidencias_consolidadas_task
-            
-            # Enviar tarea a Celery
-            task = generar_incidencias_consolidadas_task.delay(cierre.id)
-            
-            # Actualizar estado del cierre a "generando_incidencias"
-            cierre.estado_incidencias = 'generando_incidencias'
-            cierre.save(update_fields=['estado_incidencias'])
-            
-            # Registrar la actividad
+
+            resultado = generar_incidencias_consolidadas_task(cierre.id)
+
             registrar_actividad_tarjeta_nomina(
                 cierre_id=cierre.id,
                 tarjeta="incidencias",
-                accion="iniciar_generar_incidencias_consolidadas",
-                descripcion="Iniciada generación de incidencias consolidadas (tarea en background)",
+                accion="generar_incidencias_consolidadas",
+                descripcion="Generación de incidencias consolidadas (suma_total)",
                 usuario=request.user,
                 detalles={
-                    "task_id": task.id,
-                    "metodo": "consolidado_vs_periodo_anterior",
-                    "estado_anterior": "pendiente"
+                    "resultado": resultado,
+                    "metodo": "suma_total",
                 },
                 ip_address=get_client_ip(request)
             )
-            
+
+            # Estado de incidencias se actualiza por la reconciliación según conteos
             return Response({
                 "success": True,
-                "mensaje": "Generación de incidencias consolidadas iniciada en background",
-                "task_id": task.id,
-                "estado_incidencias": cierre.estado_incidencias
+                "resultado": resultado
             })
                 
         except Exception as e:

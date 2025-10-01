@@ -945,13 +945,13 @@ def consolidar_resultados_incidencias(resultados_tasks, cierre_id, chunks_indivi
         throughput_individual = empleados_procesados_total / tiempo_total_individual if tiempo_total_individual > 0 else 0
         tiempo_total_sistema = max(tiempo_total_individual, tiempo_suma_total)
         
-        # Ejecutar reconciliación por firma (vN)
+        # Ejecutar reconciliación simplificada (suma_total)
         try:
-            from .reconciliacion import reconciliar_cierre_por_firma
-            resumen_recon = reconciliar_cierre_por_firma(cierre_id)
-            logger.info(f"🔄 Reconciliación v{resumen_recon['version']}: {resumen_recon}")
+            from .reconciliacion import reconciliar_cierre_suma_total
+            resumen_recon = reconciliar_cierre_suma_total(cierre_id)
+            logger.info(f"🔄 Reconciliación suma_total v{resumen_recon['version']}: {resumen_recon}")
         except Exception as e:
-            logger.error(f"❌ Error en reconciliación por firma: {e}")
+            logger.error(f"❌ Error en reconciliación suma_total: {e}")
 
         # Log final detallado
         logger.info(f"🎯 ===== CONSOLIDACIÓN COMPLETADA =====")

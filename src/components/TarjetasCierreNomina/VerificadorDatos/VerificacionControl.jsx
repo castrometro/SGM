@@ -421,10 +421,13 @@ const VerificacionControl = ({
     const estadosQueRequierenPolling = [
       "verificacion_datos",       // Cuando está verificando
       "con_discrepancias",       // Podría estar procesando correcciones
-      "verificado_sin_discrepancias" // Podría estar finalizando verificación
+      "verificado_sin_discrepancias", // Podría estar finalizando verificación
+      "con_incidencias",         // ✅ También cuando hay incidencias y puede estar consolidando
     ];
-    
-    const deberiaHacerPolling = estadosQueRequierenPolling.includes(cierre?.estado);
+
+    // Hacer polling si está en alguno de los estados o si la consolidación está corriendo
+    const consolidacionEnCurso = cierre?.estado_consolidacion === 'consolidando';
+    const deberiaHacerPolling = estadosQueRequierenPolling.includes(cierre?.estado) || consolidacionEnCurso;
     
     if (deberiaHacerPolling && !pollingRef.current && !deberiaDetenerPolling) {
       console.log(`🔄 [VerificacionControl] Iniciando polling automático para estado: "${cierre?.estado}"`);
@@ -432,6 +435,10 @@ const VerificacionControl = ({
       // Marcar como generando si está en verificación
       if (cierre?.estado === 'verificacion_datos') {
         setGenerando(true);
+      }
+      // Marcar consolidando si backend reporta consolidación en curso
+      if (consolidacionEnCurso) {
+        setConsolidando(true);
       }
       
       let contadorPolling = 0;
@@ -490,9 +497,10 @@ const VerificacionControl = ({
       clearInterval(pollingRef.current);
       pollingRef.current = null;
       setGenerando(false);
-      setConsolidando(false);
+      // Detener consolidando si ya no estamos en consolidación
+      if (!consolidacionEnCurso) setConsolidando(false);
     }
-  }, [cierre?.estado, deberiaDetenerPolling, onCierreActualizado]);
+  }, [cierre?.estado, cierre?.estado_consolidacion, deberiaDetenerPolling, onCierreActualizado]);
 
   // 🔧 FUNCIÓN: Verificar si se puede consolidar
   const puedeConsolidarDatos = () => {
@@ -504,8 +512,9 @@ const VerificacionControl = ({
     });
     
     const puede = cierre?.estado === 'verificado_sin_discrepancias' || 
-           cierre?.estado === 'sin_discrepancias' ||
-           cierre?.estado === 'datos_consolidados' || // ✅ Permitir re-consolidación
+      cierre?.estado === 'sin_discrepancias' ||
+      cierre?.estado === 'datos_consolidados' || // ✅ Permitir re-consolidación
+      cierre?.estado === 'con_incidencias' || // ✅ Nuevo: permitir consolidar con incidencias
            (estadoDiscrepancias && estadoDiscrepancias.total_discrepancias === 0 && estadoDiscrepancias.verificacion_completada);
     
     console.log('✅ Resultado puedeConsolidarDatos:', puede);
@@ -554,6 +563,13 @@ const VerificacionControl = ({
           <div className="mb-4 px-3 py-2 bg-yellow-900/30 border border-yellow-600/30 rounded-md text-yellow-200 flex items-center">
             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
             Consolidando datos de nómina... Esta operación puede tardar varios minutos. Puedes seguir trabajando en otras secciones.
+          </div>
+        )}
+        {/* Banner post-consolidación cuando el cierre permanece en 'con_incidencias' */}
+        {cierre?.estado_consolidacion === 'consolidado' && cierre?.estado === 'con_incidencias' && (
+          <div className="mb-4 px-3 py-2 bg-blue-900/30 border border-blue-600/30 rounded-md text-blue-200 flex items-center">
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            Consolidación finalizada. Generando incidencias automáticamente...
           </div>
         )}
         <div className="flex items-center justify-between">

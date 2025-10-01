@@ -1,6 +1,7 @@
 from django.db import transaction
-from django.db.models import Count
-from ..models import IncidenciaCierre, CierreNomina, ResolucionIncidencia
+from django.db.models import Sum
+import hashlib
+from ..models import IncidenciaCierre, CierreNomina, ResolucionIncidencia, ConceptoConsolidado
 
 
 def _elegir_usuario_para_nota(cierre: CierreNomina):
@@ -8,151 +9,173 @@ def _elegir_usuario_para_nota(cierre: CierreNomina):
     return cierre.supervisor_asignado or cierre.usuario_analista or None
 
 
-def reconciliar_cierre_por_firma(cierre_id: int) -> dict:
+def _variacion_pct(actual, anterior):
+    if not anterior or float(anterior) == 0:
+        return 100.0 if (actual or 0) > 0 else 0.0
+    try:
+        return float(((actual or 0) - (anterior or 0)) / anterior * 100)
+    except Exception:
+        return 0.0
+
+
+def _hash_incidencia_suma_total(nombre_concepto: str, tipo_concepto: str) -> str:
+    """Hash estable por concepto/tipo para identificar la misma incidencia a través de recalculos.
+
+    No incluye montos, de modo que una misma incidencia (mismo concepto/tipo) conserve el hash
+    aunque cambien los valores, permitiendo actualizarla en lugar de duplicarla.
     """
-    Reconciliación vN: unifica incidencias por firma dentro de un cierre,
-    actualiza versiones y marca desapariciones como 'resolucion_supervisor_pendiente'.
-    Retorna resumen con conteos.
+    base = f"suma_total|{(tipo_concepto or '').strip().lower()}|{(nombre_concepto or '').strip().lower()}"
+    return hashlib.sha1(base.encode('utf-8')).hexdigest()
+
+
+def reconciliar_cierre_suma_total(cierre_id: int, umbral_pct: float = 30.0) -> dict:
+    """
+    Reconciliación para el modelo simplificado (suma_total):
+    - Recalcula variaciones por concepto (todas las categorías, agregado por ítem)
+    - Upsert: crea nuevas o actualiza existentes (descripcion, datos, impacto, version_ultima)
+    - Marca como resuelta_analista las incidencias que ya no superan el umbral
+    Retorna resumen con conteos y versión utilizada.
     """
     with transaction.atomic():
         cierre = CierreNomina.objects.select_for_update().get(id=cierre_id)
         vN = cierre.version_datos or 1
 
-        # No usar select_related('cierre') aquí porque más abajo se usa only(...) y se difiere el campo
-        # 'cierre', lo que provoca: "Field IncidenciaCierre.cierre cannot be both deferred and traversed"
-        # Además, en este flujo no accedemos a inc.cierre, por lo que el join no aporta.
-        qs = IncidenciaCierre.objects.filter(
-            cierre_id=cierre_id,
-            tipo_comparacion__in=['individual', 'suma_total']
+        # Determinar cierre anterior finalizado (si no hay, no se generan variaciones)
+        cierre_anterior = (
+            CierreNomina.objects
+            .filter(cliente=cierre.cliente, periodo__lt=cierre.periodo, estado='finalizado')
+            .order_by('-periodo')
+            .first()
         )
 
-        # Asegurar firma y versiones en vacíos (por bulk_create no pasa por save)
-        faltantes = []
-        for inc in qs.only('id', 'tipo_comparacion', 'concepto_afectado', 'rut_empleado', 'firma_clave', 'firma_hash', 'version_detectada_primera', 'version_detectada_ultima'):
-            mod = False
-            if not inc.firma_clave or not inc.firma_hash:
-                clave, h = inc.generar_firma()
-                inc.firma_clave = clave
-                inc.firma_hash = h
-                mod = True
-            if not inc.version_detectada_primera:
-                inc.version_detectada_primera = vN
-                inc.version_detectada_ultima = vN
-                mod = True
-            if mod:
-                faltantes.append(inc)
-        if faltantes:
-            IncidenciaCierre.objects.bulk_update(faltantes, ['firma_clave', 'firma_hash', 'version_detectada_primera', 'version_detectada_ultima'])
+        # Mapa de totales por (nombre_concepto, tipo_concepto)
+        EXCLUIR_TIPOS = {'informacion_adicional'}  # No comparar categoría informativa
+        def totales_por_concepto(cierre_obj):
+            if not cierre_obj:
+                return {}
+            qs = ConceptoConsolidado.objects.filter(nomina_consolidada__cierre=cierre_obj)
+            if EXCLUIR_TIPOS:
+                qs = qs.exclude(tipo_concepto__in=EXCLUIR_TIPOS)
+            datos = (
+                qs.values('nombre_concepto', 'tipo_concepto')
+                .annotate(total=Sum('monto_total'))
+            )
+            return { (d['nombre_concepto'], d['tipo_concepto']) : d['total'] for d in datos }
 
-        # Agrupar por firma_hash para detectar duplicados (múltiples versiones)
-        todas = list(qs)
-        grupos = {}
-        for inc in todas:
-            if not inc.firma_hash:
-                # si no hay firma, saltar (informativas, etc.)
-                continue
-            grupos.setdefault(inc.firma_hash, []).append(inc)
+        mapa_act = totales_por_concepto(cierre)
+        mapa_ant = totales_por_concepto(cierre_anterior)
+        claves = set(mapa_act.keys()) | set(mapa_ant.keys())
 
-        vigentes_actualizadas = 0
-        unificadas = 0
-        desaparecidas_pendientes = 0
+        existentes_qs = IncidenciaCierre.objects.select_for_update().filter(
+            cierre_id=cierre_id,
+            tipo_comparacion='suma_total'
+        )
+        # Mapear existentes por hash estable si está, y por clave de concepto como respaldo
+        existentes_por_hash = {i.hash_deteccion: i for i in existentes_qs if getattr(i, 'hash_deteccion', None)}
+        existentes_por_concepto = {(i.concepto_afectado, i.tipo_incidencia): i for i in existentes_qs}
+
+        creadas = 0
+        actualizadas = 0
+        marcadas_resueltas = 0
         usuario_nota = _elegir_usuario_para_nota(cierre)
 
-        for firma, lista in grupos.items():
-            if len(lista) == 1:
-                # Solo una versión; si es vN, cuenta como vigente actualizada
-                inc = lista[0]
-                if inc.version_detectada_ultima == vN:
-                    vigentes_actualizadas += 1
+        # Upsert para las que superan umbral
+        vigentes_hashes = set()
+        vigentes_keys = set()
+        for (nombre, tipo) in claves:
+            # Saltar categorías informativas
+            if tipo in EXCLUIR_TIPOS:
+                continue
+            suma_act = float(mapa_act.get((nombre, tipo), 0) or 0)
+            suma_ant = float(mapa_ant.get((nombre, tipo), 0) or 0)
+            variacion = _variacion_pct(suma_act, suma_ant)
+            if abs(variacion) < umbral_pct:
                 continue
 
-            # Elegir incidencia canónica: la con resoluciones o la de menor version_detectada_primera
-            lista_sorted = sorted(
-                lista,
-                key=lambda x: (
-                    -(getattr(x, 'resoluciones_count', 0)),
-                    x.version_detectada_primera or 10**9,
-                    x.id
+            key = (nombre, 'variacion_suma_total')
+            hash_estable = _hash_incidencia_suma_total(nombre, tipo)
+            vigentes_keys.add(key)
+            vigentes_hashes.add(hash_estable)
+
+            # Incluir ambas nomenclaturas para compatibilidad (monto_* y suma_*)
+            delta_abs = suma_act - suma_ant
+            datos = {
+                'alcance': 'item',
+                'categoria_concepto': tipo,
+                'concepto': nombre,
+                'tipo_concepto': tipo,
+                'suma_actual': suma_act,
+                'suma_anterior': suma_ant,
+                'monto_actual': suma_act,
+                'monto_anterior': suma_ant,
+                'variacion_porcentual': round(variacion, 2),
+                'variacion_absoluta': abs(delta_abs),
+                'delta_abs': delta_abs,
+                'delta_pct': round(variacion, 2),
+                'tipo_comparacion': 'suma_total'
+            }
+            descripcion = f"Variación {variacion:.1f}% en suma total de {nombre}"
+            impacto = abs(delta_abs)
+
+            # Buscar por hash estable primero; si no, por clave concepto/tipo
+            existente = existentes_por_hash.get(hash_estable) or existentes_por_concepto.get(key)
+            if existente:
+                campos = []
+                if existente.descripcion != descripcion:
+                    existente.descripcion = descripcion; campos.append('descripcion')
+                if existente.clasificacion_concepto != tipo:
+                    existente.clasificacion_concepto = tipo; campos.append('clasificacion_concepto')
+                if existente.datos_adicionales != datos:
+                    existente.datos_adicionales = datos; campos.append('datos_adicionales')
+                if float(existente.impacto_monetario or 0) != impacto:
+                    existente.impacto_monetario = impacto; campos.append('impacto_monetario')
+                if (existente.version_detectada_ultima or 0) != vN:
+                    existente.version_detectada_ultima = vN; campos.append('version_detectada_ultima')
+                if existente.version_detectada_primera is None:
+                    existente.version_detectada_primera = vN; campos.append('version_detectada_primera')
+                if existente.hash_deteccion != hash_estable:
+                    existente.hash_deteccion = hash_estable; campos.append('hash_deteccion')
+                if campos:
+                    existente.save(update_fields=campos)
+                    actualizadas += 1
+            else:
+                IncidenciaCierre.objects.create(
+                    cierre_id=cierre_id,
+                    tipo_incidencia='variacion_suma_total',
+                    tipo_comparacion='suma_total',
+                    concepto_afectado=nombre,
+                    clasificacion_concepto=tipo,
+                    descripcion=descripcion,
+                    impacto_monetario=impacto,
+                    datos_adicionales=datos,
+                    version_detectada_primera=vN,
+                    version_detectada_ultima=vN,
+                    hash_deteccion=hash_estable,
                 )
-            )
+                creadas += 1
 
-            # Prefetch conteo de resoluciones si no existe
-            if not hasattr(lista_sorted[0], 'resoluciones_count'):
-                ids = [i.id for i in lista_sorted]
-                counts = dict(
-                    IncidenciaCierre.objects.filter(id__in=ids)
-                    .annotate(c=Count('resoluciones')).values_list('id', 'c')
-                )
-                for i in lista_sorted:
-                    i.resoluciones_count = counts.get(i.id, 0)
-
-            lista_sorted = sorted(
-                lista,
-                key=lambda x: (-x.resoluciones_count, x.version_detectada_primera or 10**9, x.id)
-            )
-            canon = lista_sorted[0]
-            otros = [x for x in lista_sorted[1:]]
-
-            # Tomar el más reciente (si existe) para copiar valores
-            mas_reciente = max(lista, key=lambda x: (x.version_detectada_ultima or 0, x.id))
-
-            # Actualizar canónica con datos de la versión más reciente
-            campos_update = []
-            for campo in ['impacto_monetario', 'descripcion', 'prioridad', 'concepto_afectado', 'datos_adicionales', 'tipo_incidencia']:
-                nuevo_valor = getattr(mas_reciente, campo)
-                if getattr(canon, campo) != nuevo_valor:
-                    setattr(canon, campo, nuevo_valor)
-                    campos_update.append(campo)
-            # Actualizar tracking de versión
-            if (canon.version_detectada_ultima or 0) != (mas_reciente.version_detectada_ultima or vN):
-                canon.version_detectada_ultima = mas_reciente.version_detectada_ultima or vN
-                campos_update.append('version_detectada_ultima')
-            if campos_update:
-                canon.save(update_fields=campos_update)
-                vigentes_actualizadas += 1
-                unificadas += len(otros)
-
-            # Mover resoluciones de duplicados (por seguridad) y eliminar duplicados
-            for dup in otros:
-                if dup.id == canon.id:
-                    continue
-                # Reasignar resoluciones si existieran
-                dup.resoluciones.update(incidencia=canon)
-                dup.delete()
-
-            # Nota del sistema (opcional) — solo si tenemos un usuario para asociar la nota
-            if usuario_nota and mas_reciente.id != canon.id:
-                ResolucionIncidencia.objects.create(
-                    incidencia=canon,
-                    usuario=usuario_nota,
-                    tipo_resolucion='consulta',  # neutral
-                    comentario=f"Recalculada con v{vN}. Valores actualizados desde ID {mas_reciente.id}"
-                )
-
-        # Marcar desapariciones: incidencias cuya version_detectada_ultima < vN
-        desaparecidas = IncidenciaCierre.objects.filter(
-            cierre_id=cierre_id,
-            tipo_comparacion__in=['individual', 'suma_total'],
-            version_detectada_ultima__lt=vN
-        )
-        count_desap = 0
-        for inc in desaparecidas:
-            if inc.estado != 'resolucion_supervisor_pendiente':
-                inc.estado = 'resolucion_supervisor_pendiente'
-                inc.save(update_fields=['estado'])
-                count_desap += 1
+        # Marcar como resueltas las que ya no superan el umbral
+        for obj in existentes_qs:
+            if obj.tipo_incidencia != 'variacion_suma_total':
+                continue
+            clave = (obj.concepto_afectado, obj.tipo_incidencia)
+            if (obj.hash_deteccion and obj.hash_deteccion in vigentes_hashes) or clave in vigentes_keys:
+                continue
+            if obj.estado != 'resuelta_analista':
+                obj.estado = 'resuelta_analista'
+                obj.save(update_fields=['estado'])
+                marcadas_resueltas += 1
                 if usuario_nota:
                     ResolucionIncidencia.objects.create(
-                        incidencia=inc,
+                        incidencia=obj,
                         usuario=usuario_nota,
                         tipo_resolucion='consulta',
-                        comentario=f"Incidencia no presente en v{vN}; requiere confirmación del supervisor"
+                        comentario=f"Incidencia ya no supera umbral en v{vN}; marcada como resuelta"
                     )
-        desaparecidas_pendientes = count_desap
 
         return {
-            'vigentes_actualizadas': vigentes_actualizadas,
-            'unificadas': unificadas,
-            'supervisor_pendiente': desaparecidas_pendientes,
+            'creadas': creadas,
+            'actualizadas': actualizadas,
+            'marcadas_resueltas': marcadas_resueltas,
             'version': vN,
         }

@@ -1,5 +1,8 @@
 from django.db import transaction
 from django.db.models import Sum
+from django.utils import timezone
+from django.conf import settings
+from django.contrib.auth import get_user_model
 import hashlib
 from ..models import IncidenciaCierre, CierreNomina, ResolucionIncidencia, ConceptoConsolidado
 
@@ -7,6 +10,22 @@ from ..models import IncidenciaCierre, CierreNomina, ResolucionIncidencia, Conce
 def _elegir_usuario_para_nota(cierre: CierreNomina):
     # Preferir supervisor asignado, luego analista; si ninguno, retornar None
     return cierre.supervisor_asignado or cierre.usuario_analista or None
+
+
+def _obtener_usuario_sistema():
+    """Obtiene o crea un usuario especial 'Sistema' para comentarios automáticos."""
+    User = get_user_model()
+    correo = getattr(settings, 'SYSTEM_USER_EMAIL', 'sistema@sgm.local')
+    defaults = {
+        'nombre': 'Sistema',
+        'apellido': 'Automático',
+        'cargo_bdo': 'SGM',
+        'tipo_usuario': 'gerente',
+        'is_staff': True,
+        'is_superuser': True,
+    }
+    usuario, _ = User.objects.get_or_create(correo_bdo=correo, defaults=defaults)
+    return usuario
 
 
 def _variacion_pct(actual, anterior):
@@ -77,7 +96,9 @@ def reconciliar_cierre_suma_total(cierre_id: int, umbral_pct: float = 30.0) -> d
         creadas = 0
         actualizadas = 0
         marcadas_resueltas = 0
-        usuario_nota = _elegir_usuario_para_nota(cierre)
+        # Preferir analista para comentarios automáticos; si no existe, usar usuario de Sistema
+        usuario_sistema = _obtener_usuario_sistema()
+        usuario_para_comentario = cierre.usuario_analista or usuario_sistema
 
         # Upsert para las que superan umbral
         vigentes_hashes = set()
@@ -151,6 +172,7 @@ def reconciliar_cierre_suma_total(cierre_id: int, umbral_pct: float = 30.0) -> d
                     version_detectada_primera=vN,
                     version_detectada_ultima=vN,
                     hash_deteccion=hash_estable,
+                    asignado_a=cierre.usuario_analista,  # Asignar automáticamente al analista del cierre
                 )
                 creadas += 1
 
@@ -161,17 +183,41 @@ def reconciliar_cierre_suma_total(cierre_id: int, umbral_pct: float = 30.0) -> d
             clave = (obj.concepto_afectado, obj.tipo_incidencia)
             if (obj.hash_deteccion and obj.hash_deteccion in vigentes_hashes) or clave in vigentes_keys:
                 continue
+            # Dejar comentario informando valores vigentes, pero SIN actualizar los valores almacenados en la incidencia
+            tipo_concepto = obj.clasificacion_concepto
+            nombre = obj.concepto_afectado
+            suma_act_res = float(mapa_act.get((nombre, tipo_concepto), 0) or 0)
+            suma_ant_res = float(mapa_ant.get((nombre, tipo_concepto), 0) or 0)
+            variacion_res = _variacion_pct(suma_act_res, suma_ant_res)
+
+            # Formatear comentario solicitado
+            fecha_str = timezone.now().strftime('%Y-%m-%d')
+            comentario = (
+                f"Incidencia Resuelta el día {fecha_str} en resubida de libro. "
+                f"Monto Mes Anterior: ${suma_ant_res:,.0f}, "
+                f"Monto Mes Actual: ${suma_act_res:,.0f}, "
+                f"Nueva variación: {round(variacion_res, 2)}%."
+            )
+
+            campos_update = []
             if obj.estado != 'resuelta_analista':
-                obj.estado = 'resuelta_analista'
-                obj.save(update_fields=['estado'])
-                marcadas_resueltas += 1
-                if usuario_nota:
-                    ResolucionIncidencia.objects.create(
-                        incidencia=obj,
-                        usuario=usuario_nota,
-                        tipo_resolucion='consulta',
-                        comentario=f"Incidencia ya no supera umbral en v{vN}; marcada como resuelta"
-                    )
+                obj.estado = 'resuelta_analista'; campos_update.append('estado')
+            if obj.asignado_a != cierre.usuario_analista:
+                obj.asignado_a = cierre.usuario_analista; campos_update.append('asignado_a')
+            if (obj.version_detectada_ultima or 0) != vN:
+                obj.version_detectada_ultima = vN; campos_update.append('version_detectada_ultima')
+            if obj.version_detectada_primera is None:
+                obj.version_detectada_primera = vN; campos_update.append('version_detectada_primera')
+            if campos_update:
+                obj.save(update_fields=campos_update)
+            marcadas_resueltas += 1
+
+            ResolucionIncidencia.objects.create(
+                incidencia=obj,
+                usuario=usuario_para_comentario,
+                tipo_resolucion='justificacion',
+                comentario=comentario
+            )
 
         return {
             'creadas': creadas,

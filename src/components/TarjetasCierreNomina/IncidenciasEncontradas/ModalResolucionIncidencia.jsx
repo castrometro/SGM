@@ -108,6 +108,18 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
     }
   };
 
+  const esSistema = (res) => {
+    try {
+      const correoSistema = (import.meta?.env?.VITE_SYSTEM_USER_EMAIL || 'sistema@sgm.local').toLowerCase();
+      const correo = (res?.usuario_correo || res?.usuario?.correo_bdo || '').toLowerCase();
+      const nombre = (res?.usuario?.first_name || '').toLowerCase();
+      // Detectar por correo preferentemente; fallback por nombre "Sistema"
+      return correo && correo === correoSistema || nombre === 'sistema';
+    } catch {
+      return false;
+    }
+  };
+
   const manejarEnviarMensaje = async (e) => {
     e.preventDefault();
     setError('');
@@ -578,12 +590,18 @@ const ModalResolucionIncidencia = ({ abierto, incidencia, onCerrar, onResolucion
                         </span>
                         <span className="text-gray-400">de</span>
                         <span className="text-blue-400 font-medium">
-                          {resolucion.usuario?.first_name} {resolucion.usuario?.last_name}
+                          {esSistema(resolucion) ? 'Sistema' : `${resolucion.usuario?.first_name || ''} ${resolucion.usuario?.last_name || ''}`}
                         </span>
-                        {(resolucion.usuario?.is_staff || resolucion.usuario?.is_superuser) && (
-                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-900/50 text-purple-300 border border-purple-500/30">
-                            Supervisor
+                        {esSistema(resolucion) ? (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-slate-800 text-slate-300 border border-slate-600/40">
+                            Automático
                           </span>
+                        ) : (
+                          (resolucion.usuario?.is_staff || resolucion.usuario?.is_superuser) && (
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-900/50 text-purple-300 border border-purple-500/30">
+                              Supervisor
+                            </span>
+                          )
                         )}
                       </div>
                       <span className="text-sm text-gray-400">

@@ -1,7 +1,9 @@
 import pandas as pd
 import logging
+import re
 
 from nomina.models import ConceptoRemuneracion, LibroRemuneracionesUpload, EmpleadoCierre, RegistroConceptoEmpleado
+from .GenerarIncidencias import normalizar_rut, formatear_rut_con_guion
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,21 @@ def _es_rut_valido(valor_rut):
         return False
     
     return True
+
+
+def _es_rut_chileno_valido(valor_rut):
+    """
+    Valida que el RUT tenga estructura chilena tras normalizar:
+    - Solo dígitos + DV (0-9 o K)
+    - Largo entre 8 y 9 (7-8 dígitos + DV)
+    """
+    try:
+        rut_norm = normalizar_rut(valor_rut)
+        if not rut_norm or len(rut_norm) < 2:
+            return False
+        return re.match(r"^\d{7,8}[0-9K]$", rut_norm) is not None
+    except Exception:
+        return False
 
 def obtener_headers_libro_remuneraciones(path_archivo):
     """Obtiene los encabezados de un libro de remuneraciones.
@@ -144,18 +161,24 @@ def actualizar_empleados_desde_libro_util(libro):
     count = 0
     filas_ignoradas = 0
     
+    vistos = set()
     for _, row in df.iterrows():
         if not str(row.get(primera_col, "")).strip():
             continue
         
         # NUEVA VALIDACIÓN: Ignorar filas con RUT inválido (NaN, vacío, "total", etc.)
         rut_raw = row.get(expected["rut_trabajador"])
-        if not _es_rut_valido(rut_raw):
+        if not (_es_rut_valido(rut_raw) and _es_rut_chileno_valido(rut_raw)):
             filas_ignoradas += 1
             logger.debug(f"Fila ignorada por RUT inválido: '{rut_raw}' (posible fila de totales de Talana)")
             continue
         
-        rut = str(rut_raw).strip()
+        # Normalizar y formatear para guardar de forma consistente (8..9 + '-' + DV)
+        rut = formatear_rut_con_guion(normalizar_rut(rut_raw))
+        if rut in vistos:
+            # Evitar duplicados dentro del mismo archivo
+            continue
+        vistos.add(rut)
         
         # 📝 CREAR empleado (ya no update_or_create, solo create porque limpiamos antes)
         defaults = {
@@ -213,6 +236,8 @@ def guardar_registros_nomina_util(libro):
         )
     if not headers:
         headers = [h for h in df.columns if h not in empleado_cols]
+    # El archivo puede traer headers duplicados; conservar solo el primero de cada uno
+    headers = list(dict.fromkeys(headers))
 
     primera_col = df.columns[0]
     count = 0
@@ -224,12 +249,12 @@ def guardar_registros_nomina_util(libro):
         
         # NUEVA VALIDACIÓN: Ignorar filas con RUT inválido (NaN, vacío, "total", etc.)
         rut_raw = row.get(expected["rut_trabajador"])
-        if not _es_rut_valido(rut_raw):
+        if not (_es_rut_valido(rut_raw) and _es_rut_chileno_valido(rut_raw)):
             filas_ignoradas += 1
             logger.debug(f"Fila ignorada por RUT inválido: '{rut_raw}' (posible fila de totales de Talana)")
             continue
             
-        rut = str(rut_raw).strip()
+        rut = formatear_rut_con_guion(normalizar_rut(rut_raw))
         empleado = EmpleadoCierre.objects.filter(
             cierre=libro.cierre, rut=rut
         ).first()
@@ -287,12 +312,11 @@ def guardar_registros_nomina_util(libro):
                     cliente=libro.cierre.cliente, nombre_concepto=h, vigente=True
                 ).first()
                 
-                # 📝 CREAR registro (ya no update_or_create porque limpiamos en cascada)
-                RegistroConceptoEmpleado.objects.create(
+                # Usar update_or_create para evitar violar unique_together si hay header duplicado
+                RegistroConceptoEmpleado.objects.update_or_create(
                     empleado=empleado,
                     nombre_concepto_original=h,
-                    monto=valor,
-                    concepto=concepto
+                    defaults={"monto": valor, "concepto": concepto}
                 )
                 
             except Exception as concepto_error:

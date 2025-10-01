@@ -6,6 +6,7 @@ Esta versión divide el procesamiento en chunks paralelos para mejor rendimiento
 
 import pandas as pd
 import logging
+import re
 from django.db import transaction
 from nomina.models import (
     ConceptoRemuneracion, 
@@ -13,6 +14,7 @@ from nomina.models import (
     EmpleadoCierre, 
     RegistroConceptoEmpleado
 )
+from .GenerarIncidencias import normalizar_rut, formatear_rut_con_guion
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,22 @@ def _es_rut_valido(valor_rut):
     return True
 
 
+def _es_rut_chileno_valido(valor_rut):
+    """
+    Valida que el RUT tenga estructura chilena tras normalizar:
+    - Solo dígitos + DV (0-9 o K)
+    - Largo entre 8 y 9 (7-8 dígitos + DV)
+    """
+    try:
+        rut_norm = normalizar_rut(valor_rut)
+        if not rut_norm or len(rut_norm) < 2:
+            return False
+        # 7-8 dígitos + DV (número total 8-9)
+        return re.match(r"^\d{7,8}[0-9K]$", rut_norm) is not None
+    except Exception:
+        return False
+
+
 def dividir_dataframe_empleados(archivo_path, chunk_size):
     """
     🔀 Divide el DataFrame en chunks para procesamiento paralelo.
@@ -84,7 +102,8 @@ def dividir_dataframe_empleados(archivo_path, chunk_size):
             continue
         
         rut_raw = row.get(expected["rut_trabajador"])
-        if not _es_rut_valido(rut_raw):
+        # Filtro estricto: debe ser RUT chileno válido
+        if not (_es_rut_valido(rut_raw) and _es_rut_chileno_valido(rut_raw)):
             continue
             
         filas_validas.append(idx)
@@ -153,7 +172,12 @@ def procesar_chunk_empleados_util(libro_id, chunk_data):
         with transaction.atomic():
             for _, row in chunk_df.iterrows():
                 try:
-                    rut = str(row.get(expected["rut_trabajador"])).strip()
+                    # Normalizar y formatear RUT para guardar de forma consistente
+                    rut_valor = row.get(expected["rut_trabajador"])
+                    if not _es_rut_chileno_valido(rut_valor):
+                        # Saltar filas cuyo RUT no es válido para evitar basura (p.ej. nombres de conceptos)
+                        continue
+                    rut = formatear_rut_con_guion(normalizar_rut(rut_valor))
                     defaults = {
                         "rut_empresa": str(row.get(expected["rut_empresa"], "")).strip(),
                         "nombre": str(row.get(expected["nombre"], "")).strip(),
@@ -243,7 +267,12 @@ def procesar_chunk_registros_util(libro_id, chunk_data):
         with transaction.atomic():
             for _, row in chunk_df.iterrows():
                 try:
-                    rut = str(row.get(expected["rut_trabajador"])).strip()
+                    # Usar el mismo criterio de normalización que al crear EmpleadoCierre
+                    rut_valor = row.get(expected["rut_trabajador"])
+                    if not _es_rut_chileno_valido(rut_valor):
+                        # Si el RUT no es válido, no hay empleado que buscar
+                        continue
+                    rut = formatear_rut_con_guion(normalizar_rut(rut_valor))
                     empleado = EmpleadoCierre.objects.filter(
                         cierre=libro.cierre, rut=rut
                     ).first()

@@ -100,12 +100,15 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         user = self.request.user
         cliente_id = self.request.query_params.get('cliente')
         periodo = self.request.query_params.get('periodo')
+        estado = self.request.query_params.get('estado')
         
         # Filtrar por parámetros URL
         if cliente_id:
             queryset = queryset.filter(cliente_id=cliente_id)
         if periodo:
             queryset = queryset.filter(periodo=periodo)
+        if estado:
+            queryset = queryset.filter(estado=estado)
 
         # Aplicar filtros de acceso según tipo de usuario
         if user.tipo_usuario.lower() == 'gerente':

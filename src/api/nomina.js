@@ -2,7 +2,9 @@
 import api from "./config";
 
 export const obtenerResumenNomina = async (clienteId) => {
+  console.log('🔍 obtenerResumenNomina - Solicitando para cliente:', clienteId);
   const response = await api.get(`/nomina/cierres/resumen/${clienteId}/`);
+  console.log('🔍 obtenerResumenNomina - Respuesta recibida:', response.data);
   return response.data;
 };
 
@@ -18,28 +20,74 @@ export const obtenerResumenNomina = async (clienteId) => {
  * un endpoint unificado (p.ej. kpis_cliente/{cliente_id}/) que agregue en servidor.
  */
 export const obtenerKpisNominaCliente = async (clienteId) => {
+  console.log('🔍 obtenerKpisNominaCliente - Iniciando para cliente:', clienteId);
+  
   try {
-    const resumen = await obtenerResumenNomina(clienteId);
-    const periodo = resumen?.ultimo_cierre;
-    if (!periodo) {
-      return { tieneCierre: false, clienteId, kpis: {}, raw: {}, motivo: 'sin_cierres' };
-    }
+    // Primero intentamos obtener directamente el último cierre finalizado
+    console.log('🔍 obtenerKipsNominaCliente - Buscando último cierre finalizado...');
+    let cierre = await obtenerCierreFinalizado(clienteId);
+    
+    if (!cierre) {
+      // Fallback: usar resumen para obtener período y luego verificar si está finalizado
+      console.log('🔍 obtenerKipsNominaCliente - No hay cierres finalizados, verificando resumen...');
+      const resumen = await obtenerResumenNomina(clienteId);
+      console.log('🔍 obtenerKipsNominaCliente - Resumen obtenido:', resumen);
+      
+      const periodo = resumen?.ultimo_cierre;
+      console.log('🔍 obtenerKipsNominaCliente - Período extraído:', periodo);
+      
+      if (!periodo) {
+        console.warn('⚠️ obtenerKipsNominaCliente - No hay período, retornando sin cierres');
+        return { tieneCierre: false, clienteId, kpis: {}, raw: {}, motivo: 'sin_cierres' };
+      }
 
-    // Obtener el objeto de cierre (nos da id y estado). Reutilizamos helper existente.
-    const cierre = await obtenerCierreMensual(clienteId, periodo);
-    if (!cierre || !cierre.id) {
-      return { tieneCierre: false, clienteId, periodo, kpis: {}, raw: {}, motivo: 'cierre_no_encontrado' };
+      // Verificar si el último cierre está finalizado
+      cierre = await obtenerCierreFinalizado(clienteId, periodo);
+      if (!cierre) {
+        console.warn('⚠️ obtenerKipsNominaCliente - El último cierre no está finalizado');
+        return { tieneCierre: false, clienteId, periodo, kpis: {}, raw: {}, motivo: 'ultimo_cierre_no_finalizado' };
+      }
     }
+    
+    console.log('🔍 obtenerKipsNominaCliente - Cierre finalizado encontrado:', cierre);
     const cierreId = cierre.id;
+    const periodo = cierre.periodo;
+    console.log('🔍 obtenerKipsNominaCliente - Usando cierreId:', cierreId, 'período:', periodo);
 
     // Pedimos en paralelo libro y movimientos (fallos aislados no rompen todo)
+    console.log('🔍 obtenerKipsNominaCliente - Solicitando libro y movimientos en paralelo...');
     const [libro, movimientos] = await Promise.all([
-      (async () => { try { return await obtenerLibroResumenV2(cierreId); } catch { return null; } })(),
-      (async () => { try { return await obtenerMovimientosMes(cierreId); } catch { return null; } })(),
+      (async () => { 
+        try { 
+          const result = await obtenerLibroResumenV2(cierreId); 
+          console.log('🔍 obtenerLibroResumenV2 resultado:', result);
+          return result;
+        } catch (error) { 
+          console.warn('⚠️ Error obteniendo libro resumen V2:', error);
+          return null; 
+        } 
+      })(),
+      (async () => { 
+        try { 
+          const result = await obtenerMovimientosMes(cierreId); 
+          console.log('🔍 obtenerMovimientosMes resultado:', result);
+          return result;
+        } catch (error) { 
+          console.warn('⚠️ Error obteniendo movimientos:', error);
+          return null; 
+        } 
+      })(),
     ]);
 
     const totCat = libro?.totales_categorias || {};
     const totalEmpleados = libro?.cierre?.total_empleados ?? 0;
+    
+    console.log('🔍 obtenerKipsNominaCliente - Datos extraídos del libro:', {
+      totales_categorias: totCat,
+      total_empleados: totalEmpleados,
+      cierre_info: libro?.cierre
+    });
+    
     const haberImp = Number(totCat.haber_imponible || 0);
     const haberNoImp = Number(totCat.haber_no_imponible || 0);
     const descuentosLeg = Number(totCat.descuento_legal || 0);
@@ -71,7 +119,9 @@ export const obtenerKpisNominaCliente = async (clienteId) => {
       movimientos_por_categoria: movimientosPorCategoria,
     };
 
-    return {
+    console.log('🔍 obtenerKipsNominaCliente - KPIs calculados:', kpis);
+    
+    const resultado = {
       tieneCierre: true,
       clienteId,
       periodo,
@@ -80,8 +130,12 @@ export const obtenerKpisNominaCliente = async (clienteId) => {
       kpis,
       raw: { libro, movimientos },
     };
+    
+    console.log('🔍 obtenerKipsNominaCliente - Resultado final:', resultado);
+    return resultado;
   } catch (e) {
     // No propagamos excepción dura para que el caller pueda decidir fallback
+    console.error('❌ obtenerKipsNominaCliente - Error:', e);
     return { tieneCierre: false, clienteId, kpis: {}, raw: {}, error: e?.message || 'error_desconocido' };
   }
 };
@@ -138,9 +192,38 @@ export const obtenerKpisCierreNomina = async (cierreId) => {
 
 export const obtenerCierreMensual = async (clienteId, periodo) => {
   // Normaliza siempre el periodo
+  console.log('🔍 obtenerCierreMensual - Buscando cierre para cliente:', clienteId, 'periodo:', periodo);
 
   const res = await api.get(`/nomina/cierres/`, { params: { cliente: clienteId, periodo: periodo } });
-  return res.data.length > 0 ? res.data[0] : null;
+  console.log('🔍 obtenerCierreMensual - Respuesta API:', res.data);
+  const resultado = res.data.length > 0 ? res.data[0] : null;
+  console.log('🔍 obtenerCierreMensual - Cierre encontrado:', resultado);
+  return resultado;
+};
+
+// Nueva función para obtener cierre finalizado específicamente
+export const obtenerCierreFinalizado = async (clienteId, periodo = null) => {
+  console.log('🔍 obtenerCierreFinalizado - Buscando cierre finalizado para cliente:', clienteId, 'periodo:', periodo);
+  
+  const params = { cliente: clienteId, estado: 'finalizado' };
+  if (periodo) {
+    params.periodo = periodo;
+  }
+  
+  const res = await api.get(`/nomina/cierres/`, { params });
+  console.log('🔍 obtenerCierreFinalizado - Respuesta API:', res.data);
+  
+  // Si no especificamos período, tomar el más reciente
+  if (!periodo && res.data.length > 0) {
+    // Ordenar por período descendente para obtener el más reciente
+    const cierresOrdenados = res.data.sort((a, b) => b.periodo.localeCompare(a.periodo));
+    console.log('🔍 obtenerCierreFinalizado - Cierre más reciente finalizado:', cierresOrdenados[0]);
+    return cierresOrdenados[0];
+  }
+  
+  const resultado = res.data.length > 0 ? res.data[0] : null;
+  console.log('🔍 obtenerCierreFinalizado - Cierre finalizado encontrado:', resultado);
+  return resultado;
 };
 
 // Obtener informe completo de un cierre finalizado (solo lectura, sin cálculos)
@@ -990,7 +1073,9 @@ export const obtenerResumenNominaConsolidada = async (cierreId) => {
 // ================== LIBRO REMUNERACIONES V2 (simplificado) ==================
 // Resumen compacto: totales por categoría + conceptos agregados
 export const obtenerLibroResumenV2 = async (cierreId) => {
+  console.log('🔍 obtenerLibroResumenV2 - Solicitando para cierreId:', cierreId);
   const response = await api.get(`/nomina/cierres/${cierreId}/libro/v2/resumen/`);
+  console.log('🔍 obtenerLibroResumenV2 - Respuesta recibida:', response.data);
   return response.data;
 };
 

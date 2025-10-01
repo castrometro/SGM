@@ -45,15 +45,46 @@ const accentClasses = {
 };
 
 const KpiResumenCliente = ({ resumen, areaActiva }) => {
+  // Logs para debugging
+  console.log('🔍 KpiResumenCliente - Props recibidas:', {
+    areaActiva,
+    resumen: resumen ? {
+      keys: Object.keys(resumen),
+      empleados_activos: resumen.empleados_activos,
+      total_empleados: resumen.total_empleados,
+      totales_categorias: resumen.totales_categorias,
+      ultimo_cierre: resumen.ultimo_cierre,
+      estado_cierre_actual: resumen.estado_cierre_actual,
+      kpis: resumen.kpis
+    } : null
+  });
+
   const area = areaActiva === 'Nomina' ? 'Nomina' : (areaActiva === 'Contabilidad' ? 'Contabilidad' : 'Nomina');
   const config = METRICS_CONFIG[area] || [];
 
+  console.log('🔍 KpiResumenCliente - Área determinada:', area, 'Config métricas:', config.length);
+
   const metrics = useMemo(() => {
-    return config.map(m => {
+    const result = config.map(m => {
       let valueRaw = null;
-      try { valueRaw = m.derive(resumen); } catch { valueRaw = null; }
+      try { 
+        valueRaw = m.derive(resumen); 
+        console.log(`🔍 Métrica '${m.key}' (${m.label}):`, valueRaw);
+      } catch (error) { 
+        console.warn(`⚠️ Error calculando métrica '${m.key}':`, error);
+        valueRaw = null; 
+      }
       return { ...m, valueRaw, valueFormatted: m.format(valueRaw) };
     });
+    
+    console.log('🔍 KpiResumenCliente - Métricas calculadas:', result.map(m => ({
+      key: m.key,
+      label: m.label,
+      valueRaw: m.valueRaw,
+      valueFormatted: m.valueFormatted
+    })));
+    
+    return result;
   }, [config, resumen]);
 
   // Mostrar siempre primeras 4 más cualquier adicional que tenga valor (hasta 6)

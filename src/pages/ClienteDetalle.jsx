@@ -47,13 +47,16 @@ const ClienteDetalle = () => {
         } else if (area === "Nomina") {
           // Usamos agregador de KPIs (si falla, fallback a resumen básico existente)
             let kpisData = null;
+            console.log('🔍 ClienteDetalle - Área Nómina detectada, obteniendo KPIs para cliente:', id);
             try {
               kpisData = await obtenerKpisNominaCliente(id);
+              console.log('🔍 ClienteDetalle - KPIs obtenidos:', kpisData);
             } catch (e) {
               console.warn("Fallo obtenerKpisNominaCliente, fallback a obtenerResumenNomina", e);
             }
             if (kpisData?.tieneCierre && kpisData?.raw?.libro) {
               const libro = kpisData.raw.libro;
+              console.log('🔍 ClienteDetalle - Procesando datos del libro:', libro);
               // Normalizamos estructura esperada por KpiResumenCliente (campos plano + totales_categorias)
               r = {
                 ...libro, // contiene cierre, totales_categorias, conceptos, meta
@@ -64,9 +67,12 @@ const ClienteDetalle = () => {
                 total_empleados: libro?.cierre?.total_empleados ?? kpisData.kpis?.total_empleados ?? null,
                 kpis: kpisData.kpis,
               };
+              console.log('🔍 ClienteDetalle - Datos normalizados para KpiResumenCliente:', r);
             } else {
               // Fallback minimal
+              console.warn('🔍 ClienteDetalle - No hay datos de KPIs o libro, usando fallback');
               r = await obtenerResumenNomina(id);
+              console.log('🔍 ClienteDetalle - Resumen nómina fallback:', r);
             }
         }
 

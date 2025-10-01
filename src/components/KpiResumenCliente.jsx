@@ -59,10 +59,26 @@ const KpiResumenCliente = ({ resumen, areaActiva }) => {
     } : null
   });
 
-  const area = areaActiva === 'Nomina' ? 'Nomina' : (areaActiva === 'Contabilidad' ? 'Contabilidad' : 'Nomina');
-  const config = METRICS_CONFIG[area] || [];
+  // Solo mostrar KPIs de Nomina, resto "En Construcción..."
+  const area = areaActiva;
 
-  console.log('🔍 KpiResumenCliente - Área determinada:', area, 'Config métricas:', config.length);
+  console.log('🔍 KpiResumenCliente - Área determinada:', area);
+
+  // Solo mostrar KPIs implementados para Nomina
+  if (area !== 'Nomina') {
+    console.log('🔍 KpiResumenCliente - Área no es Nomina, mostrando "En Construcción..."');
+    return (
+      <div className="bg-gray-800 p-6 rounded-lg shadow-lg">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-bold">KPIs del Cliente</h2>
+          <span className="text-[11px] text-gray-500 uppercase tracking-wide">{area}</span>
+        </div>
+        <p className="text-gray-400 italic text-sm text-center py-8">En Construcción...</p>
+      </div>
+    );
+  }
+
+  const config = METRICS_CONFIG[area] || [];
 
   const metrics = useMemo(() => {
     const result = config.map(m => {

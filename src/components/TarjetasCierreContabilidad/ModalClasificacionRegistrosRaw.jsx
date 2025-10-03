@@ -23,6 +23,7 @@ import {
   // Migración de temporales a FK
   migrarClasificacionesTemporalesAFK
 } from '../../api/contabilidad';
+import useModalHistoryBlock from '../../hooks/useModalHistoryBlock';
 
 const ModalClasificacionRegistrosRaw = ({ 
   isOpen, 
@@ -281,6 +282,18 @@ const ModalClasificacionRegistrosRaw = ({
   const [registros, setRegistros] = useState([]);
   const [loading, setLoading] = useState(false);
   const [estadisticas, setEstadisticas] = useState({});
+  
+  // Hook para manejar navegación del navegador cuando el modal está abierto
+  const { closeModal } = useModalHistoryBlock(
+    isOpen,
+    onClose,
+    {
+      preventNavigation: true,
+      onNavigationAttempt: (event) => {
+        console.log('🔄 Usuario intentó navegar con modal de clasificaciones abierto', event);
+      }
+    }
+  );
   
   // Estados para navegación de pestañas
   const [pestanaActiva, setPestanaActiva] = useState('registros'); // 'registros' | 'sets'
@@ -661,7 +674,8 @@ const ModalClasificacionRegistrosRaw = ({
     // Limpiar timestamp
     delete window.modalClasificacionesOpenTime;
     
-    onClose();
+    // Usar closeModal para manejar tanto el cierre como la limpieza del historial
+    closeModal();
   };
 
   // ==================== FUNCIONES DE FILTRADO ====================

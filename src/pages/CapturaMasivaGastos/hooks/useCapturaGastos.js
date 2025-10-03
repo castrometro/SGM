@@ -138,11 +138,31 @@ export const useCapturaGastos = () => {
     
     // Validar cuentas globales obligatorias (iva, proveedores, gasto_default)
     const faltan = [];
+    const formatoInvalido = [];
+    
+    // Validar que las cuentas existan
     if (!cuentasGlobales.cuentaIVA?.trim()) faltan.push('IVA');
     if (!cuentasGlobales.cuentaProveedores?.trim()) faltan.push('Proveedores');
     if (!cuentasGlobales.cuentaGasto?.trim()) faltan.push('Gasto Default');
+    
     if (faltan.length) {
       setError(`Faltan cuentas globales requeridas: ${faltan.join(', ')}`);
+      return;
+    }
+    
+    // Validar formato de cuentas (detectar espacios)
+    const validarEspacios = (valor, nombre) => {
+      if (/\s/.test(valor)) {
+        formatoInvalido.push(`${nombre}: no debe contener espacios (ej: correcto "1191-001" o "1191001", incorrecto "1191 - 001" o "1191 001")`);
+      }
+    };
+    
+    validarEspacios(cuentasGlobales.cuentaIVA, 'Cuenta IVA');
+    validarEspacios(cuentasGlobales.cuentaProveedores, 'Cuenta Proveedores');
+    validarEspacios(cuentasGlobales.cuentaGasto, 'Cuenta Gasto');
+    
+    if (formatoInvalido.length) {
+      setError(`Errores de formato en cuentas globales:\n${formatoInvalido.join('\n')}`);
       return;
     }
 

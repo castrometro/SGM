@@ -114,6 +114,15 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
     if idx_tipo_doc is None:
         raise ValueError("No se encontró la columna de Tipo de Documento (buscó: Tipo Doc / tipodoc / tipo_documento)")
 
+    # Índice Monto Exento (solo para tipo doc 33) - Issue #174
+    posibles_monto_exento = {'monto exento', 'montoexento', 'monto_exento', 'exento'}
+    idx_monto_exento = None
+    for i, h in enumerate(headers):
+        nombre_norm = str(h).strip().lower()
+        if nombre_norm in posibles_monto_exento:
+            idx_monto_exento = i
+            break
+
     cc_start, cc_end = _find_cc_range(headers)
     conocidos = ['PyC', 'PS', 'EB', 'CO', 'RE', 'TR', 'CF', 'LRC']
     cc_indices_conocidos = {str(h).strip(): i for i, h in enumerate(headers) if str(h).strip() in conocidos}
@@ -216,6 +225,16 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
             monto_neto = _parse_numeric(row_in[idx_monto_neto]) if idx_monto_neto is not None and idx_monto_neto < len(row_in) else 0.0
             if monto_neto is None:
                 monto_neto = 0.0
+
+            # Issue #174: Para tipo doc 33, sumar monto exento al monto neto
+            monto_exento = 0.0
+            if tipo_doc_str == '33' and idx_monto_exento is not None:
+                monto_exento = _parse_numeric(row_in[idx_monto_exento]) if idx_monto_exento < len(row_in) else 0.0
+                if monto_exento is None:
+                    monto_exento = 0.0
+                if monto_exento > 0:
+                    monto_neto = monto_neto + monto_exento
+
             monto_total_input = _parse_numeric(row_in[idx_monto_total]) if idx_monto_total is not None and idx_monto_total < len(row_in) else None
             monto_iva_rec_input = _parse_numeric(row_in[idx_monto_iva_rec]) if idx_monto_iva_rec is not None and idx_monto_iva_rec < len(row_in) else None
             # IVA: si no existe columna o valor, calcular 0.19 * neto (truncado)
@@ -291,6 +310,7 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                 )
                 # Fila Proveedores (usa IVA y suma gastos)
                 monto1 = suma_debe_gastos
+                monto2 = monto_exento if tipo_doc_str == '33' else 0.0  # Issue #174: Monto exento en Monto 2 Detalle para tipo 33
                 monto3 = iva_monto
                 write_row(
                     descripcion=f'Proveedor Doc {fila_original_idx}',
@@ -298,8 +318,9 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                     haber=monto_total,
                     extra={
                         'Monto 1 Detalle Libro': monto1,
+                        'Monto 2 Detalle Libro': monto2,
                         'Monto 3 Detalle Libro': monto3,
-                        'Monto Suma Detalle Libro': (monto1 if monto1 is not None else 0) + (monto3 if monto3 is not None else 0),
+                        'Monto Suma Detalle Libro': (monto1 if monto1 is not None else 0) + (monto2 if monto2 is not None else 0) + (monto3 if monto3 is not None else 0),
                         'Código Plan de Cuenta': cuentas_globales.get('proveedores')
                     }
                 )
@@ -356,15 +377,17 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                 )
                 # Fila Proveedores (invertido -> Debe)
                 monto1 = suma_debe_gastos
+                monto2 = monto_exento if tipo_doc_str == '33' else 0.0  # Issue #174: Monto exento en Monto 2 Detalle para tipo 33
                 monto3 = iva_monto
                 write_row(
                     descripcion=f'Proveedor Doc {fila_original_idx}',
-                    debe=monto_total if monto_total is not None else (monto1 + monto3),
+                    debe=monto_total if monto_total is not None else (monto1 + monto2 + monto3),
                     haber=None,
                     extra={
                         'Monto 1 Detalle Libro': monto1,
+                        'Monto 2 Detalle Libro': monto2,
                         'Monto 3 Detalle Libro': monto3,
-                        'Monto Suma Detalle Libro': (monto1 if monto1 is not None else 0) + (monto3 if monto3 is not None else 0),
+                        'Monto Suma Detalle Libro': (monto1 if monto1 is not None else 0) + (monto2 if monto2 is not None else 0) + (monto3 if monto3 is not None else 0),
                         'Código Plan de Cuenta': cuentas_globales.get('proveedores')
                     }
                 )

@@ -283,8 +283,8 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                 # Fila IVA
                 write_row(
                     descripcion=f'IVA Doc {fila_original_idx}',
-                    debe=None,
-                    haber=iva_monto,
+                    debe=iva_monto,
+                    haber=None,
                     extra={
                         'Código Plan de Cuenta': cuentas_globales.get('iva')
                     }
@@ -343,13 +343,13 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                     )
             elif tipo_doc_str == '61':
                 # Tipo 61: espejo de 33 (incluye IVA) invirtiendo Debe/Haber.
-                # En 33: IVA (Haber), Proveedor (Haber), Gastos (Debe)
-                # En 61: IVA (Debe), Proveedor (Debe), Gastos (Haber)
-                # Fila IVA (invertido -> Debe)
+                # En 33: IVA (Debe), Proveedor (Haber), Gastos (Debe)
+                # En 61: IVA (Haber), Proveedor (Debe), Gastos (Haber)
+                # Fila IVA (invertido -> Haber)
                 write_row(
                     descripcion=f'IVA Doc {fila_original_idx}',
-                    debe=iva_monto,
-                    haber=None,
+                    debe=None,
+                    haber=iva_monto,
                     extra={
                         'Código Plan de Cuenta': cuentas_globales.get('iva')
                     }

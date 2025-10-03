@@ -150,16 +150,16 @@ export const useCapturaGastos = () => {
       return;
     }
     
-    // Validar formato de cuentas (detectar espacios alrededor de guiones)
-    const validarEspaciosEnGuion = (valor, nombre) => {
-      if (/\s+-\s*|\s*-\s+/.test(valor)) {
-        formatoInvalido.push(`${nombre}: no debe tener espacios alrededor del guion (ej: correcto "1191-001", incorrecto "1191 - 001")`);
+    // Validar formato de cuentas (detectar espacios)
+    const validarEspacios = (valor, nombre) => {
+      if (/\s/.test(valor)) {
+        formatoInvalido.push(`${nombre}: no debe contener espacios (ej: correcto "1191-001" o "1191001", incorrecto "1191 - 001" o "1191 001")`);
       }
     };
     
-    validarEspaciosEnGuion(cuentasGlobales.cuentaIVA, 'Cuenta IVA');
-    validarEspaciosEnGuion(cuentasGlobales.cuentaProveedores, 'Cuenta Proveedores');
-    validarEspaciosEnGuion(cuentasGlobales.cuentaGasto, 'Cuenta Gasto');
+    validarEspacios(cuentasGlobales.cuentaIVA, 'Cuenta IVA');
+    validarEspacios(cuentasGlobales.cuentaProveedores, 'Cuenta Proveedores');
+    validarEspacios(cuentasGlobales.cuentaGasto, 'Cuenta Gasto');
     
     if (formatoInvalido.length) {
       setError(`Errores de formato en cuentas globales:\n${formatoInvalido.join('\n')}`);

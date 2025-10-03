@@ -8,17 +8,17 @@ const CuentasGlobalesSection = ({ cuentasGlobales, setCuentasGlobales }) => {
     setCuentasGlobales((prev) => ({ ...prev, [field]: value }));
   };
 
-  // Validar formato de cuenta (detectar espacios alrededor de guiones)
+  // Validar formato de cuenta (detectar espacios)
   const validarFormatoCuenta = (valor) => {
     if (!valor || !valor.trim()) return { valido: false, mensaje: '' };
     
-    // Detectar espacios alrededor de guiones (ej: "119 - 1001" o "119- 1001" o "119 -1001")
-    const tieneEspaciosEnGuion = /\s+-\s*|\s*-\s+/.test(valor);
+    // Detectar cualquier espacio en el valor (ej: "123 456" o "1191 - 001" o "119- 001")
+    const tieneEspacios = /\s/.test(valor);
     
-    if (tieneEspaciosEnGuion) {
+    if (tieneEspacios) {
       return { 
         valido: false, 
-        mensaje: 'No debe tener espacios alrededor del guion' 
+        mensaje: 'No debe contener espacios' 
       };
     }
     
@@ -61,11 +61,11 @@ const CuentasGlobalesSection = ({ cuentasGlobales, setCuentasGlobales }) => {
           <div className="text-sm text-blue-300">
             <p className="font-medium mb-1">Formato de cuentas con guiones:</p>
             <p className="text-xs">
-              <strong>Si su cuenta tiene guiones, colóquelos sin espacios adicionales</strong>
+              <strong>Si su cuenta tiene guiones, colóquelos sin espacios adicionales. No use espacios en ninguna parte del código.</strong>
             </p>
             <div className="mt-2 space-y-1 text-xs">
               <p className="text-emerald-400">✓ Correcto: <code className="bg-gray-800 px-1 rounded">1191-001</code> o <code className="bg-gray-800 px-1 rounded">1191001</code></p>
-              <p className="text-red-400">✗ Incorrecto: <code className="bg-gray-800 px-1 rounded">1191 - 001</code> o <code className="bg-gray-800 px-1 rounded">1191- 001</code></p>
+              <p className="text-red-400">✗ Incorrecto: <code className="bg-gray-800 px-1 rounded">1191 - 001</code>, <code className="bg-gray-800 px-1 rounded">1191- 001</code> o <code className="bg-gray-800 px-1 rounded">1191 001</code></p>
             </div>
           </div>
         </div>

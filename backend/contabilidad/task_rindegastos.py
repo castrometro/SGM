@@ -320,7 +320,7 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                     debe=iva_monto,
                     haber=None,
                     extra={
-                        'Codigo Plan de Cuenta': cuentas_globales.get('iva'),
+                        'Código Plan de Cuenta': cuentas_globales.get('iva'),
                         'Numero': tipo_doc_str,  # Issues #3 y #4
                         'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
                         'Nro. Docto. Conciliación': folio  # Issues #3 y #4

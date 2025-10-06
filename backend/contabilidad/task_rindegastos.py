@@ -133,6 +133,24 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
             idx_folio = i
             break
 
+    # Índice RUT Proveedor - Para transferir a "Codigo Auxiliar"
+    posibles_rut_proveedor = {'rut proveedor', 'rutproveedor', 'rut_proveedor', 'rut', 'codigo proveedor', 'codigo_proveedor'}
+    idx_rut_proveedor = None
+    for i, h in enumerate(headers):
+        nombre_norm = str(h).strip().lower()
+        if nombre_norm in posibles_rut_proveedor:
+            idx_rut_proveedor = i
+            break
+
+    # Índice Fecha Docto - Para transferir a "Fecha Emisión" y "Fecha Vencimiento"
+    posibles_fecha_docto = {'fecha docto', 'fechadocto', 'fecha_docto', 'fecha documento', 'fecha_documento', 'fecha doc', 'fechadoc'}
+    idx_fecha_docto = None
+    for i, h in enumerate(headers):
+        nombre_norm = str(h).strip().lower()
+        if nombre_norm in posibles_fecha_docto:
+            idx_fecha_docto = i
+            break
+
     cc_start, cc_end = _find_cc_range(headers)
     conocidos = ['PyC', 'PS', 'EB', 'CO', 'RE', 'TR', 'CF', 'LRC']
     cc_indices_conocidos = {str(h).strip(): i for i, h in enumerate(headers) if str(h).strip() in conocidos}
@@ -250,6 +268,36 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                 folio_val = row_in[idx_folio]
                 folio = str(folio_val) if folio_val is not None else ""
 
+            # Extraer RUT Proveedor para mapeo a "Codigo Auxiliar"
+            rut_proveedor = ""
+            if idx_rut_proveedor is not None and idx_rut_proveedor < len(row_in):
+                rut_val = row_in[idx_rut_proveedor]
+                if rut_val is not None:
+                    rut_str = str(rut_val)
+                    # Limpiar RUT: quitar guión y dígito verificador
+                    if '-' in rut_str:
+                        rut_proveedor = rut_str.split('-')[0]  # Solo la parte antes del guión
+                    else:
+                        rut_proveedor = rut_str
+                else:
+                    rut_proveedor = ""
+
+            # Extraer Fecha Docto para mapeo a "Fecha Emisión" y "Fecha Vencimiento"
+            fecha_docto = ""
+            if idx_fecha_docto is not None and idx_fecha_docto < len(row_in):
+                fecha_val = row_in[idx_fecha_docto]
+                if fecha_val is not None:
+                    # Si es una fecha de Excel (datetime), formatear como DD/MM/AAAA
+                    try:
+                        from datetime import datetime
+                        if isinstance(fecha_val, datetime):
+                            fecha_docto = fecha_val.strftime("%d/%m/%Y")
+                        else:
+                            # Si es string, mantenerlo como está
+                            fecha_docto = str(fecha_val)
+                    except:
+                        fecha_docto = str(fecha_val) if fecha_val is not None else ""
+
             monto_total_input = _parse_numeric(row_in[idx_monto_total]) if idx_monto_total is not None and idx_monto_total < len(row_in) else None
             monto_iva_rec_input = _parse_numeric(row_in[idx_monto_iva_rec]) if idx_monto_iva_rec is not None and idx_monto_iva_rec < len(row_in) else None
             # IVA: si no existe columna o valor, calcular 0.19 * neto (truncado)
@@ -262,9 +310,11 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
 
             # Recolectar montos por CC (cada fila de gasto corresponde a 1 CC)
             # Los gastos se calculan solo sobre el monto neto, monto exento va separado
+            # PERO en "Monto al Debe Moneda Base" se suma neto + exento
             base_calculo_gastos = monto_neto
+            base_debe_moneda_base = monto_neto + monto_exento  # Para columna "Monto al Debe Moneda Base"
             
-            gastos_rows = []  # lista de (descripcion, debe, codigo_cc)
+            gastos_rows = []  # lista de (descripcion, debe_detalle, debe_moneda_base, codigo_cc)
             if cc_count > 0:
                 if cc_start is not None and cc_end is not None:
                     for col in range(cc_start, cc_end):
@@ -275,9 +325,10 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                         if perc is None:
                             continue
                         if abs(perc) > 0:
-                            debe = (perc / 100.0) * base_calculo_gastos  # ✅ Usa base que incluye exento para tipo 33
+                            debe_detalle = (perc / 100.0) * base_calculo_gastos  # Para los Monto Detalle
+                            debe_moneda_base = (perc / 100.0) * base_debe_moneda_base  # Para Monto al Debe Moneda Base
                             codigo_cc = headers[col] if col < len(headers) else f'CC{col}'
-                            gastos_rows.append((f'Gasto {codigo_cc}', debe, codigo_cc))
+                            gastos_rows.append((f'Gasto {codigo_cc}', debe_detalle, debe_moneda_base, codigo_cc))
                 else:
                     for nombre, col in cc_indices_conocidos.items():
                         if col >= len(row_in):
@@ -287,10 +338,11 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                         if perc is None:
                             continue
                         if abs(perc) > 0:
-                            debe = (perc / 100.0) * base_calculo_gastos  # ✅ Usa base que incluye exento para tipo 33
-                            gastos_rows.append((f'Gasto {nombre}', debe, nombre))
+                            debe_detalle = (perc / 100.0) * base_calculo_gastos  # Para los Monto Detalle
+                            debe_moneda_base = (perc / 100.0) * base_debe_moneda_base  # Para Monto al Debe Moneda Base
+                            gastos_rows.append((f'Gasto {nombre}', debe_detalle, debe_moneda_base, nombre))
 
-            suma_debe_gastos = sum(g[1] for g in gastos_rows)
+            suma_debe_gastos = sum(g[1] for g in gastos_rows)  # Suma de debe_detalle (sin exento)
 
             def _truncate_number(v):
                 """Trunca (corta decimales) hacia cero cualquier número convertible a float."""
@@ -324,9 +376,11 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                     haber=None,
                     extra={
                         'Código Plan de Cuenta': cuentas_globales.get('iva'),
+                        'Fecha Emisión Docto.(DD/MM/AAAA)': fecha_docto,
+                        'Fecha Vencimiento Docto.(DD/MM/AAAA)': fecha_docto,
                         'Numero': tipo_doc_str,  # Issues #3 y #4
-                        'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
-                        'Nro. Docto. Conciliación': folio  # Issues #3 y #4
+                        'Tipo Documento': tipo_doc_str,  # Issues #3 y #4
+                        'Numero Doc': folio  # Issues #3 y #4
                     }
                 )
                 # Fila Proveedores (usa IVA y suma gastos)
@@ -343,57 +397,66 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                         'Monto 3 Detalle Libro': monto3,
                         'Monto Suma Detalle Libro': (monto1 if monto1 is not None else 0) + (monto2 if monto2 is not None else 0) + (monto3 if monto3 is not None else 0),
                         'Código Plan de Cuenta': cuentas_globales.get('proveedores'),
+                        'Codigo Auxiliar': rut_proveedor,  # RUT Proveedor del input
+                        'Fecha Emisión Docto.(DD/MM/AAAA)': fecha_docto,
+                        'Fecha Vencimiento Docto.(DD/MM/AAAA)': fecha_docto,
                         'Numero': tipo_doc_str,  # Issues #3 y #4
-                        'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
-                        'Nro. Docto. Conciliación': folio  # Issues #3 y #4
+                        'Tipo Documento': tipo_doc_str,  # Issues #3 y #4
+                        'Numero Doc': folio  # Issues #3 y #4
                     }
                 )
                 # Filas de Gasto
-                for desc_gasto, debe_val, codigo_cc in gastos_rows:
+                for desc_gasto, debe_detalle, debe_moneda_base, codigo_cc in gastos_rows:
                     codigo_cc_final = mapeo_cc_param.get(codigo_cc, codigo_cc)
                     write_row(
                         descripcion=desc_gasto,
-                        debe=debe_val,
+                        debe=debe_moneda_base,  # Usa neto + exento para "Monto al Debe Moneda Base"
                         haber=None,
                         extra={
                             'Código Centro de Costo': codigo_cc_final,
                             'Código Plan de Cuenta': cuentas_globales.get('gasto_default'),
+                            'Fecha Emisión Docto.(DD/MM/AAAA)': fecha_docto,
+                            'Fecha Vencimiento Docto.(DD/MM/AAAA)': fecha_docto,
                             'Numero': tipo_doc_str,  # Issues #3 y #4
-                            'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
-                            'Nro. Docto. Conciliación': folio  # Issues #3 y #4
+                            'Tipo Documento': tipo_doc_str,  # Issues #3 y #4
+                            'Numero Doc': folio  # Issues #3 y #4
                         }
                     )
             elif tipo_doc_str == '34':
-                # Tipo 34 (exento) sólo Proveedores + Gastos, y Monto 3 = Monto 1
-                # Cambio solicitado: Monto 1 ahora va en Monto 2 Detalle
+                # Tipo 34 (exento) sólo Proveedores + Gastos, y Monto 3 = vacío
                 monto1 = suma_debe_gastos
-                # Para tipo 34 la suma solicitada es copiar Monto 1 (no sumatoria de 1+3 ya que son iguales)
+                # Para tipo 34: Monto 2 = suma gastos, Monto 3 = vacío
                 write_row(
                     descripcion=f'Proveedor Doc {fila_original_idx}',
                     debe=None,
                     haber=monto_total if monto_total is not None else suma_debe_gastos,
                     extra={
-                        'Monto 2 Detalle Libro': monto1,  # Cambio: era Monto 1, ahora es Monto 2
-                        'Monto 3 Detalle Libro': monto1,  # se mantiene compatibilidad actual
-                        'Monto Suma Detalle Libro': monto1,
+                        'Monto 2 Detalle Libro': monto1,  # Suma de gastos va en Monto 2
+                        'Monto 3 Detalle Libro': None,    # Monto 3 va vacío para tipo 34
+                        'Monto Suma Detalle Libro': monto1,  # Solo Monto 2 en la suma
                         'Código Plan de Cuenta': cuentas_globales.get('proveedores'),
+                        'Codigo Auxiliar': rut_proveedor,  # RUT Proveedor del input
+                        'Fecha Emisión Docto.(DD/MM/AAAA)': fecha_docto,
+                        'Fecha Vencimiento Docto.(DD/MM/AAAA)': fecha_docto,
                         'Numero': tipo_doc_str,  # Issues #3 y #4
-                        'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
-                        'Nro. Docto. Conciliación': folio  # Issues #3 y #4
+                        'Tipo Documento': tipo_doc_str,  # Issues #3 y #4
+                        'Numero Doc': folio  # Issues #3 y #4
                     }
                 )
-                for desc_gasto, debe_val, codigo_cc in gastos_rows:
+                for desc_gasto, debe_detalle, debe_moneda_base, codigo_cc in gastos_rows:
                     codigo_cc_final = mapeo_cc_param.get(codigo_cc, codigo_cc)
                     write_row(
                         descripcion=desc_gasto,
-                        debe=debe_val,
+                        debe=debe_moneda_base,  # Usa neto + exento para "Monto al Debe Moneda Base"
                         haber=None,
                         extra={
                             'Código Centro de Costo': codigo_cc_final,
                             'Código Plan de Cuenta': cuentas_globales.get('gasto_default'),
+                            'Fecha Emisión Docto.(DD/MM/AAAA)': fecha_docto,
+                            'Fecha Vencimiento Docto.(DD/MM/AAAA)': fecha_docto,
                             'Numero': tipo_doc_str,  # Issues #3 y #4
-                            'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
-                            'Nro. Docto. Conciliación': folio  # Issues #3 y #4
+                            'Tipo Documento': tipo_doc_str,  # Issues #3 y #4
+                            'Numero Doc': folio  # Issues #3 y #4
                         }
                     )
             elif tipo_doc_str == '61':
@@ -407,6 +470,8 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                     haber=iva_monto,
                     extra={
                         'Código Plan de Cuenta': cuentas_globales.get('iva'),
+                        'Fecha Emisión Docto.(DD/MM/AAAA)': fecha_docto,
+                        'Fecha Vencimiento Docto.(DD/MM/AAAA)': fecha_docto,
                         'Numero': tipo_doc_str,  # Issues #3 y #4
                         'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
                         'Nro. Docto. Conciliación': folio  # Issues #3 y #4
@@ -426,24 +491,29 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                         'Monto 3 Detalle Libro': monto3,
                         'Monto Suma Detalle Libro': (monto1 if monto1 is not None else 0) + (monto2 if monto2 is not None else 0) + (monto3 if monto3 is not None else 0),
                         'Código Plan de Cuenta': cuentas_globales.get('proveedores'),
+                        'Codigo Auxiliar': rut_proveedor,  # RUT Proveedor del input
+                        'Fecha Emisión Docto.(DD/MM/AAAA)': fecha_docto,
+                        'Fecha Vencimiento Docto.(DD/MM/AAAA)': fecha_docto,
                         'Numero': tipo_doc_str,  # Issues #3 y #4
-                        'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
-                        'Nro. Docto. Conciliación': folio  # Issues #3 y #4
+                        'Tipo Documento': tipo_doc_str,  # Issues #3 y #4
+                        'Numero Doc': folio  # Issues #3 y #4
                     }
                 )
                 # Filas Gasto (invertidas -> Haber)
-                for desc_gasto, debe_val, codigo_cc in gastos_rows:
+                for desc_gasto, debe_detalle, debe_moneda_base, codigo_cc in gastos_rows:
                     codigo_cc_final = mapeo_cc_param.get(codigo_cc, codigo_cc)
                     write_row(
                         descripcion=desc_gasto,
                         debe=None,
-                        haber=debe_val,
+                        haber=debe_moneda_base,  # Usa neto + exento para "Monto al Haber Moneda Base"
                         extra={
                             'Código Centro de Costo': codigo_cc_final,
                             'Código Plan de Cuenta': cuentas_globales.get('gasto_default'),
+                            'Fecha Emisión Docto.(DD/MM/AAAA)': fecha_docto,
+                            'Fecha Vencimiento Docto.(DD/MM/AAAA)': fecha_docto,
                             'Numero': tipo_doc_str,  # Issues #3 y #4
-                            'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
-                            'Nro. Docto. Conciliación': folio  # Issues #3 y #4
+                            'Tipo Documento': tipo_doc_str,  # Issues #3 y #4
+                            'Numero Doc': folio  # Issues #3 y #4
                         }
                     )
             else:

@@ -123,6 +123,15 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
             idx_monto_exento = i
             break
 
+    # Índice Folio - Issues #3 y #4
+    posibles_folio = {'folio', 'nro folio', 'numero folio', 'nrofolio'}
+    idx_folio = None
+    for i, h in enumerate(headers):
+        nombre_norm = str(h).strip().lower()
+        if nombre_norm in posibles_folio:
+            idx_folio = i
+            break
+
     cc_start, cc_end = _find_cc_range(headers)
     conocidos = ['PyC', 'PS', 'EB', 'CO', 'RE', 'TR', 'CF', 'LRC']
     cc_indices_conocidos = {str(h).strip(): i for i, h in enumerate(headers) if str(h).strip() in conocidos}
@@ -235,6 +244,12 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                 if monto_exento > 0:
                     monto_neto = monto_neto + monto_exento
 
+            # Issues #3 y #4: Extraer folio para mapeo a Nro. Docto. Conciliación
+            folio = ""
+            if idx_folio is not None and idx_folio < len(row_in):
+                folio_val = row_in[idx_folio]
+                folio = str(folio_val) if folio_val is not None else ""
+
             monto_total_input = _parse_numeric(row_in[idx_monto_total]) if idx_monto_total is not None and idx_monto_total < len(row_in) else None
             monto_iva_rec_input = _parse_numeric(row_in[idx_monto_iva_rec]) if idx_monto_iva_rec is not None and idx_monto_iva_rec < len(row_in) else None
             # IVA: si no existe columna o valor, calcular 0.19 * neto (truncado)
@@ -305,7 +320,10 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                     debe=iva_monto,
                     haber=None,
                     extra={
-                        'Código Plan de Cuenta': cuentas_globales.get('iva')
+                        'Codigo Plan de Cuenta': cuentas_globales.get('iva'),
+                        'Numero': tipo_doc_str,  # Issues #3 y #4
+                        'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
+                        'Nro. Docto. Conciliación': folio  # Issues #3 y #4
                     }
                 )
                 # Fila Proveedores (usa IVA y suma gastos)
@@ -321,7 +339,10 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                         'Monto 2 Detalle Libro': monto2,
                         'Monto 3 Detalle Libro': monto3,
                         'Monto Suma Detalle Libro': (monto1 if monto1 is not None else 0) + (monto2 if monto2 is not None else 0) + (monto3 if monto3 is not None else 0),
-                        'Código Plan de Cuenta': cuentas_globales.get('proveedores')
+                        'Código Plan de Cuenta': cuentas_globales.get('proveedores'),
+                        'Numero': tipo_doc_str,  # Issues #3 y #4
+                        'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
+                        'Nro. Docto. Conciliación': folio  # Issues #3 y #4
                     }
                 )
                 # Filas de Gasto
@@ -333,7 +354,10 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                         haber=None,
                         extra={
                             'Código Centro de Costo': codigo_cc_final,
-                            'Código Plan de Cuenta': cuentas_globales.get('gasto_default')
+                            'Código Plan de Cuenta': cuentas_globales.get('gasto_default'),
+                            'Numero': tipo_doc_str,  # Issues #3 y #4
+                            'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
+                            'Nro. Docto. Conciliación': folio  # Issues #3 y #4
                         }
                     )
             elif tipo_doc_str == '34':
@@ -348,7 +372,10 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                         'Monto 1 Detalle Libro': monto1,
                         'Monto 3 Detalle Libro': monto1,  # se mantiene compatibilidad actual
                         'Monto Suma Detalle Libro': monto1,
-                        'Código Plan de Cuenta': cuentas_globales.get('proveedores')
+                        'Código Plan de Cuenta': cuentas_globales.get('proveedores'),
+                        'Numero': tipo_doc_str,  # Issues #3 y #4
+                        'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
+                        'Nro. Docto. Conciliación': folio  # Issues #3 y #4
                     }
                 )
                 for desc_gasto, debe_val, codigo_cc in gastos_rows:
@@ -359,7 +386,10 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                         haber=None,
                         extra={
                             'Código Centro de Costo': codigo_cc_final,
-                            'Código Plan de Cuenta': cuentas_globales.get('gasto_default')
+                            'Código Plan de Cuenta': cuentas_globales.get('gasto_default'),
+                            'Numero': tipo_doc_str,  # Issues #3 y #4
+                            'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
+                            'Nro. Docto. Conciliación': folio  # Issues #3 y #4
                         }
                     )
             elif tipo_doc_str == '61':
@@ -372,7 +402,10 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                     debe=None,
                     haber=iva_monto,
                     extra={
-                        'Código Plan de Cuenta': cuentas_globales.get('iva')
+                        'Código Plan de Cuenta': cuentas_globales.get('iva'),
+                        'Numero': tipo_doc_str,  # Issues #3 y #4
+                        'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
+                        'Nro. Docto. Conciliación': folio  # Issues #3 y #4
                     }
                 )
                 # Fila Proveedores (invertido -> Debe)
@@ -388,7 +421,10 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                         'Monto 2 Detalle Libro': monto2,
                         'Monto 3 Detalle Libro': monto3,
                         'Monto Suma Detalle Libro': (monto1 if monto1 is not None else 0) + (monto2 if monto2 is not None else 0) + (monto3 if monto3 is not None else 0),
-                        'Código Plan de Cuenta': cuentas_globales.get('proveedores')
+                        'Código Plan de Cuenta': cuentas_globales.get('proveedores'),
+                        'Numero': tipo_doc_str,  # Issues #3 y #4
+                        'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
+                        'Nro. Docto. Conciliación': folio  # Issues #3 y #4
                     }
                 )
                 # Filas Gasto (invertidas -> Haber)
@@ -400,7 +436,10 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                         haber=debe_val,
                         extra={
                             'Código Centro de Costo': codigo_cc_final,
-                            'Código Plan de Cuenta': cuentas_globales.get('gasto_default')
+                            'Código Plan de Cuenta': cuentas_globales.get('gasto_default'),
+                            'Numero': tipo_doc_str,  # Issues #3 y #4
+                            'Tipo Docto. Conciliación': tipo_doc_str,  # Issues #3 y #4
+                            'Nro. Docto. Conciliación': folio  # Issues #3 y #4
                         }
                     )
             else:

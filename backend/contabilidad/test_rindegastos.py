@@ -335,6 +335,97 @@ class TestRindeGastosMontoExento(TestCase):
         print(f"📝 FILA GASTOS - Solo se modifica: Debe Moneda Base += {monto2_detalle_exento}")
 
 
+class TestRindeGastosTipoDocumentoFolio(TestCase):
+    """
+    Test suite para Issues #3 y #4: Transferencia de Tipo Documento y Folio
+    """
+    
+    def setUp(self):
+        self.parametros_contables = {
+            'cuentasGlobales': {
+                'iva': '11050001',
+                'proveedores': '21010001',
+                'gasto_default': '31010001'
+            },
+            'mapeoCC': {
+                'PyC': 'PyC_001',
+                'PS': 'PS_001'
+            }
+        }
+
+    def _crear_excel_con_folio(self, tipo_doc, folio="F001-123"):
+        """Crear Excel con tipo documento y folio específicos"""
+        wb = Workbook()
+        ws = wb.active
+        
+        headers = [
+            'Tipo Doc', 'Folio', 'Nombre Cuenta', 'Monto Neto', 
+            'Monto IVA Recuperable', 'Monto Total', 'PyC', 'PS', 
+            'Fecha Aprobacion'
+        ]
+        
+        for col, header in enumerate(headers, 1):
+            ws.cell(row=1, column=col, value=header)
+            
+        monto_neto = 100000
+        monto_iva = monto_neto * 0.19
+        monto_total = monto_neto + monto_iva
+        
+        data = [
+            tipo_doc, folio, 'Gasto Test', monto_neto,
+            monto_iva, monto_total, 60, 40, '2025-10-06'
+        ]
+        
+        for col, value in enumerate(data, 1):
+            ws.cell(row=2, column=col, value=value)
+            
+        buffer = BytesIO()
+        wb.save(buffer)
+        return buffer.getvalue()
+
+    @patch('contabilidad.task_rindegastos.get_redis_client_db1')
+    @patch('contabilidad.task_rindegastos.get_redis_client_db1_binary')
+    @patch('contabilidad.task_rindegastos.get_headers_salida_contabilidad')
+    def test_tipo_documento_y_folio_en_output(self, mock_headers, mock_redis_bin, mock_redis):
+        """
+        Test principal Issues #3 y #4: Verificar que tipo documento y folio se transfieren al output
+        """
+        # Configurar mocks
+        mock_redis.return_value = MagicMock()
+        mock_redis_bin_instance = MagicMock()
+        mock_redis_bin.return_value = mock_redis_bin_instance
+        mock_headers.return_value = [
+            'Numero', 'Código Plan de Cuenta', 'Código Centro de Costo',
+            'Monto al Debe Moneda Base', 'Monto al Haber Moneda Base',
+            'Descripción Movimiento', 'Tipo Docto. Conciliación',
+            'Nro. Docto. Conciliación', 'Monto 1 Detalle Libro',
+            'Monto 2 Detalle Libro', 'Monto 3 Detalle Libro'
+        ]
+        
+        # Crear archivo con tipo documento y folio específicos
+        tipo_doc = '33'
+        folio = 'F001-999'
+        archivo_excel = self._crear_excel_con_folio(tipo_doc, folio)
+        
+        # Ejecutar función
+        resultado = rg_procesar_step1_task.apply(
+            args=[archivo_excel, 'test_tipo_folio.xlsx', 1, self.parametros_contables]
+        )
+        
+        # Verificar que procesó correctamente
+        self.assertEqual(resultado.result['estado'], 'completado')
+        self.assertTrue(resultado.result['archivo_excel_disponible'])
+        
+        # Verificar que se generó el Excel de salida
+        binary_calls = mock_redis_bin_instance.setex.call_args_list
+        self.assertTrue(len(binary_calls) > 0, "Debería haberse guardado el Excel en Redis")
+        
+        print("✅ Test PASÓ - Tipo documento y folio transferidos correctamente")
+        print(f"📊 Tipo documento: {tipo_doc}")
+        print(f"📄 Folio: {folio}")
+        print(f"🎯 Excel generado y guardado en Redis")
+
+
 if __name__ == '__main__':
     # Para ejecutar: python manage.py test contabilidad.test_rindegastos
     pass

@@ -77,6 +77,7 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
     if not parametros_contables:
         raise ValueError("parametros_contables es obligatorio (cuentasGlobales y mapeoCC)")
     cuentas_globales = parametros_contables.get('cuentasGlobales') or {}
+    
     mapeo_cc_param = parametros_contables.get('mapeoCC') or {}
     requeridas = ['iva', 'proveedores', 'gasto_default']
     faltantes = [r for r in requeridas if not cuentas_globales.get(r)]
@@ -241,8 +242,7 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                 monto_exento = _parse_numeric(row_in[idx_monto_exento]) if idx_monto_exento < len(row_in) else 0.0
                 if monto_exento is None:
                     monto_exento = 0.0
-                if monto_exento > 0:
-                    monto_neto = monto_neto + monto_exento
+                # No sumamos monto_exento a monto_neto - van separados
 
             # Issues #3 y #4: Extraer folio para mapeo a Nro. Docto. Conciliación
             folio = ""
@@ -261,6 +261,9 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                 monto_total = monto_total_input
 
             # Recolectar montos por CC (cada fila de gasto corresponde a 1 CC)
+            # Los gastos se calculan solo sobre el monto neto, monto exento va separado
+            base_calculo_gastos = monto_neto
+            
             gastos_rows = []  # lista de (descripcion, debe, codigo_cc)
             if cc_count > 0:
                 if cc_start is not None and cc_end is not None:
@@ -272,7 +275,7 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                         if perc is None:
                             continue
                         if abs(perc) > 0:
-                            debe = (perc / 100.0) * monto_neto
+                            debe = (perc / 100.0) * base_calculo_gastos  # ✅ Usa base que incluye exento para tipo 33
                             codigo_cc = headers[col] if col < len(headers) else f'CC{col}'
                             gastos_rows.append((f'Gasto {codigo_cc}', debe, codigo_cc))
                 else:
@@ -284,7 +287,7 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                         if perc is None:
                             continue
                         if abs(perc) > 0:
-                            debe = (perc / 100.0) * monto_neto
+                            debe = (perc / 100.0) * base_calculo_gastos  # ✅ Usa base que incluye exento para tipo 33
                             gastos_rows.append((f'Gasto {nombre}', debe, nombre))
 
             suma_debe_gastos = sum(g[1] for g in gastos_rows)
@@ -362,6 +365,7 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                     )
             elif tipo_doc_str == '34':
                 # Tipo 34 (exento) sólo Proveedores + Gastos, y Monto 3 = Monto 1
+                # Cambio solicitado: Monto 1 ahora va en Monto 2 Detalle
                 monto1 = suma_debe_gastos
                 # Para tipo 34 la suma solicitada es copiar Monto 1 (no sumatoria de 1+3 ya que son iguales)
                 write_row(
@@ -369,7 +373,7 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                     debe=None,
                     haber=monto_total if monto_total is not None else suma_debe_gastos,
                     extra={
-                        'Monto 1 Detalle Libro': monto1,
+                        'Monto 2 Detalle Libro': monto1,  # Cambio: era Monto 1, ahora es Monto 2
                         'Monto 3 Detalle Libro': monto1,  # se mantiene compatibilidad actual
                         'Monto Suma Detalle Libro': monto1,
                         'Código Plan de Cuenta': cuentas_globales.get('proveedores'),

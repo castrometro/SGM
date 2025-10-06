@@ -143,11 +143,12 @@ def procesar_step1_rindegastos(request):
 
         # Parse parametros contables obligatorios
         raw_param = request.data.get('parametros_contables')
+        
         parametros_contables = None
         if raw_param:
             try:
                 parametros_contables = json.loads(raw_param)
-            except Exception:
+            except Exception as e:
                 return Response({'error': 'parametros_contables no es JSON válido'}, status=400)
         else:
             # Fallback: construir desde campos sueltos

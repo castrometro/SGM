@@ -23,26 +23,6 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD} 
     env_file:
     - .env
-  # ← NUEVO: RedisInsight para análisis y métricas
-  redisinsight:
-    image: redislabs/redisinsight:2.70.1
-    ports:
-      - "8001:5540"
-    volumes:
-      - redisinsight_data:/db
-    environment:
-      - RIPORT=5540
-      - RIHOST=0.0.0.0
-      - RIUSER=${REDISINSIGHT_USER}
-      - RIPASSWORD=${REDISINSIGHT_PASS}
-      - RIENCRYPTION=true
-      - RITLS=false  # ← Sin TLS hacia Redis
-      - RISSL=false  # ← Sin SSL hacia Redis
-    env_file:
-      - .env
-    depends_on:
-      - redis
-    restart: unless-stopped
 
   django:
     build:
@@ -109,27 +89,10 @@ services:
     depends_on:
       - redis
 
-  streamlit_nomina:
-    build:
-      context: .
-      dockerfile: streamlit_nomina/streamlit.Dockerfile
-    volumes:
-      - ./streamlit_nomina:/app
-    ports:
-      - "8503:8503"
-    environment:
-      - PORT=8503
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - REDIS_DB_NOMINA=2
-    depends_on:
-      - redis
-
 
 volumes:
   postgres_data:
   redis_data:        # ← NUEVO: Persistencia para Redis
-  redisinsight_data: # ← NUEVO: Configuración de RedisInsight
+  
 
 

@@ -6,7 +6,7 @@ click==8.1.8
 click-didyoumean==0.3.1
 click-plugins==1.1.1
 click-repl==0.3.0
-Django==5.2.1
+Django==5.2.7
 django-cors-headers==4.7.0
 django-extensions==3.2.3
 pydotplus==2.0.2

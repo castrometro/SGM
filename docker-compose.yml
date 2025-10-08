@@ -25,7 +25,7 @@ services:
     - .env
   # ← NUEVO: RedisInsight para análisis y métricas
   redisinsight:
-    image: redislabs/redisinsight:latest
+    image: redislabs/redisinsight:2.70.1
     ports:
       - "8001:5540"
     volumes:

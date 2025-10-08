@@ -54,11 +54,12 @@ const ArchivosAnalistaSection = ({
   const estadoFiniquitos = finiquitos?.estado || "no_subido";
   const estadoAusentismos = ausentismos?.estado || "no_subido";
   
-  const estadoNovedades = novedades?.estado === "procesando" || novedades?.estado === "procesado"
+  const hayArchivoNovedades = Boolean(novedades?.id || novedades?.archivo_nombre);
+  const estadoNovedades = (novedades?.estado === "procesando" || novedades?.estado === "procesado")
     ? novedades?.estado
-    : novedadesListo
+    : (novedadesListo && hayArchivoNovedades)
     ? "clasificado"
-    : novedades?.estado || "no_subido";
+    : (novedades?.estado || "no_subido");
   
   // Determinar el estado general: Procesado si TODOS están procesados, Pendiente en cualquier otro caso
   const todosArchivosProcessed = [estadoIngresos, estadoFiniquitos, estadoAusentismos, estadoNovedades]

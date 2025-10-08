@@ -47,12 +47,30 @@ def resumen_cliente(request, cliente_id):
         .first()
     )
 
+    # Determinar usuario responsable del último cierre (si existe)
+    usuario_cierre = None
+    if ultimo_cierre and getattr(ultimo_cierre, 'usuario', None):
+        try:
+            # Preferimos mostrar nombre + apellido; si no hay, usar correo_bdo
+            nombre = getattr(ultimo_cierre.usuario, 'nombre', None)
+            apellido = getattr(ultimo_cierre.usuario, 'apellido', None)
+            correo = getattr(ultimo_cierre.usuario, 'correo_bdo', None)
+            if nombre or apellido:
+                usuario_cierre = f"{nombre or ''} {apellido or ''}".strip()
+            elif correo:
+                usuario_cierre = correo
+            else:
+                usuario_cierre = str(ultimo_cierre.usuario)
+        except Exception:
+            usuario_cierre = None
+
     return Response(
         {
             "cliente_id": cliente.id,
             "cliente": cliente.nombre,
             "ultimo_cierre": ultimo_cierre.periodo if ultimo_cierre else None,
             "estado_ultimo_cierre": ultimo_cierre.estado if ultimo_cierre else None,
+            "usuario_cierre": usuario_cierre,
         }
     )
 

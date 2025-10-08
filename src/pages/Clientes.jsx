@@ -179,6 +179,7 @@ ${clientes.length > 5 ? `... y ${clientes.length - 5} más` : ''}
                 <th className="p-2">RUT</th>
                 <th className="p-2 text-center">Último Cierre</th>
                 <th className="p-2 text-center">Estado Actual</th>
+                <th className="p-2 text-center">Usuario Responsable</th>
                 <th className="p-2 text-center">Acciones</th>
               </tr>
             </thead>

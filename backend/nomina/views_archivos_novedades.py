@@ -1,6 +1,8 @@
 # backend/nomina/views_archivos_novedades.py
 
 import logging
+import unicodedata
+import re
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
@@ -40,6 +42,23 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
         """Obtiene el estado del archivo de novedades para un cierre específico"""
         archivo = self.get_queryset().filter(cierre_id=cierre_id).order_by('-fecha_subida').first()
         if archivo:
+            # Normalizar header_json para el frontend
+            hj = archivo.header_json
+            if isinstance(hj, dict):
+                header_json = {
+                    "headers_clasificados": hj.get("headers_clasificados", []) or [],
+                    "headers_sin_clasificar": hj.get("headers_sin_clasificar", []) or [],
+                }
+            elif isinstance(hj, list):
+                header_json = {
+                    "headers_clasificados": [],
+                    "headers_sin_clasificar": hj,
+                }
+            else:
+                header_json = {
+                    "headers_clasificados": [],
+                    "headers_sin_clasificar": [],
+                }
             return Response({
                 "id": archivo.id,
                 "estado": archivo.estado,
@@ -49,6 +68,7 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
                 "cierre_id": archivo.cierre.id,
                 "cliente_id": archivo.cierre.cliente.id,
                 "cliente_nombre": archivo.cierre.cliente.nombre,
+                "header_json": header_json,
             })
         else:
             return Response({
@@ -60,6 +80,10 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
                 "cierre_id": None,
                 "cliente_id": None,
                 "cliente_nombre": "",
+                "header_json": {
+                    "headers_clasificados": [],
+                    "headers_sin_clasificar": [],
+                }
             })
     
     @action(detail=False, methods=['post'], url_path='subir/(?P<cierre_id>[^/.]+)')
@@ -179,9 +203,9 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
         """Obtiene los headers de un archivo de novedades para clasificación"""
         archivo = self.get_object()
         
-        if archivo.estado not in ['clasif_pendiente', 'clasificado', 'procesado']:
+        if archivo.estado not in ['clasif_pendiente', 'clasificado', 'procesado', 'hdrs_analizados']:
             return Response({
-                "error": "El archivo debe estar en estado 'clasif_pendiente', 'clasificado' o 'procesado' para obtener headers"
+                "error": "El archivo debe estar en estado 'hdrs_analizados', 'clasif_pendiente', 'clasificado' o 'procesado' para obtener headers"
             }, status=400)
         
         headers_data = archivo.header_json
@@ -192,26 +216,67 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
             headers_clasificados = []
             headers_sin_clasificar = headers_data if isinstance(headers_data, list) else []
         
-        # Si el archivo está clasificado o procesado, incluir los mapeos existentes
-        mapeos_existentes = {}
-        if archivo.estado in ['clasificado', 'procesado']:
-            mapeos = ConceptoRemuneracionNovedades.objects.filter(
-                cliente=archivo.cierre.cliente,
-                activo=True,
-                nombre_concepto_novedades__in=headers_clasificados
-            ).select_related('concepto_libro')
+        # Helper de normalización para comparar cadenas de headers entre archivos (ignora acentos, espacios extra y mayúsculas)
+        def _normalize_header(s: str) -> str:
+            if not isinstance(s, str):
+                s = str(s or '')
+            s = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode('ascii')
+            s = s.strip().upper()
+            s = re.sub(r"\s+", " ", s)
+            return s
 
-            for mapeo in mapeos:
-                if mapeo.concepto_libro:
-                    mapeos_existentes[mapeo.nombre_concepto_novedades] = {
-                        'concepto_libro_id': mapeo.concepto_libro.id,
-                        'concepto_libro_nombre': mapeo.concepto_libro.nombre_concepto,
-                        'concepto_libro_clasificacion': mapeo.concepto_libro.clasificacion,
-                    }
-                else:
-                    mapeos_existentes[mapeo.nombre_concepto_novedades] = {
-                        'concepto_libro_id': None,
-                    }
+        # Incluir mapeos existentes para TODOS los headers detectados (clasificados y sin clasificar)
+        mapeos_existentes = {}
+        try:
+            headers_todos = list(set(list(headers_clasificados) + list(headers_sin_clasificar)))
+            if headers_todos:
+                # 1) Intento directo por coincidencia exacta
+                mapeos = ConceptoRemuneracionNovedades.objects.filter(
+                    cliente=archivo.cierre.cliente,
+                    activo=True,
+                    nombre_concepto_novedades__in=headers_todos
+                ).select_related('concepto_libro')
+
+                for mapeo in mapeos:
+                    if mapeo.concepto_libro:
+                        mapeos_existentes[mapeo.nombre_concepto_novedades] = {
+                            'concepto_libro_id': mapeo.concepto_libro.id,
+                            'concepto_libro_nombre': mapeo.concepto_libro.nombre_concepto,
+                            'concepto_libro_clasificacion': mapeo.concepto_libro.clasificacion,
+                        }
+                    else:
+                        mapeos_existentes[mapeo.nombre_concepto_novedades] = {
+                            'concepto_libro_id': None,
+                        }
+
+                # 2) Fallback: si no hay coincidencia exacta para algunos headers, intentar por nombre normalizado
+                faltantes = [h for h in headers_todos if h not in mapeos_existentes]
+                if faltantes:
+                    # Indexar todos los mapeos del cliente por nombre normalizado
+                    todos_mapeos_cliente = ConceptoRemuneracionNovedades.objects.filter(
+                        cliente=archivo.cierre.cliente,
+                        activo=True,
+                    ).select_related('concepto_libro')
+                    idx_norm = {}
+                    for m in todos_mapeos_cliente:
+                        idx_norm[_normalize_header(m.nombre_concepto_novedades)] = m
+
+                    for header in faltantes:
+                        clave = _normalize_header(header)
+                        m = idx_norm.get(clave)
+                        if m:
+                            if m.concepto_libro:
+                                mapeos_existentes[header] = {
+                                    'concepto_libro_id': m.concepto_libro.id,
+                                    'concepto_libro_nombre': m.concepto_libro.nombre_concepto,
+                                    'concepto_libro_clasificacion': m.concepto_libro.clasificacion,
+                                }
+                            else:
+                                mapeos_existentes[header] = {
+                                    'concepto_libro_id': None,
+                                }
+        except Exception as e:
+            logger.warning(f"No se pudieron cargar mapeos existentes para novedades {archivo.id}: {e}")
         
         return Response({
             "headers_clasificados": headers_clasificados,

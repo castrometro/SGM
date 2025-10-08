@@ -8,6 +8,7 @@ const ClienteRow = ({ cliente, areaActiva }) => {
   const [resumen, setResumen] = useState({
     ultimo_cierre: null,
     estado_cierre_actual: null,
+    usuario_cierre: null,
   });
   const navigate = useNavigate();
 
@@ -59,6 +60,9 @@ const ClienteRow = ({ cliente, areaActiva }) => {
       </td>
       <td className="p-2 text-center">
         <EstadoBadge estado={getEstadoCierre()} />
+      </td>
+      <td className="p-2 text-center">
+        {resumen.usuario_cierre || "—"}
       </td>
       <td className="p-2 text-center">
         <div className="flex items-center justify-center gap-2">

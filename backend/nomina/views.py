@@ -180,14 +180,42 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
             .first()
         )
         if cierre:
+            # Determinar usuario del cierre: si está finalizado y tiene usuario_finalizacion, usarlo; si no, usuario_analista
+            usuario_cierre = None
+            try:
+                if getattr(cierre, 'usuario_finalizacion_id', None) and cierre.usuario_finalizacion:
+                    nombre = getattr(cierre.usuario_finalizacion, 'nombre', None)
+                    apellido = getattr(cierre.usuario_finalizacion, 'apellido', None)
+                    correo = getattr(cierre.usuario_finalizacion, 'correo_bdo', None)
+                    if nombre or apellido:
+                        usuario_cierre = f"{nombre or ''} {apellido or ''}".strip()
+                    elif correo:
+                        usuario_cierre = correo
+                    else:
+                        usuario_cierre = str(cierre.usuario_finalizacion)
+                elif getattr(cierre, 'usuario_analista_id', None) and cierre.usuario_analista:
+                    nombre = getattr(cierre.usuario_analista, 'nombre', None)
+                    apellido = getattr(cierre.usuario_analista, 'apellido', None)
+                    correo = getattr(cierre.usuario_analista, 'correo_bdo', None)
+                    if nombre or apellido:
+                        usuario_cierre = f"{nombre or ''} {apellido or ''}".strip()
+                    elif correo:
+                        usuario_cierre = correo
+                    else:
+                        usuario_cierre = str(cierre.usuario_analista)
+            except Exception:
+                usuario_cierre = None
+
             return Response({
                 "ultimo_cierre": cierre.periodo,
                 "estado_cierre_actual": cierre.estado,
+                "usuario_cierre": usuario_cierre,
             })
         else:
             return Response({
                 "ultimo_cierre": None,
                 "estado_cierre_actual": None,
+                "usuario_cierre": None,
             })
 
     @action(detail=True, methods=['post'], url_path='actualizar-estado')

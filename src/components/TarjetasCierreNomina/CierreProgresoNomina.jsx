@@ -358,10 +358,12 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
       ? novedades.header_json.headers_sin_clasificar.length === 0
       : false;
     const enProcesoNovedades = novedades?.estado === "procesando" || novedades?.estado === "procesado";
+    const tieneArchivoNovedades = Boolean(novedades?.id);
 
-    if (sinClasificarNovedades && !enProcesoNovedades && !novedadesListo) {
+    // Solo marcar como listo si realmente existe un archivo cargado
+    if (tieneArchivoNovedades && sinClasificarNovedades && !enProcesoNovedades && !novedadesListo) {
       setNovedadesListo(true);
-    } else if ((!sinClasificarNovedades || enProcesoNovedades) && novedadesListo) {
+    } else if ((!tieneArchivoNovedades || !sinClasificarNovedades || enProcesoNovedades) && novedadesListo) {
       setNovedadesListo(false);
     }
   }, [novedades, novedadesListo]);
@@ -510,6 +512,14 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
 
   const handleSubirNovedades = async (archivo) => {
     setSubiendoNovedades(true);
+    // 🔄 Resetear flags/estado locales para evitar que quede 'clasificado' del archivo anterior
+    setNovedadesListo(false);
+    setNovedades((prev) => ({
+      ...(prev || {}),
+      estado: 'pendiente',
+      archivo_nombre: archivo?.name || prev?.archivo_nombre || null,
+      header_json: { headers_clasificados: [], headers_sin_clasificar: [] },
+    }));
     try {
       const formData = new FormData();
       formData.append("archivo", archivo);

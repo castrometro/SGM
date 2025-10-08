@@ -27,6 +27,7 @@ backend/venv/
 !.vscode/extensions.json
 .idea
 .DS_Store
+.backups
 *.suo
 *.ntvs*
 *.njsproj

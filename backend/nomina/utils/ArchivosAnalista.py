@@ -279,9 +279,7 @@ def procesar_archivo_incidencias_util(archivo):
                     continue
                 
                 fecha_fin = parsear_fecha(row.get(mapeo['Fecha Fin Ausencia']))
-                if not fecha_fin:
-                    errores.append(f"Fila {index + 2}: Fecha Fin Ausencia inválida")
-                    continue
+                # Fecha fin es opcional - puede ser null para ausencias indefinidas
                 
                 # Validar días
                 try:

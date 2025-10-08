@@ -488,7 +488,7 @@ def _comparar_ausentismos_vs_incidencias(cierre):
                     tipo_incidencia=TipoIncidencia.AUSENCIA_NO_REPORTADA,
                     rut_empleado=ausentismo.rut,
                     descripcion=f"Ausencia en MovimientosMes no reportada por Analista: {ausentismo.nombres_apellidos}",
-                    valor_movimientos=f"{ausentismo.fecha_inicio_ausencia} - {ausentismo.fecha_fin_ausencia} ({ausentismo.tipo})",
+                    valor_movimientos=f"{ausentismo.fecha_inicio_ausencia} - {ausentismo.fecha_fin_ausencia or 'Indefinida'} ({ausentismo.tipo})",
                     prioridad='alta'
                 ))
     

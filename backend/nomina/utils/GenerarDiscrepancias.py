@@ -445,7 +445,7 @@ def _comparar_ausentismos(cierre):
                 tipo_discrepancia=TipoDiscrepancia.AUSENCIA_NO_REPORTADA,
                 rut_empleado=mov_ausencia.rut,
                 descripcion=f"Ausencia de {mov_ausencia.nombres_apellidos} (RUT: {mov_ausencia.rut}) en MovimientosMes no reportada por Analista",
-                valor_movimientos=f"{mov_ausencia.tipo} ({mov_ausencia.fecha_inicio_ausencia} - {mov_ausencia.fecha_fin_ausencia})",
+                valor_movimientos=f"{mov_ausencia.tipo} ({mov_ausencia.fecha_inicio_ausencia} - {mov_ausencia.fecha_fin_ausencia or 'Indefinida'})",
                 valor_analista="No reportado"
             ))
         else:
@@ -460,8 +460,8 @@ def _comparar_ausentismos(cierre):
                     tipo_discrepancia=TipoDiscrepancia.DIFERENCIA_FECHAS_AUSENCIA,
                     rut_empleado=mov_ausencia.rut,
                     descripcion=f"Diferencia en fechas de ausencia para {mov_ausencia.nombres_apellidos} (RUT: {mov_ausencia.rut})",
-                    valor_movimientos=f"{mov_ausencia.fecha_inicio_ausencia} - {mov_ausencia.fecha_fin_ausencia}",
-                    valor_analista=f"{inc_analista.fecha_inicio_ausencia} - {inc_analista.fecha_fin_ausencia}"
+                    valor_movimientos=f"{mov_ausencia.fecha_inicio_ausencia} - {mov_ausencia.fecha_fin_ausencia or 'Indefinida'}",
+                    valor_analista=f"{inc_analista.fecha_inicio_ausencia} - {inc_analista.fecha_fin_ausencia or 'Indefinida'}"
                 ))
             
             # Comparar días

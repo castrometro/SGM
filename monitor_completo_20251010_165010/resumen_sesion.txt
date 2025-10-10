@@ -1,0 +1,28 @@
+📊 RESUMEN DE SESIÓN DE MONITOREO SGM
+=====================================
+
+🕐 Sesión iniciada: 2025-10-10 16:50:10
+🕐 Sesión finalizada: 2025-10-10 16:50:35
+⏱️  Duración total: 25 segundos
+
+📈 ESTADÍSTICAS:
+- Total muestras capturadas: 2
+- Eventos detectados: 0
+- Frecuencia de muestreo: cada 3 segundos
+
+📁 ARCHIVOS GENERADOS:
+- monitor_general.log: Log completo de la sesión
+- metricas_sistema.csv: Datos de CPU/RAM por timestamp  
+- eventos_deteccion.csv: Log de eventos de procesamiento Excel
+- resumen_sesion.txt: Este archivo de resumen
+
+💡 ANÁLISIS RECOMENDADO:
+1. Abrir metricas_sistema.csv en Excel/LibreOffice
+2. Crear gráficos de CPU y memoria vs tiempo
+3. Correlacionar picos con eventos_deteccion.csv
+4. Calcular requisitos mínimos basado en picos detectados
+
+🎯 PRÓXIMOS PASOS:
+- Ejecutar pruebas con múltiples usuarios simultáneos
+- Medir bajo carga de 3 usuarios procesando Excel
+- Calcular requisitos hardware definitivos

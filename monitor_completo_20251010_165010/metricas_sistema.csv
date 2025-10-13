@@ -1,3 +1,0 @@
-timestamp,cpu_sistema,memoria_total_mb,memoria_percent,django_cpu,django_mem_mb,celery_cpu,celery_mem_mb
-16:50:10,26,5052,63.6,2.88,202.6,0.45,546
-16:50:22,23,5055,63.7,2.88,202.6,0.25,546.1

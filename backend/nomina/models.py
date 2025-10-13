@@ -7,8 +7,8 @@ from django.conf import settings
 import unicodedata
 import hashlib
 
-# Importar modelos de logging
-from .models_logging import UploadLogNomina, TarjetaActivityLogNomina
+# Importar modelos de logging - USANDO STUBS DE TRANSICIÓN
+from .models_logging_stub import UploadLogNomina, TarjetaActivityLogNomina
 
 User = get_user_model()
 
@@ -1797,4 +1797,133 @@ class MovimientoPersonal(models.Model):
         if self.subtipo:
             base += f"/{self.subtipo}"
         return f"{base} - {self.nomina_consolidada.nombre_empleado}"
+
+
+# ============================================================================
+# ACTIVITY LOGGING V2 - Sistema unificado de actividad
+# ============================================================================
+
+class ActivityEvent(models.Model):
+    """
+    Modelo unificado para registrar todas las actividades del sistema V2.
+    Reemplaza TarjetaActivityLogNomina y UploadLogNomina.
+    """
+    
+    # Identificación básica
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, db_index=True)
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE, db_index=True)
+    
+    # Contexto de la actividad
+    event_type = models.CharField(max_length=50, db_index=True, help_text="Tipo de evento: upload, process, view, etc.")
+    resource_type = models.CharField(max_length=50, db_index=True, help_text="Tipo de recurso: nomina, contabilidad, etc.")
+    resource_id = models.CharField(max_length=100, blank=True, help_text="ID del recurso específico")
+    
+    # Detalles del evento
+    action = models.CharField(max_length=100, help_text="Acción específica realizada")
+    details = models.JSONField(default=dict, blank=True, help_text="Detalles adicionales del evento")
+    
+    # Metadatos de sesión
+    session_id = models.CharField(max_length=100, blank=True, db_index=True, help_text="ID de sesión para agrupar eventos relacionados")
+    ip_address = models.GenericIPAddressField(blank=True, null=True)
+    user_agent = models.TextField(blank=True)
+    
+    class Meta:
+        db_table = 'nomina_activity_event'
+        indexes = [
+            models.Index(fields=['timestamp']),
+            models.Index(fields=['user', 'timestamp']),
+            models.Index(fields=['cliente', 'timestamp']),
+            models.Index(fields=['event_type', 'timestamp']),
+            models.Index(fields=['resource_type', 'resource_id']),
+            models.Index(fields=['session_id']),
+        ]
+        ordering = ['-timestamp']
+        
+    def __str__(self):
+        user_display = getattr(self.user, 'username', None) or getattr(self.user, 'email', str(self.user))
+        return f"{self.event_type}.{self.action} - {user_display} @ {self.timestamp.strftime('%H:%M:%S')}"
+    
+    @staticmethod
+    def log(user, cliente, event_type, action, resource_type='general', resource_id='', details=None, session_id='', request=None):
+        """
+        Método estático para registrar eventos de actividad.
+        
+        Args:
+            user: Usuario que realiza la acción
+            cliente: Cliente relacionado
+            event_type: Tipo de evento (upload, process, view, etc.)
+            action: Acción específica
+            resource_type: Tipo de recurso (nomina, contabilidad, etc.)
+            resource_id: ID específico del recurso
+            details: Diccionario con detalles adicionales
+            session_id: ID de sesión para agrupar eventos
+            request: Request HTTP para extraer IP y user agent
+        
+        Returns:
+            ActivityEvent: El evento creado
+        """
+        if details is None:
+            details = {}
+            
+        # Extraer información del request si está disponible
+        ip_address = None
+        user_agent = ''
+        if request:
+            # Obtener IP real considerando proxies
+            x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+            if x_forwarded_for:
+                ip_address = x_forwarded_for.split(',')[0].strip()
+            else:
+                ip_address = request.META.get('REMOTE_ADDR')
+            user_agent = request.META.get('HTTP_USER_AGENT', '')[:500]  # Limitar tamaño
+        
+        return ActivityEvent.objects.create(
+            user=user,
+            cliente=cliente,
+            event_type=event_type,
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            details=details,
+            session_id=session_id,
+            ip_address=ip_address,
+            user_agent=user_agent
+        )
+    
+    @classmethod
+    def cleanup_old_events(cls, days=90):
+        """
+        Limpia eventos antiguos para mantener el rendimiento.
+        
+        Args:
+            days: Días de antigüedad para eliminar (default: 90)
+        
+        Returns:
+            int: Número de eventos eliminados
+        """
+        from datetime import timedelta
+        cutoff_date = timezone.now() - timedelta(days=days)
+        count, _ = cls.objects.filter(timestamp__lt=cutoff_date).delete()
+        return count
+    
+    def get_related_events(self, time_window_minutes=5):
+        """
+        Obtiene eventos relacionados en una ventana de tiempo.
+        
+        Args:
+            time_window_minutes: Ventana de tiempo en minutos
+            
+        Returns:
+            QuerySet: Eventos relacionados
+        """
+        from datetime import timedelta
+        start_time = self.timestamp - timedelta(minutes=time_window_minutes)
+        end_time = self.timestamp + timedelta(minutes=time_window_minutes)
+        
+        return ActivityEvent.objects.filter(
+            user=self.user,
+            cliente=self.cliente,
+            timestamp__range=(start_time, end_time)
+        ).exclude(pk=self.pk)
 

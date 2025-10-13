@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Download, Loader2, CheckCircle2 } from "lucide-react";
 import { descargarPlantillaFiniquitos } from "../../api/nomina";
 import EstadoBadge from "../EstadoBadge";
-import { createActivityLogger } from "../../utils/activityLogger";
+// TODO: ActivityLogger V2 - import { createActivityLogger } from "../../utils/activityLogger";
 
 const FiniquitosCard = ({
   estado,

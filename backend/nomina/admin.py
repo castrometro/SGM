@@ -24,8 +24,11 @@ from .models import (
 # Importar modelo de informes
 from .models_informe import InformeNomina
 
-# Importar modelos de logging
+# Importar modelos de logging V1 (deprecado)
 from .models_logging import UploadLogNomina, TarjetaActivityLogNomina
+
+# Importar modelo de activity logging V2
+from .models import ActivityEvent
 
 # (Import ya realizado arriba)
 
@@ -2674,5 +2677,51 @@ class HistorialVerificacionCierreAdmin(admin.ModelAdmin):
 @admin.register(DiscrepanciaHistorial)  
 class DiscrepanciaHistorialAdmin(admin.ModelAdmin):
     list_display = ('historial_verificacion', 'tipo_discrepancia', 'rut_empleado')
-    list_filter = ('tipo_discrepancia',)
-    search_fields = ('rut_empleado', 'nombre_empleado')
+
+
+# ============================================================================
+# ACTIVITY LOGGING V2 - Admin para el sistema unificado de actividad
+# ============================================================================
+
+@admin.register(ActivityEvent)
+class ActivityEventAdmin(admin.ModelAdmin):
+    list_display = (
+        'timestamp', 
+        'user', 
+        'cliente', 
+        'event_type', 
+        'action', 
+        'resource_type', 
+        'resource_id',
+        'session_id'
+    )
+    list_filter = (
+        'event_type', 
+        'resource_type', 
+        'cliente', 
+        'timestamp'
+    )
+    search_fields = (
+        'user__email', 
+        'cliente__nombre', 
+        'action', 
+        'resource_id',
+        'session_id'
+    )
+    readonly_fields = (
+        'timestamp', 
+        'user', 
+        'cliente', 
+        'ip_address', 
+        'user_agent'
+    )
+    date_hierarchy = 'timestamp'
+    ordering = ['-timestamp']
+    
+    def has_add_permission(self, request):
+        """Los eventos se crean automáticamente, no manualmente"""
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        """Los eventos son inmutables una vez creados"""
+        return False

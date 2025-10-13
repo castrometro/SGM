@@ -9,7 +9,8 @@ from celery import chain
 
 from api.models import Cliente
 from .models import CierreNomina, LibroRemuneracionesUpload
-from .utils.mixins import UploadLogNominaMixin, ValidacionArchivoCRUDMixin
+# USANDO STUBS DE TRANSICIÓN - MIGRAR A ACTIVITY V2
+from .utils.mixins_stub import UploadLogNominaMixin, ValidacionArchivoCRUDMixin
 from .utils.clientes import get_client_ip
 from .utils.uploads import guardar_temporal
 from .tasks import (

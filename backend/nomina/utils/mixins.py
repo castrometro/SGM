@@ -6,7 +6,9 @@ from datetime import datetime
 from django.utils import timezone
 from django.core.files.storage import default_storage
 
-from ..models_logging import UploadLogNomina, TarjetaActivityLogNomina, registrar_actividad_tarjeta_nomina
+# USANDO STUBS DE TRANSICIÓN - MIGRAR A ACTIVITY V2
+from .mixins_stub import UploadLogNominaMixin, ValidacionArchivoCRUDMixin
+from ..models_logging_stub import UploadLogNomina, TarjetaActivityLogNomina, registrar_actividad_tarjeta_nomina
 
 
 class UploadLogNominaMixin:

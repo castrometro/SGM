@@ -223,7 +223,7 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         """
         Actualiza automáticamente el estado del cierre basado en el estado de los archivos
         """
-        from .models_logging_stub import registrar_actividad_tarjeta_nomina
+        from .models_logging import registrar_actividad_tarjeta_nomina
         from .utils.clientes import get_client_ip
         
         cierre = self.get_object()
@@ -271,7 +271,7 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         2. Lanza tarea Celery de consolidación
         3. Retorna inmediatamente con task_id para seguimiento
         """
-        from .models_logging_stub import registrar_actividad_tarjeta_nomina
+        from .models_logging import registrar_actividad_tarjeta_nomina
         from .utils.clientes import get_client_ip
         from .tasks import consolidar_datos_nomina_task
         
@@ -436,7 +436,7 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         """
         Genera incidencias comparando información consolidada con el período anterior
         """
-        from .models_logging_stub import registrar_actividad_tarjeta_nomina
+        from .models_logging import registrar_actividad_tarjeta_nomina
         from .utils.clientes import get_client_ip
     # La detección usa el orquestador V2 a través de la task generar_incidencias_consolidadas_task
         
@@ -519,7 +519,7 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
             ]
         }
         """
-        from .models_logging_stub import registrar_actividad_tarjeta_nomina
+        from .models_logging import registrar_actividad_tarjeta_nomina
         from .utils.clientes import get_client_ip
         from .utils.DetectarIncidenciasConsolidadas import generar_incidencias_consolidados_v2
         
@@ -771,7 +771,7 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         """
         Marca todas las incidencias resueltas por analistas como aprobadas por supervisor (acción masiva)
         """
-        from .models_logging_stub import registrar_actividad_tarjeta_nomina
+        from .models_logging import registrar_actividad_tarjeta_nomina
         from .utils.clientes import get_client_ip
         from .models import ResolucionIncidencia
         
@@ -858,7 +858,7 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         """
         Solicita que se habilite la recarga de archivos para corregir incidencias en Talana
         """
-        from .models_logging_stub import registrar_actividad_tarjeta_nomina
+        from .models_logging import registrar_actividad_tarjeta_nomina
         from .utils.clientes import get_client_ip
         
         cierre = self.get_object()
@@ -927,7 +927,7 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         """
         El analista solicita la recarga; queda pendiente de aprobación del supervisor
         """
-        from .models_logging_stub import registrar_actividad_tarjeta_nomina
+        from .models_logging import registrar_actividad_tarjeta_nomina
         from .utils.clientes import get_client_ip
         from django.utils import timezone
 
@@ -968,7 +968,7 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         """
         Supervisor aprueba la solicitud de recarga. Incrementa version_datos y habilita recarga.
         """
-        from .models_logging_stub import registrar_actividad_tarjeta_nomina
+        from .models_logging import registrar_actividad_tarjeta_nomina
         from .utils.clientes import get_client_ip
         from django.utils import timezone
 
@@ -1024,10 +1024,10 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
         """
         Crear libro de remuneraciones con logging completo integrado
         """
-        from .utils.mixins_stub import UploadLogNominaMixin, ValidacionArchivoCRUDMixin
+        from .utils.mixins import UploadLogNominaMixin, ValidacionArchivoCRUDMixin
         from .utils.clientes import get_client_ip
         from .utils.uploads import guardar_temporal
-        from .models_logging_stub import registrar_actividad_tarjeta_nomina
+        from .models_logging import registrar_actividad_tarjeta_nomina
         from django.db import transaction
         import logging
         
@@ -1395,7 +1395,7 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Error ejecutando chain: {e}")
             # Marcar como error
-            from .utils.mixins_stub import UploadLogNominaMixin
+            from .utils.mixins import UploadLogNominaMixin
             mixin = UploadLogNominaMixin()
             mixin.marcar_como_error(upload_log_id, f"Error en chain: {e}")
 
@@ -1454,7 +1454,7 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
         """
         libro = self.get_object()
         
-        from .models_logging_stub import TarjetaActivityLogNomina
+        from .models_logging import TarjetaActivityLogNomina
         
         actividades = TarjetaActivityLogNomina.objects.filter(
             cierre=libro.cierre,
@@ -1532,7 +1532,7 @@ class LibroRemuneracionesUploadViewSet(viewsets.ModelViewSet):
         """
         Eliminar libro de remuneraciones y todos sus datos relacionados
         """
-        from .models_logging_stub import registrar_actividad_tarjeta_nomina
+        from .models_logging import registrar_actividad_tarjeta_nomina
         from .utils.clientes import get_client_ip
         from django.db import transaction
         import logging
@@ -3637,7 +3637,7 @@ def obtener_estado_upload_log_nomina(request, upload_log_id):
     """
     Obtiene el estado actual de un UploadLogNomina específico
     """
-    from .models_logging_stub import UploadLogNomina
+    from .models_logging import UploadLogNomina
     from rest_framework.response import Response
     from rest_framework import status
     

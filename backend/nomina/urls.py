@@ -52,13 +52,14 @@ from .views_movimientos_mes import (
     MovimientoVariacionSueldoViewSet,
     MovimientoVariacionContratoViewSet,
 )
-from .api_logging import (
-    ModalActivityView,
-    FileActivityView,
-    ClassificationActivityView,
-    SessionActivityView,
-    get_activity_log,
-    get_all_activity_logs
+# USANDO STUBS DE TRANSICIÓN - MIGRAR A ACTIVITY V2
+from .api_logging_stub import (
+    obtener_actividad_tarjeta_stub as ModalActivityView,
+    registrar_actividad_tarjeta_stub as FileActivityView,
+    obtener_logs_upload_stub as ClassificationActivityView,
+    limpiar_logs_antiguos_stub as SessionActivityView,
+    obtener_actividad_tarjeta_stub as get_activity_log,
+    obtener_logs_upload_stub as get_all_activity_logs
 )
 
 # Importar views de informes
@@ -214,12 +215,12 @@ urlpatterns = router.urls + [
     path('clientes/<int:cliente_id>/hashtags/', obtener_hashtags_disponibles),
     path("conceptos/", ConceptoRemuneracionBatchView.as_view(), name="guardar-conceptos"),
     
-    # === URLs para Activity Logging ===
+    # === URLs para Activity Logging (STUBS - MIGRAR A V2) ===
     path('activity-log/all/', get_all_activity_logs, name='get_all_activity_logs'),
-    path('activity-log/modal/', ModalActivityView.as_view(), name='modal_activity_log'),
-    path('activity-log/file/', FileActivityView.as_view(), name='file_activity_log'),
-    path('activity-log/classification/', ClassificationActivityView.as_view(), name='classification_activity_log'),
-    path('activity-log/session/', SessionActivityView.as_view(), name='session_activity_log'),
+    path('activity-log/modal/', ModalActivityView, name='modal_activity_log'),
+    path('activity-log/file/', FileActivityView, name='file_activity_log'),
+    path('activity-log/classification/', ClassificationActivityView, name='classification_activity_log'),
+    path('activity-log/session/', SessionActivityView, name='session_activity_log'),
     path('activity-log/<int:cierre_id>/<str:tarjeta>/', get_activity_log, name='get_activity_log'),
     
     path(

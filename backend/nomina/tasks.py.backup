@@ -360,8 +360,8 @@ def clasificar_headers_libro_remuneraciones_task(result):
     Tarea de clasificación de headers mejorada con logging
     Mantiene compatibilidad con el resultado de la tarea anterior
     """
-    from .utils.mixins_stub import UploadLogNominaMixin
-    from .models_logging_stub import registrar_actividad_tarjeta_nomina
+    from .utils.mixins import UploadLogNominaMixin
+    from .models_logging import registrar_actividad_tarjeta_nomina
     
     # Extraer datos del resultado
     libro_id = result["libro_id"]
@@ -384,7 +384,7 @@ def clasificar_headers_libro_remuneraciones_task(result):
 
         # 2. Registrar inicio de clasificación
         if upload_log_id:
-            from .models_logging_stub import UploadLogNomina
+            from .models_logging import UploadLogNomina
             upload_log = UploadLogNomina.objects.get(id=upload_log_id)
             registrar_actividad_tarjeta_nomina(
                 cierre_id=cierre.id,
@@ -544,8 +544,8 @@ def guardar_registros_nomina(result):
 @shared_task
 def procesar_movimientos_mes(movimiento_id, upload_log_id=None):
     """Procesa un archivo de movimientos del mes con logging completo"""
-    from .utils.mixins_stub import UploadLogNominaMixin
-    from .models_logging_stub import registrar_actividad_tarjeta_nomina, UploadLogNomina
+    from .utils.mixins import UploadLogNominaMixin
+    from .models_logging import registrar_actividad_tarjeta_nomina, UploadLogNomina
     
     logger.info(f"Procesando archivo movimientos mes id={movimiento_id} con upload_log={upload_log_id}")
     
@@ -1021,7 +1021,7 @@ def finalizar_procesamiento_novedades_task(resultados_chunks):
         Dict: Resultado final del procesamiento
     """
     from .utils.NovedadesOptimizado import consolidar_stats_novedades
-    from .models_logging_stub import registrar_actividad_tarjeta_nomina
+    from .models_logging import registrar_actividad_tarjeta_nomina
     
     logger.info(f"🎯 Finalizando procesamiento de novedades con {len(resultados_chunks)} chunks")
     
@@ -1542,7 +1542,7 @@ def analizar_headers_libro_remuneraciones_con_logging(libro_id, upload_log_id):
     """
     Analiza headers del libro de remuneraciones con logging integrado
     """
-    from .models_logging_stub import UploadLogNomina
+    from .models_logging import UploadLogNomina
     logger.info(f"Procesando libro de remuneraciones id={libro_id} con upload_log={upload_log_id}")
     
     try:
@@ -1599,7 +1599,7 @@ def clasificar_headers_libro_remuneraciones_con_logging(result):
     """
     Clasifica headers del libro de remuneraciones con logging integrado
     """
-    from .models_logging_stub import UploadLogNomina
+    from .models_logging import UploadLogNomina
     
     libro_id = result["libro_id"]
     upload_log_id = result["upload_log_id"]

@@ -3,7 +3,8 @@ import { Download, FileBarChart2, CheckCircle2, Loader2 } from "lucide-react";
 import { descargarPlantillaLibroRemuneraciones, obtenerEstadoUploadLogNomina } from "../../api/nomina";
 import EstadoBadge from "../EstadoBadge";
 import Notificacion from "../Notificacion";
-import { createActivityLogger } from "../../utils/activityLogger";
+// TODO: Migrar a ActivityLogger V2
+// import { createActivityLogger } from "../../utils/activityLogger";
 
 const LibroRemuneracionesCardConLogging = ({
   estado,
@@ -39,14 +40,15 @@ const LibroRemuneracionesCardConLogging = ({
   const pollingRef = useRef(null);
   
   // Activity Logger
-  const activityLogger = useRef(null);
+  // TODO: Migrar a ActivityLogger V2
+  // const activityLogger = useRef(null);
   
   // Inicializar logger cuando tengamos cierreId
   useEffect(() => {
-    if (cierreId && !activityLogger.current) {
-      activityLogger.current = createActivityLogger(cierreId, 'libro_remuneraciones');
+    // TODO: ActivityLogger V2 -     if (cierreId && !activityLogger.current) {
+    // TODO: ActivityLogger V2 -       activityLogger.current = createActivityLogger(cierreId, 'libro_remuneraciones');
       // Registrar inicio de sesión
-      activityLogger.current.logSessionStart();
+    // TODO: ActivityLogger V2 -       activityLogger.current.logSessionStart();
     }
   }, [cierreId]);
 
@@ -98,13 +100,13 @@ const LibroRemuneracionesCardConLogging = ({
             mostrarNotificacion("warning", "📊 Procesando archivo... Por favor espere.");
             
             // Logging: cambio a estado procesando
-            if (activityLogger.current) {
-              activityLogger.current.logStateChange(
+    // TODO: ActivityLogger V2 -             if (activityLogger.current) {
+    // TODO: ActivityLogger V2 -               activityLogger.current.logStateChange(
                 uploadEstado?.estado || 'inicial',
                 'procesando',
                 'upload_log_update'
               );
-              activityLogger.current.logProgressUpdate(50, 'Procesando archivo en segundo plano');
+    // TODO: ActivityLogger V2 -               activityLogger.current.logProgressUpdate(50, 'Procesando archivo en segundo plano');
             }
           }
           
@@ -117,9 +119,9 @@ const LibroRemuneracionesCardConLogging = ({
           mostrarNotificacion("success", `✅ Archivo procesado exitosamente. ${logData.resumen?.registros_procesados || 0} registros procesados.`);
           
           // Logging: completado exitoso
-          if (activityLogger.current) {
-            activityLogger.current.logStateChange('procesando', 'completado', 'upload_log_update');
-            activityLogger.current.logProgressUpdate(100, `Procesamiento completado: ${logData.resumen?.registros_procesados || 0} registros`);
+    // TODO: ActivityLogger V2 -           if (activityLogger.current) {
+    // TODO: ActivityLogger V2 -             activityLogger.current.logStateChange('procesando', 'completado', 'upload_log_update');
+    // TODO: ActivityLogger V2 -             activityLogger.current.logProgressUpdate(100, `Procesamiento completado: ${logData.resumen?.registros_procesados || 0} registros`);
           }
           
         } else if (logData.estado === 'error') {
@@ -129,8 +131,8 @@ const LibroRemuneracionesCardConLogging = ({
           mostrarNotificacion("error", `❌ Error: ${logData.errores || "Error desconocido"}`);
           
           // Logging: error en procesamiento
-          if (activityLogger.current) {
-            activityLogger.current.logStateChange('procesando', 'error', 'upload_log_update');
+    // TODO: ActivityLogger V2 -           if (activityLogger.current) {
+    // TODO: ActivityLogger V2 -             activityLogger.current.logStateChange('procesando', 'error', 'upload_log_update');
           }
         }
         
@@ -156,8 +158,8 @@ const LibroRemuneracionesCardConLogging = ({
       console.log('🔄 Iniciando polling para monitorear procesamiento...');
       
       // Logging: inicio de polling
-      if (activityLogger.current) {
-        activityLogger.current.logPollingStart(5);
+    // TODO: ActivityLogger V2 -       if (activityLogger.current) {
+    // TODO: ActivityLogger V2 -         activityLogger.current.logPollingStart(5);
       }
       
       let contadorPolling = 0;
@@ -175,8 +177,8 @@ const LibroRemuneracionesCardConLogging = ({
       console.log(`✅ Estado cambió a "${estado}" - deteniendo polling`);
       
       // Logging: detención de polling
-      if (activityLogger.current) {
-        activityLogger.current.logPollingStop(`estado cambió a ${estado}`);
+    // TODO: ActivityLogger V2 -       if (activityLogger.current) {
+    // TODO: ActivityLogger V2 -         activityLogger.current.logPollingStop(`estado cambió a ${estado}`);
       }
       
       clearInterval(pollingRef.current);
@@ -207,8 +209,8 @@ const LibroRemuneracionesCardConLogging = ({
     if (!file) return;
 
     // Logging: selección de archivo
-    if (activityLogger.current) {
-      await activityLogger.current.logFileSelect(file.name, file.size);
+    // TODO: ActivityLogger V2 -     if (activityLogger.current) {
+    // TODO: ActivityLogger V2 -       await activityLogger.current.logFileSelect(file.name, file.size);
     }
 
     console.log('📁 Archivo seleccionado:', {
@@ -242,9 +244,9 @@ const LibroRemuneracionesCardConLogging = ({
       console.log('✅ Respuesta recibida de onSubirArchivo:', response);
       
       // Logging: validación del archivo
-      if (activityLogger.current) {
+    // TODO: ActivityLogger V2 -       if (activityLogger.current) {
         const hasErrors = !response?.upload_log_id;
-        await activityLogger.current.logFileValidate(
+    // TODO: ActivityLogger V2 -         await activityLogger.current.logFileValidate(
           file.name, 
           hasErrors ? ['Error en la respuesta del servidor'] : []
         );
@@ -257,8 +259,8 @@ const LibroRemuneracionesCardConLogging = ({
         mostrarNotificacion("info", "📤 Archivo subido correctamente. Procesando...");
         
         // Logging: inicio de procesamiento
-        if (activityLogger.current) {
-          await activityLogger.current.logProgressUpdate(10, 'Archivo subido, iniciando análisis');
+    // TODO: ActivityLogger V2 -         if (activityLogger.current) {
+    // TODO: ActivityLogger V2 -           await activityLogger.current.logProgressUpdate(10, 'Archivo subido, iniciando análisis');
         }
       } else {
         // Si no hay upload_log_id, seguir con el flujo normal
@@ -271,8 +273,8 @@ const LibroRemuneracionesCardConLogging = ({
       console.error('❌ Error en upload:', err);
       
       // Logging: error en upload
-      if (activityLogger.current) {
-        await activityLogger.current.logFileValidate(
+    // TODO: ActivityLogger V2 -       if (activityLogger.current) {
+    // TODO: ActivityLogger V2 -         await activityLogger.current.logFileValidate(
           file.name, 
           [err.message || 'Error desconocido en upload']
         );
@@ -391,8 +393,8 @@ const LibroRemuneracionesCardConLogging = ({
           <button
             onClick={async () => {
               // Logging: descarga de plantilla
-              if (activityLogger.current) {
-                await activityLogger.current.logDownloadTemplate('libro_remuneraciones');
+    // TODO: ActivityLogger V2 -               if (activityLogger.current) {
+    // TODO: ActivityLogger V2 -                 await activityLogger.current.logDownloadTemplate('libro_remuneraciones');
               }
               descargarPlantillaLibroRemuneraciones();
             }}
@@ -434,8 +436,8 @@ const LibroRemuneracionesCardConLogging = ({
                     console.log('📂 Abriendo file picker...');
                     
                     // Logging: apertura de modal de selección
-                    if (activityLogger.current) {
-                      await activityLogger.current.logModalOpen('file_selector', {
+    // TODO: ActivityLogger V2 -                     if (activityLogger.current) {
+    // TODO: ActivityLogger V2 -                       await activityLogger.current.logModalOpen('file_selector', {
                         trigger: 'user_click'
                       });
                     }
@@ -479,13 +481,13 @@ const LibroRemuneracionesCardConLogging = ({
                 <button
                   onClick={async () => {
                     // Logging: apertura de modal de clasificación
-                    if (activityLogger.current) {
-                      await activityLogger.current.logModalOpen('classification_modal', {
+    // TODO: ActivityLogger V2 -                     if (activityLogger.current) {
+    // TODO: ActivityLogger V2 -                       await activityLogger.current.logModalOpen('classification_modal', {
                         headers_count: headersSinClasificar?.length,
                         classified_count: headerClasificados?.length
                       });
                       
-                      await activityLogger.current.logViewClassification(
+    // TODO: ActivityLogger V2 -                       await activityLogger.current.logViewClassification(
                         headersSinClasificar?.length,
                         headerClasificados?.length
                       );
@@ -506,9 +508,9 @@ const LibroRemuneracionesCardConLogging = ({
             <button
               onClick={async () => {
                 // Logging: inicio de procesamiento
-                if (activityLogger.current) {
-                  await activityLogger.current.logStateChange('clasificado', 'procesando', 'user_action');
-                  await activityLogger.current.logProgressUpdate(0, 'Iniciando procesamiento');
+    // TODO: ActivityLogger V2 -                 if (activityLogger.current) {
+    // TODO: ActivityLogger V2 -                   await activityLogger.current.logStateChange('clasificado', 'procesando', 'user_action');
+    // TODO: ActivityLogger V2 -                   await activityLogger.current.logProgressUpdate(0, 'Iniciando procesamiento');
                 }
                 
                 handleProcesar();

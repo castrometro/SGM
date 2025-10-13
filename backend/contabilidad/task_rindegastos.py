@@ -459,6 +459,38 @@ def rg_procesar_step1_task(self, archivo_content, archivo_nombre, usuario_id, pa
                             'Numero Doc': folio  # Issues #3 y #4
                         }
                     )
+            elif tipo_doc_str == 'COMO':
+                # Tipo COMO: igual que tipo 34 pero sin campos "Monto X Detalle Libro" ni "Monto Suma Detalle Libro"
+                write_row(
+                    descripcion=f'Proveedor Doc {fila_original_idx}',
+                    debe=None,
+                    haber=monto_total if monto_total is not None else suma_debe_gastos,
+                    extra={
+                        'Código Plan de Cuenta': cuentas_globales.get('proveedores'),
+                        'Codigo Auxiliar': rut_proveedor,  # RUT Proveedor del input
+                        'Fecha Emisión Docto.(DD/MM/AAAA)': fecha_docto,
+                        'Fecha Vencimiento Docto.(DD/MM/AAAA)': fecha_docto,
+                        'Numero': tipo_doc_str,  # Issues #3 y #4
+                        'Tipo Documento': tipo_doc_str,  # Issues #3 y #4
+                        'Numero Doc': folio  # Issues #3 y #4
+                    }
+                )
+                for desc_gasto, debe_detalle, debe_moneda_base, codigo_cc in gastos_rows:
+                    codigo_cc_final = mapeo_cc_param.get(codigo_cc, codigo_cc)
+                    write_row(
+                        descripcion=desc_gasto,
+                        debe=debe_moneda_base,  # Usa neto + exento para "Monto al Debe Moneda Base"
+                        haber=None,
+                        extra={
+                            'Código Centro de Costo': codigo_cc_final,
+                            'Código Plan de Cuenta': cuentas_globales.get('gasto_default'),
+                            'Fecha Emisión Docto.(DD/MM/AAAA)': fecha_docto,
+                            'Fecha Vencimiento Docto.(DD/MM/AAAA)': fecha_docto,
+                            'Numero': tipo_doc_str,  # Issues #3 y #4
+                            'Tipo Documento': tipo_doc_str,  # Issues #3 y #4
+                            'Numero Doc': folio  # Issues #3 y #4
+                        }
+                    )
             elif tipo_doc_str == '61':
                 # Tipo 61: espejo de 33 (incluye IVA) invirtiendo Debe/Haber.
                 # En 33: IVA (Debe), Proveedor (Haber), Gastos (Debe)

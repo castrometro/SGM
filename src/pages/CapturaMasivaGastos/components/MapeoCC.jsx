@@ -20,7 +20,9 @@ const MapeoCC = ({
   if (!mostrarMapeoCC || !headersExcel) return null;
 
   const handleInputChange = (key, value) => {
-    setMapeoCC(prev => ({ ...prev, [key]: value }));
+    // Filtrar solo números y guiones para códigos de centros de costos
+    const valorLimpio = value.replace(/[^\d-]/g, '');
+    setMapeoCC(prev => ({ ...prev, [key]: valorLimpio }));
   };
 
   // Generar configuración de columnas dinámicamente basada en centros de costo detectados
@@ -37,7 +39,7 @@ const MapeoCC = ({
           key, // usaremos el nombre del header como key
           label: `${info.nombre}`,
           subtitle: `Columna ${info.posicion + 1}`,
-          placeholder: 'Código CC (ej: 01-003 o 001-003)'
+          placeholder: 'Solo números y guiones (ej: 01-003)'
         });
       });
       console.log('✅ Columnas RG generadas:', columnas);

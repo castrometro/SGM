@@ -54,13 +54,13 @@ export const CAPTURA_CONFIG = {
     // Fallback cuando no se detectan CC en el Excel: mostrar los 7 tipos posibles
     // Las keys ahora son por tipo lógico para evitar dependencias con posiciones
     columns: [
-      { key: 'PyC', label: 'PyC', placeholder: 'Código CC (ej: 01-003 o 001-003)' },
-      { key: 'PS', label: 'PS/EB', placeholder: 'Código CC (ej: 02-004 o 002-004)' },
-      { key: 'CO', label: 'CO', placeholder: 'Código CC (ej: 03-005 o 003-005)' },
-      { key: 'RE', label: 'RE', placeholder: 'Código CC (ej: 04-006 o 004-006)' },
-      { key: 'TR', label: 'TR', placeholder: 'Código CC (ej: 05-007 o 005-007)' },
-      { key: 'CF', label: 'CF', placeholder: 'Código CC (ej: 06-008 o 006-008)' },
-      { key: 'LRC', label: 'LRC', placeholder: 'Código CC (ej: 07-009 o 007-009)' }
+      { key: 'PyC', label: 'PyC', placeholder: 'Solo números y guiones (ej: 01-003)' },
+      { key: 'PS', label: 'PS/EB', placeholder: 'Solo números y guiones (ej: 02-004)' },
+      { key: 'CO', label: 'CO', placeholder: 'Solo números y guiones (ej: 03-005)' },
+      { key: 'RE', label: 'RE', placeholder: 'Solo números y guiones (ej: 04-006)' },
+      { key: 'TR', label: 'TR', placeholder: 'Solo números y guiones (ej: 05-007)' },
+      { key: 'CF', label: 'CF', placeholder: 'Solo números y guiones (ej: 06-008)' },
+      { key: 'LRC', label: 'LRC', placeholder: 'Solo números y guiones (ej: 07-009)' }
     ]
   }
 };
@@ -96,6 +96,7 @@ export const UI_MESSAGES = {
   ccInfo: {
     title: "Información importante:",
     items: [
+      "Solo se permiten números y guiones en los códigos de centro de costos",
       "Use el formato XX-XXX o XXX-XXX para códigos de centro de costos (ej: 01-003 o 001-003)",
       "Deje vacío si la columna no corresponde a un centro de costos",
       'Los valores nulos, "-" o "0" en el Excel se consideran sin centro de costos',

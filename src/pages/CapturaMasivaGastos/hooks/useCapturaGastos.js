@@ -59,15 +59,25 @@ export const useCapturaGastos = () => {
     const patron = CAPTURA_CONFIG.mapeoCC.formatPattern;
     
     Object.entries(mapeo).forEach(([key, valor]) => {
-      if (valor.trim() !== '' && !patron.test(valor.trim())) {
-        // Mostrar nombre dinámico de la columna si fue detectada
-        let nombreColumna = key;
-        if (centrosCostoDetectados[key]) {
-          const det = centrosCostoDetectados[key];
-          nombreColumna = `${det.nombre} (columna ${det.posicion + 1})`;
+      if (valor.trim() !== '') {
+        // Verificar que solo contenga números y guiones
+        const soloNumerosYGuiones = /^[\d-]+$/.test(valor.trim());
+        if (!soloNumerosYGuiones) {
+          let nombreColumna = key;
+          if (centrosCostoDetectados[key]) {
+            const det = centrosCostoDetectados[key];
+            nombreColumna = `${det.nombre} (columna ${det.posicion + 1})`;
+          }
+          errores.push(`${nombreColumna}: solo se permiten números y guiones`);
+        } else if (!patron.test(valor.trim())) {
+          // Solo validar patrón si ya pasó la validación de caracteres
+          let nombreColumna = key;
+          if (centrosCostoDetectados[key]) {
+            const det = centrosCostoDetectados[key];
+            nombreColumna = `${det.nombre} (columna ${det.posicion + 1})`;
+          }
+          errores.push(`${nombreColumna}: formato inválido (debe ser XX-XXX o XXX-XXX, ej: ${CAPTURA_CONFIG.mapeoCC.formatExample})`);
         }
-        
-  errores.push(`${nombreColumna}: formato inválido (debe ser XX-XXX o XXX-XXX, ej: ${CAPTURA_CONFIG.mapeoCC.formatExample})`);
       }
     });
     
@@ -150,16 +160,16 @@ export const useCapturaGastos = () => {
       return;
     }
     
-    // Validar formato de cuentas (detectar espacios)
-    const validarEspacios = (valor, nombre) => {
-      if (/\s/.test(valor)) {
-        formatoInvalido.push(`${nombre}: no debe contener espacios (ej: correcto "1191-001" o "1191001", incorrecto "1191 - 001" o "1191 001")`);
+    // Validar formato de cuentas (solo números y guiones)
+    const validarFormatoCuenta = (valor, nombre) => {
+      if (!/^[\d-]+$/.test(valor)) {
+        formatoInvalido.push(`${nombre}: solo se permiten números y guiones (ej: correcto "1191001" o "1191-001", incorrecto "1191.001" o "1191_001")`);
       }
     };
     
-    validarEspacios(cuentasGlobales.cuentaIVA, 'Cuenta IVA');
-    validarEspacios(cuentasGlobales.cuentaProveedores, 'Cuenta Proveedores');
-    validarEspacios(cuentasGlobales.cuentaGasto, 'Cuenta Gasto');
+    validarFormatoCuenta(cuentasGlobales.cuentaIVA, 'Cuenta IVA');
+    validarFormatoCuenta(cuentasGlobales.cuentaProveedores, 'Cuenta Proveedores');
+    validarFormatoCuenta(cuentasGlobales.cuentaGasto, 'Cuenta Gasto');
     
     if (formatoInvalido.length) {
       setError(`Errores de formato en cuentas globales:\n${formatoInvalido.join('\n')}`);

@@ -5,20 +5,22 @@ const CuentasGlobalesSection = ({ cuentasGlobales, setCuentasGlobales }) => {
   const { containers } = STYLES_CONFIG;
 
   const handleChange = (field, value) => {
-    setCuentasGlobales((prev) => ({ ...prev, [field]: value }));
+    // Filtrar solo números y guiones
+    const valorLimpio = value.replace(/[^\d-]/g, '');
+    setCuentasGlobales((prev) => ({ ...prev, [field]: valorLimpio }));
   };
 
-  // Validar formato de cuenta (detectar espacios)
+  // Validar formato de cuenta (solo números y guiones)
   const validarFormatoCuenta = (valor) => {
     if (!valor || !valor.trim()) return { valido: false, mensaje: '' };
     
-    // Detectar cualquier espacio en el valor (ej: "123 456" o "1191 - 001" o "119- 001")
-    const tieneEspacios = /\s/.test(valor);
+    // Solo permitir números y guiones (sin espacios ni otros caracteres especiales)
+    const soloNumerosYGuiones = /^[\d-]+$/.test(valor);
     
-    if (tieneEspacios) {
+    if (!soloNumerosYGuiones) {
       return { 
         valido: false, 
-        mensaje: 'No debe contener espacios' 
+        mensaje: 'Solo se permiten números y guiones' 
       };
     }
     
@@ -54,18 +56,18 @@ const CuentasGlobalesSection = ({ cuentasGlobales, setCuentasGlobales }) => {
   Cuentas Globales (obligatorias)
       </h2>
 
-      {/* Mensaje informativo sobre formato de guiones */}
+      {/* Mensaje informativo sobre formato de cuentas */}
       <div className="mb-4 p-3 bg-blue-900/20 border border-blue-500/30 rounded-lg">
         <div className="flex items-start gap-2">
           <Info className="w-4 h-4 text-blue-400 mt-0.5 flex-shrink-0" />
           <div className="text-sm text-blue-300">
-            <p className="font-medium mb-1">Formato de cuentas con guiones:</p>
+            <p className="font-medium mb-1">Formato permitido para cuentas:</p>
             <p className="text-xs">
-              <strong>Si su cuenta tiene guiones, colóquelos sin espacios adicionales. No use espacios en ninguna parte del código.</strong>
+              <strong>Solo se permiten números y guiones. No se aceptan espacios ni otros caracteres especiales.</strong>
             </p>
             <div className="mt-2 space-y-1 text-xs">
-              <p className="text-emerald-400">✓ Correcto: <code className="bg-gray-800 px-1 rounded">1191-001</code> o <code className="bg-gray-800 px-1 rounded">1191001</code></p>
-              <p className="text-red-400">✗ Incorrecto: <code className="bg-gray-800 px-1 rounded">1191 - 001</code>, <code className="bg-gray-800 px-1 rounded">1191- 001</code> o <code className="bg-gray-800 px-1 rounded">1191 001</code></p>
+              <p className="text-emerald-400">✓ Correcto: <code className="bg-gray-800 px-1 rounded">1191001</code> o <code className="bg-gray-800 px-1 rounded">1191-001</code></p>
+              <p className="text-red-400">✗ Incorrecto: <code className="bg-gray-800 px-1 rounded">1191 001</code>, <code className="bg-gray-800 px-1 rounded">1191.001</code>, <code className="bg-gray-800 px-1 rounded">1191_001</code> o <code className="bg-gray-800 px-1 rounded">1191/001</code></p>
             </div>
           </div>
         </div>

@@ -18,7 +18,7 @@ import {
  */
 export const CAPTURA_CONFIG = {
   page: {
-    title: "Captura Masiva RindeGastos",
+    title: "Captura Masiva RindeGastos V2.0",
     description: "Carga múltiples gastos desde archivo Excel",
     icon: Receipt
   },

@@ -49,7 +49,7 @@ const Tools = () => {
 
   const generalTools = [
     {
-      title: "Captura Masiva de Gastos",
+      title: "Captura Masiva de Gastos V2.0",
       description: "Procesar y clasificar gastos desde Excel",
       icon: Receipt,
       color: "bg-emerald-600",

@@ -104,17 +104,6 @@ def obtener_informe_cierre(request, cierre_id):
         }
 
         logger.info(f"Informe de cierre {cierre_id} obtenido desde BD")
-
-        # 🔄 AUTO-CACHING: Cachear en Redis para futuras consultas
-        try:
-            if informe.datos_cierre:
-                success = informe.enviar_a_redis(ttl_hours=24)
-                if success:
-                    logger.info(f"✅ Auto-cache: Informe {cierre_id} guardado en Redis (TTL=24h) tras consulta BD")
-                else:
-                    logger.warning(f"⚠️ Auto-cache: Falló al guardar informe {cierre_id} en Redis")
-        except Exception as cache_error:
-            logger.error(f"❌ Auto-cache: Error cacheando informe {cierre_id}: {cache_error}")
         return Response(response_data, status=status.HTTP_200_OK)
         
     except Exception as e:

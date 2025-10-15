@@ -102,6 +102,8 @@ const NominaDashboard = () => {
           // Cargar informe completo y extraer bloques
           try {
             const informe = await obtenerInformeCierre(actual.id);
+            console.log('🔍 Respuesta completa del informe:', informe);
+            console.log('🎯 [Source Check] Extracción desde:', informe?.source, '| En cache:', informe?.en_cache);
             const libroAct = informe?.datos_cierre?.libro_resumen_v2 || null;
             const movAct = informe?.datos_cierre?.movimientos_v3 || null;
             setResumenLibroActual(libroAct);

@@ -2380,7 +2380,7 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
                 build_informe_movimientos.s(cierre_id),
             ]
             callback_guardar = unir_y_guardar_informe.s(cierre_id)
-            callback_en_redis = enviar_informe_redis_task.s(cierre_id)
+            callback_en_redis = enviar_informe_redis_task.s(cierre_id, ttl_hours=72)
             callback_final = finalizar_cierre_post_informe.s(cierre_id, getattr(request.user, 'id', None))
 
             # Encadenar: chord(tasks)(guardar informe unificado -> enviar a redis -> finalizar)

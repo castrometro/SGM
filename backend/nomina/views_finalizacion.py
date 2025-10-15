@@ -51,7 +51,7 @@ def finalizar_cierre_view(request, pk: int):
             build_informe_movimientos.s(cierre.id),
         ]
         callback_guardar = unir_y_guardar_informe.s(cierre.id)
-        callback_en_redis = enviar_informe_redis_task.s(cierre.id)
+        callback_en_redis = enviar_informe_redis_task.s(cierre.id, ttl_hours=72)
         callback_final = finalizar_cierre_post_informe.s(cierre.id, getattr(request.user, 'id', None))
 
         result = chord(tasks)(callback_guardar | callback_en_redis | callback_final)

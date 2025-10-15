@@ -82,6 +82,46 @@ class SGMCacheSystemNomina:
             logger.error(f"Error deserializando datos: {e}")
             raise
     
+    def _evict_oldest_informe_if_needed(self, cliente_id: int, max_informes_per_cliente: int = 12) -> None:
+        """
+        Elimina el informe más antiguo de un cliente si se excede el límite de informes
+        
+        Args:
+            cliente_id: ID del cliente para el cual verificar el límite
+            max_informes_per_cliente: Número máximo de informes por cliente (default: 12)
+        """
+        try:
+            # Obtener todos los informes del cliente específico
+            pattern = f"sgm:nomina:{cliente_id}:*:informe"
+            keys = self.redis_client.keys(pattern)
+            
+            if len(keys) < max_informes_per_cliente:
+                return  # No hay que eliminar nada
+            
+            # Obtener periodos de todos los informes del cliente
+            informes_con_periodo = []
+            for key in keys:
+                try:
+                    # Extraer periodo de la llave: sgm:nomina:13:2025-08:informe
+                    parts = key.decode('utf-8').split(':')
+                    if len(parts) >= 4:
+                        periodo = parts[3]  # 2025-08
+                        informes_con_periodo.append((key, periodo))
+                except Exception:
+                    continue
+            
+            # Ordenar por periodo (más antiguo primero)
+            informes_con_periodo.sort(key=lambda x: x[1])
+            
+            # Eliminar el más antiguo
+            if informes_con_periodo:
+                oldest_key = informes_con_periodo[0][0]
+                self.redis_client.delete(oldest_key)
+                logger.info(f"🗑️ Cache eviction: Eliminado informe antiguo {oldest_key.decode('utf-8')} para cliente {cliente_id} (límite: {max_informes_per_cliente} por cliente)")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Error en evicción de cache: {e}")
+    
     # ========== INFORMES DE NÓMINA ==========
     def set_informe_nomina(self, cliente_id: int, periodo: str, informe_data: Dict[str, Any], 
                           ttl: int = None) -> bool:
@@ -102,6 +142,9 @@ class SGMCacheSystemNomina:
         ttl_effective = None if (ttl is None or ttl <= 0) else ttl
         
         try:
+            # 🗑️ Evicción: Eliminar el informe más antiguo del cliente si ya hay 12 o más
+            self._evict_oldest_informe_if_needed(cliente_id=cliente_id, max_informes_per_cliente=12)
+            
             # Agregar metadata
             informe_with_meta = {
                 **informe_data,

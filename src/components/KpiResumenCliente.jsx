@@ -55,12 +55,20 @@ const KpiResumenCliente = ({ resumen, areaActiva }) => {
       totales_categorias: resumen.totales_categorias,
       ultimo_cierre: resumen.ultimo_cierre,
       estado_cierre_actual: resumen.estado_cierre_actual,
-      kpis: resumen.kpis
+      kpis: resumen.kpis,
+      source: resumen.source,
+      periodo: resumen.periodo
     } : null
   });
 
   // Solo mostrar KPIs de Nomina, resto "En Construcción..."
   const area = areaActiva;
+  
+  // Extraer metadata del informe
+  const sourceInfo = resumen?.source || 'unknown';
+  const periodo = resumen?.periodo || resumen?.ultimo_cierre || '—';
+  const sourceColor = sourceInfo === 'redis' ? 'text-emerald-400' : sourceInfo === 'db' ? 'text-amber-400' : 'text-gray-500';
+  const sourceIcon = sourceInfo === 'redis' ? '⚡' : sourceInfo === 'db' ? '💾' : '❓';
 
   console.log('🔍 KpiResumenCliente - Área determinada:', area);
 
@@ -110,7 +118,16 @@ const KpiResumenCliente = ({ resumen, areaActiva }) => {
   return (
     <div className="bg-gray-800 p-6 rounded-lg shadow-lg">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold">KPIs del Cliente</h2>
+        <div className="flex flex-col gap-1">
+          <h2 className="text-xl font-bold">KPIs del Cliente</h2>
+          <div className="flex items-center gap-3 text-[11px]">
+            <span className="text-gray-400">Periodo: <span className="text-gray-200 font-medium">{periodo}</span></span>
+            <span className="text-gray-400">•</span>
+            <span className="text-gray-400">
+              Fuente: <span className={`font-medium ${sourceColor}`}>{sourceIcon} {sourceInfo.toUpperCase()}</span>
+            </span>
+          </div>
+        </div>
         <span className="text-[11px] text-gray-500 uppercase tracking-wide">{area}</span>
       </div>
       {emptyValues && (

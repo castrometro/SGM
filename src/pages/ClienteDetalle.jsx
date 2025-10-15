@@ -54,9 +54,14 @@ const ClienteDetalle = () => {
             } catch (e) {
               console.warn("Fallo obtenerKpisNominaCliente, fallback a obtenerResumenNomina", e);
             }
-            if (kpisData?.tieneCierre && kpisData?.raw?.libro) {
-              const libro = kpisData.raw.libro;
-              console.log('🔍 ClienteDetalle - Procesando datos del libro:', libro);
+            if (kpisData?.tieneCierre && kpisData?.raw?.informe) {
+              const informe = kpisData.raw.informe;
+              const libro = informe.datos_cierre?.libro_resumen_v2 || {};
+              console.log('🔍 ClienteDetalle - Procesando datos del informe:', {
+                source: informe.source,
+                periodo: kpisData.periodo,
+                libro_cierre: libro.cierre
+              });
               // Normalizamos estructura esperada por KpiResumenCliente (campos plano + totales_categorias)
               r = {
                 ...libro, // contiene cierre, totales_categorias, conceptos, meta
@@ -66,11 +71,18 @@ const ClienteDetalle = () => {
                 // Alias para consistencia previa
                 total_empleados: libro?.cierre?.total_empleados ?? kpisData.kpis?.total_empleados ?? null,
                 kpis: kpisData.kpis,
+                source: kpisData.source, // 🎯 Fuente de datos (redis/db)
+                periodo: kpisData.periodo, // 🎯 Período del cierre
               };
-              console.log('🔍 ClienteDetalle - Datos normalizados para KpiResumenCliente:', r);
+              console.log('🔍 ClienteDetalle - Datos normalizados para KpiResumenCliente:', {
+                keys: Object.keys(r),
+                source: r.source,
+                periodo: r.periodo,
+                total_empleados: r.total_empleados
+              });
             } else {
               // Fallback minimal
-              console.warn('🔍 ClienteDetalle - No hay datos de KPIs o libro, usando fallback');
+              console.warn('🔍 ClienteDetalle - No hay datos de KPIs o informe, usando fallback');
               r = await obtenerResumenNomina(id);
               console.log('🔍 ClienteDetalle - Resumen nómina fallback:', r);
             }

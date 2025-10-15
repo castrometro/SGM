@@ -54,38 +54,29 @@ export const obtenerKpisNominaCliente = async (clienteId) => {
     const periodo = cierre.periodo;
     console.log('🔍 obtenerKipsNominaCliente - Usando cierreId:', cierreId, 'período:', periodo);
 
-    // Pedimos en paralelo libro y movimientos (fallos aislados no rompen todo)
-    console.log('🔍 obtenerKipsNominaCliente - Solicitando libro y movimientos en paralelo...');
-    const [libro, movimientos] = await Promise.all([
-      (async () => { 
-        try { 
-          const result = await obtenerLibroResumenV2(cierreId); 
-          console.log('🔍 obtenerLibroResumenV2 resultado:', result);
-          return result;
-        } catch (error) { 
-          console.warn('⚠️ Error obteniendo libro resumen V2:', error);
-          return null; 
-        } 
-      })(),
-      (async () => { 
-        try { 
-          const result = await obtenerMovimientosMes(cierreId); 
-          console.log('🔍 obtenerMovimientosMes resultado:', result);
-          return result;
-        } catch (error) { 
-          console.warn('⚠️ Error obteniendo movimientos:', error);
-          return null; 
-        } 
-      })(),
-    ]);
+    // 🚀 OPTIMIZACIÓN: Un solo llamado al informe completo (Redis/BD con cache automático)
+    console.log('🔍 obtenerKipsNominaCliente - Solicitando informe completo (cache-enabled)...');
+    const informe = await obtenerInformeCierre(cierreId);
+    console.log('🔍 obtenerInformeCierre resultado:', {
+      source: informe.source,
+      estado_cierre: informe.estado_cierre,
+      periodo: informe.periodo,
+      tiene_datos: !!informe.datos_cierre
+    });
 
+    // Extraer libro_resumen_v2 y movimientos_v3 desde datos_cierre
+    const datosCierre = informe.datos_cierre || {};
+    const libro = datosCierre.libro_resumen_v2 || {};
+    const movimientos = datosCierre.movimientos_v3 || {};
+    
     const totCat = libro?.totales_categorias || {};
     const totalEmpleados = libro?.cierre?.total_empleados ?? 0;
     
-    console.log('🔍 obtenerKipsNominaCliente - Datos extraídos del libro:', {
+    console.log('🔍 obtenerKipsNominaCliente - Datos extraídos del informe:', {
       totales_categorias: totCat,
       total_empleados: totalEmpleados,
-      cierre_info: libro?.cierre
+      cierre_info: libro?.cierre,
+      source: informe.source
     });
     
     const haberImp = Number(totCat.haber_imponible || 0);
@@ -127,8 +118,9 @@ export const obtenerKpisNominaCliente = async (clienteId) => {
       periodo,
       cierreId,
       estado_cierre: cierre.estado,
+      source: informe.source, // 🎯 Fuente de datos (redis/db)
       kpis,
-      raw: { libro, movimientos },
+      raw: { informe }, // 🎯 Informe completo en lugar de libro+movimientos separados
     };
     
     console.log('🔍 obtenerKipsNominaCliente - Resultado final:', resultado);

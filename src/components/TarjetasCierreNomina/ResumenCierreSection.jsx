@@ -24,23 +24,26 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
   const cargarArchivosUsados = async () => {
     setCargando(true);
     try {
-      // 1) KPIs unificados (cache/informe/libro_resumen_v2)
+      // 🚀 OPTIMIZACIÓN: KPIs unificados desde informe (cache/informe/libro_resumen_v2)
+      // El informe contiene libro_resumen_v2 + movimientos_v3 en un solo objeto cacheado
       const kpisPayload = await obtenerKpisCierreNomina(cierre.id);
+      
+      // 🎯 Extraer informe completo para obtener movimientos_v3
+      const informe = kpisPayload?.raw?.informe;
+      const datosCierre = informe?.datos_cierre || {};
+      const movimientos = datosCierre.movimientos_v3 || {};
+      const resumenMovimientos = movimientos.resumen || {};
+      const porTipo = resumenMovimientos.por_tipo || {};
+      
       const libroData = kpisPayload?.raw?.libro ? { resumen: { total_empleados: kpisPayload.kpis?.total_empleados }, cierre: { periodo: kpisPayload.periodo } } : await obtenerLibroRemuneraciones(cierre.id);
 
-      // Derivar stats de empleados desde libro completo sólo si fue necesario fallback.
-      let totalIngresos = 0, totalFiniquitos = 0, totalAusentismos = 0;
-      if (libroData?.empleados) {
-        totalIngresos = libroData.empleados.filter(emp => emp.estado_empleado === 'nueva_incorporacion').length;
-        totalFiniquitos = libroData.empleados.filter(emp => emp.estado_empleado === 'finiquito').length;
-        totalAusentismos = libroData.empleados.filter(emp => ['ausente_total','ausente_parcial'].includes(emp.estado_empleado)).length;
-      }
-
+      // 🎯 Estadísticas consolidadas desde el informe cacheado (movimientos_v3.resumen.por_tipo)
       const estadisticas = {
-        total_empleados: kpisPayload?.kpis?.total_empleados ?? libroData?.resumen?.total_empleados ?? 0,
-        total_ingresos: totalIngresos,
-        total_finiquitos: totalFiniquitos,
-        total_ausentismos: totalAusentismos
+        total_empleados: kpisPayload?.kpis?.total_empleados ?? libroData?.resumen?.total_empleados ?? 0, // desde libro_resumen_v2.cierre
+        total_ingresos: porTipo.ingreso?.empleados_unicos ?? 0, // 🚀 desde movimientos_v3.resumen.por_tipo.ingreso
+        total_finiquitos: porTipo.finiquito?.empleados_unicos ?? 0, // 🚀 desde movimientos_v3.resumen.por_tipo.finiquito
+        total_ausentismos: porTipo.ausencia?.empleados_unicos ?? 0, // 🚀 desde movimientos_v3.resumen.por_tipo.ausencia
+        total_movimientos: kpisPayload?.kpis?.movimientos_totales ?? 0 // desde movimientos_v3.resumen.total_movimientos
       };
       
       // ========== OBTENER DATOS REALES DE ARCHIVOS TALANA ==========
@@ -182,7 +185,9 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
           total_descuentos: kpisPayload?.kpis?.total_descuentos ?? libroData?.resumen?.total_descuentos ?? 0,
           liquido_total: kpisPayload?.kpis?.liquido_estimado ?? libroData?.resumen?.liquido_total ?? 0
         },
-        kpis: kpisPayload?.kpis || {}
+        kpis: kpisPayload?.kpis || {},
+        source: kpisPayload?.source || 'unknown', // 🎯 Fuente de datos (redis/db)
+        periodo: kpisPayload?.periodo || cierre?.periodo || '—' // 🎯 Período del cierre
       });
     } catch (err) {
       console.error("Error cargando datos del libro de remuneraciones:", err);
@@ -292,17 +297,34 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
         className="flex items-center justify-between cursor-pointer hover:bg-gray-800/50 p-3 -m-3 rounded-lg transition-colors"
         onClick={() => setExpandido(!expandido)}
       >
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-1">
           <div className="flex items-center justify-center w-10 h-10 bg-green-600 rounded-lg">
             <CheckCircle size={20} className="text-white" />
           </div>
-          <div>
+          <div className="flex-1">
             <h2 className="text-xl font-semibold text-white">
               Resumen del Cierre
             </h2>
-            <p className="text-gray-400 text-sm">
-              Cierre finalizado - Información consolidada y reportes generados
-            </p>
+            <div className="flex flex-wrap items-center gap-2 text-sm mt-1">
+              <p className="text-gray-400">
+                Cierre finalizado - Información consolidada y reportes generados
+              </p>
+              {!cargando && archivosUsados && (
+                <>
+                  <span className="text-gray-600">•</span>
+                  <span className="text-gray-400">Período: <span className="font-medium">{archivosUsados.periodo}</span></span>
+                  <span className="text-gray-600">•</span>
+                  <span className="text-gray-400">Fuente:</span>
+                  {archivosUsados.source === 'redis' ? (
+                    <span className="text-emerald-400 font-medium">⚡ Redis</span>
+                  ) : archivosUsados.source === 'db' ? (
+                    <span className="text-amber-400 font-medium">💾 Base de Datos</span>
+                  ) : (
+                    <span className="text-gray-500">❓ Desconocida</span>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -332,7 +354,7 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
           {!cargando && archivosUsados && (
             <>
               {/* Estadísticas del Cierre */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                 <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
                   <div className="flex items-center justify-between">
                     <div>
@@ -370,6 +392,16 @@ const ResumenCierreSection = ({ cierre, onIrDashboard }) => {
                   <p className="text-2xl font-bold text-white">{archivosUsados?.estadisticas?.total_ausentismos || 0}</p>
                 </div>
                 <Calendar className="w-8 h-8 text-yellow-500" />
+              </div>
+            </div>
+
+            <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-400">Total Movimientos</p>
+                  <p className="text-2xl font-bold text-white">{archivosUsados?.estadisticas?.total_movimientos || 0}</p>
+                </div>
+                <Database className="w-8 h-8 text-purple-500" />
               </div>
             </div>
           </div>

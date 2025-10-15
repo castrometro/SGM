@@ -94,7 +94,7 @@ export const obtenerKpisNominaCliente = async (clienteId) => {
 
     const movimientosResumen = movimientos?.resumen || {};
     const movimientosTotales = movimientosResumen.total_movimientos || 0;
-    const movimientosPorCategoria = movimientosResumen.por_categoria || {};
+    const movimientosPorTipo = movimientosResumen.por_tipo || {}; // 🎯 Corregido: es por_tipo, no por_categoria
 
     const kpis = {
       total_empleados: totalEmpleados,
@@ -107,7 +107,7 @@ export const obtenerKpisNominaCliente = async (clienteId) => {
       promedio_liquido: promedioLiquido,
       porcentaje_descuentos: porcentajeDescuentos, // valor 0-1
       movimientos_totales: movimientosTotales,
-      movimientos_por_categoria: movimientosPorCategoria,
+      movimientos_por_tipo: movimientosPorTipo, // 🎯 Renombrado para consistencia con backend
     };
 
     console.log('🔍 obtenerKipsNominaCliente - KPIs calculados:', kpis);
@@ -135,8 +135,14 @@ export const obtenerKpisNominaCliente = async (clienteId) => {
 // KPIs directos para un cierre específico (usa mismo flujo cache/informe de libro_resumen_v2)
 export const obtenerKpisCierreNomina = async (cierreId) => {
   try {
-    // Libro resumido (intenta fast path informe/redis)
-    const libro = await obtenerLibroResumenV2(cierreId);
+    // 🚀 OPTIMIZACIÓN: Un solo llamado al informe completo (Redis/BD con cache automático)
+    const informe = await obtenerInformeCierre(cierreId);
+    
+    // Extraer libro_resumen_v2 y movimientos_v3 desde datos_cierre
+    const datosCierre = informe.datos_cierre || {};
+    const libro = datosCierre.libro_resumen_v2 || {};
+    const movimientos = datosCierre.movimientos_v3 || {};
+    
     const totCat = libro?.totales_categorias || {};
     const totalEmpleados = libro?.cierre?.total_empleados ?? 0;
     const haberImp = Number(totCat.haber_imponible || 0);
@@ -151,16 +157,13 @@ export const obtenerKpisCierreNomina = async (cierreId) => {
     const promedioLiquido = totalEmpleados > 0 ? liquidoEstimado / totalEmpleados : 0;
     const porcentajeDescuentos = totalHaberes > 0 ? (totalDescuentos / totalHaberes) : 0;
 
-    // Movimientos (opcional, si falla no rompe)
-    let movimientosTotales = null;
-    try {
-      const movimientos = await obtenerMovimientosMes(cierreId);
-      movimientosTotales = movimientos?.resumen?.total_movimientos ?? null;
-    } catch { /* noop */ }
+    // Movimientos extraídos desde el informe (ya no necesita try/catch separado)
+    const movimientosResumen = movimientos?.resumen || {};
+    const movimientosTotales = movimientosResumen.total_movimientos || null;
 
     return {
       cierreId,
-      periodo: libro?.cierre?.periodo ?? null,
+      periodo: libro?.cierre?.periodo ?? informe.periodo ?? null,
       kpis: {
         total_empleados: totalEmpleados,
         total_haberes_imponibles: haberImp,
@@ -173,8 +176,8 @@ export const obtenerKpisCierreNomina = async (cierreId) => {
         porcentaje_descuentos: porcentajeDescuentos,
         movimientos_totales: movimientosTotales,
       },
-      raw: { libro },
-      source: 'libro_resumen_v2'
+      raw: { informe, libro }, // 🎯 Incluimos ambos para backward compatibility
+      source: informe.source || 'unknown' // 🎯 Fuente de datos (redis/db)
     };
   } catch (e) {
     return { cierreId, error: e?.message || 'error_desconocido', kpis: {}, raw: {} };

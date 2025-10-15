@@ -3,21 +3,119 @@ import React, { useMemo } from 'react';
 // Formateadores básicos
 const formatNumber = (v) => (v === null || v === undefined || isNaN(v) ? '—' : new Intl.NumberFormat('es-CL').format(Number(v)));
 const formatCurrency = (v) => (v === null || v === undefined || isNaN(v) ? '—' : new Intl.NumberFormat('es-CL',{ style:'currency', currency:'CLP', minimumFractionDigits:0, maximumFractionDigits:0 }).format(Number(v)));
-const formatPercent = (v) => (v === null || v === undefined || isNaN(v) ? '—' : `${Number(v).toFixed(1)}%`);
+const formatPercent = (v) => (v === null || v === undefined || isNaN(v) ? '—' : `${Number(v).toFixed(2)}%`);
 
 // Config de métricas por área; cada métrica: key, label, derive(resumen), format, importance
 const METRICS_CONFIG = {
   Nomina: [
-    { key:'empleados_activos', label:'Empleados Activos', derive: r => r?.empleados_activos ?? r?.total_empleados ?? null, format: formatNumber },
-    { key:'haber_imponible', label:'Hab. Imponibles', derive: r => r?.totales_categorias?.haber_imponible ?? null, format: formatCurrency, accent:'positive' },
-    { key:'haber_no_imponible', label:'Hab. No Imponibles', derive: r => r?.totales_categorias?.haber_no_imponible ?? null, format: formatCurrency, accent:'neutral' },
-    { key:'descuento_legal', label:'Desc. Legales', derive: r => r?.totales_categorias?.descuento_legal ?? null, format: formatCurrency, accent:'negative' },
-    { key:'promedio_imponible', label:'Prom. Imponible / Emp', derive: r => {
-        const total = r?.totales_categorias?.haber_imponible;
-        const empleados = r?.empleados_activos ?? r?.total_empleados;
-        if (!total || !empleados) return null;
-        return total / empleados;
-      }, format: formatCurrency },
+    // 👥 Dotación y Rotación
+    { 
+      key:'total_empleados', 
+      label:'Dotación Actual', 
+      derive: r => r?.total_empleados ?? r?.empleados_activos ?? null, 
+      format: formatNumber,
+      section: 'dotacion'
+    },
+    
+    // 💰 Haberes
+    { 
+      key:'total_haberes', 
+      label:'Total Haberes', 
+      derive: r => {
+        const imp = r?.totales_categorias?.haber_imponible ?? 0;
+        const noImp = r?.totales_categorias?.haber_no_imponible ?? 0;
+        return imp + noImp || null;
+      }, 
+      format: formatCurrency, 
+      accent:'positive',
+      section: 'haberes'
+    },
+    { 
+      key:'haber_imponible', 
+      label:'Haberes Imponibles', 
+      derive: r => r?.totales_categorias?.haber_imponible ?? null, 
+      format: formatCurrency, 
+      accent:'positive',
+      section: 'haberes'
+    },
+    { 
+      key:'haber_no_imponible', 
+      label:'Haberes No Imponibles', 
+      derive: r => r?.totales_categorias?.haber_no_imponible ?? null, 
+      format: formatCurrency, 
+      accent:'neutral',
+      section: 'haberes'
+    },
+    
+    // 📉 Descuentos
+    { 
+      key:'descuento_legal', 
+      label:'Descuentos Legales', 
+      derive: r => r?.totales_categorias?.descuento_legal ?? null, 
+      format: formatCurrency, 
+      accent:'negative',
+      section: 'descuentos'
+    },
+    { 
+      key:'otro_descuento', 
+      label:'Otros Descuentos', 
+      derive: r => r?.totales_categorias?.otro_descuento ?? null, 
+      format: formatCurrency, 
+      accent:'negative',
+      section: 'descuentos'
+    },
+    
+    // 🏢 Aportes
+    { 
+      key:'aporte_patronal', 
+      label:'Aportes Patronales', 
+      derive: r => r?.totales_categorias?.aporte_patronal ?? null, 
+      format: formatCurrency, 
+      accent:'neutral',
+      section: 'aportes'
+    },
+    
+    // 📊 Tasas de Rotación
+    { 
+      key:'tasa_ingreso', 
+      label:'Tasa de Ingreso', 
+      derive: r => {
+        const ingresos = r?.kpis?.movimientos_por_tipo?.ingreso?.empleados_unicos ?? 0;
+        const empleados = r?.total_empleados ?? r?.empleados_activos;
+        if (!empleados || empleados === 0) return null;
+        return (ingresos / empleados) * 100;
+      }, 
+      format: formatPercent, 
+      accent:'positive',
+      section: 'rotacion'
+    },
+    { 
+      key:'tasa_finiquito', 
+      label:'Tasa de Finiquitos', 
+      derive: r => {
+        const finiquitos = r?.kpis?.movimientos_por_tipo?.finiquito?.empleados_unicos ?? 0;
+        const empleados = r?.total_empleados ?? r?.empleados_activos;
+        if (!empleados || empleados === 0) return null;
+        return (finiquitos / empleados) * 100;
+      }, 
+      format: formatPercent, 
+      accent:'negative',
+      section: 'rotacion'
+    },
+    { 
+      key:'rotacion_mensual', 
+      label:'Rotación Mensual', 
+      derive: r => {
+        const finiquitos = r?.kpis?.movimientos_por_tipo?.finiquito?.empleados_unicos ?? 0;
+        const empleados = r?.total_empleados ?? r?.empleados_activos;
+        if (!empleados || empleados === 0) return null;
+        return (finiquitos / empleados) * 100;
+      }, 
+      format: formatPercent, 
+      accent:'neutral',
+      section: 'rotacion',
+      tooltip: 'Aproximación: (Finiquitos / Dotación Actual) × 100'
+    },
   ],
   Contabilidad: [
     { key:'estado', label:'Estado Cierre', derive: r => r?.estado_ultimo_cierre ?? r?.estado_cierre_actual ?? null, format: v => v || '—' },
@@ -111,43 +209,118 @@ const KpiResumenCliente = ({ resumen, areaActiva }) => {
     return result;
   }, [config, resumen]);
 
-  // Mostrar siempre primeras 4 más cualquier adicional que tenga valor (hasta 6)
-  const visible = metrics.filter((m,i) => i < 4 || (m.valueRaw !== null && m.valueRaw !== undefined)).slice(0,6);
-  const emptyValues = visible.every(v => v.valueRaw === null || v.valueRaw === undefined);
+  // Filtrar solo métricas con valores para mostrar
+  const metricasConValor = useMemo(() => {
+    return metrics.filter(m => m.valueRaw !== null && m.valueRaw !== undefined);
+  }, [metrics]);
+
+  const emptyValues = metrics.every(v => v.valueRaw === null || v.valueRaw === undefined);
 
   return (
-    <div className="bg-gray-800 p-6 rounded-lg shadow-lg">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-xl font-bold">KPIs del Cliente</h2>
-          <div className="flex items-center gap-3 text-[11px]">
-            <span className="text-gray-400">Periodo: <span className="text-gray-200 font-medium">{periodo}</span></span>
-            <span className="text-gray-400">•</span>
-            <span className="text-gray-400">
-              Fuente: <span className={`font-medium ${sourceColor}`}>{sourceIcon} {sourceInfo.toUpperCase()}</span>
-            </span>
+    <div className="bg-gradient-to-br from-gray-800 via-gray-800 to-gray-900 rounded-xl shadow-2xl overflow-hidden">
+      {/* Header con gradiente */}
+      <div className="bg-gradient-to-r from-blue-600/20 to-purple-600/20 border-b border-gray-700/50 p-6">
+        <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-2">
+            <h2 className="text-2xl font-bold text-white">Indicadores Clave</h2>
+            <div className="flex items-center gap-4 text-xs">
+              <div className="flex items-center gap-2 bg-gray-900/50 px-3 py-1.5 rounded-full border border-gray-700/50">
+                <span className="text-gray-400">Período:</span>
+                <span className="text-white font-semibold">{periodo}</span>
+              </div>
+              <div className="flex items-center gap-2 bg-gray-900/50 px-3 py-1.5 rounded-full border border-gray-700/50">
+                <span className="text-gray-400">Fuente:</span>
+                <span className={`font-semibold ${sourceColor}`}>
+                  {sourceIcon} {sourceInfo === 'redis' ? 'Redis' : sourceInfo === 'db' ? 'Base de Datos' : 'N/A'}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="px-4 py-2 bg-gray-900/70 rounded-lg border border-gray-700/50">
+            <span className="text-xs text-gray-400 uppercase tracking-wider">{area}</span>
           </div>
         </div>
-        <span className="text-[11px] text-gray-500 uppercase tracking-wide">{area}</span>
       </div>
-      {emptyValues && (
-        <p className="text-gray-400 italic text-sm">Sin datos suficientes para KPIs rápidos.</p>
-      )}
-      {!emptyValues && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {visible.map(m => (
-            <div key={m.key} className="bg-gray-700/60 border border-gray-600/30 rounded-md p-4 flex flex-col gap-1 hover:border-gray-500/50 transition">
-              <span className="text-[11px] uppercase tracking-wide text-gray-400">{m.label}</span>
-              <span className={`text-lg font-semibold tabular-nums ${m.accent ? accentClasses[m.accent] : 'text-gray-200'}`}>{m.valueFormatted}</span>
+      
+      {/* Contenido */}
+      <div className="p-6">
+        {emptyValues && (
+          <div className="text-center py-12">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-700/50 mb-4">
+              <svg className="w-8 h-8 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
             </div>
-          ))}
+            <p className="text-gray-400 text-sm">Sin datos suficientes para mostrar indicadores.</p>
+          </div>
+        )}
+        
+        {!emptyValues && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {metricasConValor.map((m, idx) => (
+              <div 
+                key={m.key}
+                className="group relative bg-gradient-to-br from-gray-700/40 to-gray-800/40 rounded-lg p-5 border border-gray-700/50 hover:border-gray-600 hover:shadow-lg transition-all duration-300 hover:-translate-y-1"
+                title={m.tooltip}
+              >
+                {/* Indicador de color según accent */}
+                <div className={`absolute top-0 left-0 w-1 h-full rounded-l-lg ${
+                  m.accent === 'positive' ? 'bg-emerald-500' : 
+                  m.accent === 'negative' ? 'bg-rose-500' : 
+                  'bg-indigo-500'
+                }`} />
+                
+                <div className="flex flex-col gap-2 ml-2">
+                  <div className="flex items-start justify-between">
+                    <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      {m.label}
+                    </span>
+                    {m.tooltip && (
+                      <svg className="w-4 h-4 text-gray-500 group-hover:text-gray-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    )}
+                  </div>
+                  
+                  <span className={`text-2xl font-bold tabular-nums ${
+                    m.accent === 'positive' ? 'text-emerald-400' : 
+                    m.accent === 'negative' ? 'text-rose-400' : 
+                    m.accent === 'neutral' ? 'text-indigo-300' :
+                    'text-gray-100'
+                  }`}>
+                    {m.valueFormatted}
+                  </span>
+                </div>
+                
+                {/* Efecto de brillo en hover */}
+                <div className="absolute inset-0 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
+                  <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-white/5 to-transparent" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      
+      {/* Footer con leyenda */}
+      {!emptyValues && (
+        <div className="px-6 pb-6">
+          <div className="flex items-center justify-center gap-6 pt-4 border-t border-gray-700/50">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-emerald-500 shadow-lg shadow-emerald-500/50" />
+              <span className="text-xs text-gray-400">Positivo</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-rose-500 shadow-lg shadow-rose-500/50" />
+              <span className="text-xs text-gray-400">Negativo</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-indigo-500 shadow-lg shadow-indigo-500/50" />
+              <span className="text-xs text-gray-400">Neutro</span>
+            </div>
+          </div>
         </div>
       )}
-      <div className="mt-4 flex flex-wrap gap-3 text-[11px] text-gray-500">
-        <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400" /> Positivo</span>
-        <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-400" /> Negativo</span>
-        <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-300" /> Neutro</span>
-      </div>
     </div>
   );
 };

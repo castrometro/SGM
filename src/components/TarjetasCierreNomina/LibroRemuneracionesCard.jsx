@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Download, FileBarChart2, CheckCircle2, Loader2 } from "lucide-react";
 import { descargarPlantillaLibroRemuneraciones } from "../../api/nomina";
 import EstadoBadge from "../EstadoBadge";
+import { createActivityLogger } from "../../utils/activityLogger_v2"; // ✅ NUEVO: Activity Logging V2
 
 const LibroRemuneracionesCard = ({
   estado,
@@ -18,9 +19,20 @@ const LibroRemuneracionesCard = ({
   onEliminarArchivo,
   libroId,
   deberiaDetenerPolling = false,
+  cierreId, // ✅ NUEVO: Requerido para activity logging
+  clienteId, // ✅ NUEVO: Requerido para activity logging
 }) => {
   const fileInputRef = useRef();
   const pollingRef = useRef(null);
+  const activityLogger = useRef(null); // ✅ NUEVO: Activity logger instance
+
+  // ✅ NUEVO: Inicializar activity logger
+  useEffect(() => {
+    if (cierreId && clienteId && !activityLogger.current) {
+      activityLogger.current = createActivityLogger(clienteId, cierreId);
+      console.log('✅ [LibroRemuneracionesCard] Activity logger inicializado');
+    }
+  }, [cierreId, clienteId]);
 
   // Estado local para errores y procesamiento
   const [error, setError] = useState("");
@@ -114,10 +126,49 @@ const LibroRemuneracionesCard = ({
     const archivo = e.target.files[0];
     if (!archivo) return;
     setError("");
+    
+    // ✅ LOGGING: Archivo seleccionado
+    if (activityLogger.current) {
+      await activityLogger.current.log({
+        action: 'file_selected',
+        resourceType: 'libro_remuneraciones',
+        details: {
+          archivo: archivo.name,
+          tamano_bytes: archivo.size,
+          tipo: archivo.type
+        }
+      });
+    }
+    
     try {
       console.log('📁 Iniciando subida de archivo:', archivo.name);
+      
+      // ✅ LOGGING: Upload iniciado
+      if (activityLogger.current) {
+        await activityLogger.current.log({
+          action: 'upload_started',
+          resourceType: 'libro_remuneraciones',
+          details: {
+            archivo: archivo.name,
+            tamano_bytes: archivo.size
+          }
+        });
+      }
+      
       await onSubirArchivo(archivo);
       console.log('✅ Archivo subido exitosamente');
+      
+      // ✅ LOGGING: Upload completado
+      if (activityLogger.current) {
+        await activityLogger.current.log({
+          action: 'upload_completed',
+          resourceType: 'libro_remuneraciones',
+          details: {
+            archivo: archivo.name,
+            estado_inicial: estado
+          }
+        });
+      }
       
       // 🔄 FORZAR ACTUALIZACIÓN: Llamar al callback de actualización para activar el polling
       if (onActualizarEstado) {
@@ -158,6 +209,18 @@ const LibroRemuneracionesCard = ({
         errorMessage = err.message;
       }
       
+      // ✅ LOGGING: Error en upload
+      if (activityLogger.current) {
+        await activityLogger.current.log({
+          action: 'upload_error',
+          resourceType: 'libro_remuneraciones',
+          details: {
+            archivo: archivo.name,
+            error: errorMessage
+          }
+        });
+      }
+      
       setError(errorMessage);
       console.error('Error subiendo archivo:', err);
     }
@@ -167,8 +230,13 @@ const LibroRemuneracionesCard = ({
   const handleEliminarArchivo = async () => {
     setEliminando(true);
     setError("");
+    
+    // ℹ️ El logging se hace automáticamente en el backend (perform_destroy)
+    // usando ActivityEvent.log() con cierre normalizado
+    
     try {
       await onEliminarArchivo();
+      
     } catch (err) {
       setError("Error eliminando el archivo.");
     } finally {
@@ -183,14 +251,50 @@ const LibroRemuneracionesCard = ({
     setProcesandoLocal(true);
     setError("");
     
+    // ✅ LOGGING: Procesamiento final iniciado
+    if (activityLogger.current) {
+      await activityLogger.current.log({
+        action: 'procesamiento_final_iniciado',
+        resourceType: 'libro_remuneraciones',
+        details: {
+          libro_id: libroId,
+          estado_previo: estado
+        }
+      });
+    }
+    
     try {
       console.log('🔄 Iniciando procesamiento...');
       await onProcesar();
       console.log('✅ Procesamiento iniciado exitosamente');
+      
+      // ✅ LOGGING: Procesamiento aceptado
+      if (activityLogger.current) {
+        await activityLogger.current.log({
+          action: 'procesamiento_final_aceptado',
+          resourceType: 'libro_remuneraciones',
+          details: {
+            libro_id: libroId
+          }
+        });
+      }
       // El polling se iniciará automáticamente cuando el estado cambie a "procesando"
       
     } catch (err) {
       setProcesandoLocal(false);
+      
+      // ✅ LOGGING: Error en procesamiento
+      if (activityLogger.current) {
+        await activityLogger.current.log({
+          action: 'procesamiento_final_error',
+          resourceType: 'libro_remuneraciones',
+          details: {
+            libro_id: libroId,
+            error: err.message
+          }
+        });
+      }
+      
       setError("Error al procesar el archivo.");
       console.error('❌ Error al procesar:', err);
     }

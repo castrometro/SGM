@@ -542,12 +542,26 @@ def guardar_registros_nomina(result):
 
 
 @shared_task
-def procesar_movimientos_mes(movimiento_id, upload_log_id=None):
+def procesar_movimientos_mes(movimiento_id, upload_log_id=None, usuario_id=None):
     """Procesa un archivo de movimientos del mes con logging completo"""
     from .utils.mixins_stub import UploadLogNominaMixin
     from .models_logging_stub import registrar_actividad_tarjeta_nomina, UploadLogNomina
+    from .models import ActivityEvent
+    from django.contrib.auth import get_user_model
     
-    logger.info(f"Procesando archivo movimientos mes id={movimiento_id} con upload_log={upload_log_id}")
+    User = get_user_model()
+    
+    # Usar el usuario real si se proporciona, sino usar sistema_user como fallback
+    if usuario_id:
+        try:
+            usuario = User.objects.get(id=usuario_id)
+        except User.DoesNotExist:
+            logger.warning(f"Usuario {usuario_id} no encontrado, usando sistema_user")
+            usuario = User.objects.filter(is_staff=True).first() or User.objects.first()
+    else:
+        usuario = User.objects.filter(is_staff=True).first() or User.objects.first()
+    
+    logger.info(f"Procesando archivo movimientos mes id={movimiento_id} con upload_log={upload_log_id}, usuario={usuario.correo_bdo}")
     
     mixin = UploadLogNominaMixin() if upload_log_id else None
     upload_log = None
@@ -555,8 +569,27 @@ def procesar_movimientos_mes(movimiento_id, upload_log_id=None):
     try:
         # Obtener referencias
         movimiento = MovimientosMesUpload.objects.get(id=movimiento_id)
+        cierre = movimiento.cierre
+        cliente = cierre.cliente
+        
         if upload_log_id:
             upload_log = UploadLogNomina.objects.get(id=upload_log_id)
+        
+        # LOG: Procesamiento iniciado en Celery
+        ActivityEvent.log(
+            user=sistema_user,
+            cliente=cliente,
+            cierre=cierre,  # Normalizado
+            event_type='process',
+            action='procesamiento_celery_iniciado',
+            resource_type='movimientos_mes',
+            resource_id=str(movimiento_id),
+            details={
+                                'movimiento_id': movimiento_id,
+                'archivo_nombre': movimiento.archivo.name if movimiento.archivo else "N/A",
+                'task': 'procesar_movimientos_mes'
+            }
+        )
         
         # Cambiar estado a procesando
         movimiento.estado = 'en_proceso'
@@ -568,7 +601,7 @@ def procesar_movimientos_mes(movimiento_id, upload_log_id=None):
                 'movimiento_id': movimiento_id
             })
         
-        # Registrar inicio de procesamiento
+        # Registrar inicio de procesamiento (sistema antiguo - mantener temporalmente)
         registrar_actividad_tarjeta_nomina(
             cierre_id=movimiento.cierre.id,
             tarjeta="movimientos_mes",
@@ -602,6 +635,25 @@ def procesar_movimientos_mes(movimiento_id, upload_log_id=None):
         
         movimiento.estado = estado_final
         movimiento.save()
+        
+        # LOG: Procesamiento completado
+        ActivityEvent.log(
+            user=sistema_user,
+            cliente=cliente,
+            cierre=cierre,  # Normalizado
+            event_type='process',
+            action='procesamiento_completado',
+            resource_type='movimientos_mes',
+            resource_id=str(movimiento_id),
+            details={
+                                'movimiento_id': movimiento_id,
+                'estado_final': estado_final,
+                'resultados': resultados,
+                'registros_totales': sum(v for k, v in resultados.items() if k != 'errores' and isinstance(v, int)),
+                'errores_count': len(resultados.get('errores', [])),
+                'task': 'procesar_movimientos_mes'
+            }
+        )
         
         # Actualizar UploadLog
         if mixin and upload_log:
@@ -647,11 +699,31 @@ def procesar_movimientos_mes(movimiento_id, upload_log_id=None):
         # Actualizar estados de error
         try:
             movimiento = MovimientosMesUpload.objects.get(id=movimiento_id)
+            cierre = movimiento.cierre
+            cliente = cierre.cliente
+            
             movimiento.estado = 'con_error'
             movimiento.resultados_procesamiento = {'errores': [str(e)]}
             movimiento.save()
-        except:
-            pass
+            
+            # LOG: Error en procesamiento
+            ActivityEvent.log(
+                user=sistema_user,
+                cliente=cliente,
+            cierre=cierre,  # Normalizado
+                event_type='error',
+                action='procesamiento_error',
+                resource_type='movimientos_mes',
+                resource_id=str(movimiento_id),
+                details={
+                                        'movimiento_id': movimiento_id,
+                    'error': str(e),
+                    'tipo_error': 'celery_processing_error',
+                    'task': 'procesar_movimientos_mes'
+                }
+            )
+        except Exception as ex:
+            logger.error(f"Error guardando estado de error: {ex}")
         
         # Marcar UploadLog como error
         if mixin and upload_log_id:
@@ -1543,16 +1615,50 @@ def analizar_headers_libro_remuneraciones_con_logging(libro_id, upload_log_id):
     Analiza headers del libro de remuneraciones con logging integrado
     """
     from .models_logging_stub import UploadLogNomina
+    from .models import ActivityEvent  # ✅ ActivityEvent desde models principal
+    
     logger.info(f"Procesando libro de remuneraciones id={libro_id} con upload_log={upload_log_id}")
     
+    # Obtener el cierre_id y datos desde el libro
     try:
-        # Obtener upload_log y actualizar estado
-        upload_log = UploadLogNomina.objects.get(id=upload_log_id)
-        upload_log.estado = "analizando_hdrs"
-        upload_log.save()
-        
-        # Obtener libro
         libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
+        cierre = libro.cierre  # ✅ Definir cierre primero
+        cliente = cierre.cliente
+        # Obtener usuario del sistema (Celery tasks no tienen request.user)
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        sistema_user = User.objects.filter(is_staff=True).first() or User.objects.first()
+    except Exception as e:
+        logger.error(f"No se pudo obtener datos para libro {libro_id}: {e}")
+        raise
+    
+    try:
+        # ✅ LOGGING V2: Inicio de análisis de headers
+        ActivityEvent.log(
+            user=sistema_user,
+            cliente=cliente,
+            cierre=cierre,  # Normalizado
+            event_type='process',
+            action='analisis_headers_iniciado',
+            resource_type='libro_remuneraciones',
+            resource_id=str(libro_id),
+            details={
+                'libro_id': libro_id,
+                'task': 'analizar_headers',
+            }
+        )
+        
+        # Obtener upload_log y actualizar estado (solo si existe)
+        upload_log = None
+        if upload_log_id is not None:
+            try:
+                upload_log = UploadLogNomina.objects.get(id=upload_log_id)
+                upload_log.estado = "analizando_hdrs"
+                upload_log.save()
+            except Exception as e:
+                logger.debug(f"[STUB] UploadLog no disponible: {e}")
+        
+        # Actualizar estado del libro
         libro.estado = "analizando_hdrs"
         libro.save()
         
@@ -1562,10 +1668,27 @@ def analizar_headers_libro_remuneraciones_con_logging(libro_id, upload_log_id):
         libro.estado = "hdrs_analizados"
         libro.save()
         
-        # Actualizar upload_log
-        upload_log.estado = "hdrs_analizados"
-        upload_log.headers_detectados = headers
-        upload_log.save()
+        # Actualizar upload_log (solo si existe)
+        if upload_log:
+            upload_log.estado = "hdrs_analizados"
+            upload_log.headers_detectados = headers
+            upload_log.save()
+        
+        # ✅ LOGGING V2: Análisis exitoso
+        ActivityEvent.log(
+            user=sistema_user,
+            cliente=cliente,
+            cierre=cierre,  # Normalizado
+            event_type='process',
+            action='analisis_headers_exitoso',
+            resource_type='libro_remuneraciones',
+            resource_id=str(libro_id),
+            details={
+                'libro_id': libro_id,
+                'headers_detectados': len(headers),
+                'task': 'analizar_headers',
+            }
+        )
         
         logger.info(f"Headers analizados exitosamente para libro {libro_id}")
         return {
@@ -1576,6 +1699,22 @@ def analizar_headers_libro_remuneraciones_con_logging(libro_id, upload_log_id):
         
     except Exception as e:
         logger.error(f"Error analizando headers libro {libro_id}: {e}")
+        
+        # ✅ LOGGING V2: Error en análisis
+        ActivityEvent.log(
+            user=sistema_user,
+            cliente=cliente,
+            cierre=cierre,  # Normalizado
+            event_type='error',
+            action='analisis_headers_error',
+            resource_type='libro_remuneraciones',
+            resource_id=str(libro_id),
+            details={
+                'libro_id': libro_id,
+                'error': str(e),
+                'task': 'analizar_headers',
+            }
+        )
         
         # Marcar errores en ambos modelos
         try:
@@ -1600,24 +1739,56 @@ def clasificar_headers_libro_remuneraciones_con_logging(result):
     Clasifica headers del libro de remuneraciones con logging integrado
     """
     from .models_logging_stub import UploadLogNomina
+    from .models import ActivityEvent  # ✅ ActivityEvent desde models principal
     
     libro_id = result["libro_id"]
     upload_log_id = result["upload_log_id"]
     
     logger.info(f"Clasificando headers para libro {libro_id} con upload_log {upload_log_id}")
     
+    # Obtener cierre_id y datos
     try:
-        # Obtener modelos
         libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-        upload_log = UploadLogNomina.objects.get(id=upload_log_id)
-        cierre = libro.cierre
+        cierre = libro.cierre  # ✅ Definir cierre primero
         cliente = cierre.cliente
+        # Obtener usuario del sistema
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        sistema_user = User.objects.filter(is_staff=True).first() or User.objects.first()
+    except Exception as e:
+        logger.error(f"No se pudo obtener datos para libro {libro_id}: {e}")
+        raise
+    
+    try:
+        # ✅ LOGGING V2: Inicio de clasificación
+        ActivityEvent.log(
+            user=sistema_user,
+            cliente=cliente,
+            cierre=cierre,  # Normalizado
+            event_type='process',
+            action='clasificacion_headers_iniciada',
+            resource_type='libro_remuneraciones',
+            resource_id=str(libro_id),
+            details={
+                'libro_id': libro_id,
+                'task': 'clasificar_headers',
+            }
+        )
+        
+        # Obtener upload_log solo si existe
+        upload_log = None
+        if upload_log_id is not None:
+            try:
+                upload_log = UploadLogNomina.objects.get(id=upload_log_id)
+            except Exception as e:
+                logger.debug(f"[STUB] UploadLog no disponible: {e}")
         
         # Actualizar estados
         libro.estado = "clasif_en_proceso"
         libro.save()
-        upload_log.estado = "clasif_en_proceso"
-        upload_log.save()
+        if upload_log:
+            upload_log.estado = "clasif_en_proceso"
+            upload_log.save()
         
         # Obtener headers
         headers = (
@@ -1640,25 +1811,46 @@ def clasificar_headers_libro_remuneraciones_con_logging(result):
         # Determinar estado final
         if headers_sin_clasificar:
             libro.estado = "clasif_pendiente"
-            upload_log.estado = "clasif_pendiente"
+            if upload_log:
+                upload_log.estado = "clasif_pendiente"
         else:
             libro.estado = "clasificado"
-            upload_log.estado = "clasificado"
+            if upload_log:
+                upload_log.estado = "clasificado"
         
         libro.save()
         
-        # Actualizar upload_log con resumen
-        resumen_final = {
-            "libro_id": libro_id,
-            "headers_total": len(headers),
-            "headers_clasificados": len(headers_clasificados),
-            "headers_sin_clasificar": len(headers_sin_clasificar),
-            "clasificados": headers_clasificados,
-            "sin_clasificar": headers_sin_clasificar
-        }
+        # Actualizar upload_log con resumen (solo si existe)
+        if upload_log:
+            resumen_final = {
+                "libro_id": libro_id,
+                "headers_total": len(headers),
+                "headers_clasificados": len(headers_clasificados),
+                "headers_sin_clasificar": len(headers_sin_clasificar),
+                "clasificados": headers_clasificados,
+                "sin_clasificar": headers_sin_clasificar
+            }
+            upload_log.resumen = resumen_final
+            upload_log.save()
         
-        upload_log.resumen = resumen_final
-        upload_log.save()
+        # ✅ LOGGING V2: Clasificación exitosa
+        ActivityEvent.log(
+            user=sistema_user,
+            cliente=cliente,
+            cierre=cierre,  # Normalizado
+            event_type='process',
+            action='clasificacion_headers_exitosa',
+            resource_type='libro_remuneraciones',
+            resource_id=str(libro_id),
+            details={
+                'libro_id': libro_id,
+                'headers_total': len(headers),
+                'headers_clasificados': len(headers_clasificados),
+                'headers_sin_clasificar': len(headers_sin_clasificar),
+                'estado_final': libro.estado,
+                'task': 'clasificar_headers',
+            }
+        )
         
         logger.info(
             f"Libro {libro_id}: {len(headers_clasificados)} headers clasificados, "
@@ -1675,6 +1867,22 @@ def clasificar_headers_libro_remuneraciones_con_logging(result):
         
     except Exception as e:
         logger.error(f"Error clasificando headers para libro {libro_id}: {e}")
+        
+        # ✅ LOGGING V2: Error en clasificación
+        ActivityEvent.log(
+            user=sistema_user,
+            cliente=cliente,
+            cierre=cierre,  # Normalizado
+            event_type='error',
+            action='clasificacion_headers_error',
+            resource_type='libro_remuneraciones',
+            resource_id=str(libro_id),
+            details={
+                'libro_id': libro_id,
+                'error': str(e),
+                'task': 'clasificar_headers',
+            }
+        )
         
         # Marcar errores en ambos modelos
         try:
@@ -4936,8 +5144,7 @@ def unir_y_guardar_informe(resultados: list, cierre_id: int, version: str = 'sgm
 
     # Metadatos del cierre
     meta = {
-        'cierre_id': cierre.id,
-        'cliente_id': getattr(cierre.cliente, 'id', None),
+                'cliente_id': getattr(cierre.cliente, 'id', None),
         'cliente_nombre': getattr(cierre.cliente, 'nombre', None),
         'periodo': cierre.periodo,  # YYYY-MM
         'generated_at': timezone.now().isoformat(),

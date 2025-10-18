@@ -27,6 +27,7 @@ const ArchivosTalanaSection = ({
   disabled = false,
   deberiaDetenerPolling = false,
   cierreId,
+  clienteId,
   
   // 🎯 Props para acordeón
   expandido = true,
@@ -126,6 +127,8 @@ const ArchivosTalanaSection = ({
             mensaje={mensajeLibro}
             disabled={disabled || libro?.estado === "procesando"}
             deberiaDetenerPolling={deberiaDetenerPolling}
+            cierreId={cierreId}
+            clienteId={clienteId}
           />
           
           <MovimientosMesCard
@@ -138,6 +141,7 @@ const ArchivosTalanaSection = ({
             disabled={disabled}
             deberiaDetenerPolling={deberiaDetenerPolling}
             cierreId={cierreId}
+            clienteId={clienteId}
           />
         </div>
       )}

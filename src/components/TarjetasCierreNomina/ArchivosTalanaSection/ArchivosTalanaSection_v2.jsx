@@ -371,6 +371,8 @@ const ArchivosTalanaSection_v2 = ({
             mensaje={mensajeLibro}
             disabled={disabled || libro?.estado === "procesando"}
             deberiaDetenerPolling={disabled}
+            cierreId={cierreId}
+            clienteId={cliente?.id}
           />
           
           <MovimientosMesCard

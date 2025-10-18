@@ -43,6 +43,7 @@ const ArchivosAnalistaSection = ({
   disabled = false,
   deberiaDetenerPolling = false,
   cierreId,
+  clienteId,
   
   // Props para acordeón
   expandido = true,
@@ -139,6 +140,7 @@ const ArchivosAnalistaSection = ({
             disabled={disabled}
             deberiaDetenerPolling={deberiaDetenerPolling}
             cierreId={cierreId}
+            clienteId={clienteId}
           />
           
           <FiniquitosCard
@@ -151,6 +153,7 @@ const ArchivosAnalistaSection = ({
             disabled={disabled}
             deberiaDetenerPolling={deberiaDetenerPolling}
             cierreId={cierreId}
+            clienteId={clienteId}
           />
           
           {/* Segunda fila: Ausentismos y Novedades */}
@@ -164,6 +167,7 @@ const ArchivosAnalistaSection = ({
             disabled={disabled}
             deberiaDetenerPolling={deberiaDetenerPolling}
             cierreId={cierreId}
+            clienteId={clienteId}
           />
           
           <NovedadesCard

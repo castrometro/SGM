@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Download, Loader2, CheckCircle2 } from "lucide-react";
 import { descargarPlantillaMovimientosMes } from "../../api/nomina";
 import EstadoBadge from "../EstadoBadge";
-// TODO: ActivityLogger V2 - import { createActivityLogger } from "../../utils/activityLogger";
+import { createActivityLogger } from "../../utils/activityLogger_v2";
 
 const MovimientosMesCard = ({
   estado,
@@ -12,7 +12,8 @@ const MovimientosMesCard = ({
   onEliminarArchivo,
   subiendo = false,
   disabled = false,
-  cierreId, // Nueva prop necesaria para logging
+  cierreId,
+  clienteId,
   deberiaDetenerPolling = false,
 }) => {
   const fileInputRef = useRef();
@@ -20,17 +21,16 @@ const MovimientosMesCard = ({
   const [error, setError] = useState("");
   const [eliminando, setEliminando] = useState(false);
   
-  // Activity Logger
+  // Activity Logger V2
   const activityLogger = useRef(null);
   
-  // Inicializar logger cuando tengamos cierreId
+  // Inicializar logger cuando tengamos clienteId y cierreId
   useEffect(() => {
-    if (cierreId && !activityLogger.current) {
-      activityLogger.current = createActivityLogger(cierreId, 'movimientos_mes');
-      // Registrar inicio de sesión
+    if (cierreId && clienteId && !activityLogger.current) {
+      activityLogger.current = createActivityLogger(clienteId, cierreId);
       activityLogger.current.logSessionStart();
     }
-  }, [cierreId]);
+  }, [cierreId, clienteId]);
 
   // 🚀 VARIABLES DE ESTADO UNIFICADAS
   const isProcesando = estado === "en_proceso";

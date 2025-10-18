@@ -52,14 +52,15 @@ from .views_movimientos_mes import (
     MovimientoVariacionSueldoViewSet,
     MovimientoVariacionContratoViewSet,
 )
-# USANDO STUBS DE TRANSICIÓN - MIGRAR A ACTIVITY V2
-from .api_logging_stub import (
-    obtener_actividad_tarjeta_stub as ModalActivityView,
-    registrar_actividad_tarjeta_stub as FileActivityView,
-    obtener_logs_upload_stub as ClassificationActivityView,
-    limpiar_logs_antiguos_stub as SessionActivityView,
-    obtener_actividad_tarjeta_stub as get_activity_log,
-    obtener_logs_upload_stub as get_all_activity_logs
+# Activity Logging V2 - Vistas reales
+from .views_activity_v2 import (
+    list_activities,
+    log_activity,
+    get_cierre_activities,
+    get_activity_stats,
+    # ✅ NUEVOS: Timeline y exportación
+    get_cierre_timeline,
+    exportar_cierre_log_txt,
 )
 
 # Importar views de informes
@@ -215,13 +216,15 @@ urlpatterns = router.urls + [
     path('clientes/<int:cliente_id>/hashtags/', obtener_hashtags_disponibles),
     path("conceptos/", ConceptoRemuneracionBatchView.as_view(), name="guardar-conceptos"),
     
-    # === URLs para Activity Logging (STUBS - MIGRAR A V2) ===
-    path('activity-log/all/', get_all_activity_logs, name='get_all_activity_logs'),
-    path('activity-log/modal/', ModalActivityView, name='modal_activity_log'),
-    path('activity-log/file/', FileActivityView, name='file_activity_log'),
-    path('activity-log/classification/', ClassificationActivityView, name='classification_activity_log'),
-    path('activity-log/session/', SessionActivityView, name='session_activity_log'),
-    path('activity-log/<int:cierre_id>/<str:tarjeta>/', get_activity_log, name='get_activity_log'),
+    # === URLs para Activity Logging V2 ===
+    path('activity-log/', list_activities, name='list_activities'),
+    path('activity-log/log/', log_activity, name='log_activity'),
+    path('activity-log/cierre/<int:cierre_id>/', get_cierre_activities, name='get_cierre_activities'),
+    path('activity-log/stats/', get_activity_stats, name='get_activity_stats'),
+    
+    # ✅ NUEVOS ENDPOINTS: Timeline del Cierre
+    path('cierre/<int:cierre_id>/timeline/', get_cierre_timeline, name='get_cierre_timeline'),
+    path('cierre/<int:cierre_id>/log/export/txt/', exportar_cierre_log_txt, name='exportar_cierre_log_txt'),
     
     path(
         "conceptos/<int:cliente_id>/<path:nombre_concepto>/eliminar/",

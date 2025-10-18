@@ -1,310 +1,417 @@
 # backend/nomina/views_activity_v2.py
 """
-API endpoints para Activity Logging V2
-Sistema unificado y simplificado
+Vistas para el sistema de Activity Logging V2
+Reemplaza las vistas antiguas del sistema V1
 """
 
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
-from django.views.decorators.http import require_http_methods
-from django.core.paginator import Paginator
-import json
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from datetime import timedelta
 import logging
 
-from .models_activity_v2 import ActivityEvent, log_user_activity
+from .models import ActivityEvent, CierreNomina
+from api.models import Cliente
 
 logger = logging.getLogger(__name__)
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def log_single_activity(request):
-    """
-    Endpoint principal para logging individual
-    
-    POST /api/activity/
-    {
-        "cierre_id": 123,
-        "modulo": "nomina",
-        "seccion": "libro_remuneraciones", 
-        "evento": "file_upload",
-        "datos": {"filename": "libro.xlsx", "size": 1024}
-    }
-    """
-    try:
-        data = request.data
-        
-        # Validar campos requeridos
-        required_fields = ['cierre_id', 'seccion', 'evento']
-        missing_fields = [f for f in required_fields if not data.get(f)]
-        if missing_fields:
-            return Response({
-                'error': f'Campos requeridos faltantes: {", ".join(missing_fields)}'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Usar helper para registrar
-        activity = log_user_activity(
-            request=request,
-            cierre_id=data['cierre_id'],
-            modulo=data.get('modulo', 'nomina'),
-            seccion=data['seccion'],
-            evento=data['evento'],
-            datos=data.get('datos', {})
-        )
-        
-        return Response({
-            'success': True,
-            'activity_id': activity.id if activity else None,
-            'message': 'Actividad registrada correctamente'
-        })
-        
-    except Exception as e:
-        logger.error(f"Error en log_single_activity: {e}")
-        return Response({
-            'error': 'Error interno del servidor'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def log_batch_activities(request):
-    """
-    Endpoint para logging en lotes (mejor performance)
-    
-    POST /api/activity/batch/
-    {
-        "events": [
-            {
-                "cierre_id": 123,
-                "seccion": "libro_remuneraciones",
-                "evento": "file_select",
-                "datos": {"filename": "libro.xlsx"}
-            },
-            {
-                "cierre_id": 123,
-                "seccion": "libro_remuneraciones", 
-                "evento": "file_upload",
-                "datos": {"filename": "libro.xlsx", "success": true}
-            }
-        ]
-    }
-    """
-    try:
-        data = request.data
-        events = data.get('events', [])
-        
-        if not events or not isinstance(events, list):
-            return Response({
-                'error': 'Se requiere una lista de eventos'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        if len(events) > 50:  # Limitar tamaño del batch
-            return Response({
-                'error': 'Máximo 50 eventos por batch'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        successful_count = 0
-        failed_count = 0
-        
-        for event_data in events:
-            # Validar cada evento
-            if not all(k in event_data for k in ['cierre_id', 'seccion', 'evento']):
-                failed_count += 1
-                continue
-                
-            # Registrar evento
-            activity = log_user_activity(
-                request=request,
-                cierre_id=event_data['cierre_id'],
-                modulo=event_data.get('modulo', 'nomina'),
-                seccion=event_data['seccion'],
-                evento=event_data['evento'],
-                datos=event_data.get('datos', {})
-            )
-            
-            if activity:
-                successful_count += 1
-            else:
-                failed_count += 1
-        
-        return Response({
-            'success': True,
-            'processed': len(events),
-            'successful': successful_count,
-            'failed': failed_count,
-            'message': f'Batch procesado: {successful_count} exitosos, {failed_count} fallidos'
-        })
-        
-    except Exception as e:
-        logger.error(f"Error en log_batch_activities: {e}")
-        return Response({
-            'error': 'Error interno del servidor'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def get_activity_stats(request, cierre_id):
+def list_activities(request):
     """
-    Obtiene estadísticas de actividad para un cierre
+    Listar eventos de actividad con filtros
     
-    GET /api/activity/stats/{cierre_id}/
-    ?seccion=libro_remuneraciones&days=7
+    GET /api/nomina/activity-log/
+    Query params:
+    - cliente_id: Filtrar por cliente
+    - event_type: Filtrar por tipo (nomina, contabilidad, etc.)
+    - resource_type: Filtrar por recurso
+    - days: Últimos N días (default: 7)
+    - limit: Límite de resultados (default: 100, max: 1000)
     """
-    try:
-        # Filtros
-        seccion = request.GET.get('seccion')
-        days = int(request.GET.get('days', 7))
-        
-        # Query base
-        queryset = ActivityEvent.objects.filter(cierre_id=cierre_id)
-        
-        if seccion:
-            queryset = queryset.filter(seccion=seccion)
-            
-        # Filtrar por días recientes
-        from django.utils import timezone
-        from datetime import timedelta
-        
-        date_from = timezone.now() - timedelta(days=days)
-        queryset = queryset.filter(timestamp__gte=date_from)
-        
-        # Estadísticas básicas
-        total_events = queryset.count()
-        unique_sessions = queryset.values('session_id').distinct().count()
-        unique_users = queryset.filter(usuario_id__isnull=False).values('usuario_id').distinct().count()
-        
-        # Top eventos
-        top_eventos = list(
-            queryset.values('seccion', 'evento')
-            .annotate(count=models.Count('id'))
-            .order_by('-count')[:10]
-        )
-        
-        # Eventos por día
-        from django.db.models import Count
-        from django.db.models.functions import TruncDate
-        
-        eventos_por_dia = list(
-            queryset.annotate(fecha=TruncDate('timestamp'))
-            .values('fecha')
-            .annotate(count=Count('id'))
-            .order_by('fecha')
-        )
-        
-        return Response({
-            'cierre_id': cierre_id,
-            'period_days': days,
-            'stats': {
-                'total_events': total_events,
-                'unique_sessions': unique_sessions,
-                'unique_users': unique_users,
-                'top_eventos': top_eventos,
-                'eventos_por_dia': eventos_por_dia,
-            }
-        })
-        
-    except Exception as e:
-        logger.error(f"Error en get_activity_stats: {e}")
-        return Response({
-            'error': 'Error interno del servidor'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])  
-def get_activity_log(request, cierre_id):
-    """
-    Obtiene log detallado de actividades
+    queryset = ActivityEvent.objects.select_related('user', 'cliente')
     
-    GET /api/activity/log/{cierre_id}/
-    ?seccion=libro_remuneraciones&evento=file_upload&page=1&limit=50
-    """
-    try:
-        # Filtros
-        seccion = request.GET.get('seccion')
-        evento = request.GET.get('evento') 
-        page = int(request.GET.get('page', 1))
-        limit = min(int(request.GET.get('limit', 50)), 100)  # Max 100 por página
-        
-        # Query
-        queryset = ActivityEvent.objects.filter(cierre_id=cierre_id)
-        
-        if seccion:
-            queryset = queryset.filter(seccion=seccion)
-        if evento:
-            queryset = queryset.filter(evento=evento)
-            
-        # Paginar
-        paginator = Paginator(queryset, limit)
-        page_obj = paginator.get_page(page)
-        
-        # Serializar
-        activities = []
-        for activity in page_obj.object_list:
-            activities.append({
-                'id': activity.id,
-                'timestamp': activity.timestamp.isoformat(),
-                'seccion': activity.seccion,
-                'evento': activity.evento,
-                'datos': activity.datos,
-                'resultado': activity.resultado,
-                'usuario_id': activity.usuario_id,
-                'session_id': activity.session_id,
-            })
-        
-        return Response({
-            'activities': activities,
-            'pagination': {
-                'current_page': page,
-                'total_pages': paginator.num_pages,
-                'total_count': paginator.count,
-                'has_next': page_obj.has_next(),
-                'has_previous': page_obj.has_previous(),
-            }
-        })
-        
-    except Exception as e:
-        logger.error(f"Error en get_activity_log: {e}")
-        return Response({
-            'error': 'Error interno del servidor'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def cleanup_old_activities(request):
-    """
-    Endpoint para limpieza manual de actividades antiguas
-    Solo para administradores
-    
-    POST /api/activity/cleanup/
-    {"days_to_keep": 30}
-    """
-    # Verificar permisos de admin
+    # Filtrar por cliente si no es superuser
     if not request.user.is_superuser:
-        return Response({
-            'error': 'Permisos insuficientes'
-        }, status=status.HTTP_403_FORBIDDEN)
+        # Obtener clientes asignados a través de AsignacionClienteUsuario
+        clientes_ids = request.user.asignaciones.values_list('cliente_id', flat=True)
+        queryset = queryset.filter(cliente_id__in=clientes_ids)
     
+    # Aplicar filtros
+    cliente_id = request.GET.get('cliente_id')
+    if cliente_id:
+        queryset = queryset.filter(cliente_id=cliente_id)
+    
+    event_type = request.GET.get('event_type')
+    if event_type:
+        queryset = queryset.filter(event_type=event_type)
+    
+    resource_type = request.GET.get('resource_type')
+    if resource_type:
+        queryset = queryset.filter(resource_type=resource_type)
+    
+    session_id = request.GET.get('session_id')
+    if session_id:
+        queryset = queryset.filter(session_id=session_id)
+    
+    # Filtrar por días
+    days = int(request.GET.get('days', 7))
+    cutoff_date = timezone.now() - timedelta(days=days)
+    queryset = queryset.filter(timestamp__gte=cutoff_date)
+    
+    # Límite
+    limit = min(int(request.GET.get('limit', 100)), 1000)
+    events = queryset.order_by('-timestamp')[:limit]
+    
+    # Serializar
+    data = [{
+        'id': event.id,
+        'timestamp': event.timestamp.isoformat(),
+        'user_email': getattr(event.user, 'email', str(event.user)),
+        'cliente_nombre': event.cliente.nombre,
+        'event_type': event.event_type,
+        'action': event.action,
+        'resource_type': event.resource_type,
+        'resource_id': event.resource_id,
+        'details': event.details,
+    } for event in events]
+    
+    return Response({
+        'count': len(data),
+        'results': data
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def log_activity(request):
+    """
+    Registrar actividad manualmente desde el frontend
+    
+    POST /api/nomina/activity-log/log/
+    Body:
+    {
+        "cliente_id": 1,
+        "cierre_id": 30,           // ✅ NUEVO: ID del cierre
+        "event_type": "nomina",
+        "action": "modal_opened",
+        "resource_type": "ingresos",
+        "resource_id": "123",
+        "details": {},
+        "session_id": ""
+    }
+    """
     try:
-        days_to_keep = request.data.get('days_to_keep', 30)
-        deleted_count = ActivityEvent.cleanup_old_events(days_to_keep)
+        cliente_id = request.data.get('cliente_id')
+        if not cliente_id:
+            return Response(
+                {'error': 'cliente_id requerido'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        cliente = get_object_or_404(Cliente, id=cliente_id)
+        
+        # Verificar acceso
+        if not request.user.is_superuser:
+            # Verificar que el usuario tiene asignado este cliente
+            tiene_acceso = request.user.asignaciones.filter(cliente_id=cliente_id).exists()
+            if not tiene_acceso:
+                return Response(
+                    {'error': 'Sin acceso a este cliente'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        # ✅ Obtener cierre_id del request
+        cierre_id = request.data.get('cierre_id', '')
+        resource_id = request.data.get('resource_id', '')
+        
+        # ✅ Si tenemos cierre_id, usarlo como resource_id con tipo 'cierre'
+        if cierre_id:
+            resource_type = 'cierre'
+            resource_id = str(cierre_id)
+        else:
+            resource_type = request.data.get('resource_type', 'general')
+        
+        event = ActivityEvent.log(
+            user=request.user,
+            cliente=cliente,
+            event_type=request.data.get('event_type', 'manual'),
+            action=request.data.get('action', 'manual_log'),
+            resource_type=resource_type,           # ✅ Usar 'cierre' si tenemos cierre_id
+            resource_id=resource_id,               # ✅ Usar cierre_id como resource_id
+            details=request.data.get('details', {}),
+            session_id=request.data.get('session_id', ''),
+            request=request
+        )
         
         return Response({
             'success': True,
-            'deleted_count': deleted_count,
-            'days_kept': days_to_keep,
-            'message': f'Se eliminaron {deleted_count} eventos antiguos'
-        })
+            'event_id': event.id,
+        }, status=status.HTTP_201_CREATED)
         
     except Exception as e:
-        logger.error(f"Error en cleanup_old_activities: {e}")
-        return Response({
-            'error': 'Error interno del servidor'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        logger.error(f"Error logging activity: {e}")
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_cierre_activities(request, cierre_id):
+    """
+    Obtener actividad de un cierre específico
+    
+    GET /api/nomina/activity-log/cierre/{cierre_id}/
+    
+    Retorna todas las actividades relacionadas con este cierre.
+    """
+    cierre = get_object_or_404(CierreNomina, id=cierre_id)
+    
+    # Verificar acceso
+    if not request.user.is_superuser:
+        # Verificar que el usuario tiene asignado este cliente
+        tiene_acceso = request.user.asignaciones.filter(cliente_id=cierre.cliente_id).exists()
+        if not tiene_acceso:
+            return Response(
+                {'error': 'Sin acceso'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+    
+    # ✅ Buscar por resource_type='cierre' Y resource_id=cierre_id
+    events = ActivityEvent.objects.filter(
+        resource_type='cierre',
+        resource_id=str(cierre_id),
+        cliente=cierre.cliente
+    ).select_related('user').order_by('-timestamp')[:200]  # ✅ Aumentado límite a 200
+    
+    data = [{
+        'id': e.id,
+        'timestamp': e.timestamp.isoformat(),
+        'user_email': getattr(e.user, 'email', str(e.user)),
+        'action': e.action,
+        'details': e.details,
+    } for e in events]
+    
+    return Response({
+        'cierre_id': cierre_id,
+        'count': len(data),
+        'events': data
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_activity_stats(request):
+    """
+    Estadísticas de actividad
+    
+    GET /api/nomina/activity-log/stats/
+    """
+    queryset = ActivityEvent.objects.all()
+    
+    if not request.user.is_superuser:
+        queryset = queryset.filter(cliente__in=request.user.clientes.all())
+    
+    days = int(request.GET.get('days', 7))
+    cutoff = timezone.now() - timedelta(days=days)
+    queryset = queryset.filter(timestamp__gte=cutoff)
+    
+    # Contar por tipo
+    event_counts = {}
+    for et in queryset.values_list('event_type', flat=True).distinct():
+        event_counts[et] = queryset.filter(event_type=et).count()
+    
+    return Response({
+        'total': queryset.count(),
+        'by_type': event_counts,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_cierre_timeline(request, cierre_id):
+    """
+    Obtener timeline completo de todas las actividades de un cierre
+    
+    GET /api/nomina/cierre/{cierre_id}/timeline/
+    
+    Retorna un historial completo con todos los eventos que ocurrieron
+    en el cierre: uploads, eliminaciones, procesamientos, errores, etc.
+    
+    Response:
+    {
+        "cierre_id": 30,
+        "periodo": "2025-10",
+        "cliente": "Cliente XYZ",
+        "total_eventos": 47,
+        "timeline": [
+            {
+                "timestamp": "2025-10-17T10:30:00Z",
+                "seccion": "libro_remuneraciones",
+                "evento": "upload_iniciado",
+                "usuario": "Juan Pérez",
+                "resultado": "ok",
+                "datos": {...}
+            },
+            ...
+        ],
+        "resumen": {
+            "uploads_exitosos": 5,
+            "uploads_fallidos": 1,
+            "eliminaciones": 2,
+            "procesamiento_exitoso": 4,
+            "errores": 1,
+            "primera_actividad": "2025-10-17T10:00:00Z",
+            "ultima_actividad": "2025-10-17T14:20:00Z"
+        }
+    }
+    """
+    from .models import ActivityEvent  # ✅ Importar desde models principal
+    from django.db.models import Count, Q, Min, Max
+    
+    # Obtener cierre
+    cierre = get_object_or_404(CierreNomina, id=cierre_id)
+    
+    # Verificar acceso
+    if not request.user.is_superuser:
+        tiene_acceso = request.user.asignaciones.filter(cliente_id=cierre.cliente_id).exists()
+        if not tiene_acceso:
+            return Response(
+                {'error': 'Sin acceso a este cierre'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+    
+    # Obtener todos los eventos del cierre
+    eventos = ActivityEvent.objects.filter(
+        cierre_id=cierre_id
+    ).select_related('usuario').order_by('timestamp')
+    
+    # Construir timeline
+    timeline = []
+    for e in eventos:
+        timeline.append({
+            'id': e.id,
+            'timestamp': e.timestamp.isoformat(),
+            'seccion': e.seccion,
+            'evento': e.evento,
+            'modulo': e.modulo,
+            'usuario': e.usuario.get_full_name() if e.usuario_id else 'Sistema',
+            'usuario_email': e.usuario.correo_bdo if e.usuario_id else None,
+            'resultado': e.resultado,
+            'datos': e.datos,
+            'session_id': e.session_id,
+        })
+    
+    # Generar resumen estadístico
+    stats = eventos.aggregate(
+        primera_actividad=Min('timestamp'),
+        ultima_actividad=Max('timestamp'),
+    )
+    
+    resumen = {
+        'total_eventos': eventos.count(),
+        'uploads_exitosos': eventos.filter(
+            Q(evento__icontains='upload') | Q(evento__icontains='completado'),
+            resultado='ok'
+        ).count(),
+        'uploads_fallidos': eventos.filter(
+            Q(evento__icontains='upload') | Q(evento__icontains='validacion'),
+            resultado='error'
+        ).count(),
+        'eliminaciones': eventos.filter(evento__icontains='eliminado').count(),
+        'procesamiento_exitoso': eventos.filter(
+            Q(evento__icontains='procesamiento') | Q(evento__icontains='analisis') | Q(evento__icontains='clasificacion'),
+            resultado='ok'
+        ).count(),
+        'errores': eventos.filter(resultado='error').count(),
+        'primera_actividad': stats['primera_actividad'].isoformat() if stats['primera_actividad'] else None,
+        'ultima_actividad': stats['ultima_actividad'].isoformat() if stats['ultima_actividad'] else None,
+    }
+    
+    # Agrupar por sección
+    por_seccion = {}
+    for seccion in eventos.values_list('seccion', flat=True).distinct():
+        por_seccion[seccion] = eventos.filter(seccion=seccion).count()
+    
+    return Response({
+        'cierre_id': cierre_id,
+        'periodo': str(cierre.periodo),
+        'cliente': cierre.cliente.razon_social,
+        'cliente_id': cierre.cliente.id,
+        'total_eventos': eventos.count(),
+        'timeline': timeline,
+        'resumen': resumen,
+        'por_seccion': por_seccion,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def exportar_cierre_log_txt(request, cierre_id):
+    """
+    Exportar historial del cierre como archivo de texto plano
+    
+    GET /api/nomina/cierre/{cierre_id}/log/export/txt/
+    """
+    from .models import ActivityEvent  # ✅ Importar desde models principal
+    from django.http import HttpResponse
+    
+    # Obtener cierre
+    cierre = get_object_or_404(CierreNomina, id=cierre_id)
+    
+    # Verificar acceso
+    if not request.user.is_superuser:
+        tiene_acceso = request.user.asignaciones.filter(cliente_id=cierre.cliente_id).exists()
+        if not tiene_acceso:
+            return Response(
+                {'error': 'Sin acceso a este cierre'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+    
+    # Obtener eventos
+    eventos = ActivityEvent.objects.filter(
+        cierre_id=cierre_id
+    ).select_related('usuario').order_by('timestamp')
+    
+    # Generar contenido de texto
+    lines = []
+    lines.append("=" * 80)
+    lines.append(f"LOG DE ACTIVIDAD - CIERRE #{cierre_id}")
+    lines.append(f"Cliente: {cierre.cliente.razon_social}")
+    lines.append(f"Período: {cierre.periodo}")
+    lines.append(f"Generado: {timezone.now().strftime('%d/%m/%Y %H:%M:%S')}")
+    lines.append("=" * 80)
+    lines.append("")
+    
+    for evento in eventos:
+        usuario = evento.usuario.get_full_name() if evento.usuario_id else 'Sistema'
+        timestamp = evento.timestamp.strftime('%d/%m/%Y %H:%M:%S')
+        resultado_icon = "✅" if evento.resultado == 'ok' else "❌" if evento.resultado == 'error' else "⏱️"
+        
+        lines.append(f"{timestamp} - {usuario}")
+        lines.append(f"  {resultado_icon} {evento.seccion}: {evento.evento}")
+        
+        if evento.datos:
+            lines.append(f"  Datos: {evento.datos}")
+        
+        lines.append("")
+    
+    lines.append("=" * 80)
+    lines.append(f"RESUMEN")
+    lines.append(f"Total de eventos: {eventos.count()}")
+    lines.append(f"Eventos exitosos: {eventos.filter(resultado='ok').count()}")
+    lines.append(f"Eventos con error: {eventos.filter(resultado='error').count()}")
+    lines.append("=" * 80)
+    
+    # Generar respuesta
+    content = "\n".join(lines)
+    response = HttpResponse(content, content_type='text/plain; charset=utf-8')
+    response['Content-Disposition'] = f'attachment; filename="cierre_{cierre_id}_log.txt"'
+    
+    return response

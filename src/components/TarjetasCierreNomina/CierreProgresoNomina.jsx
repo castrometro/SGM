@@ -880,6 +880,7 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
               onEliminarMovimientos={handleEliminarMovimientos}
               deberiaDetenerPolling={deberiaDetenerPolling}
               cierreId={cierre?.id}
+              clienteId={cliente?.id}
               // 🎯 Props para acordeón
               expandido={estaSeccionExpandida('archivosTalana')}
               onToggleExpansion={() => manejarExpansionSeccion('archivosTalana')}
@@ -925,6 +926,7 @@ const CierreProgresoNomina = ({ cierre, cliente, onCierreActualizado }) => {
               // Props de control
               deberiaDetenerPolling={deberiaDetenerPolling}
               cierreId={cierre?.id}
+              clienteId={cliente?.id}
               
               // Props para acordeón
               expandido={estaSeccionExpandida('archivosAnalista')}

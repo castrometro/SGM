@@ -1,0 +1,382 @@
+/* src/components/CierreTimeline.css */
+
+.cierre-timeline-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 20px;
+}
+
+.cierre-timeline-modal {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  max-width: 900px;
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Header */
+.timeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 20px 24px;
+  border-bottom: 2px solid #e0e0e0;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.timeline-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.timeline-subtitle {
+  margin: 8px 0 0 0;
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+.btn-close-x {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  font-size: 1.5rem;
+  cursor: pointer;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.btn-close-x:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Resumen */
+.timeline-resumen {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+  padding: 20px 24px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.resumen-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: white;
+  border-radius: 8px;
+  border-left: 4px solid #667eea;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.resumen-card.success {
+  border-left-color: #28a745;
+}
+
+.resumen-card.error {
+  border-left-color: #dc3545;
+}
+
+.resumen-card.warning {
+  border-left-color: #ffc107;
+}
+
+.resumen-icon {
+  font-size: 2rem;
+}
+
+.resumen-data {
+  display: flex;
+  flex-direction: column;
+}
+
+.resumen-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #333;
+}
+
+.resumen-label {
+  font-size: 0.75rem;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Timeline Container */
+.timeline-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.timeline-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: #999;
+}
+
+.timeline-empty p {
+  font-size: 1.1rem;
+}
+
+/* Timeline List */
+.timeline-list {
+  position: relative;
+}
+
+.timeline-list::before {
+  content: '';
+  position: absolute;
+  left: 20px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+}
+
+.timeline-item {
+  position: relative;
+  display: flex;
+  gap: 20px;
+  margin-bottom: 24px;
+  padding-left: 0;
+}
+
+.timeline-item-error .timeline-content {
+  border-left: 4px solid #dc3545;
+  background: #fff5f5;
+}
+
+.timeline-marker {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: white;
+  border: 3px solid #667eea;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+
+.timeline-icon {
+  font-size: 1.2rem;
+}
+
+.timeline-content {
+  flex: 1;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-left: 4px solid #667eea;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  transition: box-shadow 0.2s;
+}
+
+.timeline-content:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.timeline-time {
+  font-size: 0.85rem;
+  color: #666;
+  margin-bottom: 8px;
+  font-family: 'Courier New', monospace;
+}
+
+.timeline-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.timeline-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.timeline-title strong {
+  font-size: 1rem;
+  color: #333;
+}
+
+.timeline-seccion {
+  display: inline-block;
+  padding: 4px 8px;
+  background: #e7f3ff;
+  color: #0066cc;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.timeline-usuario {
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.timeline-detalles {
+  margin-top: 8px;
+}
+
+.timeline-detalles summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #667eea;
+  font-weight: 500;
+  user-select: none;
+}
+
+.timeline-detalles summary:hover {
+  text-decoration: underline;
+}
+
+.timeline-detalles pre {
+  margin-top: 8px;
+  padding: 12px;
+  background: #f5f5f5;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  overflow-x: auto;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* Footer */
+.timeline-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid #e0e0e0;
+  background: #f8f9fa;
+}
+
+.btn-export {
+  padding: 10px 20px;
+  background: #28a745;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-export:hover {
+  background: #218838;
+}
+
+.btn-secondary {
+  padding: 10px 20px;
+  background: #6c757d;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-secondary:hover {
+  background: #5a6268;
+}
+
+/* Loading */
+.loading-container {
+  text-align: center;
+  padding: 60px 20px;
+}
+
+.spinner {
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #667eea;
+  border-radius: 50%;
+  width: 50px;
+  height: 50px;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 20px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Error */
+.error-container {
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.error-container h3 {
+  color: #dc3545;
+  margin-bottom: 12px;
+}
+
+.error-container p {
+  color: #666;
+  margin-bottom: 24px;
+}
+
+.btn-close {
+  padding: 10px 24px;
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-close:hover {
+  background: #5568d3;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .cierre-timeline-modal {
+    max-width: 100%;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+
+  .timeline-resumen {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .timeline-header h2 {
+    font-size: 1.2rem;
+  }
+
+  .timeline-subtitle {
+    font-size: 0.8rem;
+  }
+}

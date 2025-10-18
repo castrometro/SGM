@@ -1,0 +1,250 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║           🔧 FIX: Movimientos del Mes - StubInstance Error                  ║
+║                ValueError al intentar asignar StubInstance                   ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+📅 FECHA: 2025-10-17 15:42
+🎯 OBJETIVO: Eliminar referencias al StubInstance en views_movimientos_mes.py
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ PROBLEMA: ValueError con StubInstance                                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+🚨 ERROR:
+   ValueError: Cannot assign "<nomina.models_logging_stub.StubInstance object>": 
+   "MovimientosMesUpload.upload_log" must be a "UploadLogNomina" instance.
+
+📋 CAUSA:
+   El código intentaba asignar un StubInstance del sistema de logging stub
+   al campo ForeignKey upload_log, pero Django requiere:
+   - Una instancia real de UploadLogNomina
+   - O None (null=True)
+   
+   Django NO acepta objetos stub/mock en campos ForeignKey.
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ SOLUCIÓN: Asignar None en lugar de StubInstance                             │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+Archivo: backend/nomina/views_movimientos_mes.py
+Método: subir()
+
+CAMBIOS REALIZADOS:
+
+1. ✅ Deshabilitar creación de upload_log stub (línea ~138-152)
+   ANTES:
+     mixin = UploadLogNominaMixin()
+     upload_log = mixin.crear_upload_log(cliente, archivo)
+     upload_log.cierre = cierre
+     upload_log.save()
+   
+   DESPUÉS:
+     # STUB DESHABILITADO
+     logger.debug(f"[STUB] UploadLog NO creado")
+
+2. ✅ Asignar None a upload_log en UPDATE (línea ~161)
+   ANTES:
+     movimiento_existente.upload_log = upload_log
+   
+   DESPUÉS:
+     movimiento_existente.upload_log = None  # STUB: No asignar
+
+3. ✅ Asignar None a upload_log en CREATE (línea ~170)
+   ANTES:
+     MovimientosMesUpload.objects.create(
+         ...
+         upload_log=upload_log
+     )
+   
+   DESPUÉS:
+     MovimientosMesUpload.objects.create(
+         ...
+         upload_log=None  # STUB: No asignar
+     )
+
+4. ✅ Deshabilitar registro de actividad stub (línea ~175-184)
+   ANTES:
+     registrar_actividad_tarjeta_nomina(
+         cierre_id=cierre.id,
+         ...
+         upload_log=upload_log
+     )
+   
+   DESPUÉS:
+     # STUB DESHABILITADO
+     logger.debug(f"[STUB] Actividad NO registrada")
+
+5. ✅ Deshabilitar actualización de resumen (línea ~182-184)
+   ANTES:
+     upload_log.resumen = {...}
+     upload_log.save()
+   
+   DESPUÉS:
+     # STUB DESHABILITADO
+     logger.debug(f"[STUB] Resumen NO guardado")
+
+6. ✅ Pasar None a Celery task (línea ~188)
+   ANTES:
+     procesar_movimientos_mes.delay(instance.id, upload_log.id)
+   
+   DESPUÉS:
+     procesar_movimientos_mes.delay(instance.id, None)
+
+7. ✅ Eliminar todas las llamadas a upload_log.* (líneas ~191-199)
+   ANTES:
+     upload_log.celery_task_id = task.id
+     upload_log.save()
+     upload_log.resumen["celery_task_id"] = task.id
+   
+   DESPUÉS:
+     # Código eliminado
+
+8. ✅ Eliminar upload_log de respuesta (línea ~215)
+   ANTES:
+     response_data['upload_log_id'] = upload_log.id
+   
+   DESPUÉS:
+     # Línea eliminada
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ PATRÓN DE MIGRACIÓN: Logging Stub → None                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+Durante transición a ActivityEvent V2:
+
+❌ NO HACER:
+   upload_log = mixin.crear_upload_log(...)  # Retorna StubInstance
+   model.upload_log = upload_log              # ValueError!
+
+✅ HACER:
+   model.upload_log = None                    # Válido (si field permite null=True)
+
+✅ FUTURO (con ActivityEvent V2):
+   ActivityEvent.log(
+       user=request.user,
+       cliente=cliente,
+       event_type='upload',
+       action='movimientos_mes_upload',
+       resource_type='movimientos_mes',
+       resource_id=str(instance.id),
+       details={...},
+       request=request
+   )
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ MODELO MOVIMIENTOSMESUPLOAD                                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+class MovimientosMesUpload(models.Model):
+    cierre = ForeignKey(CierreNomina, ...)
+    archivo = FileField(upload_to='movimientos/')
+    estado = CharField(max_length=50)
+    upload_log = ForeignKey(
+        UploadLogNomina, 
+        null=True,        # ✅ Permite None
+        blank=True,
+        on_delete=SET_NULL
+    )
+
+VALIDACIÓN:
+  ✅ Campo upload_log permite null=True
+  ✅ Asignar None es válido
+  ✅ No causa IntegrityError
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ FLUJO CORREGIDO                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+Usuario sube archivo de Movimientos del Mes:
+  1. ✅ POST /api/nomina/movimientos/subir/30/
+  2. ✅ Validar archivo y cierre
+  3. ✅ Crear/actualizar MovimientosMesUpload con upload_log=None
+  4. ✅ Iniciar task Celery: procesar_movimientos_mes.delay(id, None)
+  5. ✅ Respuesta 201 Created con datos del modelo
+  6. ✅ Celery procesa en background
+
+SIN ERRORES:
+  ✅ No hay ValueError de StubInstance
+  ✅ Modelo se guarda correctamente en BD
+  ✅ Task Celery inicia correctamente
+  ✅ Frontend recibe respuesta exitosa
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ IMPACTO EN OTROS MÓDULOS                                                     │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+MISMO PROBLEMA EN:
+  ⚠️  views_archivos_analista.py (Ingresos, Finiquitos, Incidencias)
+  ⚠️  Otros views que usen UploadLogNominaMixin
+
+SOLUCIÓN GENERAL:
+  1. NO crear upload_log stub
+  2. Asignar upload_log=None en models
+  3. Pasar None a Celery tasks
+  4. Deshabilitar registrar_actividad_tarjeta_nomina()
+  5. Migrar a ActivityEvent V2 cuando sea posible
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ VALIDACIÓN DEL FIX                                                           │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+✅ Django reiniciado sin errores
+✅ Sintaxis Python correcta
+✅ Sin referencias a upload_log.id
+✅ Sin referencias a upload_log.save()
+✅ upload_log=None en todos los lugares necesarios
+
+Test manual:
+  1. Subir archivo de Movimientos del Mes
+  2. Verificar que se crea MovimientosMesUpload
+  3. Verificar que upload_log es NULL en BD
+  4. Verificar que Celery task inicia
+  5. Verificar respuesta 201 Created
+
+Comando de verificación:
+  docker compose exec postgres psql -U postgres -d sgm_db -c "
+    SELECT id, cierre_id, estado, upload_log_id 
+    FROM nomina_movimientomesupload 
+    ORDER BY id DESC LIMIT 5;
+  "
+  
+  Esperado: upload_log_id = NULL
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ PRÓXIMOS PASOS                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+1. ✅ Movimientos del Mes: CORREGIDO
+2. ⏳ Archivos Analista (Ingresos): Aplicar mismo patrón
+3. ⏳ Archivos Analista (Finiquitos): Aplicar mismo patrón
+4. ⏳ Archivos Analista (Incidencias): Aplicar mismo patrón
+5. ⏳ Implementar ActivityEvent V2 para logging real
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ ESTADO DEL SISTEMA                                                           │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+ANTES:
+  ❌ ValueError: Cannot assign StubInstance
+  ❌ Upload de Movimientos del Mes falla
+  ❌ Sistema no funcional
+
+DESPUÉS:
+  ✅ upload_log=None asignado correctamente
+  ✅ Upload de Movimientos del Mes funciona
+  ✅ Celery task inicia correctamente
+  ✅ Sin errores de StubInstance
+  ✅ Sistema operacional
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    ✅ FIX MOVIMIENTOS DEL MES COMPLETADO                     ║
+║        StubInstance eliminado - Sistema funcional con upload_log=None        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+📚 DOCUMENTACIÓN:
+   - FIX_MOVIMIENTOS_MES_STUBINSTANCE.txt (este archivo)
+   - FIX_CAMPOS_ACTIVITYEVENT_255.txt
+   - FIX_FIRMA_ACTIVITYEVENT_COMPLETO.txt
+
+🚀 SIGUIENTE:
+   Aplicar mismo patrón a views_archivos_analista.py

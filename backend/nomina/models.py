@@ -1814,17 +1814,21 @@ class ActivityEvent(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, db_index=True)
     cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE, db_index=True)
     
+    # Relación con cierre (normalizado para queries eficientes)
+    cierre = models.ForeignKey('CierreNomina', on_delete=models.CASCADE, null=True, blank=True, db_index=True, 
+                                help_text="Cierre de nómina relacionado (normalizado para queries eficientes)")
+    
     # Contexto de la actividad
     event_type = models.CharField(max_length=50, db_index=True, help_text="Tipo de evento: upload, process, view, etc.")
     resource_type = models.CharField(max_length=50, db_index=True, help_text="Tipo de recurso: nomina, contabilidad, etc.")
-    resource_id = models.CharField(max_length=100, blank=True, help_text="ID del recurso específico")
+    resource_id = models.CharField(max_length=255, blank=True, help_text="ID del recurso específico (puede contener nombres de archivo largos)")
     
     # Detalles del evento
-    action = models.CharField(max_length=100, help_text="Acción específica realizada")
+    action = models.CharField(max_length=255, help_text="Acción específica realizada (aumentado para nombres largos)")
     details = models.JSONField(default=dict, blank=True, help_text="Detalles adicionales del evento")
     
     # Metadatos de sesión
-    session_id = models.CharField(max_length=100, blank=True, db_index=True, help_text="ID de sesión para agrupar eventos relacionados")
+    session_id = models.CharField(max_length=255, blank=True, db_index=True, help_text="ID de sesión para agrupar eventos relacionados (UUID largo)")
     ip_address = models.GenericIPAddressField(blank=True, null=True)
     user_agent = models.TextField(blank=True)
     
@@ -1834,6 +1838,7 @@ class ActivityEvent(models.Model):
             models.Index(fields=['timestamp']),
             models.Index(fields=['user', 'timestamp']),
             models.Index(fields=['cliente', 'timestamp']),
+            models.Index(fields=['cierre', 'timestamp']),  # Nuevo índice para queries por cierre
             models.Index(fields=['event_type', 'timestamp']),
             models.Index(fields=['resource_type', 'resource_id']),
             models.Index(fields=['session_id']),
@@ -1845,7 +1850,7 @@ class ActivityEvent(models.Model):
         return f"{self.event_type}.{self.action} - {user_display} @ {self.timestamp.strftime('%H:%M:%S')}"
     
     @staticmethod
-    def log(user, cliente, event_type, action, resource_type='general', resource_id='', details=None, session_id='', request=None):
+    def log(user, cliente, event_type, action, resource_type='general', resource_id='', details=None, session_id='', request=None, cierre=None):
         """
         Método estático para registrar eventos de actividad.
         
@@ -1858,6 +1863,8 @@ class ActivityEvent(models.Model):
             resource_id: ID específico del recurso
             details: Diccionario con detalles adicionales
             session_id: ID de sesión para agrupar eventos
+            request: HttpRequest object para extraer IP y user agent
+            cierre: CierreNomina relacionado (normalizado)
             request: Request HTTP para extraer IP y user agent
         
         Returns:
@@ -1881,6 +1888,7 @@ class ActivityEvent(models.Model):
         return ActivityEvent.objects.create(
             user=user,
             cliente=cliente,
+            cierre=cierre,  # Normalizado
             event_type=event_type,
             action=action,
             resource_type=resource_type,

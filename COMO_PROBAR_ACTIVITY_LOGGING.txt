@@ -1,0 +1,229 @@
+╔══════════════════════════════════════════════════════════════════╗
+║                                                                  ║
+║     🧪 CÓMO PROBAR ACTIVITY LOGGING V2 - PASO A PASO            ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
+
+┌────────────────────────────────────────────────────────────────┐
+│ ✅ SISTEMA FUNCIONANDO (Error corregido: user.asignaciones)   │
+└────────────────────────────────────────────────────────────────┘
+
+
+🎯 OBJETIVO: Verificar que el sistema registra automáticamente las
+            interacciones del usuario con las tarjetas de nómina.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 PASO 1: ABRIR LA APLICACIÓN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Abrir navegador en: http://172.17.11.18:5174
+
+2. Hacer login con un usuario válido
+
+3. Navegar a: Menu → Nómina → Clientes
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 PASO 2: ABRIR UN CIERRE DE NÓMINA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Seleccionar cualquier cliente de la lista
+
+2. Click en un cierre existente (o crear uno nuevo)
+
+3. Esperar a que cargue la página del cierre
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 PASO 3: INTERACTUAR CON UNA TARJETA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🟢 ACCIÓN 1: Abrir tarjeta
+   • En "Archivos del Analista" o "Archivos Talana"
+   • Visualizar la tarjeta de Ingresos/Finiquitos/Ausentismos/Movimientos
+   
+   ✅ SE REGISTRA: session_started
+
+�� ACCIÓN 2: Abrir modal de subida
+   • Click en botón "Subir Archivo"
+   • Se abre el modal
+   
+   ✅ SE REGISTRA: modal_opened
+
+🟡 ACCIÓN 3: Seleccionar archivo
+   • Click en "Seleccionar Archivo"
+   • Elegir un archivo Excel desde tu computadora
+   
+   ✅ SE REGISTRA: file_selected (con nombre y tamaño)
+
+🟠 ACCIÓN 4: Subir archivo
+   • Click en botón "Subir"
+   • Esperar respuesta del servidor
+   
+   ✅ SE REGISTRA: file_upload
+
+🟣 ACCIÓN 5: Monitoreo automático
+   • Sistema inicia polling automáticamente
+   
+   ✅ SE REGISTRA: polling_started
+
+⚪ ACCIÓN 6: Procesamiento completo
+   • Archivo termina de procesarse
+   
+   ✅ SE REGISTRA: polling_stopped
+
+🔵 ACCIÓN 7: Cerrar modal
+   • Click en X o fuera del modal
+   
+   ✅ SE REGISTRA: modal_closed
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 PASO 4: VERIFICAR EN CONSOLA DEL NAVEGADOR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Presionar F12 para abrir DevTools
+
+2. Ir a la pestaña "Console"
+
+3. Buscar mensajes con prefijo [ActivityV2]
+
+LOGS ESPERADOS:
+   📤 [ActivityV2] {cliente_id: 1, action: "session_started", ...}
+   ✅ [ActivityV2] OK
+   
+   📤 [ActivityV2] {cliente_id: 1, action: "modal_opened", ...}
+   ✅ [ActivityV2] OK
+   
+   ... etc
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 PASO 5: VERIFICAR EN BASE DE DATOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+En el servidor, ejecutar:
+
+docker compose exec django python manage.py shell -c "
+from nomina.models import ActivityEvent
+print('\n📊 Últimos 10 eventos registrados:\n')
+for e in ActivityEvent.objects.all().order_by('-timestamp')[:10]:
+    print(f'{e.timestamp.strftime(\"%H:%M:%S\")} | {e.action:25} | {e.resource_type}')
+"
+
+SALIDA ESPERADA:
+   📊 Últimos 10 eventos registrados:
+   
+   10:35:28 | modal_closed              | ingresos
+   10:35:27 | polling_stopped           | cierre
+   10:35:15 | polling_started           | cierre
+   10:35:14 | file_upload               | ingresos
+   10:35:10 | file_selected             | ingresos
+   10:35:05 | modal_opened              | ingresos
+   10:35:00 | session_started           | cierre
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 PASO 6: VERIFICAR EVENTOS POR USUARIO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+docker compose exec django python manage.py shell -c "
+from nomina.models import ActivityEvent
+from django.db.models import Count
+
+# Contar eventos por acción
+print('\n📈 Eventos por tipo de acción:\n')
+stats = ActivityEvent.objects.values('action').annotate(
+    total=Count('action')
+).order_by('-total')
+
+for stat in stats:
+    print(f'{stat[\"action\"]:25} : {stat[\"total\"]} eventos')
+"
+
+SALIDA ESPERADA:
+   📈 Eventos por tipo de acción:
+   
+   session_started           : 5 eventos
+   modal_opened              : 4 eventos
+   file_selected             : 3 eventos
+   file_upload               : 3 eventos
+   modal_closed              : 4 eventos
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🐛 TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+❌ NO VEO LOGS EN CONSOLA DEL NAVEGADOR
+   
+   Verificar:
+   1. F12 está abierto en pestaña "Console"
+   2. No hay filtros activos (debe decir "All levels")
+   3. El sitio no está en producción (debug=true solo en dev)
+
+
+❌ LOGS MUESTRAN ERROR 500
+   
+   Ver logs de Django:
+   docker compose logs django --tail=50 | grep -i error
+   
+   Error común (YA CORREGIDO):
+   • "Usuario object has no attribute 'clientes'"
+     → Solución: Ya corregido en views_activity_v2.py
+
+
+❌ NO VEO EVENTOS EN LA BD
+   
+   Verificar que el componente recibe clienteId:
+   
+   En consola del navegador:
+   1. Ir a pestaña "Components" (React DevTools)
+   2. Buscar IngresosCard/FiniquitosCard/etc
+   3. Ver props → debe tener clienteId y cierreId
+
+
+❌ LOGGER DICE "disabled: true"
+   
+   Verificar en src/utils/activityLogger_v2.js:
+   
+   const CONFIG = {
+     enabled: true,  // ← Debe ser TRUE
+     debug: true,
+   };
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ CHECKLIST DE VERIFICACIÓN RÁPIDA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+□ Frontend compila sin errores (npm run dev)
+□ Django está corriendo (docker compose ps)
+□ Logger V2 está enabled=true
+□ Componentes tienen clienteId prop
+□ Usuario puede ver tarjetas de nómina
+□ Consola del navegador muestra logs [ActivityV2]
+□ BD tiene eventos (ActivityEvent.objects.count() > 0)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📚 DOCUMENTACIÓN ADICIONAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• docs/activity-logging-v2-GUIA-INTERACCIONES.md
+  → Explicación detallada de cada evento
+
+• docs/activity-logging-v2-FINAL.md
+  → Documentación completa del sistema
+
+• ACTIVITY_LOGGING_V2_RESUMEN_VISUAL.txt
+  → Diagrama de arquitectura
+
+
+╔══════════════════════════════════════════════════════════════════╗
+║                                                                  ║
+║  🎉 Si ves eventos en la BD, ¡el sistema está funcionando! 🎉  ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
+

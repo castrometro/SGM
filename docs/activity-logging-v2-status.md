@@ -17,7 +17,10 @@ Reemplazar el sistema complejo y fragmentado de logging V1 por un sistema unific
 
 ---
 
-## ✅ COMPLETADO
+## ✅ COMPLETADO - Sistema Activity Logging V2
+
+### ⚠️ **NOTA IMPORTANTE:**
+Los componentes frontend están listos pero el logging V1 está **completamente deshabilitado** (código comentado) para evitar errores. El sistema V2 está disponible pero requiere agregar `clienteId` como prop a los componentes para activarlo.
 
 ### 1. **Análisis y Limpieza del Sistema V1** ✅
 
@@ -265,6 +268,54 @@ print(f'Eliminados: {deleted} eventos')"
 
 ---
 
+## 🎨 FRONTEND V2 - En Progreso
+
+### **activityLogger_v2.js - ACTUALIZADO** ✅
+
+El logger V2 está listo y actualizado con la API correcta:
+
+```javascript
+// Importar
+import { createActivityLogger } from '../../utils/activityLogger_v2';
+
+// Crear instancia (en componente)
+const logger = createActivityLogger(cliente.id, cierre.id);
+
+// Usar
+await logger.logModalOpen('ingresos', { filename: 'test.xlsx' });
+await logger.logFileUpload('ingresos', 'archivo.xlsx');
+await logger.logSessionStart();
+```
+
+### **Integración en Componentes**
+
+Los componentes actualmente usan el stub. Para migrar:
+
+1. **Agregar prop `clienteId`** a los componentes de tarjetas
+2. **Reemplazar import** del stub por V2:
+   ```javascript
+   // ANTES (stub):
+   // import { createActivityLogger } from "../../utils/activityLogger";
+   
+   // DESPUÉS (V2):
+   import { createActivityLogger } from "../../utils/activityLogger_v2";
+   ```
+3. **Actualizar creación** del logger:
+   ```javascript
+   // Ahora requiere clienteId primero
+   activityLogger.current = createActivityLogger(cliente.id, cierreId);
+   ```
+
+### **Estado de Componentes:**
+
+- `IngresosCard.jsx` - ✅ Imports comentados, código V1 deshabilitado
+- `FiniquitosCard.jsx` - ✅ Imports comentados, código V1 deshabilitado
+- `AusentismosCard.jsx` - ✅ Imports comentados, código V1 deshabilitado
+- `MovimientosMesCard.jsx` - ✅ Imports comentados, código V1 deshabilitado
+
+**Nota:** Todos los componentes tienen el código de logging comentado pero funcional. 
+No generan errores porque los checks son `if (activityLogger.current)` que evalúa a `null`.
+
 **Creado por:** GitHub Copilot  
-**Revisión siguiente:** Al completar middleware V2  
+**Última actualización:** 16 de octubre de 2025 - Middleware y APIs V2 completados  
 **Contacto:** Continuar en el chat para siguientes pasos

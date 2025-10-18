@@ -6,45 +6,47 @@ para evitar errores mientras migramos al V2.
 """
 
 import logging
-from django.db import models
 
 logger = logging.getLogger(__name__)
+
+
+class StubInstance:
+    """Instancia stub que simula un objeto de modelo"""
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+        self.id = None  # Simular que no tiene ID
+    
+    def save(self):
+        logger.debug("STUB: save() no-op")
+        pass
+
+
+class StubManager:
+    """Manager stub que simula Django ORM"""
+    
+    def create(self, **kwargs):
+        logger.debug(f"STUB: UploadLogNomina/TarjetaActivityLogNomina.create(**kwargs)")
+        return StubInstance(**kwargs)
+    
+    def get(self, **kwargs):
+        logger.debug("STUB: get() - returning None")
+        return None
+    
+    def filter(self, **kwargs):
+        logger.debug("STUB: filter() - returning empty list")
+        return []
+
 
 # Stub models que no hacen nada
 class UploadLogNomina:
     """STUB: Modelo para logging de uploads"""
-    
-    @classmethod
-    def objects(cls):
-        class StubManager:
-            def create(cls, **kwargs):
-                logger.debug("STUB: UploadLogNomina.create()")
-                return None
-            def get(cls, **kwargs):
-                logger.debug("STUB: UploadLogNomina.get()")
-                return None
-            def filter(cls, **kwargs):
-                logger.debug("STUB: UploadLogNomina.filter()")
-                return []
-        return StubManager()
+    objects = StubManager()
 
 
 class TarjetaActivityLogNomina:
     """STUB: Modelo para logging de actividades"""
-    
-    @classmethod  
-    def objects(cls):
-        class StubManager:
-            def create(cls, **kwargs):
-                logger.debug("STUB: TarjetaActivityLogNomina.create()")
-                return None
-            def get(cls, **kwargs):
-                logger.debug("STUB: TarjetaActivityLogNomina.get()")
-                return None
-            def filter(cls, **kwargs):
-                logger.debug("STUB: TarjetaActivityLogNomina.filter()")
-                return []
-        return StubManager()
+    objects = StubManager()
 
 
 # Stub functions

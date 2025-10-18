@@ -277,6 +277,10 @@ class TarjetaActivityLogNomina(models.Model):
         ("movimientos_mes", "Tarjeta: Movimientos del Mes"),
         ("novedades", "Tarjeta: Novedades"),
         ("archivos_analista", "Tarjeta: Archivos del Analista"),
+        # ✅ Tarjetas específicas por tipo de archivo analista
+        ("analista_finiquitos", "Tarjeta: Finiquitos"),
+        ("analista_incidencias", "Tarjeta: Incidencias/Ausentismos"),
+        ("analista_ingresos", "Tarjeta: Nuevos Ingresos"),
         ("incidencias", "Tarjeta: Incidencias"),
         ("revision", "Tarjeta: Revisión"),
     ]

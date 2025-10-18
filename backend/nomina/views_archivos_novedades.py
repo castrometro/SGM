@@ -17,7 +17,8 @@ from .models import (
 from .serializers import ArchivoNovedadesUploadSerializer
 from .utils.clientes import get_client_ip
 from .models_logging import registrar_actividad_tarjeta_nomina
-from .tasks import procesar_archivo_novedades
+# ✅ Importar desde tasks_refactored
+from .tasks_refactored.novedades import procesar_archivo_novedades_con_logging
 
 logger = logging.getLogger(__name__)
 
@@ -158,8 +159,8 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
                 
                 logger.info(f"Archivo de novedades {archivo_novedades.id} limpiado y actualizado para resubida")
         
-        # Disparar tarea de procesamiento con Celery
-        procesar_archivo_novedades.delay(archivo_novedades.id)
+        # ✅ Disparar tarea de procesamiento con logging dual y usuario_id
+        procesar_archivo_novedades_con_logging(archivo_novedades.id, request.user.id)
         
         return Response({
             "id": archivo_novedades.id,
@@ -185,8 +186,8 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
             archivo.header_json = None
             archivo.save()
             
-            # Iniciar procesamiento asíncrono
-            procesar_archivo_novedades.delay(archivo.id)
+            # ✅ Iniciar procesamiento asíncrono con logging dual y usuario_id
+            procesar_archivo_novedades_con_logging(archivo.id, request.user.id)
             
             return Response({
                 "mensaje": "Reprocesamiento iniciado",
@@ -370,7 +371,8 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def procesar_final(self, request, pk=None):
         """Procesa finalmente un archivo de novedades (actualiza empleados y guarda registros)"""
-        from nomina.tasks import actualizar_empleados_desde_novedades_task, guardar_registros_novedades_task
+        # ✅ Importar desde tasks_refactored
+        from .tasks_refactored.novedades import actualizar_empleados_desde_novedades_task, guardar_registros_novedades_task
         from celery import chain
         
         archivo = self.get_object()
@@ -381,9 +383,9 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
             }, status=400)
         
         try:
-            # Crear cadena de tareas finales
+            # ✅ Crear cadena con usuario_id propagado
             workflow = chain(
-                actualizar_empleados_desde_novedades_task.s({"archivo_id": archivo.id}),
+                actualizar_empleados_desde_novedades_task.s({"archivo_id": archivo.id, "usuario_id": request.user.id}),
                 guardar_registros_novedades_task.s()
             )
             
@@ -401,8 +403,9 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def procesar_final_optimizado(self, request, pk=None):
         """🚀 Versión optimizada con Celery Chord para procesamiento paralelo"""
-        from nomina.tasks import actualizar_empleados_desde_novedades_task_optimizado, guardar_registros_novedades_task_optimizado
-        from nomina.models_logging import registrar_actividad_tarjeta_nomina
+        # ✅ Importar desde tasks_refactored
+        from .tasks_refactored.novedades import actualizar_empleados_desde_novedades_task_optimizado, guardar_registros_novedades_task_optimizado
+        from .models_logging import registrar_actividad_tarjeta_nomina
         from celery import chain
         
         archivo = self.get_object()
@@ -413,16 +416,16 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
             }, status=400)
         
         try:
-            # Crear chain optimizado con chord interno
+            # ✅ Crear chain optimizado con usuario_id propagado
             workflow = chain(
-                actualizar_empleados_desde_novedades_task_optimizado.s({"archivo_id": archivo.id}),
+                actualizar_empleados_desde_novedades_task_optimizado.s({"archivo_id": archivo.id, "usuario_id": request.user.id}),
                 guardar_registros_novedades_task_optimizado.s()
             )
             
             # Ejecutar con tracking
             result = workflow.apply_async()
             
-            # Registrar inicio optimizado
+            # ✅ Registrar inicio optimizado (este log es adicional al dual logging interno de las tareas)
             try:
                 headers_clasificados = len(archivo.header_json.get('headers_clasificados', {})) if archivo.header_json else 0
                 
@@ -431,6 +434,7 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
                     tarjeta="novedades", 
                     accion="procesar_final_optimizado",
                     descripcion="Iniciando procesamiento paralelo de novedades con chunks",
+                    usuario=request.user,
                     detalles={
                         "archivo_id": archivo.id,
                         "chain_id": str(result),
@@ -438,7 +442,7 @@ class ArchivoNovedadesUploadViewSet(viewsets.ModelViewSet):
                         "headers_clasificados": headers_clasificados,
                         "archivo_nombre": archivo.archivo.name if archivo.archivo else "N/A"
                     },
-                    resultado="procesando"
+                    resultado="info"
                 )
             except Exception as e:
                 # No fallar si no se puede registrar actividad

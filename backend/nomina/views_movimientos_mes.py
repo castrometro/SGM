@@ -30,7 +30,8 @@ from .serializers import (
     MovimientoVariacionContratoSerializer,
 )
 
-from .tasks import procesar_movimientos_mes
+# Importar tarea refactorizada desde tasks_refactored/
+from .tasks_refactored.movimientos_mes import procesar_movimientos_mes_con_logging
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
         from .utils.clientes import get_client_ip
         from .utils.uploads import guardar_temporal
         from .models_logging import registrar_actividad_tarjeta_nomina
+        from .models import ActivityEvent
         
         # 1. OBTENER DATOS DEL REQUEST
         archivo = request.FILES.get('archivo')
@@ -95,11 +97,45 @@ class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         
+        # LOG: Upload iniciado
+        ActivityEvent.log(
+            user=request.user,
+            cliente=cliente,
+            cierre=cierre,  # Normalizado
+            event_type='upload',
+            action='upload_iniciado',
+            resource_type='movimientos_mes',
+            resource_id=str(cierre.id),
+            details={
+                                'archivo_nombre': archivo.name,
+                'archivo_size': archivo.size,
+                'periodo': str(cierre.periodo)
+            },
+            request=request
+        )
+        
         # 3. VALIDAR ARCHIVO
         validador = ValidacionArchivoCRUDMixin()
         try:
             validador.validar_archivo(archivo)
         except ValueError as e:
+            # LOG: Validación fallida
+            ActivityEvent.log(
+                user=request.user,
+                cliente=cliente,
+            cierre=cierre,  # Normalizado
+                event_type='upload',
+                action='validacion_fallida',
+                resource_type='movimientos_mes',
+                resource_id=str(cierre.id),
+                details={
+                                        'archivo_nombre': archivo.name,
+                    'error': str(e),
+                    'tipo_error': 'validacion_archivo'
+                },
+                request=request
+            )
+            
             return Response(
                 {"error": f"Archivo inválido: {str(e)}"}, 
                 status=status.HTTP_400_BAD_REQUEST
@@ -117,6 +153,24 @@ class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
             if not resultado_validacion['es_valido']:
                 errores = resultado_validacion.get('errores', [])
                 mensaje_error = '\n'.join(errores) if errores else "Nombre de archivo inválido"
+                
+                # LOG: Validación de nombre fallida
+                ActivityEvent.log(
+                    user=request.user,
+                    cliente=cliente,
+            cierre=cierre,  # Normalizado
+                    event_type='upload',
+                    action='validacion_nombre_fallida',
+                    resource_type='movimientos_mes',
+                    resource_id=str(cierre.id),
+                    details={
+                                                'archivo_nombre': archivo.name,
+                        'errores': errores,
+                        'tipo_error': 'validacion_nombre'
+                    },
+                    request=request
+                )
+                
                 return Response(
                     {"error": mensaje_error}, 
                     status=status.HTTP_400_BAD_REQUEST
@@ -129,27 +183,38 @@ class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
                 
         except Exception as e:
             logger.error(f"Error validando nombre de archivo {archivo.name}: {e}")
+            
+            # LOG: Error validando nombre
+            ActivityEvent.log(
+                user=request.user,
+                cliente=cliente,
+            cierre=cierre,  # Normalizado
+                event_type='error',
+                action='error_validacion_nombre',
+                resource_type='movimientos_mes',
+                resource_id=str(cierre.id),
+                details={
+                                        'archivo_nombre': archivo.name,
+                    'error': str(e),
+                    'tipo_error': 'exception_validacion'
+                },
+                request=request
+            )
+            
             return Response(
                 {"error": "Error interno validando el nombre del archivo"}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
         # 4. CREAR UPLOAD LOG
-        mixin = UploadLogNominaMixin()
-        mixin.tipo_upload = "movimientos_mes"
-        mixin.usuario = request.user
-        mixin.ip_usuario = get_client_ip(request)
-        
-        upload_log = mixin.crear_upload_log(cliente, archivo)
-        logger.info(f"Upload log creado para MovimientosMes con ID: {upload_log.id}")
+        # 4.5. CREAR UPLOAD LOG - STUB DESHABILITADO
+        # TODO: Migrar a ActivityEvent V2
+        # mixin = UploadLogNominaMixin()
+        # upload_log = mixin.crear_upload_log(cliente, archivo)
+        logger.debug(f"[STUB] UploadLog NO creado para MovimientosMes")
         
         # 5. GUARDAR ARCHIVO TEMPORAL - ELIMINADO PARA EVITAR DUPLICACIÓN
         # TODO: Refactorizar para usar solo ubicación definitiva hasta consolidación final
-        # nombre_temporal = f"movimientos_mes_cierre_{cierre_id}_{upload_log.id}.xlsx"
-        # ruta_temporal = guardar_temporal(nombre_temporal, archivo)
-        # upload_log.ruta_archivo = ruta_temporal
-        upload_log.cierre = cierre
-        upload_log.save()
         
         # 6. CREAR/ACTUALIZAR REGISTRO DE MOVIMIENTOS
         movimiento_existente = MovimientosMesUpload.objects.filter(cierre=cierre).first()
@@ -158,68 +223,94 @@ class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
             # Actualizar existente - Las señales se encargan automáticamente de eliminar archivos anteriores
             movimiento_existente.archivo = archivo
             movimiento_existente.estado = "pendiente"
-            movimiento_existente.upload_log = upload_log
+            movimiento_existente.upload_log = None  # STUB: No asignar durante transición
             movimiento_existente.save()
             instance = movimiento_existente
+            accion_db = 'actualizado'
         else:
             # Crear nuevo
             instance = MovimientosMesUpload.objects.create(
                 cierre=cierre,
                 archivo=archivo,
                 estado="pendiente",
-                upload_log=upload_log
+                upload_log=None  # STUB: No asignar durante transición
             )
+            accion_db = 'creado'
         
-        logger.info(f"Procesamiento iniciado para MovimientosMes {instance.id} con UploadLog {upload_log.id}")
+        logger.info(f"Procesamiento iniciado para MovimientosMes {instance.id}")
         
-        # 7. REGISTRAR ACTIVIDAD
-        registrar_actividad_tarjeta_nomina(
-            cierre_id=cierre.id,
-            tarjeta="movimientos_mes",
-            accion="upload_excel",
-            descripcion=f"Archivo {archivo.name} subido para procesamiento",
-            usuario=request.user,
-            detalles={
-                "nombre_archivo": archivo.name,
-                "tamaño_archivo": archivo.size,
-                "upload_log_id": upload_log.id,
-                "movimiento_id": instance.id
+        # LOG: Archivo validado y guardado
+        ActivityEvent.log(
+            user=request.user,
+            cliente=cliente,
+            cierre=cierre,  # Normalizado
+            event_type='upload',
+            action='archivo_validado',
+            resource_type='movimientos_mes',
+            resource_id=str(instance.id),
+            details={
+                                'movimiento_id': instance.id,
+                'archivo_nombre': archivo.name,
+                'archivo_size': archivo.size,
+                'accion_db': accion_db,
+                'periodo': str(cierre.periodo)
             },
-            ip_address=get_client_ip(request),
-            upload_log=upload_log
+            request=request
         )
         
-        # 8. ACTUALIZAR RESUMEN DEL UPLOAD LOG
-        upload_log.resumen = {
-            "movimiento_id": instance.id,
-            "cierre_id": cierre_id,
-            "cliente_id": cliente.id,
-            "archivo_original": archivo.name
-        }
-        upload_log.save(update_fields=['resumen'])
+        # 7. REGISTRAR ACTIVIDAD - STUB DESHABILITADO
+        # TODO: Migrar a ActivityEvent V2
+        # registrar_actividad_tarjeta_nomina(...)
+        logger.debug(f"[STUB] Actividad NO registrada para MovimientosMes {instance.id}")
+        
+        # 8. ACTUALIZAR RESUMEN DEL UPLOAD LOG - STUB DESHABILITADO
+        # TODO: Migrar a ActivityEvent V2
+        # upload_log.resumen = {...}
+        # upload_log.save()
+        logger.debug(f"[STUB] Resumen NO guardado para MovimientosMes {instance.id}")
         
         # 9. INICIAR PROCESAMIENTO CON CELERY
         try:
-            task = procesar_movimientos_mes.delay(instance.id, upload_log.id)
-            
-            # Verificar si el modelo tiene el campo celery_task_id antes de asignarlo
-            if hasattr(upload_log, 'celery_task_id'):
-                upload_log.celery_task_id = task.id
-                upload_log.save(update_fields=['celery_task_id'])
-            else:
-                # Si no tiene el campo, guardar en resumen
-                if upload_log.resumen is None:
-                    upload_log.resumen = {}
-                upload_log.resumen["celery_task_id"] = task.id
-                upload_log.save(update_fields=['resumen'])
-            
+            # ✅ Usar tarea refactorizada con logging dual (solo 2 parámetros)
+            task = procesar_movimientos_mes_con_logging.delay(instance.id, request.user.id)
             logger.info(f"Tarea Celery iniciada: {task.id} para MovimientosMes {instance.id}")
+            
+            # LOG: Procesamiento iniciado en Celery
+            ActivityEvent.log(
+                user=request.user,
+                cliente=cliente,
+            cierre=cierre,  # Normalizado
+                event_type='process',
+                action='procesamiento_iniciado',
+                resource_type='movimientos_mes',
+                resource_id=str(instance.id),
+                details={
+                                        'movimiento_id': instance.id,
+                    'celery_task_id': task.id,
+                    'archivo_nombre': archivo.name
+                },
+                request=request
+            )
             
         except Exception as e:
             logger.error(f"Error iniciando tarea Celery para MovimientosMes {instance.id}: {e}")
-            upload_log.estado = "error"
-            upload_log.errores = f"Error iniciando procesamiento: {str(e)}"
-            upload_log.save()
+            
+            # LOG: Error iniciando procesamiento
+            ActivityEvent.log(
+                user=request.user,
+                cliente=cliente,
+            cierre=cierre,  # Normalizado
+                event_type='error',
+                action='procesamiento_error_inicio',
+                resource_type='movimientos_mes',
+                resource_id=str(instance.id),
+                details={
+                                        'movimiento_id': instance.id,
+                    'error': str(e),
+                    'tipo_error': 'celery_task_error'
+                },
+                request=request
+            )
             
             return Response(
                 {"error": "Error iniciando el procesamiento"}, 
@@ -228,10 +319,7 @@ class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
         
         # 10. RESPUESTA EXITOSA
         serializer = MovimientosMesUploadSerializer(instance)
-        response_data = serializer.data
-        response_data['upload_log_id'] = upload_log.id
-        
-        return Response(response_data, status=status.HTTP_201_CREATED)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     def perform_destroy(self, instance):
         """
@@ -239,9 +327,29 @@ class MovimientosMesUploadViewSet(viewsets.ModelViewSet):
         """
         from .models_logging import registrar_actividad_tarjeta_nomina
         from .utils.clientes import get_client_ip
+        from .models import ActivityEvent
         
         logger = logging.getLogger(__name__)
         cierre = instance.cierre
+        cliente = cierre.cliente
+        
+        # LOG: Archivo eliminado
+        ActivityEvent.log(
+            user=self.request.user,
+            cliente=cliente,
+            cierre=instance.cierre,  # Normalizado
+            event_type='delete',
+            action='archivo_eliminado',
+            resource_type='movimientos_mes',
+            resource_id=str(instance.id),
+            details={
+                                'movimiento_id': instance.id,
+                'archivo_nombre': instance.archivo.name if instance.archivo else "N/A",
+                'estado_anterior': instance.estado,
+                'periodo': str(cierre.periodo)
+            },
+            request=self.request
+        )
         
         # Registrar actividad antes de eliminar
         registrar_actividad_tarjeta_nomina(

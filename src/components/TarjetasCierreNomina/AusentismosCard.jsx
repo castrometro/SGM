@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Download, Loader2, CheckCircle2 } from "lucide-react";
 import { descargarPlantillaAusentismos } from "../../api/nomina";
 import EstadoBadge from "../EstadoBadge";
-// TODO: ActivityLogger V2 - import { createActivityLogger } from "../../utils/activityLogger";
+import { createActivityLogger } from "../../utils/activityLogger_v2";
 
 const AusentismosCard = ({
   estado,
@@ -13,6 +13,7 @@ const AusentismosCard = ({
   subiendo = false,
   disabled = false,
   cierreId,
+  clienteId,
   deberiaDetenerPolling = false,
 }) => {
   const fileInputRef = useRef();
@@ -20,16 +21,16 @@ const AusentismosCard = ({
   const [error, setError] = useState("");
   const [eliminando, setEliminando] = useState(false);
   
-  // Activity Logger
+  // Activity Logger V2
   const activityLogger = useRef(null);
   
-  // Inicializar logger cuando tengamos cierreId
+  // Inicializar logger cuando tengamos clienteId y cierreId
   useEffect(() => {
-    if (cierreId && !activityLogger.current) {
-      activityLogger.current = createActivityLogger(cierreId, 'ausentismos');
+    if (cierreId && clienteId && !activityLogger.current) {
+      activityLogger.current = createActivityLogger(clienteId, cierreId);
       activityLogger.current.logSessionStart();
     }
-  }, [cierreId]);
+  }, [cierreId, clienteId]);
 
   // Variables de estado unificadas
   const isProcesando = estado === "en_proceso";

@@ -14,8 +14,9 @@ from .serializers import ArchivoAnalistaUploadSerializer
 from .utils.mixins_stub import UploadLogNominaMixin, ValidacionArchivoCRUDMixin
 from .utils.clientes import get_client_ip
 from .utils.uploads import guardar_temporal
-from .models_logging_stub import registrar_actividad_tarjeta_nomina
-from .tasks import procesar_archivo_analista
+from .models_logging import registrar_actividad_tarjeta_nomina  # ✅ Usando función real, no stub
+# Importar tarea refactorizada desde tasks_refactored/
+from .tasks_refactored.archivos_analista import procesar_archivo_analista_con_logging
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +99,8 @@ class ArchivoAnalistaUploadViewSet(viewsets.ModelViewSet):
             estado='pendiente'
         )
         
-        # Disparar tarea de procesamiento con Celery
-        procesar_archivo_analista.delay(archivo_analista.id)
+        # ✅ Disparar tarea refactorizada con usuario_id
+        procesar_archivo_analista_con_logging.delay(archivo_analista.id, request.user.id)
         
         return Response({
             "id": archivo_analista.id,
@@ -119,8 +120,8 @@ class ArchivoAnalistaUploadViewSet(viewsets.ModelViewSet):
         archivo.estado = 'pendiente'
         archivo.save()
         
-        # Disparar tarea de procesamiento
-        procesar_archivo_analista.delay(archivo.id)
+        # ✅ Disparar tarea refactorizada con usuario_id
+        procesar_archivo_analista_con_logging.delay(archivo.id, request.user.id)
         
         return Response({
             "mensaje": "Archivo enviado a reprocesamiento",
@@ -135,10 +136,13 @@ class ArchivoAnalistaUploadViewSet(viewsets.ModelViewSet):
         cierre = instance.cierre
         tipo = instance.tipo_archivo
         
+        # ✅ Registrar actividad con tarjeta específica (abreviado para DB limit de 25 chars)
+        tarjeta_especifica = f"analista_{tipo}" if tipo else "archivos_analista"
+        
         # Registrar actividad antes de eliminar
         registrar_actividad_tarjeta_nomina(
             cierre_id=cierre.id,
-            tarjeta="archivos_analista",
+            tarjeta=tarjeta_especifica,  # ✅ 'analista_finiquitos' / 'analista_incidencias' / 'analista_ingresos'
             accion="delete_archivo",
             descripcion=f"Archivo del analista ({tipo}) eliminado para resubida",
             usuario=self.request.user,
@@ -252,9 +256,10 @@ def cargar_archivo_analista_con_logging(request):
     
     # 7. 🔗 INICIAR PROCESAMIENTO
     try:
-        result = procesar_archivo_analista.delay(archivo_id, upload_log.id)
+        # ✅ Usar tarea refactorizada (solo 2 parámetros, sin upload_log obsoleto)
+        result = procesar_archivo_analista_con_logging.delay(archivo_id, request.user.id)
         
-        logger.info(f"Procesamiento de archivo analista iniciado para cierre {cierre_id}, upload_log {upload_log.id}")
+        logger.info(f"Procesamiento de archivo analista iniciado para cierre {cierre_id}, usuario {request.user.correo_bdo}")
         
     except Exception as e:
         logger.error(f"Error al iniciar procesamiento de archivo analista: {str(e)}")

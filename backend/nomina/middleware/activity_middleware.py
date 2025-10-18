@@ -7,7 +7,7 @@ Intercepta requests específicos y registra automáticamente
 import json
 import time
 from django.utils.deprecation import MiddlewareMixin
-from ..models_activity_v2 import log_user_activity
+from nomina.models import ActivityEvent
 
 
 class ActivityCaptureMiddleware(MiddlewareMixin):
@@ -108,15 +108,23 @@ class ActivityCaptureMiddleware(MiddlewareMixin):
         if hasattr(request, '_activity_start_time'):
             datos['duration_ms'] = int((time.time() - request._activity_start_time) * 1000)
         
-        # Registrar la actividad
-        log_user_activity(
-            request=request,
-            cierre_id=cierre_id,
-            modulo=modulo,
-            seccion=seccion,
-            evento=evento,
-            datos=datos
-        )
+        # Registrar la actividad usando ActivityEvent V2
+        try:
+            ActivityEvent.log(
+                user=request.user,
+                cliente=getattr(request, 'cliente', None) or self._extract_cliente_from_request(request),
+                event_type=modulo,
+                action=evento,
+                resource_type=seccion,
+                resource_id=str(cierre_id) if cierre_id else '',
+                details=datos,
+                request=request
+            )
+        except Exception as e:
+            # No queremos que falle el request si el logging falla
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error logging activity: {e}")
         
         return response
     
@@ -200,6 +208,50 @@ class ActivityCaptureMiddleware(MiddlewareMixin):
         except (json.JSONDecodeError, KeyError):
             pass
         return state_info
+    
+    def _extract_cliente_from_request(self, request):
+        """Intenta extraer el cliente del request"""
+        from api.models import Cliente
+        
+        # Intentar obtener cliente_id de diferentes lugares
+        cliente_id = None
+        
+        # 1. Query params
+        cliente_id = request.GET.get('cliente_id')
+        
+        # 2. POST data
+        if not cliente_id and request.method == 'POST':
+            try:
+                if hasattr(request, 'data'):
+                    cliente_id = request.data.get('cliente_id')
+                elif request.POST:
+                    cliente_id = request.POST.get('cliente_id')
+            except:
+                pass
+        
+        # 3. Si hay cierre_id, sacar cliente de ahí
+        if not cliente_id:
+            cierre_id = self._extract_cierre_id(request)
+            if cierre_id:
+                try:
+                    from nomina.models import CierreNomina
+                    cierre = CierreNomina.objects.select_related('cliente').get(id=cierre_id)
+                    return cierre.cliente
+                except:
+                    pass
+        
+        # Intentar obtener el cliente
+        if cliente_id:
+            try:
+                return Cliente.objects.get(id=cliente_id)
+            except:
+                pass
+        
+        # Fallback: primer cliente del usuario (para testing)
+        try:
+            return request.user.clientes.first()
+        except:
+            return None
 
 
 class ActivityToggleMixin:

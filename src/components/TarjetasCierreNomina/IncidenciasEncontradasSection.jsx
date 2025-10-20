@@ -12,7 +12,7 @@ import {
   finalizarCierre,
   consultarEstadoTarea,
   limpiarIncidenciasCierre,
-  generarIncidenciasTotalesVariacion,
+  generarIncidenciasCierre,  // ✅ Cambiado: Usa endpoint refactorizado /incidencias-v2/
   obtenerEstadoCacheCierre,
   obtenerCierreMensual
 } from "../../api/nomina";
@@ -333,42 +333,31 @@ const IncidenciasEncontradasSection = ({
     setGenerando(true);
     setError("");
     try {
-      // Diagnóstico previo a generación
-      await diagnosticarCache();
-      console.log("🚀 Generando incidencias simplificadas (variación totales ±30%)...");
-      const resultado = await generarIncidenciasTotalesVariacion(cierre.id);
-      console.log("✅ Resultado generación variaciones:", resultado);
-      // Actualización optimista inmediata usando respuesta
-      if (resultado?.incidencias) {
-        const adaptadas = resultado.incidencias.map((i, idx) => ({
-          id: `temp-${idx}`,
-          tipo_comparacion: 'suma_total',
-          concepto_afectado: i.concepto,
-          descripcion: `${i.tipo.toUpperCase()} ${i.concepto} Δ ${i.delta_pct?.toFixed ? i.delta_pct.toFixed(1) : i.delta_pct}%`,
-          impacto_monetario: Math.abs(i.delta_abs || 0),
-          datos_adicionales: {
-            monto_actual: i.monto_actual,
-            monto_anterior: i.monto_anterior,
-            delta_abs: i.delta_abs,
-            delta_pct: i.delta_pct,
-            tipo_generado: i.tipo,
-            umbral_pct: resultado?.parametros?.umbral_pct,
-            informativo: false
-          },
-          estado: 'pendiente'
-        }));
-        setIncidencias(adaptadas);
+      console.log("🚀 Generando incidencias (endpoint refactorizado con dual logging)...");
+      
+      // ✅ Llamar al endpoint refactorizado /incidencias-v2/{id}/generar/
+      const resultado = await generarIncidenciasCierre(cierre.id);
+      console.log("✅ Resultado generación:", resultado);
+      
+      // Mostrar mensaje de éxito
+      if (resultado?.success) {
+        alert(`✅ Generación de incidencias iniciada\nTask ID: ${resultado.task_id}\nVerifica los logs en la tarjeta de incidencias.`);
       }
-      // Refrescar estado de cierre / incidencias desde backend para IDs reales
-      if (onCierreActualizado) {
-        await onCierreActualizado();
-      }
-      await cargarEstadoIncidencias();
-      await cargarDatos();
+      
+      // Refrescar datos después de un breve delay para que se procese
+      setTimeout(async () => {
+        if (onCierreActualizado) {
+          await onCierreActualizado();
+        }
+        await cargarEstadoIncidencias();
+        await cargarDatos();
+      }, 2000);
+      
     } catch (err) {
-      console.error("Error generando incidencias (variaciones):", err);
-      setError("Error al generar incidencias de variaciones");
-      alert("❌ Error generando incidencias de variaciones");
+      console.error("Error generando incidencias:", err);
+      const errorMsg = err?.response?.data?.error || err.message || "Error desconocido";
+      setError(`Error al generar incidencias: ${errorMsg}`);
+      alert(`❌ Error generando incidencias:\n${errorMsg}`);
     } finally {
       setGenerando(false);
     }

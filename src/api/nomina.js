@@ -345,15 +345,16 @@ export const obtenerIncidenciasCierre = async (cierreId, filtros = {}) => {
 };
 
 // Generar incidencias para un cierre
+// ✅ REFACTORIZADO: Usa nuevo endpoint /incidencias-v2/{id}/generar/
 export const generarIncidenciasCierre = async (cierreId, clasificacionesSeleccionadas = null) => {
-  const payload = { cierre_id: cierreId };
+  const payload = {};
   
   // Si se proporcionan clasificaciones específicas, incluirlas en el payload
   if (clasificacionesSeleccionadas && clasificacionesSeleccionadas.length > 0) {
     payload.clasificaciones_seleccionadas = clasificacionesSeleccionadas;
   }
   
-  const response = await api.post(`/nomina/incidencias/generar/${cierreId}/`, payload);
+  const response = await api.post(`/nomina/incidencias-v2/${cierreId}/generar/`, payload);
   const data = response.data;
   // Log amigable sobre uso de caché del período anterior si viene expuesto por el backend
   const usadoCachePrev = data?.prev_period_cache_used ?? data?.diagnosticos?.prev_period_cache_used;

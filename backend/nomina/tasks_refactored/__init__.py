@@ -18,10 +18,11 @@ Estructura:
 - novedades.py: Procesamiento de novedades (11 tareas: 3 principales + 6 optimizadas + 2 consolidación)
 - discrepancias.py: Verificación de datos y generación de discrepancias (1 tarea principal)
 - consolidacion.py: Consolidación de datos con dual logging (1 tarea principal)
+- incidencias.py: Generación de incidencias con dual logging (1 tarea principal)
 
 Autor: Sistema SGM
 Fecha: 20 de octubre de 2025
-Versión: 2.5.0 (Refactorizado - Added Consolidación)
+Versión: 2.6.0 (Refactorizado - Added Incidencias)
 """
 
 # ============================================================================
@@ -99,6 +100,14 @@ from .consolidacion import (
 )
 
 # ============================================================================
+# INCIDENCIAS (1 tarea principal)
+# ============================================================================
+
+from .incidencias import (
+    generar_incidencias_con_logging,
+)
+
+# ============================================================================
 # EXPORTACIONES
 # ============================================================================
 
@@ -134,13 +143,15 @@ __all__ = [
     'generar_discrepancias_cierre_con_logging',
     # Consolidación (1 tarea principal)
     'consolidar_datos_nomina_con_logging',
+    # Incidencias (1 tarea principal)
+    'generar_incidencias_con_logging',
 ]
 
 # ============================================================================
 # METADATA
 # ============================================================================
 
-__version__ = '2.5.0'
+__version__ = '2.6.0'
 __author__ = 'Sistema SGM'
 __status__ = 'Production'
 
@@ -152,7 +163,7 @@ TAREAS_MIGRADAS = {
     'novedades': True,              # ✅ 11 tareas (3 análisis + 2 finales + 2 optimizadas + 4 paralelo)
     'discrepancias': True,          # ✅ 1 tarea principal (verificación de datos)
     'consolidacion': True,          # ✅ 1 tarea principal (consolidación con dual logging)
-    'incidencias': False,           # ⏳ Pendiente
+    'incidencias': True,            # ✅ 1 tarea principal (generación de incidencias con dual logging)
     'informes': False,              # ⏳ Pendiente
 }
 

@@ -57,159 +57,115 @@ def _serialize_decimal(value):
 
 
 # ================================
-# 🎯 CONFIGURACIÓN PABLO - CONCEPTOS A ANALIZAR
+# 🎯 CONFIGURACIÓN - GENERACIÓN DE INCIDENCIAS
 # ================================
 
-# Controla si se generan incidencias de suma total por item (concepto específico).
-# Requisito actualizado: SÍ, por ítem agregado. Alcance: TODAS las categorías.
-GENERAR_INCIDENCIAS_SUMA_TOTAL_POR_CONCEPTO = True
+# Umbral de variación porcentual para detectar incidencias
+UMBRAL_VARIACION_PORCENTUAL = 30.0
 
-# Controla si se generan incidencias por sumas de CATEGORÍA (total categoría)
-# Requisito actualizado: NO generar incidencias por categoría agregada
-GENERAR_INCIDENCIAS_SUMA_TOTAL_POR_CATEGORIA = False
-
-# Conceptos que Pablo quiere analizar en DETALLE (empleado por empleado)
-CONCEPTOS_ANALISIS_DETALLADO = [
-    # Preferir códigos internos reales; si llegan alias, se normalizarán abajo
-    'haber_imponible',        # 💰 Sueldos
-    'haber_no_imponible',     # 🎁 Bonos no imponibles
-    'otro_descuento'          # 📋 Descuentos discrecionales
-]
-
-# Alias amigables → códigos internos (tolerancia a configuraciones antiguas)
-ALIAS_TIPO_CONCEPTO = {
-    'haberes_imponibles': 'haber_imponible',
-    'haberes_no_imponibles': 'haber_no_imponible',
-    'otros_descuentos': 'otro_descuento',
-}
-
-def normalizar_tipos_concepto(tipos):
-    """Mapea alias amigables a códigos internos y deduplica conservando orden."""
-    vistos = set()
-    normalizados = []
-    for t in tipos or []:
-        norm = ALIAS_TIPO_CONCEPTO.get(t, t)
-        if norm not in vistos:
-            vistos.add(norm)
-            normalizados.append(norm)
-    return normalizados
-
-# Conceptos que Pablo quiere SOLO como resumen (totales)
-CONCEPTOS_SOLO_RESUMEN = [
-    'descuentos_legales',     # 🤖 Se calculan automáticamente por ley
-    'aportes_patronales',     # 🏢 Los paga la empresa, no el empleado
+# Tipos de concepto que se EXCLUYEN del análisis (informativos, no monetarios)
+CONCEPTOS_EXCLUIDOS = [
     'informacion_adicional',  # 📄 No son montos
-    'impuestos',              # 💸 Se calculan automáticamente
-    'horas_extras'            # ⏰ Muy variables por naturaleza
+    'informacion',            # 📄 Variante del nombre
+    'informativo',            # � Otra variante
 ]
 
+# 🚨 MÉTODO SIMPLIFICADO:
+# Se compara la SUMA TOTAL de cada ÍTEM (nombre_concepto + tipo_concepto)
+# entre el período actual y el anterior.
+# Si |variación%| ≥ 30% → Se genera incidencia
+# NO se analiza empleado por empleado (comparación individual eliminada)
+
 # ================================
-# 🚀 SISTEMA DUAL CON CELERY CHORD
+# 🚀 GENERACIÓN SIMPLIFICADA DE INCIDENCIAS
 # ================================
 
 @shared_task
 def generar_incidencias_consolidados_v2(cierre_id, clasificaciones_seleccionadas=None):
     """
-    🎯 TAREA ORQUESTADORA PRINCIPAL - SISTEMA DUAL CON CONFIGURACIÓN PABLO
+    🎯 GENERACIÓN DE INCIDENCIAS - MÉTODO SIMPLIFICADO
     
-    Coordina dos tipos de comparación usando Celery Chord:
-    1. Comparación Individual: elemento a elemento (SOLO conceptos de Pablo)  
-    2. Comparación Suma Total: agregada (TODOS los conceptos)
+    Compara la suma total de cada ÍTEM (nombre_concepto + tipo_concepto)
+    entre el período actual y el anterior.
+    
+    Criterio: Si |variación%| ≥ 30% → Se genera incidencia
     
     Args:
         cierre_id: ID del cierre actual
-        clasificaciones_seleccionadas: IGNORADO - ahora usa configuración automática de Pablo
+        clasificaciones_seleccionadas: Parámetro ignorado (compatibilidad)
         
     Returns:
-        dict: Resultado de la coordinación con estadísticas del Chord
+        dict: Resultado de la generación con estadísticas
     """
-    # 🎯 USAR CONFIGURACIÓN AUTOMÁTICA DE PABLO (ignorar parámetro)
-    clasificaciones_pablo = normalizar_tipos_concepto(CONCEPTOS_ANALISIS_DETALLADO)
+    start_time = time.time()
     
-    logger.info(f"🚀 Iniciando sistema dual para cierre {cierre_id}")
-    logger.info(f"🔍 Conceptos para análisis detallado (Pablo): {clasificaciones_pablo}")
-    logger.info(f"📊 Conceptos solo resumen: {CONCEPTOS_SOLO_RESUMEN}")
+    logger.info(f"🚀 Iniciando generación simplificada de incidencias para cierre {cierre_id}")
+    logger.info(f"� Método: Suma total por ÍTEM (umbral: {UMBRAL_VARIACION_PORCENTUAL}%)")
+    logger.info(f"❌ Conceptos excluidos: {CONCEPTOS_EXCLUIDOS}")
     
     try:
         cierre_actual = CierreNomina.objects.get(id=cierre_id)
         cierre_anterior = obtener_cierre_anterior_finalizado(cierre_actual)
         
+        # CASO 1: Primer cierre del cliente (sin comparación)
         if not cierre_anterior:
             logger.info(f"🆕 Primer cierre del cliente {cierre_actual.cliente.nombre}")
-            logger.info(f"📊 Generando análisis informativo sin comparación para {cierre_actual.periodo}")
+            logger.info(f"📊 Generando análisis informativo sin comparación")
             
-            # Generar análisis informativo para el primer cierre
-            return generar_analisis_primer_cierre(cierre_actual, clasificaciones_pablo)
+            resultado = generar_analisis_primer_cierre_simple(cierre_actual)
+            
+            # Actualizar estado del cierre
+            actualizar_estado_cierre_incidencias(cierre_actual, total_incidencias=0)
+            
+            tiempo_total = time.time() - start_time
+            logger.info(f"✅ Análisis primer cierre completado en {tiempo_total:.2f}s")
+            
+            return resultado
         
+        # CASO 2: Comparación con período anterior
         logger.info(f"📊 Comparando {cierre_actual.periodo} vs {cierre_anterior.periodo}")
         
-        # 1. PREPARAR EMPLEADOS PARA COMPARACIÓN INDIVIDUAL
-        # Nota: El related_name correcto para ConceptoConsolidado es 'conceptos' (ver modelo),
-        # antes se intentaba prefetch_related('conceptos_consolidados') y fallaba.
-        empleados_consolidados = NominaConsolidada.objects.filter(
-            cierre=cierre_actual
-        ).select_related('cierre').prefetch_related('conceptos')
-        
-        total_empleados = empleados_consolidados.count()
-        logger.info(f"👥 Total empleados a procesar: {total_empleados}")
-        
-        if total_empleados == 0:
+        # Validar que haya datos consolidados
+        total_consolidados = cierre_actual.nomina_consolidada.count()
+        if total_consolidados == 0:
             logger.warning("⚠️ No hay empleados consolidados para procesar")
-            return {'success': False, 'message': 'No hay empleados consolidados'}
+            return {
+                'success': False,
+                'error': 'No hay datos consolidados para analizar',
+                'cierre_id': cierre_id
+            }
         
-        # 2. CREAR CHUNKS DINÁMICOS PARA COMPARACIÓN INDIVIDUAL
-        chunks_empleados = crear_chunks_empleados_dinamicos(empleados_consolidados)
-        logger.info(f"📦 Creados {len(chunks_empleados)} chunks para comparación individual")
+        logger.info(f"� Empleados consolidados: {total_consolidados}")
         
-        # 3. CREAR TAREAS PARALELAS
-        tasks = []
-        
-        # TAREAS TIPO A: Comparación individual (chunks paralelos) - SOLO CONCEPTOS DE PABLO
-        for i, chunk_empleados_ids in enumerate(chunks_empleados):
-            tasks.append(
-                procesar_chunk_comparacion_individual.s(
-                    chunk_empleados_ids,
-                    cierre_id,
-                    cierre_anterior.id,
-                    clasificaciones_pablo,  # 🎯 USAR CONFIGURACIÓN DE PABLO
-                    f"individual_chunk_{i+1}"
-                )
-            )
-        
-        # TAREA TIPO B: Comparación suma total (tarea única dedicada) - TODAS LAS CATEGORÍAS (por ítem)
-        tasks.append(
-            procesar_comparacion_suma_total.s(
-                cierre_id,
-                cierre_anterior.id,
-                "suma_total_global"
-            )
+        # PROCESAR: Comparación suma total por ítem
+        resultado = procesar_incidencias_suma_total_simple(
+            cierre_actual=cierre_actual,
+            cierre_anterior=cierre_anterior
         )
         
-        # 4. EJECUTAR CHORD
-        logger.info(f"🎼 Ejecutando Chord con {len(tasks)} tareas")
-        logger.info(f"   🔍 {len(chunks_empleados)} chunks individuales (solo conceptos críticos)")
-        logger.info(f"   📊 1 comparación suma total (todos los conceptos)")
+        # Actualizar estado del cierre
+        total_incidencias = resultado.get('total_incidencias', 0)
+        actualizar_estado_cierre_incidencias(cierre_actual, total_incidencias)
         
-        job = chord(tasks)(consolidar_resultados_incidencias.s(cierre_id, len(chunks_empleados)))
+        tiempo_total = time.time() - start_time
+        resultado['tiempo_procesamiento'] = f"{tiempo_total:.2f}s"
         
-        logger.info(f"✅ Chord iniciado exitosamente: {job.id}")
+        logger.info(f"✅ Generación completada en {tiempo_total:.2f}s")
+        logger.info(f"   � Incidencias detectadas: {total_incidencias}")
+        logger.info(f"   📊 Conceptos analizados: {resultado.get('conceptos_analizados', 0)}")
+        logger.info(f"   ⚠️ Variaciones >30%: {resultado.get('variaciones_sobre_umbral', 0)}")
         
-        return {
-            'success': True,
-            'chord_id': job.id,
-            'chunks_individuales': len(chunks_empleados),
-            'comparacion_suma_total': True,
-            'total_tasks': len(tasks),
-            'empleados_total': total_empleados,
-            'clasificaciones_detalladas': clasificaciones_pablo,  # 🎯 CONCEPTOS PABLO
-            'clasificaciones_solo_resumen': CONCEPTOS_SOLO_RESUMEN,
-            'configuracion': 'pablo_automatica',
-            'mensaje': f'Sistema Pablo: {len(chunks_empleados)} chunks individuales + suma total automática'
-        }
+        return resultado
         
     except Exception as e:
-        logger.error(f"❌ Error en sistema dual: {str(e)}")
-        return {'success': False, 'error': str(e)}
+        logger.error(f"❌ Error en generación de incidencias: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return {
+            'success': False,
+            'error': str(e),
+            'cierre_id': cierre_id
+        }
 
 def obtener_cierre_anterior_finalizado(cierre_actual):
     """Obtiene el cierre anterior finalizado para comparación"""
@@ -265,8 +221,189 @@ def obtener_totales_por_concepto_desde_cache(cliente_id: int, periodo: str):
         return None
 
 # ================================
-# 🔍 COMPARACIÓN INDIVIDUAL
+# 🎯 PROCESAMIENTO SIMPLIFICADO
 # ================================
+
+def procesar_incidencias_suma_total_simple(cierre_actual, cierre_anterior):
+    """
+    📊 PROCESAMIENTO SIMPLIFICADO DE INCIDENCIAS
+    
+    Compara la suma total de cada ÍTEM entre dos períodos.
+    Genera incidencia si |variación%| ≥ 30%
+    
+    Args:
+        cierre_actual: CierreNomina del período actual
+        cierre_anterior: CierreNomina del período anterior
+        
+    Returns:
+        dict: Estadísticas del procesamiento
+    """
+    incidencias_creadas = []
+    conceptos_analizados = 0
+    variaciones_sobre_umbral = 0
+    conceptos_excluidos_count = 0
+    
+    # Obtener versión del cierre para trazabilidad
+    cierre_version = cierre_actual.version_datos or 1
+    
+    # Obtener todos los conceptos únicos de ambos períodos
+    conceptos_actuales = ConceptoConsolidado.objects.filter(
+        nomina_consolidada__cierre=cierre_actual
+    ).values('nombre_concepto', 'tipo_concepto').distinct()
+    
+    conceptos_anteriores = ConceptoConsolidado.objects.filter(
+        nomina_consolidada__cierre=cierre_anterior
+    ).values('nombre_concepto', 'tipo_concepto').distinct()
+    
+    # Unir todos los conceptos únicos
+    conceptos_unicos = set()
+    for c in conceptos_actuales:
+        conceptos_unicos.add((c['nombre_concepto'], c['tipo_concepto']))
+    for c in conceptos_anteriores:
+        conceptos_unicos.add((c['nombre_concepto'], c['tipo_concepto']))
+    
+    logger.info(f"📊 Analizando {len(conceptos_unicos)} ítems únicos (umbral: {UMBRAL_VARIACION_PORCENTUAL}%)")
+    
+    # Procesar cada concepto único
+    for nombre_concepto, tipo_concepto in conceptos_unicos:
+        # EXCLUIR conceptos informativos
+        if tipo_concepto in CONCEPTOS_EXCLUIDOS:
+            conceptos_excluidos_count += 1
+            continue
+        
+        # Calcular suma total en período actual
+        suma_actual = ConceptoConsolidado.objects.filter(
+            nomina_consolidada__cierre=cierre_actual,
+            nombre_concepto=nombre_concepto,
+            tipo_concepto=tipo_concepto
+        ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
+        
+        # Calcular suma total en período anterior
+        suma_anterior = ConceptoConsolidado.objects.filter(
+            nomina_consolidada__cierre=cierre_anterior,
+            nombre_concepto=nombre_concepto,
+            tipo_concepto=tipo_concepto
+        ).aggregate(total=Sum('monto_total'))['total'] or Decimal('0')
+        
+        # Calcular variación porcentual
+        variacion_pct = calcular_variacion_porcentual(suma_actual, suma_anterior)
+        conceptos_analizados += 1
+        
+        # Verificar si supera el umbral
+        if abs(variacion_pct) >= UMBRAL_VARIACION_PORCENTUAL:
+            variaciones_sobre_umbral += 1
+            
+            # Crear incidencia
+            incidencia = crear_incidencia_suma_total(
+                cierre_id=cierre_actual.id,
+                nombre_concepto=nombre_concepto,
+                tipo_concepto=tipo_concepto,
+                suma_actual=suma_actual,
+                suma_anterior=suma_anterior,
+                variacion_pct=variacion_pct
+            )
+            
+            incidencias_creadas.append(incidencia)
+    
+    # Guardar todas las incidencias en batch
+    if incidencias_creadas:
+        IncidenciaCierre.objects.bulk_create(incidencias_creadas, ignore_conflicts=True)
+        logger.info(f"✅ Creadas {len(incidencias_creadas)} incidencias en base de datos")
+    
+    # Estadísticas de incidencias por prioridad
+    incidencias_criticas = sum(1 for inc in incidencias_creadas if inc.prioridad == 'critica')
+    incidencias_alta = sum(1 for inc in incidencias_creadas if inc.prioridad == 'alta')
+    incidencias_media = sum(1 for inc in incidencias_creadas if inc.prioridad == 'media')
+    incidencias_baja = sum(1 for inc in incidencias_creadas if inc.prioridad == 'baja')
+    
+    # Tipos de incidencias detectadas
+    tipos_detectados = list(set(inc.tipo_incidencia for inc in incidencias_creadas))
+    
+    return {
+        'success': True,
+        'cierre_id': cierre_actual.id,
+        'total_incidencias': len(incidencias_creadas),
+        'conceptos_analizados': conceptos_analizados,
+        'conceptos_excluidos': conceptos_excluidos_count,
+        'variaciones_sobre_umbral': variaciones_sobre_umbral,
+        'umbral_usado': UMBRAL_VARIACION_PORCENTUAL,
+        'prioridades': {
+            'critica': incidencias_criticas,
+            'alta': incidencias_alta,
+            'media': incidencias_media,
+            'baja': incidencias_baja
+        },
+        'tipos_detectados': tipos_detectados,
+        'periodo_actual': cierre_actual.periodo,
+        'periodo_anterior': cierre_anterior.periodo
+    }
+
+def generar_analisis_primer_cierre_simple(cierre_actual):
+    """
+    📊 ANÁLISIS INFORMATIVO PARA PRIMER CIERRE
+    
+    Genera estadísticas descriptivas cuando no hay período anterior para comparar
+    
+    Args:
+        cierre_actual: CierreNomina del primer período
+        
+    Returns:
+        dict: Estadísticas del primer cierre
+    """
+    total_empleados = cierre_actual.nomina_consolidada.count()
+    
+    # Obtener estadísticas de conceptos
+    conceptos = ConceptoConsolidado.objects.filter(
+        nomina_consolidada__cierre=cierre_actual
+    ).values('tipo_concepto').annotate(
+        total_monto=Sum('monto_total'),
+        cantidad=Count('id')
+    )
+    
+    estadisticas_conceptos = {}
+    for c in conceptos:
+        if c['tipo_concepto'] not in CONCEPTOS_EXCLUIDOS:
+            estadisticas_conceptos[c['tipo_concepto']] = {
+                'total': float(c['total_monto'] or 0),
+                'cantidad': c['cantidad']
+            }
+    
+    logger.info(f"📊 Primer cierre: {total_empleados} empleados, {len(estadisticas_conceptos)} tipos de conceptos")
+    
+    return {
+        'success': True,
+        'cierre_id': cierre_actual.id,
+        'primer_cierre': True,
+        'total_empleados': total_empleados,
+        'estadisticas_conceptos': estadisticas_conceptos,
+        'total_incidencias': 0,
+        'mensaje': 'Primer cierre del cliente - Sin comparación'
+    }
+
+def calcular_variacion_porcentual(valor_actual, valor_anterior):
+    """Calcula variación porcentual entre dos valores"""
+    if valor_anterior == 0:
+        return 100.0 if valor_actual > 0 else 0.0
+    
+    return ((valor_actual - valor_anterior) / valor_anterior) * 100
+
+def actualizar_estado_cierre_incidencias(cierre, total_incidencias):
+    """Actualiza el estado del cierre según las incidencias detectadas"""
+    if total_incidencias > 0:
+        cierre.estado = 'con_incidencias'
+        logger.info(f"📌 Estado actualizado a 'con_incidencias' ({total_incidencias} detectadas)")
+    else:
+        cierre.estado = 'incidencias_resueltas'
+        logger.info(f"✅ Estado actualizado a 'incidencias_resueltas' (0 incidencias)")
+    
+    cierre.save(update_fields=['estado'])
+    return cierre
+
+# ================================
+# 🔍 COMPARACIÓN INDIVIDUAL (DEPRECATED - Comentado para referencia)
+# ================================
+# Las siguientes funciones están comentadas porque ya NO se usa comparación individual
+# Solo se mantienen para referencia histórica
 
 @shared_task
 def procesar_chunk_comparacion_individual(empleados_ids, cierre_actual_id, cierre_anterior_id, 
@@ -1201,13 +1338,21 @@ def crear_incidencia_empleado_nuevo(empleado):
     )
 
 def crear_incidencia_suma_total(cierre_id, nombre_concepto, tipo_concepto, suma_actual, suma_anterior, variacion_pct):
-    """Crea incidencia para variación en suma total (valores JSON-serializables)."""
+    """
+    Crea incidencia para variación en suma total (modelo simplificado sin firma).
+    Compatible con IncidenciaCierre simplificado.
+    """
     variacion_pct_float = float(variacion_pct)
     variacion_abs_float = float(abs(suma_actual - suma_anterior))
-    obj = IncidenciaCierre(
+    
+    # Truncar tipo_concepto si es muy largo (máx 30 caracteres)
+    clasificacion_truncada = tipo_concepto[:30] if tipo_concepto and len(tipo_concepto) > 30 else tipo_concepto
+    
+    return IncidenciaCierre(
         cierre_id=cierre_id,
         tipo_incidencia='variacion_suma_total',
         tipo_comparacion='suma_total',
+        clasificacion_concepto=clasificacion_truncada,
         prioridad=determinar_prioridad_suma_total(variacion_pct_float, variacion_abs_float),
         concepto_afectado=nombre_concepto,
         descripcion=f'Variación {variacion_pct_float:.1f}% en suma total de {nombre_concepto}',
@@ -1221,13 +1366,13 @@ def crear_incidencia_suma_total(cierre_id, nombre_concepto, tipo_concepto, suma_
             'suma_anterior': float(suma_anterior),
             'variacion_porcentual': round(variacion_pct_float, 2),
             'variacion_absoluta': variacion_abs_float,
-            'tipo_comparacion': 'suma_total'
+            'tipo_comparacion': 'suma_total',
+            'monto_actual': float(suma_actual),
+            'monto_anterior': float(suma_anterior),
+            'delta_abs': variacion_abs_float,
+            'delta_pct': variacion_pct_float
         }
     )
-    clave, h = obj.generar_firma()
-    obj.firma_clave = clave
-    obj.firma_hash = h
-    return obj
 
 def crear_incidencia_suma_total_categoria(cierre_id, categoria, suma_actual, suma_anterior, variacion_pct):
     """Crea incidencia para variación en suma total por CATEGORÍA (e.g., total haberes imponibles)."""

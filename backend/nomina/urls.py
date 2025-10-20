@@ -43,8 +43,9 @@ from .views_incidencias import (
     IncidenciaCierreViewSet,
     ResolucionIncidenciaViewSet,
 )
-# Importar ViewSet de consolidación
+# Importar ViewSets refactorizados
 from .views_consolidacion import ConsolidacionDatosViewSet
+from .views_incidencias_v2 import GeneracionIncidenciasViewSet
 from .views_libro_remuneraciones import LibroRemuneracionesUploadViewSet
 from .views_movimientos_mes import (
     MovimientosMesUploadViewSet,
@@ -133,6 +134,9 @@ router.register(r'cierres-discrepancias', CierreNominaDiscrepanciasViewSet, base
 
 # ViewSet para Consolidación de Datos
 router.register(r'consolidacion', ConsolidacionDatosViewSet, basename='consolidacion')
+
+# ViewSet para Generación de Incidencias (V2 - Refactorizado)
+router.register(r'incidencias-v2', GeneracionIncidenciasViewSet, basename='incidencias-v2')
 
 urlpatterns = router.urls + [
     path(

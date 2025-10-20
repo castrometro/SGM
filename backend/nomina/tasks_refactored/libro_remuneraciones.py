@@ -756,12 +756,12 @@ def procesar_chunk_empleados_task(libro_id, chunk_data):
     from ..utils.LibroRemuneracionesOptimizado import procesar_chunk_empleados_util
     
     try:
-        libro = LibroRemuneracionesUpload.objects.get(id=libro_id)
-        stats = procesar_chunk_empleados_util(libro, chunk_data)
+        # ✅ CORREGIDO: pasar libro_id directamente, no el objeto libro
+        stats = procesar_chunk_empleados_util(libro_id, chunk_data)
         return stats
     except Exception as e:
         logger.error(f"[LIBRO] Error en chunk empleados: {e}")
-        return {"empleados_procesados": 0, "error": str(e)}
+        return {"empleados_procesados": 0, "error": str(e), "libro_id": libro_id}
 
 
 @shared_task(queue='nomina_queue')

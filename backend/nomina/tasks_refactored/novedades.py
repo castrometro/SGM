@@ -35,9 +35,8 @@ import logging
 from celery import shared_task, chain, chord
 from django.utils import timezone
 
-from ..models import ArchivoNovedadesUpload, Empleado
+from ..models import ArchivoNovedadesUpload, ActivityEvent
 from ..models_logging import registrar_actividad_tarjeta_nomina
-from ..activity_v2 import ActivityEvent
 from ..utils.NovedadesRemuneraciones import (
     obtener_headers_archivo_novedades,
     clasificar_headers_archivo_novedades,
@@ -52,27 +51,120 @@ from ..utils.NovedadesOptimizado import (
     consolidar_stats_novedades,
     validar_chunk_data,
 )
-from ..utils.calculos import calcular_chunk_size_dinamico
-from ..utils.usuarios import get_sistema_user
 
 logger = logging.getLogger(__name__)
 
 
+# ===== 🧮 FUNCIONES HELPER =====
+
+def get_sistema_user():
+    """Obtiene el primer usuario staff como usuario del sistema"""
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    return User.objects.filter(is_staff=True).first() or User.objects.first()
+
+
+def calcular_chunk_size_dinamico(empleados_count):
+    """
+    🧮 Calcula el tamaño de chunk óptimo basado en el número de empleados
+    
+    Args:
+        empleados_count: Número total de empleados a procesar
+        
+    Returns:
+        int: Tamaño de chunk optimizado
+    """
+    if empleados_count <= 50:
+        return 25  # Chunks pequeños para pocos empleados
+    elif empleados_count <= 200:
+        return 50  # Chunks medianos para empresas pequeñas-medianas
+    elif empleados_count <= 500:
+        return 100  # Chunks grandes para empresas medianas
+    elif empleados_count <= 1000:
+        return 150  # Chunks muy grandes para empresas grandes
+    else:
+        return 200  # Chunks extremos para corporaciones
+
+
 # ===== 📤 FUNCIONES DE LOGGING DUAL =====
 
-def log_process_start_novedades(archivo_id, fase, usuario_id=None, detalles_extra=None):
+# ===== 🎨 MAPEO DE ACCIONES DESCRIPTIVAS A ACCION_CHOICES =====
+# Mapeo de nuestras acciones descriptivas a las acciones válidas de TarjetaActivityLogNomina
+ACCION_MAP = {
+    # Análisis de headers
+    'analisis_headers_iniciado': 'header_analysis',
+    'analisis_headers_exitoso': 'header_analysis',
+    'analisis_headers_error': 'validation_error',
+    
+    # Clasificación
+    'clasificacion_headers_iniciada': 'classification_start',
+    'clasificacion_headers_exitosa': 'classification_complete',
+    'clasificacion_headers_error': 'validation_error',
+    
+    # Actualización de empleados
+    'actualizacion_empleados_iniciada': 'process_start',
+    'actualizacion_empleados_exitosa': 'process_complete',
+    'actualizacion_empleados_error': 'validation_error',
+    
+    # Guardado de registros
+    'guardado_registros_iniciado': 'process_start',
+    'guardado_registros_exitoso': 'process_complete',
+    'guardado_registros_error': 'validation_error',
+    
+    # Procesamiento inicial
+    'upload_archivo_iniciado': 'upload_excel',
+    'procesamiento_inicial_error': 'validation_error',
+    
+    # Procesamiento paralelo
+    'procesamiento_paralelo_completo': 'process_complete',
+    'procesamiento_paralelo_error': 'validation_error',
+    
+    # Operaciones optimizadas
+    'actualizacion_empleados_optimizada_iniciada': 'process_start',
+    'actualizacion_empleados_optimizada_exitosa': 'process_complete',
+    'actualizacion_empleados_optimizada_error': 'validation_error',
+    'guardado_registros_optimizado_iniciado': 'process_start',
+    'guardado_registros_optimizado_exitoso': 'process_complete',
+    'guardado_registros_optimizado_error': 'validation_error',
+}
+
+
+def get_tarjeta_accion(accion_descriptiva):
+    """
+    Convierte una acción descriptiva a una acción válida de ACCION_CHOICES.
+    Si no hay mapeo, usa 'process_start' o 'process_complete' según el sufijo.
+    """
+    if accion_descriptiva in ACCION_MAP:
+        return ACCION_MAP[accion_descriptiva]
+    
+    # Fallback basado en sufijos
+    if 'iniciado' in accion_descriptiva or 'iniciada' in accion_descriptiva:
+        return 'process_start'
+    elif 'exitoso' in accion_descriptiva or 'exitosa' in accion_descriptiva:
+        return 'process_complete'
+    elif 'error' in accion_descriptiva:
+        return 'validation_error'
+    else:
+        return 'process_start'
+
+
+# ===== 📊 FUNCIONES DE LOGGING DUAL =====
+
+def log_process_start_novedades(archivo_id, accion, descripcion, usuario_id=None, detalles_extra=None):
     """
     Registra el inicio de una fase del procesamiento de novedades en ambos sistemas de logging
     
     Args:
         archivo_id: ID del ArchivoNovedadesUpload
-        fase: Nombre de la fase (ej: 'analisis_headers', 'clasificacion', etc.)
+        accion: Acción descriptiva (ej: 'analisis_headers_iniciado', 'clasificacion_headers_iniciada')
+        descripcion: Descripción legible del proceso
         usuario_id: ID del usuario que inició la operación
         detalles_extra: Detalles adicionales opcionales
     """
     try:
         archivo = ArchivoNovedadesUpload.objects.select_related('cierre', 'cierre__cliente').get(id=archivo_id)
         cierre = archivo.cierre
+        cliente = cierre.cliente
         
         # Obtener usuario con fallback inteligente
         if usuario_id:
@@ -89,48 +181,50 @@ def log_process_start_novedades(archivo_id, fase, usuario_id=None, detalles_extr
         # Preparar detalles base
         detalles = {
             'archivo_id': archivo_id,
-            'fase': fase,
             'archivo_nombre': archivo.archivo.name if archivo.archivo else 'N/A',
             'estado_inicial': archivo.estado,
         }
         if detalles_extra:
             detalles.update(detalles_extra)
         
-        # 1️⃣ Logging en TarjetaActivityLogNomina (usuario-visible)
+        # 1️⃣ Logging en TarjetaActivityLogNomina (usuario-visible con acción del CHOICES)
+        accion_tarjeta = get_tarjeta_accion(accion)
         registrar_actividad_tarjeta_nomina(
             cierre_id=cierre.id,
             tarjeta='novedades',
-            accion='process_start',
-            descripcion=f"Iniciando {fase} de novedades",
+            accion=accion_tarjeta,  # ✅ Usar acción válida del CHOICES
+            descripcion=descripcion,
             usuario=usuario,
             detalles=detalles,
             resultado='info'
         )
         
-        # 2️⃣ Logging en ActivityEvent (audit trail)
-        ActivityEvent.objects.create(
-            event_type='process_start',
+        # 2️⃣ Logging en ActivityEvent (audit trail con acción descriptiva completa)
+        ActivityEvent.log(
+            user=usuario,
+            cliente=cliente,
+            cierre=cierre,
+            event_type='process',
+            action=accion,  # ✅ Usar acción descriptiva personalizada
             resource_type='archivo_novedades',
             resource_id=str(archivo_id),
-            user_id=usuario.id if usuario else None,
-            description=f"Inicio de {fase} para novedades",
-            metadata=detalles,
-            client_id=cierre.cliente.id
+            details=detalles
         )
         
-        logger.info(f"✅ Log dual process_start registrado: novedades {archivo_id} - {fase}")
+        logger.info(f"✅ Log dual iniciado: novedades {archivo_id} - {accion}")
         
     except Exception as e:
         logger.error(f"❌ Error en log_process_start_novedades para archivo {archivo_id}: {e}")
 
 
-def log_process_complete_novedades(archivo_id, fase, usuario_id=None, resultado='exito', detalles_extra=None):
+def log_process_complete_novedades(archivo_id, accion, descripcion, usuario_id=None, resultado='exito', detalles_extra=None):
     """
     Registra la finalización de una fase del procesamiento de novedades
     
     Args:
         archivo_id: ID del ArchivoNovedadesUpload
-        fase: Nombre de la fase completada
+        accion: Acción descriptiva (ej: 'analisis_headers_exitoso', 'clasificacion_headers_exitosa')
+        descripcion: Descripción legible del resultado
         usuario_id: ID del usuario
         resultado: 'exito', 'warning', o 'error'
         detalles_extra: Detalles adicionales
@@ -138,6 +232,7 @@ def log_process_complete_novedades(archivo_id, fase, usuario_id=None, resultado=
     try:
         archivo = ArchivoNovedadesUpload.objects.select_related('cierre', 'cierre__cliente').get(id=archivo_id)
         cierre = archivo.cierre
+        cliente = cierre.cliente
         
         # Obtener usuario con fallback
         if usuario_id:
@@ -153,36 +248,37 @@ def log_process_complete_novedades(archivo_id, fase, usuario_id=None, resultado=
         # Preparar detalles
         detalles = {
             'archivo_id': archivo_id,
-            'fase': fase,
             'estado_final': archivo.estado,
             'timestamp_completado': timezone.now().isoformat(),
         }
         if detalles_extra:
             detalles.update(detalles_extra)
         
-        # 1️⃣ TarjetaActivityLogNomina
+        # 1️⃣ TarjetaActivityLogNomina (acción del CHOICES)
+        accion_tarjeta = get_tarjeta_accion(accion)
         registrar_actividad_tarjeta_nomina(
             cierre_id=cierre.id,
             tarjeta='novedades',
-            accion='process_complete',
-            descripcion=f"{fase.replace('_', ' ').title()} completado: {archivo.estado}",
+            accion=accion_tarjeta,  # ✅ Usar acción válida del CHOICES
+            descripcion=descripcion,
             usuario=usuario,
             detalles=detalles,
             resultado=resultado
         )
         
-        # 2️⃣ ActivityEvent
-        ActivityEvent.objects.create(
-            event_type='process_complete',
+        # 2️⃣ ActivityEvent (acción descriptiva completa)
+        ActivityEvent.log(
+            user=usuario,
+            cliente=cliente,
+            cierre=cierre,
+            event_type='process',
+            action=accion,  # ✅ Usar acción descriptiva personalizada
             resource_type='archivo_novedades',
             resource_id=str(archivo_id),
-            user_id=usuario.id if usuario else None,
-            description=f"{fase} completado con resultado: {resultado}",
-            metadata=detalles,
-            client_id=cierre.cliente.id
+            details=detalles
         )
         
-        logger.info(f"✅ Log dual process_complete registrado: novedades {archivo_id} - {fase} - {resultado}")
+        logger.info(f"✅ Log dual completado: novedades {archivo_id} - {accion} - {resultado}")
         
     except Exception as e:
         logger.error(f"❌ Error en log_process_complete_novedades para archivo {archivo_id}: {e}")
@@ -206,10 +302,11 @@ def procesar_archivo_novedades_con_logging(archivo_id, usuario_id=None):
     try:
         archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
         
-        # ✅ Logging dual de inicio
+        # ✅ Logging dual de inicio con acción descriptiva
         log_process_start_novedades(
             archivo_id=archivo_id,
-            fase='procesamiento_inicial',
+            accion='upload_archivo_iniciado',
+            descripcion='Archivo de novedades recibido, iniciando análisis y clasificación',
             usuario_id=usuario_id,
             detalles_extra={'workflow': 'chain_analisis_clasificacion'}
         )
@@ -236,7 +333,8 @@ def procesar_archivo_novedades_con_logging(archivo_id, usuario_id=None):
             # Log de error
             log_process_complete_novedades(
                 archivo_id=archivo_id,
-                fase='procesamiento_inicial',
+                accion='procesamiento_inicial_error',
+                descripcion=f'Error en procesamiento inicial: {str(e)}',
                 usuario_id=usuario_id,
                 resultado='error',
                 detalles_extra={'error': str(e)}
@@ -262,10 +360,11 @@ def analizar_headers_archivo_novedades(self, archivo_id, usuario_id=None):
     """
     logger.info(f"🔍 Analizando headers novedades id={archivo_id}")
     
-    # ✅ Logging de inicio
+    # ✅ Logging de inicio con acción descriptiva
     log_process_start_novedades(
         archivo_id=archivo_id,
-        fase='analisis_headers',
+        accion='analisis_headers_iniciado',
+        descripcion='Iniciando análisis de headers del archivo Excel',
         usuario_id=usuario_id
     )
     
@@ -282,10 +381,11 @@ def analizar_headers_archivo_novedades(self, archivo_id, usuario_id=None):
         archivo.estado = "hdrs_analizados"
         archivo.save()
         
-        # ✅ Logging de completado
+        # ✅ Logging de completado con acción descriptiva
         log_process_complete_novedades(
             archivo_id=archivo_id,
-            fase='analisis_headers',
+            accion='analisis_headers_exitoso',
+            descripcion=f'Headers analizados exitosamente: {len(headers)} columnas detectadas',
             usuario_id=usuario_id,
             resultado='exito',
             detalles_extra={'headers_detectados': len(headers)}
@@ -304,10 +404,11 @@ def analizar_headers_archivo_novedades(self, archivo_id, usuario_id=None):
         archivo.estado = "con_error"
         archivo.save()
         
-        # Log de error
+        # Log de error con acción descriptiva
         log_process_complete_novedades(
             archivo_id=archivo_id,
-            fase='analisis_headers',
+            accion='analisis_headers_error',
+            descripcion=f'Error al analizar headers: {str(e)}',
             usuario_id=usuario_id,
             resultado='error',
             detalles_extra={'error': str(e)}
@@ -336,10 +437,11 @@ def clasificar_headers_archivo_novedades_task(self, result, usuario_id=None):
     
     logger.info(f"🏷️ Clasificando headers novedades id={archivo_id}")
     
-    # ✅ Logging de inicio
+    # ✅ Logging de inicio con acción descriptiva
     log_process_start_novedades(
         archivo_id=archivo_id,
-        fase='clasificacion_headers',
+        accion='clasificacion_headers_iniciada',
+        descripcion='Iniciando clasificación automática de headers',
         usuario_id=usuario_id
     )
     
@@ -372,20 +474,24 @@ def clasificar_headers_archivo_novedades_task(self, result, usuario_id=None):
         if headers_sin_clasificar:
             archivo.estado = "clasif_pendiente"
             resultado_log = 'warning'
+            descripcion_log = f'Clasificación completada con {len(headers_sin_clasificar)} headers pendientes de mapeo manual'
         else:
             archivo.estado = "clasificado"
             resultado_log = 'exito'
+            descripcion_log = f'Clasificación completada: {len(headers_clasificados)} de {len(headers)} columnas identificadas'
             logger.info(f"✅ Novedades {archivo_id}: Todos los headers clasificados automáticamente")
 
         archivo.save()
         
-        # ✅ Logging de completado
+        # ✅ Logging de completado con acción descriptiva
         log_process_complete_novedades(
             archivo_id=archivo_id,
-            fase='clasificacion_headers',
+            accion='clasificacion_headers_exitosa',
+            descripcion=descripcion_log,
             usuario_id=usuario_id,
             resultado=resultado_log,
             detalles_extra={
+                'headers_total': len(headers),
                 'headers_clasificados': len(headers_clasificados),
                 'headers_sin_clasificar': len(headers_sin_clasificar),
                 'estado_final': archivo.estado
@@ -412,10 +518,11 @@ def clasificar_headers_archivo_novedades_task(self, result, usuario_id=None):
             archivo.estado = "con_error"
             archivo.save()
             
-            # Log de error
+            # Log de error con acción descriptiva
             log_process_complete_novedades(
                 archivo_id=archivo_id,
-                fase='clasificacion_headers',
+                accion='clasificacion_headers_error',
+                descripcion=f'Error en clasificación de headers: {str(e)}',
                 usuario_id=usuario_id,
                 resultado='error',
                 detalles_extra={'error': str(e)}
@@ -446,10 +553,11 @@ def actualizar_empleados_desde_novedades_task(self, result, usuario_id=None):
     
     logger.info(f"👥 Actualizando empleados desde novedades id={archivo_id}")
     
-    # ✅ Logging de inicio
+    # ✅ Logging de inicio con acción descriptiva
     log_process_start_novedades(
         archivo_id=archivo_id,
-        fase='actualizacion_empleados',
+        accion='actualizacion_empleados_iniciada',
+        descripcion='Iniciando actualización de datos de empleados desde novedades',
         usuario_id=usuario_id
     )
     
@@ -457,10 +565,11 @@ def actualizar_empleados_desde_novedades_task(self, result, usuario_id=None):
         archivo = ArchivoNovedadesUpload.objects.get(id=archivo_id)
         count = actualizar_empleados_desde_novedades(archivo)
         
-        # ✅ Logging de completado
+        # ✅ Logging de completado con acción descriptiva
         log_process_complete_novedades(
             archivo_id=archivo_id,
-            fase='actualizacion_empleados',
+            accion='actualizacion_empleados_exitosa',
+            descripcion=f'Actualización de empleados completada: {count} empleados actualizados',
             usuario_id=usuario_id,
             resultado='exito',
             detalles_extra={'empleados_actualizados': count}
@@ -478,7 +587,8 @@ def actualizar_empleados_desde_novedades_task(self, result, usuario_id=None):
         # Log de error
         log_process_complete_novedades(
             archivo_id=archivo_id,
-            fase='actualizacion_empleados',
+            accion='actualizacion_empleados_error',
+            descripcion=f'Error al actualizar empleados: {str(e)}',
             usuario_id=usuario_id,
             resultado='error',
             detalles_extra={'error': str(e)}
@@ -506,10 +616,11 @@ def guardar_registros_novedades_task(self, result, usuario_id=None):
     
     logger.info(f"💾 Guardando registros novedades id={archivo_id}")
     
-    # ✅ Logging de inicio
+    # ✅ Logging de inicio con acción descriptiva
     log_process_start_novedades(
         archivo_id=archivo_id,
-        fase='guardado_registros',
+        accion='guardado_registros_iniciado',
+        descripcion='Iniciando guardado de registros de novedades en la base de datos',
         usuario_id=usuario_id
     )
     
@@ -521,10 +632,11 @@ def guardar_registros_novedades_task(self, result, usuario_id=None):
         archivo.estado = "procesado"
         archivo.save()
         
-        # ✅ Logging de completado
+        # ✅ Logging de completado con acción descriptiva
         log_process_complete_novedades(
             archivo_id=archivo_id,
-            fase='guardado_registros',
+            accion='guardado_registros_exitoso',
+            descripcion=f'Procesamiento completado: {count} registros guardados exitosamente',
             usuario_id=usuario_id,
             resultado='exito',
             detalles_extra={
@@ -552,7 +664,8 @@ def guardar_registros_novedades_task(self, result, usuario_id=None):
             # Log de error
             log_process_complete_novedades(
                 archivo_id=archivo_id,
-                fase='guardado_registros',
+                accion='guardado_registros_error',
+                descripcion=f'Error al guardar registros: {str(e)}',
                 usuario_id=usuario_id,
                 resultado='error',
                 detalles_extra={'error': str(e)}
@@ -741,7 +854,8 @@ def finalizar_procesamiento_novedades_task(self, resultados_chunks, usuario_id=N
         # ✅ Logging dual de finalización
         log_process_complete_novedades(
             archivo_id=archivo_id,
-            fase='procesamiento_paralelo_completo',
+            accion='procesamiento_paralelo_completo',
+            descripcion=f'Procesamiento paralelo completado: {registros_creados} registros creados, {registros_actualizados} actualizados',
             usuario_id=usuario_id,
             resultado=resultado_log,
             detalles_extra={
@@ -778,7 +892,8 @@ def finalizar_procesamiento_novedades_task(self, resultados_chunks, usuario_id=N
                 # Log de error
                 log_process_complete_novedades(
                     archivo_id=archivo_id,
-                    fase='procesamiento_paralelo_completo',
+                    accion='procesamiento_paralelo_error',
+                    descripcion=f'Error en procesamiento paralelo: {str(e)}',
                     usuario_id=usuario_id,
                     resultado='error',
                     detalles_extra={'error': str(e)}
@@ -817,7 +932,8 @@ def actualizar_empleados_desde_novedades_task_optimizado(self, result, usuario_i
     # ✅ Logging de inicio
     log_process_start_novedades(
         archivo_id=archivo_id,
-        fase='actualizacion_empleados_optimizada',
+        accion='actualizacion_empleados_optimizada_iniciada',
+        descripcion='Iniciando actualización optimizada de empleados con chord paralelo',
         usuario_id=usuario_id,
         detalles_extra={'modo': 'chord_paralelo'}
     )
@@ -848,7 +964,8 @@ def actualizar_empleados_desde_novedades_task_optimizado(self, result, usuario_i
             # Log de completado
             log_process_complete_novedades(
                 archivo_id=archivo_id,
-                fase='actualizacion_empleados_optimizada',
+                accion='actualizacion_empleados_optimizada_exitosa',
+                descripcion=f'Actualización directa completada: {count} empleados actualizados ({total_filas} filas)',
                 usuario_id=usuario_id,
                 resultado='exito',
                 detalles_extra={
@@ -908,7 +1025,8 @@ def actualizar_empleados_desde_novedades_task_optimizado(self, result, usuario_i
             # Log de error
             log_process_complete_novedades(
                 archivo_id=archivo_id,
-                fase='actualizacion_empleados_optimizada',
+                accion='actualizacion_empleados_optimizada_error',
+                descripcion=f'Error en actualización optimizada: {str(e)}',
                 usuario_id=usuario_id,
                 resultado='error',
                 detalles_extra={'error': str(e)}
@@ -940,7 +1058,8 @@ def guardar_registros_novedades_task_optimizado(self, result, usuario_id=None):
     # ✅ Logging de inicio
     log_process_start_novedades(
         archivo_id=archivo_id,
-        fase='guardado_registros_optimizado',
+        accion='guardado_registros_optimizado_iniciado',
+        descripcion='Iniciando guardado optimizado de registros con chord paralelo',
         usuario_id=usuario_id,
         detalles_extra={'modo': 'chord_paralelo'}
     )
@@ -979,7 +1098,8 @@ def guardar_registros_novedades_task_optimizado(self, result, usuario_id=None):
             # Log de completado
             log_process_complete_novedades(
                 archivo_id=archivo_id,
-                fase='guardado_registros_optimizado',
+                accion='guardado_registros_optimizado_exitoso',
+                descripcion=f'Guardado directo completado: {count} registros guardados ({total_filas} filas)',
                 usuario_id=usuario_id,
                 resultado='exito',
                 detalles_extra={
@@ -1041,7 +1161,8 @@ def guardar_registros_novedades_task_optimizado(self, result, usuario_id=None):
             # Log de error
             log_process_complete_novedades(
                 archivo_id=archivo_id,
-                fase='guardado_registros_optimizado',
+                accion='guardado_registros_optimizado_error',
+                descripcion=f'Error en guardado optimizado: {str(e)}',
                 usuario_id=usuario_id,
                 resultado='error',
                 detalles_extra={'error': str(e)}

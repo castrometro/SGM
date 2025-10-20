@@ -7,8 +7,8 @@ from django.conf import settings
 import unicodedata
 import hashlib
 
-# Importar modelos de logging - USANDO STUBS DE TRANSICIÓN
-from .models_logging_stub import UploadLogNomina, TarjetaActivityLogNomina
+# Importar modelos de logging - MODELOS REALES
+from .models_logging import UploadLogNomina, TarjetaActivityLogNomina
 
 User = get_user_model()
 
@@ -126,8 +126,18 @@ class CierreNomina(models.Model):
         """
         from django.utils import timezone
         
-        # Si ya está finalizado, no cambiar
-        if self.estado == 'finalizado':
+        # ⚠️ ESTADOS AVANZADOS - No retroceder si ya está más allá de archivos_completos
+        estados_avanzados = [
+            'finalizado',
+            'verificacion_datos',
+            'discrepancias_detectadas', 
+            'verificado_sin_discrepancias',
+            'datos_verificados',
+            'datos_consolidados',
+            'con_incidencias',
+            'incidencias_resueltas'
+        ]
+        if self.estado in estados_avanzados:
             return self.estado
             
         # Verificar el estado de todos los archivos necesarios

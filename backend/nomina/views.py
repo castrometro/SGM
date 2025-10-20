@@ -80,9 +80,11 @@ from .tasks import (
     procesar_archivo_novedades,
     generar_incidencias_cierre_task,
     generar_incidencias_cierre_paralelo,  # 🆕 Nueva tarea paralela incidencias
-    generar_discrepancias_cierre_task,
-    generar_discrepancias_cierre_paralelo,  # 🆕 Nueva tarea paralela discrepancias
+    generar_discrepancias_cierre_paralelo,  # 🆕 Nueva tarea paralela discrepancias (mantener para legacy)
 )
+
+# ✅ Import de tarea refactorizada de discrepancias
+from .tasks_refactored.discrepancias import generar_discrepancias_cierre_con_logging
 
 logger = logging.getLogger(__name__)
 
@@ -3418,216 +3420,12 @@ class IncidenciaVariacionSalarialViewSet(viewsets.ModelViewSet):
 
 
 # ===== VIEWSETS PARA SISTEMA DE DISCREPANCIAS (VERIFICACIÓN DE DATOS) =====
-
-class DiscrepanciaCierreViewSet(viewsets.ModelViewSet):
-    """ViewSet para gestionar discrepancias de verificación de datos"""
-    queryset = DiscrepanciaCierre.objects.all()
-    serializer_class = DiscrepanciaCierreSerializer
-    permission_classes = [IsAuthenticated]
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        
-        # Filtros disponibles
-        cierre_id = self.request.query_params.get('cierre')
-        tipo_discrepancia = self.request.query_params.get('tipo')
-        rut_empleado = self.request.query_params.get('rut')
-        grupo = self.request.query_params.get('grupo')
-        
-        if cierre_id:
-            queryset = queryset.filter(cierre_id=cierre_id)
-        if tipo_discrepancia:
-            queryset = queryset.filter(tipo_discrepancia=tipo_discrepancia)
-        if rut_empleado:
-            queryset = queryset.filter(rut_empleado__icontains=rut_empleado)
-        if grupo:
-            # Filtrar por grupo de discrepancias
-            libro_vs_novedades = [
-                'empleado_solo_libro', 'empleado_solo_novedades', 'diff_datos_personales',
-                'diff_sueldo_base', 'diff_concepto_monto', 'concepto_solo_libro', 'concepto_solo_novedades'
-            ]
-            if grupo == 'libro_vs_novedades':
-                queryset = queryset.filter(tipo_discrepancia__in=libro_vs_novedades)
-            elif grupo == 'movimientos_vs_analista':
-                queryset = queryset.exclude(tipo_discrepancia__in=libro_vs_novedades)
-            
-        return queryset.select_related('cierre').order_by('-fecha_detectada')
-    
-    @action(detail=False, methods=['post'], url_path='generar/(?P<cierre_id>[^/.]+)')
-    def generar_discrepancias(self, request, cierre_id=None):
-        """
-        🚀 ENDPOINT: Generar discrepancias con procesamiento paralelo
-        
-        Ejecuta la verificación de consistencia de datos usando Celery Chord:
-        1. Chunk 1: Discrepancias Libro vs Novedades
-        2. Chunk 2: Discrepancias Movimientos vs Analista  
-        3. Consolidación: Unificación de resultados
-        """
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        # Verificar permisos básicos
-        if not request.user.is_authenticated:
-            return Response({"error": "Usuario no autenticado"}, status=401)
-        
-        # Verificar que el cierre esté en estado adecuado
-        if cierre.estado not in ['archivos_completos', 'verificacion_datos', 'con_discrepancias']:
-            return Response({
-                "error": f"El cierre debe estar en estado 'archivos_completos', 'verificacion_datos' o 'con_discrepancias' para generar discrepancias. Estado actual: '{cierre.estado}'"
-            }, status=400)
-        
-        # Log para debugging
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"🚀 Generando discrepancias paralelas para cierre {cierre_id}")
-        
-        # Obtener el usuario que ejecuta la verificación
-        usuario_id = request.user.id if request.user.is_authenticated else None
-        logger.info(f"👤 Usuario ejecutor: {request.user.correo_bdo} (ID: {usuario_id})" if usuario_id else "👤 Usuario ejecutor: Anónimo")
-        
-        # 🆕 NUEVO: Usar la nueva tarea paralela con Chord (incluyendo usuario_id)
-        from .tasks import generar_discrepancias_cierre_paralelo
-        task = generar_discrepancias_cierre_paralelo.delay(cierre_id, usuario_id)
-        
-        return Response({
-            "message": "🚀 Generación de discrepancias paralela iniciada",
-            "descripcion": "Verificación en paralelo: Libro vs Novedades + Movimientos vs Analista",
-            "task_id": task.id,
-            "cierre_id": cierre_id,
-            "usuario_ejecutor": request.user.correo_bdo if request.user.is_authenticated else "Anónimo",
-            "modo_procesamiento": "paralelo_chord"
-        }, status=202)
-    
-    @action(detail=False, methods=['get'], url_path='resumen/(?P<cierre_id>[^/.]+)')
-    def resumen_discrepancias(self, request, cierre_id=None):
-        """Obtiene un resumen estadístico de discrepancias de un cierre"""
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        from .utils.GenerarDiscrepancias import obtener_resumen_discrepancias
-        resumen = obtener_resumen_discrepancias(cierre)
-        
-        serializer = ResumenDiscrepanciasSerializer(resumen)
-        return Response(serializer.data)
-    
-    @action(detail=False, methods=['get'], url_path='estado/(?P<cierre_id>[^/.]+)')
-    def estado_discrepancias(self, request, cierre_id=None):
-        """Obtiene el estado de discrepancias de un cierre"""
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        total_discrepancias = cierre.discrepancias.count()
-        
-        # Clasificar por grupos
-        libro_vs_novedades_tipos = [
-            'empleado_solo_libro', 'empleado_solo_novedades', 'diff_datos_personales',
-            'diff_sueldo_base', 'diff_concepto_monto', 'concepto_solo_libro', 'concepto_solo_novedades'
-        ]
-        
-        total_libro_vs_novedades = cierre.discrepancias.filter(tipo_discrepancia__in=libro_vs_novedades_tipos).count()
-        total_movimientos_vs_analista = total_discrepancias - total_libro_vs_novedades
-        
-        return Response({
-            "cierre_id": cierre.id,
-            "estado_cierre": cierre.estado,
-            "tiene_discrepancias": total_discrepancias > 0,
-            "total_discrepancias": total_discrepancias,
-            "discrepancias_por_grupo": {
-                "libro_vs_novedades": total_libro_vs_novedades,
-                "movimientos_vs_analista": total_movimientos_vs_analista
-            },
-            "empleados_afectados": cierre.discrepancias.values('rut_empleado').distinct().count(),
-            "fecha_ultima_verificacion": cierre.discrepancias.first().fecha_detectada if total_discrepancias > 0 else None
-        })
-    
-    @action(detail=False, methods=['delete'], url_path='limpiar/(?P<cierre_id>[^/.]+)')
-    def limpiar_discrepancias(self, request, cierre_id=None):
-        """
-        Limpia todas las discrepancias de un cierre.
-        Útil para re-ejecutar la verificación después de corregir archivos.
-        """
-        try:
-            cierre = CierreNomina.objects.get(id=cierre_id)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        # Eliminar todas las discrepancias del cierre
-        deleted_count = cierre.discrepancias.all().delete()[0]
-        
-        # 🔄 NUEVO: Resetear estado del cierre al estado anterior apropiado
-        # Cuando se limpian discrepancias, el cierre debe volver a estar listo para verificación
-        cierre.estado = 'archivos_completos'
-        cierre.save(update_fields=['estado'])
-        
-        logger.info(f"🧹 Eliminadas {deleted_count} discrepancias del cierre {cierre_id} - Estado revertido a 'archivos_completos'")
-        
-        return Response({
-            "message": f"Eliminadas {deleted_count} discrepancias. Cierre revertido al estado 'Archivos Completos' y listo para nueva verificación.",
-            "discrepancias_eliminadas": deleted_count,
-            "estado_anterior": "archivos_completos",
-            "nuevo_estado": cierre.estado
-        })
-
-
-class CierreNominaDiscrepanciasViewSet(viewsets.ViewSet):
-    """ViewSet adicional para operaciones de verificación de datos en cierres"""
-    
-    @action(detail=True, methods=['get'])
-    def estado_verificacion(self, request, pk=None):
-        """Obtiene el estado de verificación de datos de un cierre"""
-        try:
-            cierre = CierreNomina.objects.get(id=pk)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        total_discrepancias = cierre.discrepancias.count()
-        
-        # Determinar estado automáticamente
-        if total_discrepancias == 0:
-            if cierre.estado in ['discrepancias_detectadas']:
-                cierre.estado = 'datos_verificados'
-                cierre.save(update_fields=['estado'])
-        else:
-            if cierre.estado in ['datos_consolidados', 'datos_verificados']:
-                cierre.estado = 'discrepancias_detectadas'
-                cierre.save(update_fields=['estado'])
-        
-        return Response({
-            "cierre_id": cierre.id,
-            "estado_verificacion": cierre.estado,
-            "requiere_correccion": total_discrepancias > 0,
-            "total_discrepancias": total_discrepancias,
-            "mensaje": "Sin discrepancias - datos verificados" if total_discrepancias == 0 else f"Se encontraron {total_discrepancias} discrepancias que requieren corrección"
-        })
-    
-    @action(detail=True, methods=['post'])
-    def lanzar_verificacion(self, request, pk=None):
-        """Lanza la verificación de datos para un cierre"""
-        try:
-            cierre = CierreNomina.objects.get(id=pk)
-        except CierreNomina.DoesNotExist:
-            return Response({"error": "Cierre no encontrado"}, status=404)
-        
-        # Verificar que el cierre esté en estado adecuado
-        if cierre.estado not in ['datos_consolidados', 'discrepancias_detectadas']:
-            return Response({
-                "error": "El cierre debe estar en estado 'datos_consolidados' para verificar datos"
-            }, status=400)
-        
-        # Lanzar tarea
-        task = generar_discrepancias_cierre_task.delay(pk)
-        
-        return Response({
-            "message": "Verificación de datos iniciada",
-            "task_id": task.id,
-            "cierre_id": pk
-        }, status=202)
+# ✅ REFACTORIZADO: ViewSets movidos a views_discrepancias.py
+# Importar desde el nuevo archivo para mantener compatibilidad con URLs
+from .views_discrepancias import (
+    DiscrepanciaCierreViewSet,
+    CierreNominaDiscrepanciasViewSet
+)
 
 
 # ========== UPLOAD LOG ENDPOINTS ==========

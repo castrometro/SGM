@@ -16,10 +16,12 @@ Estructura:
 - movimientos_mes.py: Procesamiento de movimientos del mes (1 tarea principal)
 - archivos_analista.py: Procesamiento de archivos del analista (1 tarea, 3 tipos: finiquitos, incidencias, ingresos)
 - novedades.py: Procesamiento de novedades (11 tareas: 3 principales + 6 optimizadas + 2 consolidación)
+- discrepancias.py: Verificación de datos y generación de discrepancias (1 tarea principal)
+- consolidacion.py: Consolidación de datos con dual logging (1 tarea principal)
 
 Autor: Sistema SGM
-Fecha: 18 de octubre de 2025
-Versión: 2.3.0 (Refactorizado - Added Novedades)
+Fecha: 20 de octubre de 2025
+Versión: 2.5.0 (Refactorizado - Added Consolidación)
 """
 
 # ============================================================================
@@ -81,6 +83,22 @@ from .novedades import (
 )
 
 # ============================================================================
+# DISCREPANCIAS (1 tarea principal)
+# ============================================================================
+
+from .discrepancias import (
+    generar_discrepancias_cierre_con_logging,
+)
+
+# ============================================================================
+# CONSOLIDACIÓN (1 tarea principal)
+# ============================================================================
+
+from .consolidacion import (
+    consolidar_datos_nomina_con_logging,
+)
+
+# ============================================================================
 # EXPORTACIONES
 # ============================================================================
 
@@ -112,13 +130,17 @@ __all__ = [
     'procesar_chunk_registros_novedades_task',
     'consolidar_empleados_novedades_task',
     'finalizar_procesamiento_novedades_task',
+    # Discrepancias (1 tarea principal)
+    'generar_discrepancias_cierre_con_logging',
+    # Consolidación (1 tarea principal)
+    'consolidar_datos_nomina_con_logging',
 ]
 
 # ============================================================================
 # METADATA
 # ============================================================================
 
-__version__ = '2.3.0'
+__version__ = '2.5.0'
 __author__ = 'Sistema SGM'
 __status__ = 'Production'
 
@@ -128,9 +150,9 @@ TAREAS_MIGRADAS = {
     'movimientos_mes': True,        # ✅ 1 tarea principal
     'archivos_analista': True,      # ✅ 1 tarea principal (3 tipos: finiquitos, incidencias, ingresos)
     'novedades': True,              # ✅ 11 tareas (3 análisis + 2 finales + 2 optimizadas + 4 paralelo)
-    'consolidacion': False,         # ⏳ Pendiente
+    'discrepancias': True,          # ✅ 1 tarea principal (verificación de datos)
+    'consolidacion': True,          # ✅ 1 tarea principal (consolidación con dual logging)
     'incidencias': False,           # ⏳ Pendiente
-    'discrepancias': False,         # ⏳ Pendiente
     'informes': False,              # ⏳ Pendiente
 }
 

@@ -287,11 +287,12 @@ export const aprobarRecargaArchivos = async (cierreId) => {
 };
 
 // Consolidar datos de Talana (Libro + Novedades)
+// ✅ REFACTORIZADO: Usa nuevo endpoint /consolidacion/{id}/consolidar/
 export const consolidarDatosTalana = async (cierreId, opciones = {}) => {
   // Permite pasar modo de consolidación u opciones futuras
   const payload = {};
   if (opciones?.modo) payload.modo = opciones.modo;
-  const res = await api.post(`/nomina/cierres/${cierreId}/consolidar-datos/`, payload);
+  const res = await api.post(`/nomina/consolidacion/${cierreId}/consolidar/`, payload);
   return res.data;
 };
 

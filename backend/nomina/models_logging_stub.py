@@ -17,8 +17,8 @@ class StubInstance:
             setattr(self, key, value)
         self.id = None  # Simular que no tiene ID
     
-    def save(self):
-        logger.debug("STUB: save() no-op")
+    def save(self, *args, **kwargs):
+        logger.debug(f"STUB: save() no-op args={args}, kwargs={kwargs}")
         pass
 
 

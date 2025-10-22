@@ -68,7 +68,8 @@ def reconciliar_cierre_suma_total(cierre_id: int, umbral_pct: float = 30.0) -> d
         )
 
         # Mapa de totales por (nombre_concepto, tipo_concepto)
-        EXCLUIR_TIPOS = {'informacion_adicional'}  # No comparar categoría informativa
+        # ✅ Excluir conceptos informativos (no generan incidencias)
+        EXCLUIR_TIPOS = {'informativo'}  # No comparar categoría informativa
         def totales_por_concepto(cierre_obj):
             if not cierre_obj:
                 return {}

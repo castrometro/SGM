@@ -324,6 +324,21 @@ def consolidar_datos_nomina_con_logging(self, cierre_id, usuario_id=None, modo='
             f"{resultado.get('movimientos_consolidados', 0)} movimientos "
             f"en {duracion:.2f}s"
         )
+
+        # 🚀 DISPARO AUTOMÁTICO DE INCIDENCIAS (REFACTORIZADO)
+        # Ejecutar generación automática de incidencias post-consolidación
+        # (solo si el cierre está en estado que requiere incidencias)
+        if resultado.get('estado_final') == 'con_incidencias':
+            try:
+                from nomina.tasks_refactored.incidencias import generar_incidencias_con_logging
+                generar_incidencias_con_logging.delay(cierre_id, usuario_id or 0)
+                logger.info(
+                    f"🔁 [CONSOLIDACIÓN] Disparada generación automática de incidencias (tasks_refactored) para cierre {cierre_id}"
+                )
+            except Exception as e_auto:
+                logger.error(
+                    f"⚠️ [CONSOLIDACIÓN] No se pudo disparar incidencias automáticas (tasks_refactored) para cierre {cierre_id}: {e_auto}"
+                )
         
         return resultado
         

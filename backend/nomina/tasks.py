@@ -2233,16 +2233,89 @@ def generar_incidencias_consolidadas_task(cierre_id):
     """
     # Generación simplificada: SOLO suma_total por ítem (alineado al front actual)
     from .utils.reconciliacion import reconciliar_cierre_suma_total
+    from .models import CierreNomina, ActivityEvent
+    from .models_logging import registrar_actividad_tarjeta_nomina
     
     logger.info(f"🔍 Iniciando detección de incidencias consolidadas para cierre {cierre_id}")
     
     try:
+        # 📋 Log de inicio (dual logging)
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=cierre_id,
+                tarjeta="incidencias",
+                accion="process_start",
+                descripcion="Auto: Generación de incidencias por re-corrección/consolidación",
+                usuario=getattr(cierre, 'usuario_analista', None),
+                detalles={
+                    "trigger": "auto_post_consolidacion",
+                    "version_datos": getattr(cierre, 'version_datos', None),
+                },
+                resultado="info",
+            )
+            ActivityEvent.objects.create(
+                event_type='process',
+                action=f'incidencias_auto_start_cierre_{cierre_id}',
+                resource_type='nomina',
+                resource_id=str(cierre_id),
+                user=getattr(cierre, 'usuario_analista', None),
+                cliente=getattr(cierre, 'cliente', None),
+                cierre=cierre,
+                details={
+                    "trigger": "auto_post_consolidacion",
+                    "version_datos": getattr(cierre, 'version_datos', None),
+                }
+            )
+        except Exception as e_log_start:
+            logger.warning(f"[INCIDENCIAS AUTO] No se pudo registrar log de inicio: {e_log_start}")
+
         # Ejecutar reconciliación/generación de incidencias de suma_total
         resumen = reconciliar_cierre_suma_total(cierre_id)
         logger.info(
             f"✅ Incidencias (suma_total) para cierre {cierre_id}: creadas={resumen.get('creadas')}, "
             f"actualizadas={resumen.get('actualizadas')}, resueltas={resumen.get('marcadas_resueltas')}, v={resumen.get('version')}"
         )
+
+        # 📋 Log de finalización (dual logging) con contadores
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            nuevas = int(resumen.get('creadas', 0) or 0)
+            act = int(resumen.get('actualizadas', 0) or 0)
+            res = int(resumen.get('marcadas_resueltas', 0) or 0)
+            total_vigentes = nuevas + act
+            detalles = {
+                "incidencias_nuevas": nuevas,
+                "incidencias_actualizadas": act,
+                "incidencias_resueltas": res,
+                "incidencias_vigentes": total_vigentes,
+                "version_datos": resumen.get('version'),
+                "trigger": "auto_post_consolidacion",
+            }
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=cierre_id,
+                tarjeta="incidencias",
+                accion="process_complete",
+                descripcion=(
+                    f"Auto: Generación completada - {total_vigentes} vigentes "
+                    f"(nuevas={nuevas}, act={act}), {res} resueltas"
+                ),
+                usuario=getattr(cierre, 'usuario_analista', None),
+                detalles=detalles,
+                resultado="exito",
+            )
+            ActivityEvent.objects.create(
+                event_type='process',
+                action=f'incidencias_auto_complete_cierre_{cierre_id}',
+                resource_type='nomina',
+                resource_id=str(cierre_id),
+                user=getattr(cierre, 'usuario_analista', None),
+                cliente=getattr(cierre, 'cliente', None),
+                cierre=cierre,
+                details=detalles,
+            )
+        except Exception as e_log_end:
+            logger.warning(f"[INCIDENCIAS AUTO] No se pudo registrar log de finalización: {e_log_end}")
         return {
             'success': True,
             'cierre_id': cierre_id,
@@ -2251,6 +2324,30 @@ def generar_incidencias_consolidadas_task(cierre_id):
         
     except Exception as e:
         logger.error(f"❌ Error crítico en detección de incidencias para cierre {cierre_id}: {e}")
+        # 📋 Log de error (dual logging)
+        try:
+            cierre = CierreNomina.objects.get(id=cierre_id)
+            registrar_actividad_tarjeta_nomina(
+                cierre_id=cierre_id,
+                tarjeta="incidencias",
+                accion="validation_error",
+                descripcion="Auto: Error en generación de incidencias tras consolidación",
+                usuario=getattr(cierre, 'usuario_analista', None),
+                detalles={"error": str(e), "trigger": "auto_post_consolidacion"},
+                resultado="error",
+            )
+            ActivityEvent.objects.create(
+                event_type='process',
+                action=f'incidencias_auto_error_cierre_{cierre_id}',
+                resource_type='nomina',
+                resource_id=str(cierre_id),
+                user=getattr(cierre, 'usuario_analista', None),
+                cliente=getattr(cierre, 'cliente', None),
+                cierre=cierre,
+                details={"error": str(e), "trigger": "auto_post_consolidacion"},
+            )
+        except Exception as e_log_err:
+            logger.warning(f"[INCIDENCIAS AUTO] No se pudo registrar log de error: {e_log_err}")
         return {
             'success': False,
             'error': str(e)
@@ -3076,13 +3173,19 @@ def finalizar_consolidacion_post_movimientos(cierre_id):
         cierre.fecha_consolidacion = timezone.now()
         cierre.save(update_fields=update_fields)
 
-        # Si preservamos 'con_incidencias', disparar generación de incidencias automáticamente
+        # Si preservamos 'con_incidencias', disparar generación de incidencias usando tarea REFACTORIZADA
         if estado_anterior == 'con_incidencias':
             try:
-                generar_incidencias_consolidadas_task.delay(cierre_id)
-                logger.info(f"🧩 [FINAL] Cierre {cierre_id} en 'con_incidencias': incidencias consolidadas disparadas automáticamente")
+                # ✅ Usar la tarea refactorizada para incidencias (evita duplicación en tasks.py)
+                from .tasks_refactored.incidencias import generar_incidencias_con_logging
+                generar_incidencias_con_logging.delay(cierre_id, usuario_id=0)
+                logger.info(
+                    f"🧩 [FINAL] Cierre {cierre_id} en 'con_incidencias': incidencias (tasks_refactored) disparadas automáticamente"
+                )
             except Exception as ex:
-                logger.error(f"⚠️ [FINAL] No se pudo disparar incidencias automáticamente para cierre {cierre_id}: {ex}")
+                logger.error(
+                    f"⚠️ [FINAL] No se pudo disparar incidencias (tasks_refactored) automáticamente para cierre {cierre_id}: {ex}"
+                )
 
         return {
             'success': True,
@@ -3218,19 +3321,25 @@ def consolidar_resultados_finales(resultados_paralelos, cierre_id):
         cierre.fecha_consolidacion = timezone.now()
         cierre.save(update_fields=update_fields)
 
+        
         if estado_anterior == 'con_incidencias':
             try:
-                generar_incidencias_consolidadas_task.delay(cierre_id)
-                logger.info(f"🧩 [FINAL] Cierre {cierre_id} en 'con_incidencias': incidencias consolidadas disparadas automáticamente")
+                # ✅ Usar la tarea refactorizada para incidencias (evita duplicación en tasks.py)
+                from .tasks_refactored.incidencias import generar_incidencias_con_logging
+                generar_incidencias_con_logging.delay(cierre_id, usuario_id=0)
+                logger.info(
+                    f"🧩 [FINAL] Cierre {cierre_id} en 'con_incidencias': incidencias (tasks_refactored) disparadas automáticamente"
+                )
             except Exception as ex:
-                logger.error(f"⚠️ [FINAL] No se pudo disparar incidencias automáticamente para cierre {cierre_id}: {ex}")
-        
-        logger.info(f"✅ [FINAL] Consolidación OPTIMIZADA completada exitosamente:")
-        logger.info(f"   📊 {empleados_consolidados} empleados consolidados")
-        logger.info(f"   📋 {headers_consolidados} headers-valores creados")
-        logger.info(f"   🔄 {movimientos_creados} movimientos de personal creados")
-        logger.info(f"   💰 {conceptos_consolidados} conceptos consolidados creados")
-        logger.info(f"   ⚡ Todas las tareas ejecutadas en PARALELO")
+                logger.error(
+                    f"⚠️ [FINAL] No se pudo disparar incidencias (tasks_refactored) automáticamente para cierre {cierre_id}: {ex}"
+                )
+                logger.info(f"✅ [FINAL] Consolidación OPTIMIZADA completada exitosamente:")
+                logger.info(f"   📊 {empleados_consolidados} empleados consolidados")
+                logger.info(f"   📋 {headers_consolidados} headers-valores creados")
+                logger.info(f"   🔄 {movimientos_creados} movimientos de personal creados")
+                logger.info(f"   💰 {conceptos_consolidados} conceptos consolidados creados")
+                logger.info(f"   ⚡ Todas las tareas ejecutadas en PARALELO")
         
         return {
             'success': True,

@@ -64,10 +64,9 @@ def _serialize_decimal(value):
 UMBRAL_VARIACION_PORCENTUAL = 30.0
 
 # Tipos de concepto que se EXCLUYEN del análisis (informativos, no monetarios)
+# ✅ Usar el valor correcto según TIPO_CONCEPTO_CHOICES del modelo
 CONCEPTOS_EXCLUIDOS = [
-    'informacion_adicional',  # 📄 No son montos
-    'informacion',            # 📄 Variante del nombre
-    'informativo',            # � Otra variante
+    'informativo',  # ✅ Valor correcto según ConceptoConsolidado.TIPO_CONCEPTO_CHOICES
 ]
 
 # 🚨 MÉTODO SIMPLIFICADO:
@@ -307,6 +306,18 @@ def procesar_incidencias_suma_total_simple(cierre_actual, cierre_anterior):
     
     # Guardar todas las incidencias en batch
     if incidencias_creadas:
+        # ⚠️ bulk_create NO invoca save(), debemos generar hash_deteccion manualmente
+        for inc in incidencias_creadas:
+            if not inc.hash_deteccion:
+                try:
+                    inc.hash_deteccion = inc.generar_hash_deteccion()
+                except Exception as e:
+                    logger.warning(f"⚠️ No se pudo generar hash para incidencia: {e}")
+            # Establecer versión de detección
+            if not inc.version_detectada_primera:
+                inc.version_detectada_primera = cierre_version
+            inc.version_detectada_ultima = cierre_version
+        
         IncidenciaCierre.objects.bulk_create(incidencias_creadas, ignore_conflicts=True)
         logger.info(f"✅ Creadas {len(incidencias_creadas)} incidencias en base de datos")
     

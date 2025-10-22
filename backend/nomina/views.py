@@ -438,6 +438,10 @@ class CierreNominaViewSet(viewsets.ModelViewSet):
         """
         Genera incidencias comparando información consolidada con el período anterior
         """
+        logger.warning(
+            "[DEPRECATION] Endpoint legacy generar_incidencias_consolidadas llamado. "
+            "Usar views_incidencias_v2.GeneracionIncidenciasViewSet (incidencias-v2) + tasks_refactored.incidencias"
+        )
         from .models_logging_stub import registrar_actividad_tarjeta_nomina
         from .utils.clientes import get_client_ip
     # La detección usa el orquestador V2 a través de la task generar_incidencias_consolidadas_task

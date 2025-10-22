@@ -9,6 +9,22 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+class StubUploadLog:
+    """Objeto stub que simula UploadLogNomina para evitar errores"""
+    def __init__(self, cliente, archivo):
+        self.cliente = cliente
+        self.archivo = archivo
+        self.cierre = None
+        self.resumen = {}
+        logger.debug(f"[STUB] StubUploadLog creado - archivo: {archivo.name}")
+    
+    def save(self, *args, **kwargs):
+        """STUB: No hace nada, acepta cualquier argumento"""
+        logger.debug(f"[STUB] StubUploadLog.save() llamado con args={args}, kwargs={kwargs}")
+        pass
+
+
 class UploadLogNominaMixin:
     """
     STUB: Mixin para manejar el logging de uploads en nómina
@@ -23,9 +39,9 @@ class UploadLogNominaMixin:
         self.ip_usuario = None
     
     def crear_upload_log(self, cliente, archivo, tipo_upload=None):
-        """STUB: No crea ningún log"""
-        logger.debug(f"STUB: crear_upload_log - archivo: {archivo.name}")
-        return None
+        """STUB: Retorna un objeto stub que simula UploadLogNomina"""
+        logger.debug(f"[STUB] crear_upload_log - archivo: {archivo.name}")
+        return StubUploadLog(cliente, archivo)
     
     def actualizar_upload_log(self, upload_log_id, **kwargs):
         """STUB: No actualiza ningún log"""

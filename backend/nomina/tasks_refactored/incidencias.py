@@ -114,17 +114,19 @@ def log_incidencias_complete(cierre_id, usuario_id, resultado, detalles_extra=No
         cierre = CierreNomina.objects.get(id=cierre_id)
         usuario = User.objects.get(id=usuario_id) if usuario_id else None
         
-        # Estadísticas del resultado
-        total_incidencias = resultado.get('incidencias_generadas', 0)
-        incidencias_criticas = resultado.get('incidencias_criticas', 0)
-        tipos_detectados = resultado.get('tipos_detectados', [])
+        # Estadísticas del resultado (adaptado a reconciliación suma_total)
+        total_incidencias = int(resultado.get('incidencias_generadas', 0) or 0)
+        nuevas = int(resultado.get('incidencias_nuevas', 0) or 0)
+        actualizadas = int(resultado.get('incidencias_actualizadas', 0) or 0)
+        resueltas = int(resultado.get('incidencias_resueltas', 0) or 0)
         
         # Detalles para logging
         detalles = {
             'cierre_id': cierre_id,
             'total_incidencias': total_incidencias,
-            'incidencias_criticas': incidencias_criticas,
-            'tipos_detectados': tipos_detectados,
+            'incidencias_nuevas': nuevas,
+            'incidencias_actualizadas': actualizadas,
+            'incidencias_resueltas': resueltas,
             'timestamp': timezone.now().isoformat()
         }
         if detalles_extra:
@@ -135,7 +137,11 @@ def log_incidencias_complete(cierre_id, usuario_id, resultado, detalles_extra=No
             cierre_id=cierre_id,
             tarjeta='incidencias',
             accion='process_complete',  # ✅ Máx 25 caracteres
-            descripcion=f'Celery: Generación completada - {total_incidencias} incidencias detectadas',
+            descripcion=(
+                f'Celery: Generación completada - '
+                f'{total_incidencias} vigentes (nuevas={nuevas}, act={actualizadas}), '
+                f'{resueltas} resueltas'
+            ),
             usuario=usuario,
             detalles=detalles,
             resultado='exito'
@@ -153,7 +159,10 @@ def log_incidencias_complete(cierre_id, usuario_id, resultado, detalles_extra=No
             details=detalles
         )
         
-        logger.info(f"✅ [LOGGING] Generación de incidencias completada: {total_incidencias} incidencias")
+        logger.info(
+            f"✅ [LOGGING] Generación de incidencias completada: "
+            f"{total_incidencias} vigentes (nuevas={nuevas}, act={actualizadas}), resueltas={resueltas}"
+        )
         
     except Exception as e:
         logger.error(f"❌ Error en log_incidencias_complete: {e}")
@@ -259,49 +268,40 @@ def generar_incidencias_con_logging(self, cierre_id, usuario_id=0, clasificacion
     )
     
     try:
-        # EJECUTAR GENERACIÓN DE INCIDENCIAS USANDO TAREA SIMPLIFICADA
-        from nomina.utils.DetectarIncidenciasConsolidadas import generar_incidencias_consolidados_v2
+        # ✅ MIGRADO A RECONCILIACIÓN: Usa upsert inteligente con hash estable
+        from nomina.utils.reconciliacion import reconciliar_cierre_suma_total
         
-        logger.info(f"🚀 Llamando a generar_incidencias_consolidados_v2 (versión simplificada)...")
+        logger.info(f"🚀 Llamando a reconciliar_cierre_suma_total (upsert inteligente con hash)...")
         
-        # Llamar a la función simplificada directamente (no es tarea async)
-        resultado_generacion = generar_incidencias_consolidados_v2(
+        # Llamar a la función de reconciliación (actualiza existentes, crea nuevas, marca resueltas)
+        resultado_generacion = reconciliar_cierre_suma_total(
             cierre_id=cierre_id,
-            clasificaciones_seleccionadas=clasificaciones_seleccionadas
+            umbral_pct=30.0  # Umbral fijo 30%
         )
-        
-        # Verificar si fue exitoso
-        if not resultado_generacion.get('success', False):
-            raise Exception(resultado_generacion.get('error', 'Error desconocido en generación'))
         
         # RECARGAR CIERRE PARA OBTENER ESTADO ACTUALIZADO
         cierre = CierreNomina.objects.get(id=cierre_id)
         
-        # RECOPILAR ESTADÍSTICAS DEL RESULTADO
-        total_incidencias = resultado_generacion.get('total_incidencias', 0)
-        
-        # Prioridades desde el resultado
-        prioridades = resultado_generacion.get('prioridades', {})
-        incidencias_criticas = prioridades.get('critica', 0)
-        
-        # Tipos detectados desde el resultado
-        tipos_detectados = resultado_generacion.get('tipos_detectados', [])
+        # RECOPILAR ESTADÍSTICAS DEL RESULTADO (adaptado a reconciliación suma_total)
+        nuevas = int(resultado_generacion.get('creadas', 0) or 0)
+        actualizadas = int(resultado_generacion.get('actualizadas', 0) or 0)
+        resueltas = int(resultado_generacion.get('marcadas_resueltas', 0) or 0)
+        total_vigentes = nuevas + actualizadas
         
         resultado = {
             'success': True,
             'cierre_id': cierre_id,
-            'incidencias_generadas': total_incidencias,
-            'incidencias_criticas': incidencias_criticas,
-            'tipos_detectados': tipos_detectados,
+            'incidencias_generadas': total_vigentes,
+            'incidencias_nuevas': nuevas,
+            'incidencias_actualizadas': actualizadas,
+            'incidencias_resueltas': resueltas,
             'estado_final': cierre.estado,
             'modo_procesamiento': modo,
             'conceptos_analizados': resultado_generacion.get('conceptos_analizados', 0),
-            'variaciones_sobre_umbral': resultado_generacion.get('variaciones_sobre_umbral', 0),
-            'umbral_usado': resultado_generacion.get('umbral_usado', 30.0),
+            'variaciones_sobre_umbral': total_vigentes,
+            'umbral_usado': 30.0,
             'tiempo_ejecucion': (timezone.now() - tiempo_inicio).total_seconds(),
-            'periodo_actual': resultado_generacion.get('periodo_actual'),
-            'periodo_anterior': resultado_generacion.get('periodo_anterior'),
-            'primer_cierre': resultado_generacion.get('primer_cierre', False)
+            'version_datos': resultado_generacion.get('version'),
         }
         
         # ✅ LOG DUAL: Generación completada exitosamente
@@ -317,7 +317,7 @@ def generar_incidencias_con_logging(self, cierre_id, usuario_id=0, clasificacion
         
         logger.info(
             f"✅ [INCIDENCIAS] Generación completada para cierre {cierre_id}: "
-            f"{total_incidencias} incidencias ({incidencias_criticas} críticas)"
+            f"{total_vigentes} vigentes (nuevas={nuevas}, act={actualizadas}), resueltas={resueltas}"
         )
         
         return resultado

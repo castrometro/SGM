@@ -167,13 +167,11 @@ class ActivityCaptureMiddleware(MiddlewareMixin):
         # Intentar desde POST data
         if request.method == 'POST':
             try:
+                # Solo usar request.data (parseado por DRF)
+                # NO acceder a request.body porque el stream ya fue leído
                 if hasattr(request, 'data') and 'cierre_id' in request.data:
                     return int(request.data['cierre_id'])
-                elif request.content_type == 'application/json':
-                    data = json.loads(request.body)
-                    if 'cierre_id' in data:
-                        return int(data['cierre_id'])
-            except (json.JSONDecodeError, ValueError, KeyError):
+            except (ValueError, KeyError, AttributeError):
                 pass
                 
         # Intentar desde query params

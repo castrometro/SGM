@@ -257,12 +257,19 @@ def procesar_chunk_registros_util(libro_id, chunk_data):
         if not headers:
             headers = [h for h in df.columns if h not in empleado_cols]
         
+        # 🔍 DEBUG LOGGING AGREGADO
+        chunk_indices = chunk_data['indices']
+        logger.info(f"🔍 [DEBUG Chunk {chunk_id}] Total indices recibidos: {len(chunk_indices)}")
+        logger.info(f"🔍 [DEBUG Chunk {chunk_id}] Primeros 3 indices: {chunk_indices[:3] if chunk_indices else 'VACÍO'}")
+        logger.info(f"🔍 [DEBUG Chunk {chunk_id}] Total headers: {len(headers)}")
+        logger.info(f"🔍 [DEBUG Chunk {chunk_id}] DataFrame shape: {df.shape}")
+        
         count = 0
         errores = []
         
         # Procesar solo las filas de este chunk
-        chunk_indices = chunk_data['indices']
         chunk_df = df.iloc[chunk_indices]
+        logger.info(f"🔍 [DEBUG Chunk {chunk_id}] chunk_df shape: {chunk_df.shape}")
         
         with transaction.atomic():
             for _, row in chunk_df.iterrows():

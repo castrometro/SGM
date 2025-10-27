@@ -127,16 +127,62 @@ def limpiar_rut(rut: str) -> str:
     return rut_str
 
 def convertir_fecha(fecha_valor: Any) -> Any:
-    """Convierte un valor a fecha, manejando diferentes formatos"""
+    """Convierte un valor a fecha, manejando diferentes formatos incluyendo seriales de Excel"""
+    # Handle arrays and other complex types first
+    try:
+        if hasattr(fecha_valor, '__iter__') and not isinstance(fecha_valor, (str, bytes)):
+            return None
+    except Exception:
+        pass
+        
     if pd.isna(fecha_valor) or fecha_valor is None:
         return None
     
+    # Si ya es datetime, convertir a date
     if isinstance(fecha_valor, datetime):
         return fecha_valor.date()
     
-    if isinstance(fecha_valor, str):
+    # Si es Pandas Timestamp
+    if hasattr(fecha_valor, 'date') and callable(getattr(fecha_valor, 'date')):
+        return fecha_valor.date()
+    
+    # Manejar números (seriales de Excel)
+    if isinstance(fecha_valor, (int, float)):
         try:
-            return parse_date(fecha_valor)
+            # Excel usa 1899-12-30 como origen para la mayoría de casos
+            result = pd.to_datetime(fecha_valor, unit='D', origin='1899-12-30')
+            if pd.isna(result):
+                return None
+            return result.date()
+        except Exception:
+            return None
+    
+    # Manejar strings con múltiples formatos
+    if isinstance(fecha_valor, str):
+        fecha_str = str(fecha_valor).strip()
+        if not fecha_str:
+            return None
+        
+        # Intentar parse_date primero (formato django)
+        try:
+            return parse_date(fecha_str)
+        except:
+            pass
+        
+        # Intentar formatos comunes
+        formatos = ['%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%Y/%m/%d', '%m/%d/%Y', '%d.%m.%Y']
+        for formato in formatos:
+            try:
+                return datetime.strptime(fecha_str, formato).date()
+            except ValueError:
+                continue
+        
+        # Último intento con pandas
+        try:
+            result = pd.to_datetime(fecha_str, dayfirst=True, errors='coerce')
+            if pd.isna(result):
+                return None
+            return result.date()
         except:
             return None
     
@@ -217,6 +263,7 @@ def procesar_altas_bajas(df: pd.DataFrame, cierre) -> int:
 def procesar_ausentismos(df: pd.DataFrame, cierre) -> int:
     """Procesa la hoja de Ausentismos"""
     contador = 0
+    correcciones_dias = 0
     
     # Limpiar registros anteriores de este cierre
     MovimientoAusentismo.objects.filter(cierre=cierre).delete()
@@ -230,6 +277,25 @@ def procesar_ausentismos(df: pd.DataFrame, cierre) -> int:
             
             empleado = buscar_empleado_por_rut(rut_limpio, cierre)
             
+            # Convertir fechas
+            fecha_inicio = convertir_fecha(row.get('FECHA INICIO AUSENCIA'))
+            fecha_fin = convertir_fecha(row.get('FECHA FIN AUSENCIA'))
+            dias_original = convertir_entero(row.get('DIAS'))
+            
+            # Recalcular días si es necesario
+            dias_final = dias_original
+            if fecha_inicio and fecha_fin:
+                dias_calculado = (fecha_fin - fecha_inicio).days + 1  # Inclusivo
+                
+                # Recalcular si días está vacío, es 0, negativo, o hay discrepancia significativa
+                if (dias_original <= 0 or 
+                    abs(dias_original - dias_calculado) > 0):  # Cualquier diferencia
+                    dias_final = max(1, dias_calculado)  # Asegurar al menos 1 día
+                    if dias_original != dias_final:
+                        correcciones_dias += 1
+                        logger.warning(f"Fila {index} Ausentismos - Días corregido: {dias_original} → {dias_final} "
+                                     f"(fechas: {fecha_inicio} a {fecha_fin})")
+            
             MovimientoAusentismo.objects.create(
                 cierre=cierre,
                 empleado=empleado,
@@ -239,9 +305,9 @@ def procesar_ausentismos(df: pd.DataFrame, cierre) -> int:
                 cargo=str(row.get('CARGO', '')).strip(),
                 centro_de_costo=str(row.get('CENTRO DE COSTO', '')).strip(),
                 sucursal=str(row.get('SUCURSAL', '')).strip(),
-                fecha_inicio_ausencia=convertir_fecha(row.get('FECHA INICIO AUSENCIA')),
-                fecha_fin_ausencia=convertir_fecha(row.get('FECHA FIN AUSENCIA')),
-                dias=convertir_entero(row.get('DIAS')),
+                fecha_inicio_ausencia=fecha_inicio,
+                fecha_fin_ausencia=fecha_fin,
+                dias=dias_final,
                 tipo=str(row.get('TIPO DE AUSENTISMO', '')).strip(),
                 motivo=str(row.get('MOTIVO', '')).strip(),
                 observaciones=str(row.get('OBSERVACIONES', '')).strip()
@@ -252,12 +318,13 @@ def procesar_ausentismos(df: pd.DataFrame, cierre) -> int:
             logger.error(f"Error procesando fila {index} de Ausentismos: {e}")
             continue
     
-    logger.info(f"Procesados {contador} registros de Ausentismos")
+    logger.info(f"Procesados {contador} registros de Ausentismos. Correcciones de días: {correcciones_dias}")
     return contador
 
 def procesar_vacaciones(df: pd.DataFrame, cierre) -> int:
     """Procesa la hoja de Vacaciones"""
     contador = 0
+    correcciones_dias = 0
     
     # Limpiar registros anteriores de este cierre
     MovimientoVacaciones.objects.filter(cierre=cierre).delete()
@@ -271,6 +338,25 @@ def procesar_vacaciones(df: pd.DataFrame, cierre) -> int:
             
             empleado = buscar_empleado_por_rut(rut_limpio, cierre)
             
+            # Convertir fechas
+            fecha_inicio = convertir_fecha(row.get('FECHA INICIAL'))
+            fecha_fin = convertir_fecha(row.get('FECHA FIN VACACIONES'))
+            dias_original = convertir_entero(row.get('CANTIDAD DE DIAS'))
+            
+            # Recalcular días si es necesario
+            dias_final = dias_original
+            if fecha_inicio and fecha_fin:
+                dias_calculado = (fecha_fin - fecha_inicio).days + 1  # Inclusivo
+                
+                # Recalcular si días está vacío, es 0, negativo, o hay discrepancia significativa
+                if (dias_original <= 0 or 
+                    abs(dias_original - dias_calculado) > 0):  # Cualquier diferencia
+                    dias_final = max(1, dias_calculado)  # Asegurar al menos 1 día
+                    if dias_original != dias_final:
+                        correcciones_dias += 1
+                        logger.warning(f"Fila {index} Vacaciones - Días corregido: {dias_original} → {dias_final} "
+                                     f"(fechas: {fecha_inicio} a {fecha_fin})")
+            
             MovimientoVacaciones.objects.create(
                 cierre=cierre,
                 empleado=empleado,
@@ -281,10 +367,10 @@ def procesar_vacaciones(df: pd.DataFrame, cierre) -> int:
                 centro_de_costo=str(row.get('CENTRO DE COSTO', '')).strip(),
                 sucursal=str(row.get('SUCURSAL', '')).strip(),
                 fecha_ingreso=convertir_fecha(row.get('FECHA INGRESO')),
-                fecha_inicio=convertir_fecha(row.get('FECHA INICIAL')),
-                fecha_fin_vacaciones=convertir_fecha(row.get('FECHA FIN VACACIONES')),
+                fecha_inicio=fecha_inicio,
+                fecha_fin_vacaciones=fecha_fin,
                 fecha_retorno=convertir_fecha(row.get('FECHA RETORNO')),
-                cantidad_dias=convertir_entero(row.get('CANTIDAD DE DIAS'))
+                cantidad_dias=dias_final
             )
             contador += 1
             
@@ -292,7 +378,7 @@ def procesar_vacaciones(df: pd.DataFrame, cierre) -> int:
             logger.error(f"Error procesando fila {index} de Vacaciones: {e}")
             continue
     
-    logger.info(f"Procesados {contador} registros de Vacaciones")
+    logger.info(f"Procesados {contador} registros de Vacaciones. Correcciones de días: {correcciones_dias}")
     return contador
 
 def procesar_variaciones_sueldo(df: pd.DataFrame, cierre) -> int:
@@ -393,7 +479,9 @@ def procesar_archivo_movimientos_mes_util(movimiento_upload: MovimientosMesUploa
         'vacaciones': 0,
         'variaciones_sueldo': 0,
         'variaciones_contrato': 0,
-        'errores': []
+        'errores': [],
+        'correcciones_fechas': 0,  # Nuevo campo para tracking
+        'correcciones_dias': 0     # Nuevo campo para tracking
     }
     
     # Mapeo de nombres de hojas posibles a funciones de procesamiento
@@ -451,7 +539,7 @@ def procesar_archivo_movimientos_mes_util(movimiento_upload: MovimientosMesUploa
             resultados['errores'].append(error_msg)
             logger.error(error_msg)
     
-    total_procesados = sum([v for k, v in resultados.items() if k != 'errores'])
+    total_procesados = sum([v for k, v in resultados.items() if k not in ['errores', 'correcciones_fechas', 'correcciones_dias']])
     logger.info(f"Procesamiento completado. Total de registros: {total_procesados}")
     
     return resultados

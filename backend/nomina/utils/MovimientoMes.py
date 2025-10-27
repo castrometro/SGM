@@ -134,6 +134,12 @@ def convertir_fecha(fecha_valor: Any) -> Any:
     if isinstance(fecha_valor, datetime):
         return fecha_valor.date()
     
+    # Manejar pandas Timestamp (que viene de Excel)
+    if hasattr(fecha_valor, 'to_pydatetime'):
+        # Convertir Timestamp a datetime y luego a date
+        # Esto evita problemas de timezone que causan el bug de "un día menos"
+        return fecha_valor.to_pydatetime().date()
+    
     if isinstance(fecha_valor, str):
         try:
             return parse_date(fecha_valor)
@@ -419,9 +425,13 @@ def procesar_archivo_movimientos_mes_util(movimiento_upload: MovimientosMesUploa
             continue
         
         # Buscar el mapeo correspondiente
+        # FIX: Normalizar ambos lados de la comparación para evitar problemas con '_' vs ' '
         clave_encontrada = None
+        nombre_hoja_normalizado = nombre_hoja.lower().replace('_', ' ').replace('-', ' ')
+        
         for posible_nombre, (tipo, funcion) in mapeo_hojas.items():
-            if posible_nombre in nombre_hoja.lower().replace('_', ' ').replace('-', ' '):
+            posible_nombre_normalizado = posible_nombre.replace('_', ' ').replace('-', ' ')
+            if posible_nombre_normalizado in nombre_hoja_normalizado:
                 clave_encontrada = (tipo, funcion)
                 break
         

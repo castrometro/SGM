@@ -424,7 +424,19 @@ def _comparar_finiquitos(cierre):
     return discrepancias
 
 def _comparar_ausentismos(cierre):
-    """Compara ausentismos entre MovimientosMes y Archivos del Analista"""
+    """
+    Compara ausentismos entre MovimientosMes y Archivos del Analista.
+    Soporta múltiples eventos de ausentismo por empleado.
+    
+    🔧 FIX Issue #1: Compara por (RUT + fechas + tipo) en vez de solo RUT.
+    Esto permite que un empleado tenga múltiples ausentismos en el mismo mes
+    sin generar falsos positivos.
+    
+    Estrategia:
+    - Usa sets de tuplas (rut, fecha_inicio, fecha_fin, tipo_normalizado)
+    - Operaciones de conjuntos para detectar diferencias
+    - Comparación precisa evento por evento
+    """
     discrepancias = []
     
     # Obtener ausentismos de MovimientosMes
@@ -433,57 +445,115 @@ def _comparar_ausentismos(cierre):
     # Obtener incidencias reportadas por el analista
     incidencias_analista = AnalistaIncidencia.objects.filter(cierre=cierre)
     
-    # Crear diccionarios por RUT normalizado
-    dict_movimientos = {normalizar_rut(mov.rut): mov for mov in movimientos_ausentismo}
-    dict_analista = {normalizar_rut(inc.rut): inc for inc in incidencias_analista}
+    # 🔧 FIX: Crear sets de tuplas (rut, fecha_inicio, fecha_fin, tipo)
+    # Esto permite comparar TODOS los eventos, no solo uno por empleado
     
-    # Ausentismos en MovimientosMes no reportados por Analista
-    for rut_norm, mov_ausencia in dict_movimientos.items():
-        if rut_norm not in dict_analista:
+    # Conjunto de movimientos: (rut_normalizado, fecha_inicio, fecha_fin, tipo_normalizado)
+    movimientos_set = set()
+    movimientos_dict = {}  # Para acceso rápido a objeto completo
+    
+    for mov in movimientos_ausentismo:
+        rut_norm = normalizar_rut(mov.rut)
+        key = (
+            rut_norm,
+            mov.fecha_inicio_ausencia,
+            mov.fecha_fin_ausencia,
+            normalizar_texto(mov.tipo)
+        )
+        movimientos_set.add(key)
+        movimientos_dict[key] = mov
+    
+    # Conjunto de analista: (rut_normalizado, fecha_inicio, fecha_fin, tipo_normalizado)
+    analista_set = set()
+    analista_dict = {}  # Para acceso rápido a objeto completo
+    
+    for inc in incidencias_analista:
+        rut_norm = normalizar_rut(inc.rut)
+        key = (
+            rut_norm,
+            inc.fecha_inicio_ausencia,
+            inc.fecha_fin_ausencia,
+            normalizar_texto(inc.tipo_ausentismo)
+        )
+        analista_set.add(key)
+        analista_dict[key] = inc
+    
+    # 🔍 DETECTAR DISCREPANCIAS
+    
+    # 1. Ausentismos en Movimientos NO reportados por Analista
+    solo_en_movimientos = movimientos_set - analista_set
+    
+    for key in solo_en_movimientos:
+        mov = movimientos_dict[key]
+        discrepancias.append(DiscrepanciaCierre(
+            cierre=cierre,
+            tipo_discrepancia=TipoDiscrepancia.AUSENCIA_NO_REPORTADA,
+            rut_empleado=mov.rut,
+            descripcion=(
+                f"Ausencia de {mov.nombres_apellidos} (RUT: {mov.rut}) "
+                f"en MovimientosMes no reportada por Analista"
+            ),
+            valor_movimientos=(
+                f"{mov.tipo} ({mov.fecha_inicio_ausencia} - {mov.fecha_fin_ausencia})"
+            ),
+            valor_analista="No reportado"
+        ))
+    
+    # 2. Ausentismos reportados por Analista NO en Movimientos
+    solo_en_analista = analista_set - movimientos_set
+    
+    for key in solo_en_analista:
+        inc = analista_dict[key]
+        discrepancias.append(DiscrepanciaCierre(
+            cierre=cierre,
+            tipo_discrepancia=TipoDiscrepancia.AUSENCIA_NO_EN_MOVIMIENTOS,
+            rut_empleado=inc.rut,
+            descripcion=(
+                f"Ausencia de {inc.nombre} (RUT: {inc.rut}) "
+                f"reportada por Analista no encontrada en MovimientosMes"
+            ),
+            valor_movimientos="No encontrado",
+            valor_analista=(
+                f"{inc.tipo_ausentismo} "
+                f"({inc.fecha_inicio_ausencia} - {inc.fecha_fin_ausencia})"
+            )
+        ))
+    
+    # 3. Comparar detalles de ausentismos que coinciden
+    ausentismos_comunes = movimientos_set & analista_set
+    
+    for key in ausentismos_comunes:
+        mov = movimientos_dict[key]
+        inc = analista_dict[key]
+        
+        # Comparar días (las fechas ya coinciden por cómo construimos las keys)
+        if mov.dias != inc.dias:
             discrepancias.append(DiscrepanciaCierre(
                 cierre=cierre,
-                tipo_discrepancia=TipoDiscrepancia.AUSENCIA_NO_REPORTADA,
-                rut_empleado=mov_ausencia.rut,
-                descripcion=f"Ausencia de {mov_ausencia.nombres_apellidos} (RUT: {mov_ausencia.rut}) en MovimientosMes no reportada por Analista",
-                valor_movimientos=f"{mov_ausencia.tipo} ({mov_ausencia.fecha_inicio_ausencia} - {mov_ausencia.fecha_fin_ausencia})",
-                valor_analista="No reportado"
+                tipo_discrepancia=TipoDiscrepancia.DIFERENCIA_DIAS_AUSENCIA,
+                rut_empleado=mov.rut,
+                descripcion=(
+                    f"Diferencia en días de ausencia para {mov.nombres_apellidos} "
+                    f"(RUT: {mov.rut}, {mov.fecha_inicio_ausencia} - {mov.fecha_fin_ausencia})"
+                ),
+                valor_movimientos=str(mov.dias),
+                valor_analista=str(inc.dias)
             ))
-        else:
-            # Comparar detalles de ausentismo reportado
-            inc_analista = dict_analista[rut_norm]
-            
-            # Comparar fechas
-            if mov_ausencia.fecha_inicio_ausencia != inc_analista.fecha_inicio_ausencia or \
-               mov_ausencia.fecha_fin_ausencia != inc_analista.fecha_fin_ausencia:
-                discrepancias.append(DiscrepanciaCierre(
-                    cierre=cierre,
-                    tipo_discrepancia=TipoDiscrepancia.DIFERENCIA_FECHAS_AUSENCIA,
-                    rut_empleado=mov_ausencia.rut,
-                    descripcion=f"Diferencia en fechas de ausencia para {mov_ausencia.nombres_apellidos} (RUT: {mov_ausencia.rut})",
-                    valor_movimientos=f"{mov_ausencia.fecha_inicio_ausencia} - {mov_ausencia.fecha_fin_ausencia}",
-                    valor_analista=f"{inc_analista.fecha_inicio_ausencia} - {inc_analista.fecha_fin_ausencia}"
-                ))
-            
-            # Comparar días
-            if mov_ausencia.dias != inc_analista.dias:
-                discrepancias.append(DiscrepanciaCierre(
-                    cierre=cierre,
-                    tipo_discrepancia=TipoDiscrepancia.DIFERENCIA_DIAS_AUSENCIA,
-                    rut_empleado=mov_ausencia.rut,
-                    descripcion=f"Diferencia en días de ausencia para {mov_ausencia.nombres_apellidos} (RUT: {mov_ausencia.rut})",
-                    valor_movimientos=str(mov_ausencia.dias),
-                    valor_analista=str(inc_analista.dias)
-                ))
-            
-            # Comparar tipo de ausentismo
-            if not textos_son_equivalentes(mov_ausencia.tipo, inc_analista.tipo_ausentismo):
+        
+        # Comparar tipo original (sin normalizar) para detectar diferencias de formato
+        # Solo si no son equivalentes después de normalizar
+        if mov.tipo != inc.tipo_ausentismo:
+            if not textos_son_equivalentes(mov.tipo, inc.tipo_ausentismo):
                 discrepancias.append(DiscrepanciaCierre(
                     cierre=cierre,
                     tipo_discrepancia=TipoDiscrepancia.DIFERENCIA_TIPO_AUSENCIA,
-                    rut_empleado=mov_ausencia.rut,
-                    descripcion=f"Diferencia en tipo de ausencia para {mov_ausencia.nombres_apellidos} (RUT: {mov_ausencia.rut})",
-                    valor_movimientos=mov_ausencia.tipo,
-                    valor_analista=inc_analista.tipo_ausentismo
+                    rut_empleado=mov.rut,
+                    descripcion=(
+                        f"Diferencia en tipo de ausencia para {mov.nombres_apellidos} "
+                        f"(RUT: {mov.rut}, {mov.fecha_inicio_ausencia} - {mov.fecha_fin_ausencia})"
+                    ),
+                    valor_movimientos=mov.tipo,
+                    valor_analista=inc.tipo_ausentismo
                 ))
     
     return discrepancias

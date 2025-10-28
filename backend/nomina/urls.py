@@ -292,15 +292,15 @@ urlpatterns = router.urls + [
          name='limpiar_incidencias'),
 
     # === Compatibilidad: ruta antigua para finalizar a través de 'incidencias/finalizar/<id>/' ===
-    # Redirige al mismo action que hoy vive en CierreNominaViewSet (detail=True)
+    # Usa la vista directa (finalizar_cierre_view) en lugar del ViewSet para evitar errores de routing
     path('incidencias/finalizar/<int:pk>/',
-        CierreNominaViewSet.as_view({'post': 'finalizar_cierre'}),
+        finalizar_cierre_view,
         name='finalizar_cierre_compat'),
 
     # === Compatibilidad: ruta antigua con orden invertido 'cierres/finalizar/<id>/' ===
-    # La ruta oficial es 'cierres/<id>/finalizar/' (detail=True), pero mantenemos soporte a la anterior
+    # Usa la vista directa (finalizar_cierre_view) en lugar del ViewSet para evitar errores de routing
     path('cierres/finalizar/<int:pk>/',
-        CierreNominaViewSet.as_view({'post': 'finalizar_cierre'}),
+        finalizar_cierre_view,
         name='finalizar_cierre_compat_cierres'),
 
     # === Ruta explícita oficial para finalizar (función directa) ===

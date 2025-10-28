@@ -4,7 +4,6 @@ import ArchivosTalanaSection from "./ArchivosTalanaSection";
 import ArchivosAnalistaSection from "./ArchivosAnalistaSection";
 import VerificadorDatosSection from "./VerificadorDatosSection";
 import IncidenciasEncontradasSection from "./IncidenciasEncontradasSection";
-import IncidenciasDashboard from "./IncidenciasDashboard";
 import ResumenCierreSection from "./ResumenCierreSection";
 import ModalClasificacionHeaders from "../ModalClasificacionHeaders";
 import {

@@ -48,6 +48,70 @@ def _normalizar_monto_peso(valor_raw):
     except Exception:
         return None
 
+
+def normalizar_valor_concepto_novedades(valor):
+    """
+    Normaliza valores de conceptos en archivos de novedades.
+    
+    REGLA DE NEGOCIO: En archivos de novedades, ciertos valores especiales
+    significan "cero" o "no aplica":
+    - "X" o "x" → valor cero
+    - "-" (guión) → valor cero
+    - "N/A" o "n/a" → valor cero
+    - "" (vacío) → valor cero
+    - None → valor cero
+    
+    Esta normalización previene falsos positivos al comparar con Libro de
+    Remuneraciones, donde estos conceptos aparecen como 0 o simplemente no existen.
+    
+    Args:
+        valor: Valor raw del concepto (puede ser string, número, None)
+        
+    Returns:
+        str: Valor normalizado como string. "0" para valores especiales,
+             valor original para números válidos.
+             
+    Ejemplo:
+        >>> normalizar_valor_concepto_novedades("X")
+        "0"
+        >>> normalizar_valor_concepto_novedades("150000")
+        "150000"
+        >>> normalizar_valor_concepto_novedades("-")
+        "0"
+    """
+    # Lista de valores que se consideran "cero" o "no aplica"
+    VALORES_CERO_EQUIVALENTES = ['X', 'x', '-', 'N/A', 'n/a', 'NA', 'na', '']
+    
+    # Caso 1: None o NaN
+    if valor is None or pd.isna(valor):
+        return "0"
+    
+    # Caso 2: String que necesita normalización
+    if isinstance(valor, str):
+        valor_limpio = valor.strip()
+        
+        # Si está en la lista de equivalentes a cero
+        if valor_limpio in VALORES_CERO_EQUIVALENTES:
+            logger.debug(f"🔧 Valor '{valor}' normalizado a '0' (equivalente a cero)")
+            return "0"
+        
+        # Si es "nan" como string (case insensitive)
+        if valor_limpio.lower() == 'nan':
+            logger.debug(f"🔧 Valor 'nan' normalizado a '0'")
+            return "0"
+        
+        # Si está vacío después de limpiar
+        if not valor_limpio:
+            return "0"
+    
+    # Caso 3: Ya es un número válido, retornar como string
+    if isinstance(valor, (int, float)):
+        return str(valor)
+    
+    # Caso 4: Valor ya procesado, retornar como está
+    return str(valor)
+
+
 def obtener_headers_archivo_novedades(path_archivo):
     """Obtiene los encabezados de un archivo de novedades.
 
@@ -205,8 +269,16 @@ def guardar_registros_novedades(archivo_novedades):
             try:
                 valor_raw = row.get(h)
                 
+                # 🔧 NORMALIZACIÓN DE VALORES ESPECIALES (Issue #3)
+                # Aplicar normalización ANTES de cualquier otro procesamiento
+                # para tratar "X", "-", "N/A", etc. como cero
+                valor_raw = normalizar_valor_concepto_novedades(valor_raw)
+                
+                # Si después de normalizar es "0", usar ese valor directamente
+                if valor_raw == "0":
+                    valor = "0"
                 # Procesamiento mejorado de valores
-                if pd.isna(valor_raw) or valor_raw == '':
+                elif pd.isna(valor_raw) or valor_raw == '':
                     valor = ""  # Valor vacío
                 else:
                     # Si es un número, preservar su precisión original

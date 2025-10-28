@@ -1,0 +1,2108 @@
+openapi: 3.0.3
+info:
+  title: API Talana
+  description: |
+    API REST de Talana
+    
+    Talana puede ser parte de tu ecosistema de software, a través de nuestra API de Integración, 
+    permitiendo que los sistemas interactúen entre sí intercambiando información de forma segura, 
+    fácil y sencilla.
+    
+    A través de sus métodos podrá consultar, inyectar, actualizar información entre Talana y sus sistemas.
+    
+    **Módulos disponibles:**
+    - Gestión de Personas
+    - Remuneraciones
+    - Firma digital
+    - Asistencia y Turnos
+    
+    **¿Cómo puedo acceder a la API de Talana?**
+    Para utilizar nuestra API es necesario contar con credenciales que le permitirán obtener un token.
+    
+    **Recursos:**
+    - Portal del desarrollador: https://developers.talana.com/
+    - Changelog: https://developers.talana.com/changelog#/
+  version: 1.0.0
+  contact:
+    name: Soporte Talana
+    url: https://developers.talana.com/
+
+servers:
+  - url: https://talana.com/es/api
+    description: Servidor de producción
+
+security:
+  - TokenAuth: []
+
+tags:
+  - name: Autenticación
+    description: Endpoints para autenticación
+  - name: Persona
+    description: Gestión de personas
+  - name: Contratos
+    description: Gestión de contratos
+  - name: Liquidaciones
+    description: Gestión de liquidaciones
+  - name: Documentos
+    description: Gestión de documentos
+  - name: Firma
+    description: Firma digital
+  - name: Marcas
+    description: Marcas de asistencia
+  - name: Ausentismos
+    description: Licencias y permisos
+  - name: Jornada
+    description: Jornadas calculadas
+  - name: Instituciones
+    description: Bancos, AFP, Isapres, etc.
+  - name: Periodos de trabajo
+    description: Periodos de liquidación
+  - name: Variables entrada Talana
+    description: Variables de entrada para liquidaciones
+  - name: Pais
+    description: Información de países
+
+paths:
+  /api-token-auth/:
+    post:
+      tags:
+        - Autenticación
+      summary: Obtener token de autenticación
+      description: Endpoint para obtener el token de acceso a la API
+      operationId: obtenerToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                  description: Usuario de acceso
+                password:
+                  type: string
+                  format: password
+                  description: Contraseña
+      responses:
+        '200':
+          description: Token generado exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    example: "32f9c307c33e6d2aae786cca1189172bbe6bfe23"
+      security: []
+
+  /persona/:
+    get:
+      tags:
+        - Persona
+      summary: Listar personas
+      description: Información de las personas, una persona puede tener uno o más contratos.
+      operationId: listarPersonas
+      parameters:
+        - name: rut
+          in: query
+          description: Filtrar por rut de empleado
+          schema:
+            type: string
+        - name: nombre
+          in: query
+          description: Filtrar por nombre de empleado
+          schema:
+            type: string
+        - name: apellidoPaterno
+          in: query
+          description: Filtrar por apellido Paterno de empleado
+          schema:
+            type: string
+        - name: apellidoMaterno
+          in: query
+          description: Filtrar por apellido Materno de empleado
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Lista de personas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Persona'
+    
+    post:
+      tags:
+        - Persona
+      summary: Crear personas
+      description: Crea nuevas personas.
+      operationId: crearPersona
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonaCreate'
+      responses:
+        '201':
+          description: Persona creada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaCreate'
+
+  /persona/{id}/:
+    get:
+      tags:
+        - Persona
+      summary: Obtener persona
+      description: Información de una persona específica
+      operationId: obtenerPersona
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Información de la persona
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaRetrieve'
+    
+    put:
+      tags:
+        - Persona
+      summary: Actualizar persona
+      description: Actualiza la información completa de una persona
+      operationId: actualizarPersona
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonaUpdate'
+      responses:
+        '200':
+          description: Persona actualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaUpdate'
+    
+    patch:
+      tags:
+        - Persona
+      summary: Actualizar persona parcialmente
+      description: Actualiza parcialmente la información de una persona
+      operationId: actualizarPersonaParcial
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonaUpdate'
+      responses:
+        '200':
+          description: Persona actualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaUpdate'
+
+  /persona/{id}/saldo_vacaciones/:
+    get:
+      tags:
+        - Persona
+      summary: Obtener saldo de vacaciones por persona
+      description: Información sobre el saldo de vacaciones de una persona
+      operationId: obtenerSaldoVacaciones
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: fecha
+          in: query
+          description: Fecha en formato YYYY-MM-DD
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Saldo de vacaciones
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - diasNormales
+                  - diasProgresivos
+                  - diasRestantes
+                properties:
+                  diasNormales:
+                    type: integer
+                    description: Días normales restantes
+                    example: 5
+                  diasProgresivos:
+                    type: integer
+                    description: Días progresivos restantes
+                    example: 2
+                  diasRestantes:
+                    type: integer
+                    description: Total de días restantes
+                    example: 7
+                  diasZonaExtrema:
+                    type: integer
+                    description: Días zona extrema restantes (solo si aplica)
+                    example: 1
+        '400':
+          description: Formato de fecha inválido
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail:
+                    type: string
+                    example: "Formato de fecha inválido. Usa YYYY-MM-DD."
+        '403':
+          description: Sin permisos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail:
+                    type: string
+                    example: "No tienes permiso para ver el saldo de vacaciones de este empleado."
+
+  /contrato/:
+    get:
+      tags:
+        - Contratos
+      summary: Listar contratos
+      description: Servicio que permite listar contratos
+      operationId: listarContratos
+      parameters:
+        - name: rut
+          in: query
+          description: Filtrar por RUT de empleado
+          schema:
+            type: string
+        - name: show_details
+          in: query
+          description: Mostrar contratos en detalle
+          schema:
+            type: boolean
+        - name: solo-activos
+          in: query
+          description: Filtrar solo contratos activos
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Lista de contratos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ContratoSimplificado'
+
+  /contrato-midt/:
+    get:
+      tags:
+        - Contratos
+      summary: Listar contratos DT (MiDT)
+      description: Servicio que permite listar contratos para la Dirección del Trabajo
+      operationId: listarContratosMidt
+      responses:
+        '200':
+          description: Lista de contratos DT
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  next:
+                    type: string
+                    format: uri
+                    nullable: true
+                  previous:
+                    type: string
+                    format: uri
+                    nullable: true
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ContratoMidt'
+    
+    post:
+      tags:
+        - Contratos
+      summary: Crear contrato DT
+      description: Crea un nuevo contrato para la Dirección del Trabajo
+      operationId: crearContratoMidt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContratoMidtCreate'
+      responses:
+        '201':
+          description: Contrato creado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContratoMidt'
+
+  /contrato-midt/{id}/:
+    get:
+      tags:
+        - Contratos
+      summary: Obtener contrato DT específico
+      description: Obtiene información detallada de un contrato DT
+      operationId: obtenerContratoMidt
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Información del contrato DT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContratoMidt'
+
+  /liquidaciones/:
+    get:
+      tags:
+        - Liquidaciones
+      summary: Lista de liquidaciones con desglose
+      description: Entrega la información de las liquidaciones con su desglose
+      operationId: listarLiquidaciones
+      parameters:
+        - name: empleado
+          in: query
+          description: Filtrar por ID de empleado
+          schema:
+            type: integer
+        - name: rut
+          in: query
+          description: Filtrar por RUT de empleado
+          schema:
+            type: string
+        - name: tipoLiquidacion
+          in: query
+          description: Tipo de liquidación
+          schema:
+            type: string
+            enum:
+              - sueldo
+              - anticipo
+              - finiquito
+              - histórica
+              - reliquidacion
+              - sueldo reprocesada
+        - name: periodo
+          in: query
+          description: ID del periodo
+          schema:
+            type: integer
+        - name: periodo__mes
+          in: query
+          description: Mes del periodo
+          schema:
+            type: integer
+        - name: periodo__ano
+          in: query
+          description: Año del periodo
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Lista de liquidaciones
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Liquidacion'
+
+  /liquidaciones/{id}/:
+    get:
+      tags:
+        - Liquidaciones
+      summary: Obtener liquidación específica
+      description: Obtiene información detallada de una liquidación
+      operationId: obtenerLiquidacion
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Información de la liquidación
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liquidacion'
+
+  /liquidaciones/comprobantes/:
+    get:
+      tags:
+        - Liquidaciones
+      summary: Lista de PDFs de liquidaciones
+      description: Entrega la información de las liquidaciones con link al PDF
+      operationId: listarComprobantes
+      parameters:
+        - name: periodo
+          in: query
+          description: |
+            Periodo de liquidación. Ejemplos: current-month, current-calendar-month, 2025-01 (año y mes en formato YYYY-MM)
+          schema:
+            type: string
+            enum:
+              - current-month
+              - current-calendar-month
+      responses:
+        '200':
+          description: Lista de comprobantes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    empleado:
+                      type: string
+                    periodo:
+                      type: string
+                    pdf_url:
+                      type: string
+                      format: uri
+
+  /payslips-wide-view:
+    get:
+      tags:
+        - Liquidaciones
+      summary: Lista de liquidaciones detalladas
+      description: Entrega la información de las liquidaciones con información del contrato y el trabajador en formato ancho para plataformas BI
+      operationId: listarLiquidacionesDetalladas
+      parameters:
+        - name: ano
+          in: query
+          description: Filtra las liquidaciones generadas en un año específico
+          schema:
+            type: integer
+        - name: mes
+          in: query
+          description: Filtra las liquidaciones generadas en un mes específico
+          schema:
+            type: integer
+        - name: centro_costo
+          in: query
+          description: Filtra las liquidaciones generadas por ID centro de costo específico
+          schema:
+            type: integer
+        - name: rut
+          in: query
+          description: Filtra las liquidaciones generadas a un rut en específico
+          schema:
+            type: string
+        - name: persona_id
+          in: query
+          description: Filtra las liquidaciones generadas a un ID de persona específico
+          schema:
+            type: integer
+        - name: tipo_liquidacion
+          in: query
+          description: Filtra las liquidaciones generadas de un tipo en específico
+          schema:
+            type: string
+            enum:
+              - sueldo
+              - anticipo
+              - finiquito
+              - histórica
+              - reliquidacion
+              - sueldo reprocesada
+      responses:
+        '200':
+          description: Lista de liquidaciones detalladas
+
+  /documentos/:
+    get:
+      tags:
+        - Documentos
+      summary: Listar documentos
+      description: Servicio que permite listar documentos
+      operationId: listarDocumentos
+      parameters:
+        - name: empleado
+          in: query
+          description: ID de empleado
+          schema:
+            type: integer
+        - name: rut
+          in: query
+          description: RUT del empleado
+          schema:
+            type: string
+        - name: desde
+          in: query
+          description: Fecha desde (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: hasta
+          in: query
+          description: Fecha hasta (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: page
+          in: query
+          description: Número de página
+          schema:
+            type: integer
+        - name: page_size
+          in: query
+          description: Resultados por página
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Lista de documentos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  next:
+                    type: string
+                    format: uri
+                    nullable: true
+                  previous:
+                    type: string
+                    format: uri
+                    nullable: true
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DocumentoRetrieve'
+    
+    post:
+      tags:
+        - Documentos
+      summary: Crear documentos
+      description: Servicio que permite crear documentos
+      operationId: crearDocumento
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - rut
+                - nombre
+                - categoria
+                - adjunto
+              properties:
+                rut:
+                  type: string
+                  description: RUT del empleado
+                nombre:
+                  type: string
+                  description: Nombre del documento
+                categoria:
+                  type: string
+                  description: Categoría del documento
+                puedeVerloElTrabajador:
+                  type: boolean
+                  description: Si el trabajador puede ver el documento
+                adjunto:
+                  type: string
+                  format: binary
+                  description: Archivo adjunto
+      responses:
+        '201':
+          description: Documento creado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentoPost'
+
+  /documentos/{id}/:
+    get:
+      tags:
+        - Documentos
+      summary: Obtener documento
+      description: Servicio que permite obtener un documento específico
+      operationId: obtenerDocumento
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Información del documento
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentoRetrieve'
+    
+    put:
+      tags:
+        - Documentos
+      summary: Actualizar documento
+      description: Actualiza completamente un documento
+      operationId: actualizarDocumento
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/DocumentoUpload'
+      responses:
+        '200':
+          description: Documento actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentoRetrieve'
+    
+    patch:
+      tags:
+        - Documentos
+      summary: Actualizar documento parcialmente
+      description: Actualiza parcialmente un documento
+      operationId: actualizarDocumentoParcial
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/DocumentoUpload'
+      responses:
+        '200':
+          description: Documento actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentoRetrieve'
+
+  /document/requestSignature:
+    post:
+      tags:
+        - Firma
+      summary: Enviar a firma
+      description: |
+        Servicio permite enviar a firmar documento en la carpeta de un trabajador, pudiendo también elegir hasta dos contrapartes.
+        Si firma solo el trabajador, la solicitud se envía a esa persona y nadie más.
+        Si se seleccionan contrapartes, el flujo es primero firman las contrapartes y luego el trabajador.
+      operationId: enviarAFirma
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSigningRequest'
+      responses:
+        '200':
+          description: Solicitud de firma creada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sr_id:
+                    type: integer
+                  message:
+                    type: string
+
+  /mark/:
+    get:
+      tags:
+        - Marcas
+      summary: Listar marcas
+      description: Servicio que permite listar marcas de asistencia
+      operationId: listarMarcas
+      parameters:
+        - name: desde
+          in: query
+          description: Filtrar marcas creadas desde esta fecha (formato YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: hasta
+          in: query
+          description: Filtrar marcas creadas hasta esta fecha (formato YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: persona
+          in: query
+          description: Filtrar por ID de empleado
+          schema:
+            type: integer
+        - name: checksum
+          in: query
+          description: Filtrar por checksum
+          schema:
+            type: integer
+        - name: page
+          in: query
+          description: Número de página
+          schema:
+            type: integer
+        - name: page_size
+          in: query
+          description: Resultados por página
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Lista de marcas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  next:
+                    type: string
+                    format: uri
+                    nullable: true
+                  previous:
+                    type: string
+                    format: uri
+                    nullable: true
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SimpleMarkList'
+    
+    post:
+      tags:
+        - Marcas
+      summary: Crear marcas
+      description: Servicio que permite agregar marcas de los trabajadores
+      operationId: crearMarca
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkCreate'
+      responses:
+        '201':
+          description: Marca creada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarkCreate'
+
+  /personaAusencia-paginado/:
+    get:
+      tags:
+        - Ausentismos
+      summary: Listar ausentismos paginados
+      description: Servicio que entrega listado de las licencias, permisos con y sin goce
+      operationId: listarAusentismos
+      parameters:
+        - name: page
+          in: query
+          description: Número de página
+          schema:
+            type: integer
+        - name: page_size
+          in: query
+          description: Resultados por página
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Lista de ausentismos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  next:
+                    type: string
+                    format: uri
+                    nullable: true
+                  previous:
+                    type: string
+                    format: uri
+                    nullable: true
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PersonaAusencia'
+
+  /assignationSummaryApi/:
+    get:
+      tags:
+        - Jornada
+      summary: Resumen de jornadas
+      description: Servicio que entrega el resumen de las jornadas calculadas
+      operationId: listarJornadas
+      parameters:
+        - name: from_date
+          in: query
+          description: Fecha inicio (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: to_date
+          in: query
+          description: Fecha fin (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: status
+          in: query
+          description: Estado de la jornada
+          schema:
+            type: string
+            enum:
+              - anomalia
+              - inexistente
+              - invalida
+              - justificada
+              - valida
+              - en_curso
+              - en_revision
+      responses:
+        '200':
+          description: Lista de jornadas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AssignationSummary'
+
+  /assignationSummaryApi/{id}/:
+    get:
+      tags:
+        - Jornada
+      summary: Obtener asignación específica
+      description: Obtiene información detallada de una asignación
+      operationId: obtenerAsignacion
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Información de la asignación
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssignationSummary'
+
+  /banco/:
+    get:
+      tags:
+        - Instituciones
+      summary: Listar bancos
+      description: Entrega la información de los bancos soportados por Talana
+      operationId: listarBancos
+      responses:
+        '200':
+          description: Lista de bancos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Banco'
+
+  /mutualSeguridad/:
+    get:
+      tags:
+        - Instituciones
+      summary: Listar instituciones
+      description: Entrega la información de las mutuales existentes
+      operationId: listarMutuales
+      responses:
+        '200':
+          description: Lista de mutuales
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MutualSeguridad'
+
+  /mutualSeguridad/{id}/:
+    get:
+      tags:
+        - Instituciones
+      summary: Obtener institución
+      description: Entrega la información de la mutual indicada
+      operationId: obtenerMutual
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Información de la mutual
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MutualSeguridad'
+
+  /pais/:
+    get:
+      tags:
+        - Pais
+      summary: Lista de Paises
+      description: Entrega la información del país y gentilicio de la persona
+      operationId: listarPaises
+      responses:
+        '200':
+          description: Lista de países
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Pais'
+
+  /payroll-parameters/:
+    get:
+      tags:
+        - Variables entrada Talana
+      summary: Listado variables de entrada en Talana
+      description: Servicio que devuelve variables de entrada en Talana
+      operationId: listarVariablesEntrada
+      responses:
+        '200':
+          description: Lista de variables de entrada
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PayrollParameter'
+
+  /payroll-parameters/{id}/:
+    get:
+      tags:
+        - Variables entrada Talana
+      summary: Obtiene una variable de entrada de Talana
+      description: Servicio que obtiene una variable de entrada de Talana
+      operationId: obtenerVariableEntrada
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Información de la variable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PayrollParameter'
+
+  /periodos/:
+    get:
+      tags:
+        - Periodos de trabajo
+      summary: Listado de periodos de Trabajo por empresa
+      description: Servicio que devuelve los periodos de trabajo de la empresa
+      operationId: listarPeriodos
+      parameters:
+        - name: mes
+          in: query
+          description: Filtra por mes del periodo (Ej 5 para mes de Mayo)
+          schema:
+            type: integer
+        - name: ano
+          in: query
+          description: Filtra por año del periodo (Ej 2024)
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Lista de periodos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PeriodoTrabajo'
+
+  /periodos/{id}/:
+    get:
+      tags:
+        - Periodos de trabajo
+      summary: Obtiene un periodo de trabajo de la empresa
+      description: Servicio que obtiene un periodo de trabajo
+      operationId: obtenerPeriodo
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Información del periodo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeriodoTrabajo'
+
+  /enrolments-paginado/:
+    get:
+      tags:
+        - Enrolamiento
+      summary: Listar enrolamientos paginados
+      description: Servicio que entrega listado de enrolamientos
+      operationId: listarEnrolamientos
+      parameters:
+        - name: page
+          in: query
+          description: Número de página
+          schema:
+            type: integer
+        - name: page_size
+          in: query
+          description: Resultados por página
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Lista de enrolamientos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  next:
+                    type: string
+                    format: uri
+                    nullable: true
+                  previous:
+                    type: string
+                    format: uri
+                    nullable: true
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Enrollment'
+
+components:
+  securitySchemes:
+    TokenAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: |
+        Token de autenticación. Formato: Token <tu_token>
+        Ejemplo: Token 32f9c307c33e6d2aae786cca1189172bbe6bfe23
+
+  schemas:
+    Persona:
+      type: object
+      required:
+        - rut```yaml
+        - nombre
+        - apellidoPaterno
+        - apellidoMaterno
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        fechaCreacion:
+          type: string
+          format: date-time
+          readOnly: true
+        rut:
+          type: string
+          maxLength: 12
+          description: Sin puntos y con guión
+        nombre:
+          type: string
+          maxLength: 128
+        apellidoPaterno:
+          type: string
+          maxLength: 128
+        apellidoMaterno:
+          type: string
+          maxLength: 128
+        sexo:
+          type: string
+          enum:
+            - M
+            - F
+            - N
+          description: M/F/N
+        fechaNacimiento:
+          type: string
+          format: date
+          nullable: true
+        nacionalidad:
+          type: string
+          nullable: true
+          description: Del árbol de ubicaciones geográficas
+        email:
+          type: string
+          format: email
+          maxLength: 100
+          nullable: true
+        username:
+          type: string
+          maxLength: 64
+          nullable: true
+        empresa:
+          $ref: '#/components/schemas/Empresa'
+        permisos:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/PersonaPermisos'
+        detalles:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/PersonaDetalle'
+        externalReference:
+          type: string
+          readOnly: true
+        userDefinedFields:
+          type: string
+          readOnly: true
+        anexo:
+          type: string
+          maxLength: 64
+          nullable: true
+
+    PersonaCreate:
+      type: object
+      required:
+        - rut
+        - nombre
+        - apellidoPaterno
+        - apellidoMaterno
+        - detalles
+      properties:
+        rut:
+          type: string
+          maxLength: 12
+          description: Sin puntos y con guión
+        nombre:
+          type: string
+          maxLength: 128
+        email:
+          type: string
+          format: email
+          maxLength: 100
+          nullable: true
+        apellidoPaterno:
+          type: string
+          maxLength: 128
+        apellidoMaterno:
+          type: string
+          maxLength: 128
+        fechaNacimiento:
+          type: string
+          format: date
+          nullable: true
+        nacionalidad:
+          type: string
+          nullable: true
+          description: Del árbol de ubicaciones geográficas
+        sexo:
+          type: string
+          enum:
+            - M
+            - F
+            - N
+          description: M/F/N
+        detalles:
+          type: array
+          items:
+            $ref: '#/components/schemas/PersonaDetalle'
+        permisos:
+          type: array
+          items:
+            $ref: '#/components/schemas/PersonaPermisos'
+        username:
+          type: string
+          maxLength: 64
+          nullable: true
+        anexo:
+          type: integer
+          nullable: true
+
+    PersonaRetrieve:
+      type: object
+      required:
+        - rut
+        - nombre
+        - apellidoPaterno
+        - apellidoMaterno
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        fechaCreacion:
+          type: string
+          format: date-time
+          readOnly: true
+        rut:
+          type: string
+          maxLength: 12
+          description: Sin puntos y con guión
+        nombre:
+          type: string
+          maxLength: 128
+        email:
+          type: string
+          format: email
+          maxLength: 100
+          nullable: true
+        apellidoPaterno:
+          type: string
+          maxLength: 128
+        apellidoMaterno:
+          type: string
+          maxLength: 128
+        fechaNacimiento:
+          type: string
+          format: date
+          nullable: true
+        nacionalidad:
+          type: string
+          nullable: true
+          description: Del árbol de ubicaciones geográficas
+        sexo:
+          type: string
+          enum:
+            - M
+            - F
+            - N
+        username:
+          type: string
+          maxLength: 64
+          nullable: true
+        permisos:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/PersonaPermisos'
+        detalles:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/PersonaDetalle'
+        externalReference:
+          type: string
+          readOnly: true
+        empresa:
+          $ref: '#/components/schemas/Empresa'
+        userDefinedFields:
+          type: string
+          readOnly: true
+        anexo:
+          type: string
+          maxLength: 64
+          nullable: true
+
+    PersonaUpdate:
+      type: object
+      required:
+        - rut
+        - nombre
+        - apellidoPaterno
+        - apellidoMaterno
+      properties:
+        rut:
+          type: string
+          maxLength: 12
+          description: Sin puntos y con guión
+        nombre:
+          type: string
+          maxLength: 128
+        email:
+          type: string
+          format: email
+          maxLength: 100
+          nullable: true
+        apellidoPaterno:
+          type: string
+          maxLength: 128
+        apellidoMaterno:
+          type: string
+          maxLength: 128
+        fechaNacimiento:
+          type: string
+          format: date
+          nullable: true
+        nacionalidad:
+          type: string
+          nullable: true
+          description: Del árbol de ubicaciones geográficas
+        sexo:
+          type: string
+          enum:
+            - M
+            - F
+            - N
+        permisos:
+          type: array
+          description: Permisos que posee cada persona
+          items:
+            type: integer
+          uniqueItems: true
+        detalles:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/PersonaDetalle'
+        username:
+          type: string
+          maxLength: 64
+          nullable: true
+        anexo:
+          type: string
+          maxLength: 64
+          nullable: true
+
+    PersonaSimplificada:
+      type: object
+      required:
+        - rut
+        - nombre
+        - apellidoPaterno
+        - apellidoMaterno
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        rut:
+          type: string
+          maxLength: 12
+          description: Sin puntos y con guión
+        nombre:
+          type: string
+          maxLength: 128
+        apellidoPaterno:
+          type: string
+          maxLength: 128
+        apellidoMaterno:
+          type: string
+          maxLength: 128
+        email:
+          type: string
+          format: email
+          maxLength: 100
+          nullable: true
+
+    PersonaPermisos:
+      type: object
+      required:
+        - nombre
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        nombre:
+          type: string
+          maxLength: 500
+        vigente:
+          type: boolean
+
+    PersonaDetalle:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        foto:
+          type: string
+          format: uri
+          readOnly: true
+          nullable: true
+        idiomas:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/Idioma'
+        codigoUbicacion:
+          type: string
+          readOnly: true
+        fechaCreacion:
+          type: string
+          format: date-time
+          readOnly: true
+        validoDesde:
+          type: string
+          format: date
+        email:
+          type: string
+          format: email
+          maxLength: 128
+          nullable: true
+        emailPersonal:
+          type: string
+          format: email
+          maxLength: 128
+          nullable: true
+
+    ContratoSimplificado:
+      type: object
+      required:
+        - empleado
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        persona_rut:
+          type: string
+          readOnly: true
+        empleado:
+          type: integer
+        codigo:
+          type: string
+          maxLength: 256
+          description: Código interno usado por la empresa
+          nullable: true
+        fechaCreacion:
+          type: string
+          format: date-time
+          readOnly: true
+        fechaModificacion:
+          type: string
+          format: date-time
+          readOnly: true
+        tipoContrato:
+          $ref: '#/components/schemas/TipoContrato'
+        anexo:
+          type: string
+          maxLength: 32
+          nullable: true
+        empleadorRazonSocial:
+          $ref: '#/components/schemas/RazonSocialSimplificada'
+        cargo:
+          type: string
+          maxLength: 256
+          description: Cargo del Trabajador
+          nullable: true
+
+    ContratoMidt:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        empleado:
+          type: integer
+        tipoContrato:
+          type: string
+        fechaInicio:
+          type: string
+          format: date
+        fechaTermino:
+          type: string
+          format: date
+          nullable: true
+        cargo:
+          type: string
+        sueldo:
+          type: number
+        jornada:
+          type: string
+        empleadorRazonSocial:
+          type: string
+
+    ContratoMidtCreate:
+      type: object
+      required:
+        - empleado
+        - tipoContrato
+        - fechaInicio
+        - cargo
+        - sueldo
+      properties:
+        empleado:
+          type: integer
+        tipoContrato:
+          type: string
+        fechaInicio:
+          type: string
+          format: date
+        fechaTermino:
+          type: string
+          format: date
+          nullable: true
+        cargo:
+          type: string
+        sueldo:
+          type: number
+        jornada:
+          type: string
+
+    Liquidacion:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        empleado:
+          type: integer
+        periodo:
+          $ref: '#/components/schemas/PeriodoTrabajo'
+        tipoLiquidacion:
+          type: string
+          enum:
+            - sueldo
+            - anticipo
+            - finiquito
+            - histórica
+            - reliquidacion
+            - sueldo reprocesada
+        totalHaberes:
+          type: number
+        totalDescuentos:
+          type: number
+        totalLiquido:
+          type: number
+        desglose:
+          type: array
+          items:
+            $ref: '#/components/schemas/LiquidacionItem'
+
+    LiquidacionItem:
+      type: object
+      properties:
+        concepto:
+          type: string
+        monto:
+          type: number
+        tipo:
+          type: string
+          enum:
+            - haber
+            - descuento
+
+    DocumentoRetrieve:
+      type: object
+      required:
+        - nombre
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        empleado:
+          type: integer
+        rut:
+          type: string
+        nombre:
+          type: string
+          maxLength: 255
+        categoria:
+          type: string
+          maxLength: 64
+        puedeVerloElTrabajador:
+          type: boolean
+        adjunto:
+          type: string
+          format: uri
+          readOnly: true
+
+    DocumentoPost:
+      type: object
+      required:
+        - nombre
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        empleado:
+          type: integer
+        rut:
+          type: string
+        nombre:
+          type: string
+          maxLength: 255
+        categoria:
+          type: string
+          maxLength: 64
+        puedeVerloElTrabajador:
+          type: boolean
+        adjunto:
+          type: string
+          format: uri
+          readOnly: true
+
+    DocumentoUpload:
+      type: object
+      required:
+        - nombre
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        empleado:
+          type: integer
+        rut:
+          type: string
+        nombre:
+          type: string
+          maxLength: 255
+        categoria:
+          type: string
+          maxLength: 64
+        puedeVerloElTrabajador:
+          type: boolean
+        adjunto:
+          type: string
+          format: uri
+          readOnly: true
+
+    CreateSigningRequest:
+      type: object
+      required:
+        - document_id
+        - worker_signs
+      properties:
+        document_id:
+          type: integer
+          description: ID del documento a firmar
+        worker_signs:
+          type: boolean
+          description: Si el trabajador debe firmar
+        counterpart_ids:
+          type: array
+          maxItems: 2
+          items:
+            type: integer
+          description: IDs de contrapartes (máximo 2)
+
+    MarkCreate:
+      type: object
+      required:
+        - persona
+        - fecha
+        - hora
+      properties:
+        persona:
+          type: integer
+          description: ID del empleado
+        fecha:
+          type: string
+          format: date
+          description: Fecha de la marca
+        hora:
+          type: string
+          description: Hora de la marca (HH:MM:SS)
+        tipo:
+          type: string
+          enum:
+            - entrada
+            - salida
+          description: Tipo de marca
+        checksum:
+          type: integer
+          description: Checksum de validación
+
+    SimpleMarkList:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        persona:
+          type: integer
+        fecha:
+          type: string
+          format: date
+        hora:
+          type: string
+        tipo:
+          type: string
+        checksum:
+          type: integer
+
+    PersonaAusencia:
+      type: object
+      required:
+        - numeroDias
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        empleado:
+          $ref: '#/components/schemas/PersonaSimplificada'
+        fechaDesde:
+          type: string
+          format: date
+          description: Fecha inclusive
+        numeroDias:
+          type: integer
+          minimum: 0
+          maximum: 32767
+        fechaHasta:
+          type: string
+          format: date
+          description: Fecha inclusive
+        tipoAusencia:
+          type: string
+          nullable: true
+        fechaCreacion:
+          type: string
+          format: date-time
+          readOnly: true
+        fechaRetorno:
+          type: string
+          format: date
+          nullable: true
+        fechaAprobacion:
+          type: string
+          format: date
+          nullable: true
+        fechaHoraAprobacion:
+          type: string
+          format: date-time
+          nullable: true
+        motivo:
+          type: string
+          maxLength: 200
+          nullable: true
+        observaciones:
+          type: string
+          nullable: true
+
+    AssignationSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        absenceReason:
+          type: string
+          maxLength: 255
+          nullable: true
+        absenceType:
+          type: string
+          maxLength: 100
+          nullable: true
+        assignation:
+          $ref: '#/components/schemas/WorkShiftPersonRange'
+        assignationWithSnack:
+          type: boolean
+        comments:
+          type: string
+          maxLength: 500
+        date:
+          type: string
+          format: date
+          nullable: true
+
+    WorkShiftPersonRange:
+      type: object
+      required:
+        - workShift
+        - person
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        fromDate:
+          type: string
+          format: date
+        toDate:
+          type: string
+          format: date
+        workShift:
+          type: integer
+        person:
+          type: integer
+
+    Banco:
+      type: object
+      required:
+        - nombre
+        - codigo
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        nombre:
+          type: string
+          maxLength: 128
+        codigo:
+          type: string
+          maxLength: 12
+        vigente:
+          type: boolean
+
+    MutualSeguridad:
+      type: object
+      required:
+        - nombre
+        - razonSocial
+        - codigo
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        nombre:
+          type: string
+          maxLength: 128
+        razonSocial:
+          type: string
+          maxLength: 128
+        codigo:
+          type: string
+          maxLength: 12
+        vigente:
+          type: boolean
+
+    Pais:
+      type: object
+      required:
+        - nombre
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        nombre:
+          type: string
+          maxLength: 128
+        gentilicio:
+          type: string
+          maxLength: 128
+        idioma:
+          type: string
+          maxLength: 10
+          nullable: true
+        codigo_numerico:
+          type: string
+          maxLength: 3
+          nullable: true
+
+    PayrollParameter:
+      type: object
+      required:
+        - desde
+        - hasta
+        - valor
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        variableDeEntrada:
+          $ref: '#/components/schemas/LiquidacionVariableDeEntrada'
+        desde:
+          type: string
+          format: date
+        hasta:
+          type: string
+          format: date
+        valor:
+          type: number
+
+    LiquidacionVariableDeEntrada:
+      type: object
+      required:
+        - nombre
+        - codigo
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        nombre:
+          type: string
+          maxLength: 64
+        descripcion:
+          type: string
+          maxLength: 1024
+          nullable: true
+        modificable:
+          type: boolean
+        codigo:
+          type: string
+          maxLength: 64
+        empresa:
+          type: integer
+          nullable: true
+        pais:
+          type: string
+          nullable: true
+          description: Del árbol de ubicaciones geográficas
+
+    PeriodoTrabajo:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        mes:
+          type: integer
+          minimum: 1
+          maximum: 12
+        ano:
+          type: integer
+        fechaInicio:
+          type: string
+          format: date
+        fechaTermino:
+          type: string
+          format: date
+
+    Enrollment:
+      type: object
+      required:
+        - rut
+        - creadoPor
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        rut:
+          type: string
+          maxLength: 12
+          description: Sin puntos y con guión
+        fechaCreacion:
+          type: string
+          format: date-time
+          readOnly: true
+        vigente:
+          type: boolean
+        mobileNumber:
+          type: string
+          maxLength: 14
+          description: Este número se utilizará como mecanismo de validación de identidad
+        creadoPor:
+          type: integer
+
+    Empresa:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        nombre:
+          type: string
+          maxLength: 128
+        rut:
+          type: string
+          maxLength: 12
+
+    TipoContrato:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        nombre:
+          type: string
+          maxLength: 64
+
+    RazonSocialSimplificada:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        rut:
+          type: string
+          maxLength: 12
+        razonSocial:
+          type: string
+          maxLength: 128
+
+    Idioma:
+      type: object
+      required:
+        - nombre
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        nombre:
+          type: string
+          maxLength: 128
+
+    GrupoSimplificado:
+      type: object
+      required:
+        - nombre
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        nombre:
+          type: string
+          maxLength: 64

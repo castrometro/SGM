@@ -81,13 +81,20 @@ from .tasks_refactored.archivos_analista import procesar_archivo_analista_util
 procesar_archivo_analista = procesar_archivo_analista_util
 
 
+# 8. INFORMES Y FINALIZACIÓN
+from .tasks_refactored.informes import (
+    build_informe_libro,
+    build_informe_movimientos,
+    unir_y_guardar_informe,
+    enviar_informe_redis_task,
+    finalizar_cierre_post_informe,
+    calcular_kpis_cierre,
+)
+
+
 # ===================================================================
 # STUBS PARA FUNCIONES NO REFACTORIZADAS
 # ===================================================================
-
-def build_informe_libro(cierre_id):
-    raise NotImplementedError("Función no refactorizada aún - ver tasks.py.original línea ~XXXX")
-
 
 def generar_incidencias_totales_simple(cierre_id):
     raise NotImplementedError("Función no refactorizada aún - ver tasks.py.original línea ~63")
@@ -103,18 +110,6 @@ def generar_incidencias_consolidadas_task(cierre_id):
 
 def analizar_datos_cierre_task(cierre_id, tolerancia_variacion=30.0):
     raise NotImplementedError("Función no refactorizada aún - ver tasks.py.original línea ~1907")
-
-
-def build_informe_movimientos(cierre_id):
-    raise NotImplementedError("Función no refactorizada aún - ver tasks.py.original línea ~XXXX")
-
-
-def unir_y_guardar_informe(cierre_id, informe_libro, informe_movimientos):
-    raise NotImplementedError("Función no refactorizada aún - ver tasks.py.original línea ~XXXX")
-
-
-def enviar_informe_redis_task(cierre_id):
-    raise NotImplementedError("Función no refactorizada aún - ver tasks.py.original línea ~XXXX")
 
 
 print("✅ tasks.py (SMOKE TEST MODE) cargado correctamente")

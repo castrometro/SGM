@@ -1,7 +1,11 @@
 import React from 'react';
 import { ArrowLeft, Sparkles, Download } from 'lucide-react';
+import DataSourceBadge from '../common/DataSourceBadge';
 
-export const HeaderMovimientos = ({ cliente, periodo, onBack }) => (
+export const HeaderMovimientos = ({ cliente, periodo, onBack, metadata }) => {
+  console.log('🎨 [HeaderMovimientos] Metadata recibida:', metadata);
+  
+  return (
   <div className="bg-gradient-to-b from-teal-900/20 to-transparent border-b border-gray-800">
     <div className="w-full px-6 py-5">
       <div className="flex items-center justify-between">
@@ -22,6 +26,9 @@ export const HeaderMovimientos = ({ cliente, periodo, onBack }) => (
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {/* Badge de fuente de datos */}
+          <DataSourceBadge metadata={metadata} size="md" />
+          
           <button
             onClick={() => window.print()}
             className="bg-teal-600/90 hover:bg-teal-600 text-white px-4 py-2 rounded-lg font-medium transition-colors transition-transform duration-200 hover:scale-[1.02] flex items-center gap-2 shadow shadow-teal-900/30"
@@ -33,6 +40,7 @@ export const HeaderMovimientos = ({ cliente, periodo, onBack }) => (
       </div>
     </div>
   </div>
-);
+  );
+};
 
 export default HeaderMovimientos;

@@ -9,6 +9,7 @@ import {
 import { ArrowLeft, Calendar, BookOpen, Users2 } from 'lucide-react';
 import LibroEmbed from '../../components/DashboardNomina/Embeds/LibroEmbed';
 import MovimientosEmbed from '../../components/DashboardNomina/Embeds/MovimientosEmbed';
+import DataSourceBadge from '../../components/DashboardNomina/common/DataSourceBadge';
 
 // Util: calcula periodo anterior YYYY-MM
 function periodoAnterior(periodo) {
@@ -233,13 +234,10 @@ const NominaDashboard = () => {
           {cierreActual && (
             <span className="text-sm text-gray-400 ml-2">Cliente #{cierreActual.cliente} • {periodo || cierreActual.periodo}</span>
           )}
-          {informeMetaActual?.source && (
-            <span
-              title={informeMetaActual?.fecha_generacion ? `Generado: ${new Date(informeMetaActual.fecha_generacion).toLocaleString()}` : undefined}
-              className={`ml-3 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${informeMetaActual.source === 'redis' ? 'bg-green-900/40 text-green-300 border border-green-700/40' : 'bg-blue-900/40 text-blue-300 border border-blue-700/40'}`}
-            >
-              Fuente: {informeMetaActual.source === 'redis' ? 'Redis' : 'Base de Datos'}
-            </span>
+          {informeMetaActual && (
+            <div className="ml-3">
+              <DataSourceBadge metadata={informeMetaActual} size="sm" />
+            </div>
           )}
         </div>
         {SelectorCierre}

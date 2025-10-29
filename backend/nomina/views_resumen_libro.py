@@ -30,6 +30,12 @@ def libro_resumen_v2(request, cierre_id: int):
         if informe and isinstance(informe.datos_cierre, dict):
             bloque = informe.datos_cierre.get('libro_resumen_v2')
             if isinstance(bloque, dict) and bloque.get('cierre', {}).get('id') == cierre.id:
+                # Agregar metadata de fuente
+                bloque['_metadata'] = {
+                    'fuente': 'informe_persistente',
+                    'descripcion': 'Datos históricos del informe guardado (no caduca)',
+                    'fecha_informe': informe.fecha_generacion.isoformat() if hasattr(informe, 'fecha_generacion') else None
+                }
                 return Response(bloque, status=status.HTTP_200_OK)
     except Exception:
         pass
@@ -41,6 +47,13 @@ def libro_resumen_v2(request, cierre_id: int):
         if isinstance(cached, dict):
             bloque = cached.get('libro_resumen_v2') or cached.get('libro')  # compat
             if isinstance(bloque, dict) and bloque.get('cierre', {}).get('id') == cierre.id:
+                # Agregar metadata de fuente
+                bloque['_metadata'] = {
+                    'fuente': 'cache_redis',
+                    'descripcion': 'Datos temporales en cache (TTL corto, ~5-10 min)',
+                    'cached_at': cached.get('cached_at'),
+                    'ttl_estimado': '5-10 minutos'
+                }
                 return Response(bloque, status=status.HTTP_200_OK)
     except Exception:
         pass
@@ -111,6 +124,12 @@ def libro_resumen_v2(request, cierre_id: int):
             'version_datos': getattr(cierre, 'version_datos', None),
             'generated_at': timezone.now().isoformat(),
             'api_version': '2'
+        },
+        '_metadata': {
+            'fuente': 'query_directo_bd',
+            'descripcion': 'Datos calculados directamente desde base de datos (sin cache)',
+            'generado_en': timezone.now().isoformat(),
+            'tablas_consultadas': ['ConceptoConsolidado', 'NominaConsolidada']
         }
     }
 

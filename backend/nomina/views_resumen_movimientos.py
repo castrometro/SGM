@@ -31,6 +31,12 @@ def movimientos_personal_detalle_v3(request, cierre_id: int):
             if informe and isinstance(informe.datos_cierre, dict):
                 bloque = informe.datos_cierre.get('movimientos_v3')
                 if isinstance(bloque, dict) and bloque.get('cierre', {}).get('id') == cierre.id:
+                    # Agregar metadata de fuente
+                    bloque['_metadata'] = {
+                        'fuente': 'informe_persistente',
+                        'descripcion': 'Datos históricos del informe guardado (no caduca)',
+                        'fecha_informe': informe.fecha_generacion.isoformat() if hasattr(informe, 'fecha_generacion') else None
+                    }
                     return Response(bloque, status=status.HTTP_200_OK)
         except Exception:
             pass
@@ -41,6 +47,13 @@ def movimientos_personal_detalle_v3(request, cierre_id: int):
             if isinstance(cached, dict):
                 bloque = cached.get('movimientos_v3') or cached.get('movimientos')
                 if isinstance(bloque, dict) and bloque.get('cierre', {}).get('id') == cierre.id:
+                    # Agregar metadata de fuente
+                    bloque['_metadata'] = {
+                        'fuente': 'cache_redis',
+                        'descripcion': 'Datos temporales en cache (TTL corto, ~5-10 min)',
+                        'cached_at': cached.get('cached_at'),
+                        'ttl_estimado': '5-10 minutos'
+                    }
                     return Response(bloque, status=status.HTTP_200_OK)
         except Exception:
             pass
@@ -151,6 +164,12 @@ def movimientos_personal_detalle_v3(request, cierre_id: int):
             'meta': {
                 'generated_at': timezone.now().isoformat(),
                 'api_version': '3'
+            },
+            '_metadata': {
+                'fuente': 'query_directo_bd',
+                'descripcion': 'Datos calculados directamente desde base de datos (sin cache)',
+                'generado_en': timezone.now().isoformat(),
+                'tablas_consultadas': ['MovimientoPersonal', 'NominaConsolidada']
             }
         }
         # Guardar en cache temporal si el cierre aún no está finalizado

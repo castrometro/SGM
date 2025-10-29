@@ -72,6 +72,8 @@ const LibroRemuneraciones = () => {
     try {
       setCargando(true);
       const data = await obtenerLibroResumenV2(id);
+      console.log('🔍 [LibroRemuneraciones] Datos recibidos:', data);
+      console.log('🎯 [LibroRemuneraciones] Metadata:', data?._metadata);
       setResumenV2(data);
     } catch (e) {
       console.error(e);
@@ -157,7 +159,12 @@ const LibroRemuneraciones = () => {
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
-      <HeaderLibro onBack={()=>navigate(-1)} cliente={resumenV2?.cierre?.cliente} periodo={resumenV2?.cierre?.periodo} />
+      <HeaderLibro 
+        onBack={()=>navigate(-1)} 
+        cliente={resumenV2?.cierre?.cliente} 
+        periodo={resumenV2?.cierre?.periodo}
+        metadata={resumenV2?._metadata}
+      />
       <div className="w-full px-6 py-6 space-y-8">
         <TarjetasLibro resumen={resumenV2} selectedCat={selectedCat} setSelectedCat={setSelectedCat} formatearMonto={formatearMonto} />
         <ChartsLibro

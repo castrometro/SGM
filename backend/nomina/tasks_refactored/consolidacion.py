@@ -461,10 +461,26 @@ def consolidar_datos_nomina_task_optimizado(cierre_id):
         logger.info(f"📚 Libro: {libro.archivo.name}")
         logger.info(f"🔄 Movimientos: {movimientos.archivo.name}")
         
-        # 3. LIMPIAR CONSOLIDACIÓN ANTERIOR (SI EXISTE)
+        # 3. LIMPIAR CACHE REDIS ANTES DE CONSOLIDAR
+        # BUG FIX: Evitar que dashboards muestren datos antiguos de cache después de re-consolidar
+        try:
+            from nomina.cache_redis import get_cache_system_nomina
+            cache_system = get_cache_system_nomina()
+            cache_cleared = cache_system.clear_cierre_cache(
+                cliente_id=cierre.cliente_id,
+                periodo=str(cierre.periodo)
+            )
+            if cache_cleared:
+                logger.info(f"🗑️ Cache Redis limpiado para cierre {cierre.id} antes de consolidar")
+            else:
+                logger.warning(f"⚠️ No se pudo limpiar completamente el cache Redis para cierre {cierre.id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Error limpiando cache Redis antes de consolidar: {e}")
+        
+        # 4. LIMPIAR CONSOLIDACIÓN ANTERIOR EN BD (SI EXISTE)
         consolidaciones_eliminadas = cierre.nomina_consolidada.count()
         if consolidaciones_eliminadas > 0:
-            logger.info(f"🗑️ Eliminando {consolidaciones_eliminadas} registros de consolidación anterior...")
+            logger.info(f"🗑️ Eliminando {consolidaciones_eliminadas} registros de consolidación anterior en BD...")
             movimientos_eliminados = MovimientoPersonal.objects.filter(nomina_consolidada__cierre=cierre).count()
             MovimientoPersonal.objects.filter(nomina_consolidada__cierre=cierre).delete()
             
@@ -474,13 +490,13 @@ def consolidar_datos_nomina_task_optimizado(cierre_id):
         else:
             logger.info("ℹ️ No hay consolidación anterior que eliminar")
         
-        # 3.5. CÁLCULO DINÁMICO DE CHUNKS
+        # 5. CÁLCULO DINÁMICO DE CHUNKS
         from nomina.models import EmpleadoCierre
         empleados_count = EmpleadoCierre.objects.filter(cierre=cierre).count()
         chunk_size = calcular_chunk_size_dinamico(empleados_count)
         logger.info(f"📊 Procesando {empleados_count} empleados con chunk size dinámico: {chunk_size}")
         
-        # 4. INICIAR ORQUESTACIÓN: EMPLEADOS → MOVIMIENTOS → CONCEPTOS
+        # 6. INICIAR ORQUESTACIÓN: EMPLEADOS → MOVIMIENTOS → CONCEPTOS
         logger.info("🎯 Iniciando orquestación: empleados → movimientos → conceptos")
 
         flujo = chain(
@@ -1271,10 +1287,25 @@ def consolidar_datos_nomina_task_secuencial(cierre_id):
         logger.info(f"📚 Libro: {libro.archivo.name}")
         logger.info(f"🔄 Movimientos: {movimientos.archivo.name}")
         
-        # Limpiar consolidación anterior
+        # Limpiar cache Redis antes de consolidar (igual que versión optimizada)
+        try:
+            from nomina.cache_redis import get_cache_system_nomina
+            cache_system = get_cache_system_nomina()
+            cache_cleared = cache_system.clear_cierre_cache(
+                cliente_id=cierre.cliente_id,
+                periodo=str(cierre.periodo)
+            )
+            if cache_cleared:
+                logger.info(f"🗑️ Cache Redis limpiado para cierre {cierre.id} antes de consolidar (modo secuencial)")
+            else:
+                logger.warning(f"⚠️ No se pudo limpiar completamente el cache Redis para cierre {cierre.id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Error limpiando cache Redis antes de consolidar: {e}")
+        
+        # Limpiar consolidación anterior en BD
         consolidaciones_eliminadas = cierre.nomina_consolidada.count()
         if consolidaciones_eliminadas > 0:
-            logger.info(f"🗑️ Eliminando {consolidaciones_eliminadas} registros de consolidación anterior...")
+            logger.info(f"🗑️ Eliminando {consolidaciones_eliminadas} registros de consolidación anterior en BD...")
             MovimientoPersonal.objects.filter(nomina_consolidada__cierre=cierre).delete()
             cierre.nomina_consolidada.all().delete()
         

@@ -61,6 +61,8 @@ const MovimientosMes = () => {
       try {
         const data = await obtenerMovimientosPersonalV3(id);
         if (cancel) return;
+        console.log('🔍 [MovimientosMes] Datos recibidos:', data);
+        console.log('🎯 [MovimientosMes] Metadata:', data?._metadata);
         // Intentamos normalizar a la estructura esperada por el componente
         const movimientos = data?.movimientos || data?.detalle || data?.items || [];
         const cierre = data?.cierre || {
@@ -349,7 +351,12 @@ const MovimientosMes = () => {
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
-      <HeaderMovimientos cliente={datos?.cierre?.cliente} periodo={datos?.cierre?.periodo} onBack={()=>navigate(-1)} />
+      <HeaderMovimientos 
+        cliente={datos?.cierre?.cliente} 
+        periodo={datos?.cierre?.periodo} 
+        onBack={()=>navigate(-1)}
+        metadata={datos?.raw?._metadata}
+      />
 
       {/* Contenido principal */}
       <div className="w-full px-6 py-6">

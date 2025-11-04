@@ -99,16 +99,21 @@ const Clientes = () => {
   }
 
   return (
-    <div className="text-white">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-4">
-          <h1 className="text-3xl font-bold">Lista de Clientes</h1>
-          <span className="px-3 py-1 rounded-full bg-blue-600 text-white text-sm font-semibold">
+    <div className="text-white px-4 sm:px-0">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+        <div className="flex items-center gap-3 flex-wrap">
+          <h1 className="text-2xl sm:text-3xl font-bold">Lista de Clientes</h1>
+          <span className="px-3 py-1 rounded-full bg-blue-600 text-white text-xs sm:text-sm font-semibold">
             {areaActiva}
           </span>
         </div>
-        <div className="text-gray-400 text-sm">
-          {clientes.length} cliente{clientes.length !== 1 ? 's' : ''} en tu área
+        <div className="text-gray-400 text-xs sm:text-sm flex items-center gap-2">
+          <span className="hidden sm:inline">
+            {clientes.length} cliente{clientes.length !== 1 ? 's' : ''} en tu área
+          </span>
+          <span className="sm:hidden">
+            {clientes.length} cliente{clientes.length !== 1 ? 's' : ''}
+          </span>
           <button
             onClick={() => {
               const debugInfo = `
@@ -137,7 +142,7 @@ ${clientes.length > 5 ? `... y ${clientes.length - 5} más` : ''}
 =====================================`;
               alert(debugInfo);
             }}
-            className="ml-2 text-xs text-blue-400 hover:text-blue-300 underline"
+            className="text-xs text-blue-400 hover:text-blue-300 underline"
           >
             🔍 Debug
           </button>
@@ -147,12 +152,12 @@ ${clientes.length > 5 ? `... y ${clientes.length - 5} más` : ''}
       <input
         type="text"
         placeholder="Buscar por nombre o RUT..."
-        className="mb-4 p-2 rounded bg-gray-700 text-white w-full"
+        className="mb-4 p-2.5 sm:p-3 rounded-lg bg-gray-700 text-white w-full text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
         value={filtro}
         onChange={(e) => setFiltro(e.target.value)}
       />
 
-      <div className="bg-gray-800 p-6 rounded-lg shadow-lg">
+      <div className="bg-gray-800 p-4 sm:p-6 rounded-lg shadow-lg">
         {clientesFiltrados.length === 0 ? (
           <div className="text-center py-8">
             {clientes.length === 0 ? (
@@ -172,27 +177,45 @@ ${clientes.length > 5 ? `... y ${clientes.length - 5} más` : ''}
             )}
           </div>
         ) : (
-          <table className="w-full text-left">
-            <thead>
-              <tr className="border-b border-gray-700">
-                <th className="p-2">Cliente</th>
-                <th className="p-2">RUT</th>
-                <th className="p-2 text-center">Último Cierre</th>
-                <th className="p-2 text-center">Estado Actual</th>
-                <th className="p-2 text-center">Usuario Responsable</th>
-                <th className="p-2 text-center">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {clientesFiltrados.map((cliente) => (
+          <>
+            {/* Vista Cards - Móvil/Tablet */}
+            <div className="lg:hidden space-y-3">
+              {clientesFiltrados.map((cliente, idx) => (
                 <ClienteRow
                   key={cliente.id}
                   cliente={cliente}
                   areaActiva={areaActiva}
+                  index={idx}
                 />
               ))}
-            </tbody>
-          </table>
+            </div>
+
+            {/* Vista Tabla - Desktop */}
+            <div className="hidden lg:block overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-gray-700">
+                    <th className="p-2">Cliente</th>
+                    <th className="p-2">RUT</th>
+                    <th className="p-2 text-center">Último Cierre</th>
+                    <th className="p-2 text-center">Estado Actual</th>
+                    <th className="p-2 text-center">Usuario Responsable</th>
+                    <th className="p-2 text-center">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {clientesFiltrados.map((cliente, idx) => (
+                    <ClienteRow
+                      key={cliente.id}
+                      cliente={cliente}
+                      areaActiva={areaActiva}
+                      index={idx}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
     </div>

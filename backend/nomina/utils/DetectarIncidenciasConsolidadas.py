@@ -402,12 +402,16 @@ def actualizar_estado_cierre_incidencias(cierre, total_incidencias):
     """Actualiza el estado del cierre según las incidencias detectadas"""
     if total_incidencias > 0:
         cierre.estado = 'con_incidencias'
-        logger.info(f"📌 Estado actualizado a 'con_incidencias' ({total_incidencias} detectadas)")
+        cierre.estado_incidencias = 'detectadas'
+        cierre.total_incidencias = total_incidencias
+        logger.info(f"📌 Estado actualizado a 'con_incidencias' / 'detectadas' ({total_incidencias} incidencias)")
     else:
         cierre.estado = 'incidencias_resueltas'
-        logger.info(f"✅ Estado actualizado a 'incidencias_resueltas' (0 incidencias)")
+        cierre.estado_incidencias = 'resueltas'
+        cierre.total_incidencias = 0
+        logger.info(f"✅ Estado actualizado a 'incidencias_resueltas' / 'resueltas' (0 incidencias)")
     
-    cierre.save(update_fields=['estado'])
+    cierre.save(update_fields=['estado', 'estado_incidencias', 'total_incidencias'])
     return cierre
 
 # ================================

@@ -1,17 +1,17 @@
 # Índice de Documentación - Smoke Tests SGM Nómina
 
-**Última actualización**: 29 de octubre de 2025  
-**Progreso**: 10/12 flujos completados (83.3%)
+**Última actualización**: 4 de noviembre de 2025  
+**Progreso**: 12/12 flujos completados (100%) 🎉
 
 ---
 
 ## 📊 Estado General
 
 ```
-[████████████████████████████████████████░░░░░░░░] 83.3%
+[████████████████████████████████████████████████] 100%
 
-✅ Completados: 10/12
-⏭️ Pendientes:   2/12
+✅ Completados: 12/12
+🎉 SMOKE TESTS COMPLETADOS
 ```
 
 ---
@@ -84,7 +84,7 @@
 - **Contenido**: Validación de 3 dashboards (Libro, Movimientos, Nómina Consolidada)
 - **Resultado**: Totales consistentes ($8.43M), performance < 1s
 
-#### 10. Generación de Incidencias ✨ **NUEVO**
+#### 10. Generación de Incidencias ✨
 - **Archivo**: `FLUJO_10_GENERACION_INCIDENCIAS_COMPLETADO.md`
 - **Fecha**: 29/10/2025
 - **Líneas**: 1,400+
@@ -92,19 +92,25 @@
 - **Resultado**: 5 incidencias críticas (variación 100% = primer cierre)
 - **Destacado**: Diferenciación clara con Flujo 5, análisis de primer cierre
 
+#### 11. Sistema de Incidencias (Corrección) 📋 **DOCUMENTACIÓN OFICIAL**
+- **Archivo**: `FLUJO_INCIDENCIAS_ACTUAL.md`
+- **Fecha**: 04/11/2025
+- **Líneas**: 600+
+- **Contenido**: Sistema completo de justificación y aprobación de incidencias
+- **Resultado**: Bug fix de estado automático, centralización de lógica
+- **Destacado**: Código activo vs obsoleto identificado, endpoints activos documentados
+
+#### 12. Finalización del Cierre ✅ **COMPLETADO**
+- **Archivo**: `FLUJO_12_FINALIZACION_COMPLETADO.md`
+- **Fecha**: 04/11/2025
+- **Líneas**: 1,000+
+- **Contenido**: Chord de Celery, generación de informes, cache Redis
+- **Resultado**: Tiempo total 177ms, informe guardado en DB y Redis
+- **Destacado**: Timeline real con logs, estructura completa de tareas paralelas
+
 ---
 
-### ⏭️ Flujos Pendientes
-
-#### 11. Corrección de Incidencias
-- **Estado**: NO EJECUTADO
-- **Objetivo**: Marcar incidencias como resueltas/justificadas
-- **Pasos**: Listar → Justificar → Verificar estado en BD
-
-#### 12. Finalizar Cierre
-- **Estado**: NO EJECUTADO
-- **Objetivo**: Transición a estado finalizado
-- **Pasos**: Verificar incidencias resueltas → Finalizar → Validar inmutabilidad
+### 🎉 TODOS LOS FLUJOS COMPLETADOS
 
 ---
 
@@ -128,12 +134,32 @@ docs/smoke-tests/
 │
 ├── FLUJO_8_CONSOLIDACION_COMPLETADO.md
 ├── FLUJO_9_DASHBOARDS_COMPLETADO.md
-└── FLUJO_10_GENERACION_INCIDENCIAS_COMPLETADO.md  # ✨ NUEVO
+├── FLUJO_10_GENERACION_INCIDENCIAS_COMPLETADO.md
+│
+├── FLUJO_INCIDENCIAS_ACTUAL.md        # 📋 SISTEMA DE INCIDENCIAS (Flujo 11)
+│                                       # Sistema completo de incidencias
+│                                       # Código activo vs obsoleto
+│                                       # Actualizado: 04/11/2025
+│
+└── FLUJO_12_FINALIZACION_COMPLETADO.md # ✅ FINALIZACIÓN DEL CIERRE
+                                        # Chord Celery, informes, Redis
+                                        # Timeline real con logs
+                                        # Actualizado: 04/11/2025
 ```
 
 ---
 
 ## 📖 Documentación Complementaria
+
+### ⭐ Documentación Técnica Oficial
+- `FLUJO_INCIDENCIAS_ACTUAL.md` - **DOCUMENTACIÓN OFICIAL DEL SISTEMA DE INCIDENCIAS**
+  - Flujo completo de generación, justificación y aprobación
+  - Arquitectura de archivos y funciones activas
+  - Código obsoleto identificado (NO usar)
+  - Estados del cierre y transiciones
+  - Endpoints API disponibles
+  - Testing y troubleshooting
+  - **Fecha:** 04/11/2025
 
 ### Diagramas y Análisis
 - `DIAGRAMA_CONSOLIDACION_SIMPLE.md` - Diagrama visual del proceso de consolidación

@@ -293,15 +293,15 @@ urlpatterns = router.urls + [
 
     # === Compatibilidad: ruta antigua para finalizar a través de 'incidencias/finalizar/<id>/' ===
     # Usa la vista directa (finalizar_cierre_view) en lugar del ViewSet para evitar errores de routing
-    path('incidencias/finalizar/<int:pk>/',
-        finalizar_cierre_view,
-        name='finalizar_cierre_compat'),
+    #path('incidencias/finalizar/<int:pk>/',
+        #finalizar_cierre_view,
+        #name='finalizar_cierre_compat'),
 
     # === Compatibilidad: ruta antigua con orden invertido 'cierres/finalizar/<id>/' ===
     # Usa la vista directa (finalizar_cierre_view) en lugar del ViewSet para evitar errores de routing
-    path('cierres/finalizar/<int:pk>/',
-        finalizar_cierre_view,
-        name='finalizar_cierre_compat_cierres'),
+    #path('cierres/finalizar/<int:pk>/',
+       # finalizar_cierre_view,
+       # name='finalizar_cierre_compat_cierres'),
 
     # === Ruta explícita oficial para finalizar (función directa) ===
     path('cierres/<int:pk>/finalizar/', finalizar_cierre_view, name='finalizar_cierre_explicita'),

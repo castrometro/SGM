@@ -186,6 +186,12 @@ class ResolucionIncidenciaViewSet(viewsets.ModelViewSet):
             # Asegurar persistencia si recién seteamos
             cambios.append('fecha_primera_resolucion')
         incidencia.save(update_fields=list(set(cambios)))
+        
+        # ✅ ACTUALIZAR ESTADO DEL CIERRE automáticamente después de resolver/aprobar
+        # Solo para acciones que cambian el estado (no consultas)
+        if tipo in ['justificacion', 'aprobacion', 'rechazo']:
+            from nomina.utils.reconciliacion import verificar_y_actualizar_estado_cierre
+            verificar_y_actualizar_estado_cierre(incidencia.cierre.id)
     
     @action(detail=False, methods=['get'], url_path='historial/(?P<incidencia_id>[^/.]+)')
     def historial_incidencia(self, request, incidencia_id=None):
@@ -450,11 +456,21 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
             
             logger.info(f"📝 Incidencia {incidencia.id} justificada por {request.user.correo_bdo}")
             
+            # ✅ USAR FUNCIÓN CENTRALIZADA para actualizar estado del cierre
+            from nomina.utils.reconciliacion import verificar_y_actualizar_estado_cierre
+            resultado_actualizacion = verificar_y_actualizar_estado_cierre(incidencia.cierre.id)
+            
+            # Recargar cierre para obtener valores actualizados
+            cierre = CierreNomina.objects.get(id=incidencia.cierre.id)
+            
             return Response({
                 "message": "Incidencia justificada correctamente",
                 "estado": incidencia.estado,
                 "fecha_justificacion": incidencia.fecha_ultima_accion,
-                "resolucion_id": resolucion.id
+                "resolucion_id": resolucion.id,
+                "cierre_estado": cierre.estado,
+                "cierre_estado_incidencias": cierre.estado_incidencias,
+                "estado_actualizado": resultado_actualizacion.get('cambio_realizado', False)
             })
             
         except Exception as e:
@@ -488,25 +504,21 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
             
             logger.info(f"✅ Incidencia {incidencia.id} aprobada por {request.user.correo_bdo}")
 
-            # Verificar si todas las incidencias del cierre están aprobadas
-            cierre = incidencia.cierre
-            pendientes = cierre.incidencias.exclude(estado='aprobada_supervisor').exists()
-            if not pendientes:
-                # Actualizar estado global del cierre
-                cierre.estado_incidencias = 'resueltas'
-                # Solo escalar estado principal si todavía no está finalizado
-                if cierre.estado in ['con_incidencias', 'datos_consolidados']:
-                    cierre.estado = 'incidencias_resueltas'
-                cierre.save(update_fields=['estado_incidencias', 'estado'])
-                logger.info(f"🧩 Todas las incidencias aprobadas: cierre {cierre.id} -> incidencias_resueltas")
+            # ✅ USAR FUNCIÓN CENTRALIZADA para actualizar estado del cierre
+            from nomina.utils.reconciliacion import verificar_y_actualizar_estado_cierre
+            resultado_actualizacion = verificar_y_actualizar_estado_cierre(incidencia.cierre.id)
+            
+            # Recargar cierre para obtener valores actualizados
+            cierre = CierreNomina.objects.get(id=incidencia.cierre.id)
             
             return Response({
                 "message": "Incidencia aprobada correctamente",
                 "estado": incidencia.estado,
                 "fecha_aprobacion": incidencia.fecha_ultima_accion,
                 "resolucion_id": resolucion.id,
-                "cierre_estado": incidencia.cierre.estado,
-                "cierre_estado_incidencias": incidencia.cierre.estado_incidencias
+                "cierre_estado": cierre.estado,
+                "cierre_estado_incidencias": cierre.estado_incidencias,
+                "estado_actualizado": resultado_actualizacion.get('cambio_realizado', False)
             })
             
         except Exception as e:
@@ -833,24 +845,22 @@ class IncidenciaCierreViewSet(viewsets.ModelViewSet):
             
             resoluciones_creadas.append(resolucion)
         
-        # Verificar si todas las incidencias están aprobadas
-        incidencias_restantes = cierre.incidencias.exclude(estado='aprobada_supervisor').count()
+        # ✅ USAR FUNCIÓN CENTRALIZADA para actualizar estado del cierre
+        from nomina.utils.reconciliacion import verificar_y_actualizar_estado_cierre
+        resultado_actualizacion = verificar_y_actualizar_estado_cierre(cierre.id)
         
-        if incidencias_restantes == 0:
-            # Todas las incidencias están resueltas
-            cierre.estado = 'incidencias_resueltas'
-            if hasattr(cierre, 'estado_incidencias'):
-                cierre.estado_incidencias = 'resueltas'
-            cierre.save()
+        # Recargar cierre para obtener valores actualizados
+        cierre.refresh_from_db()
         
         logger.info(f"✅ Aprobación masiva realizada por {request.user.correo_bdo} en cierre {cierre_id}: {len(resoluciones_creadas)} incidencias aprobadas")
         
         return Response({
             "mensaje": f"{len(resoluciones_creadas)} incidencias aprobadas exitosamente",
             "incidencias_aprobadas": len(resoluciones_creadas),
-            "incidencias_restantes": incidencias_restantes,
-            "cierre_completado": incidencias_restantes == 0,
-            "nuevo_estado_cierre": cierre.estado
+            "incidencias_restantes": cierre.total_incidencias,
+            "cierre_completado": cierre.estado_incidencias == 'resueltas',
+            "nuevo_estado_cierre": cierre.estado,
+            "estado_incidencias": cierre.estado_incidencias
         })
     
     def totales_variacion(self, request, cierre_id=None):

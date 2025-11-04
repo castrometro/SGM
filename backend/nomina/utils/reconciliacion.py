@@ -4,7 +4,10 @@ from django.utils import timezone
 from django.conf import settings
 from django.contrib.auth import get_user_model
 import hashlib
+import logging
 from ..models import IncidenciaCierre, CierreNomina, ResolucionIncidencia, ConceptoConsolidado
+
+logger = logging.getLogger(__name__)
 
 
 def _elegir_usuario_para_nota(cierre: CierreNomina):
@@ -45,6 +48,89 @@ def _hash_incidencia_suma_total(nombre_concepto: str, tipo_concepto: str) -> str
     """
     base = f"suma_total|{(tipo_concepto or '').strip().lower()}|{(nombre_concepto or '').strip().lower()}"
     return hashlib.sha1(base.encode('utf-8')).hexdigest()
+
+
+def verificar_y_actualizar_estado_cierre(cierre_id: int) -> dict:
+    """
+    Verifica el estado de todas las incidencias de un cierre y actualiza automáticamente
+    el estado del cierre según corresponda.
+    
+    Lógica:
+    - Si NO hay incidencias vigentes → 'incidencias_resueltas' / 'resueltas'
+    - Si TODAS las incidencias están en estado 'aprobada_supervisor' → 'incidencias_resueltas' / 'resueltas'
+    - Si hay incidencias pendientes → 'con_incidencias' / 'detectadas' o 'en_revision'
+    
+    Args:
+        cierre_id: ID del cierre a verificar
+        
+    Returns:
+        dict: Información del estado actualizado
+    """
+    try:
+        cierre = CierreNomina.objects.get(id=cierre_id)
+        
+        # Contar incidencias por estado
+        total_incidencias = cierre.incidencias.count()
+        incidencias_aprobadas = cierre.incidencias.filter(estado='aprobada_supervisor').count()
+        incidencias_resueltas = cierre.incidencias.filter(estado__in=['resuelta_analista', 'aprobada_supervisor']).count()
+        incidencias_pendientes = cierre.incidencias.filter(estado='pendiente').count()
+        
+        estado_anterior = cierre.estado
+        estado_incidencias_anterior = cierre.estado_incidencias
+        
+        # CASO 1: No hay incidencias → Estado resuelto
+        if total_incidencias == 0:
+            cierre.estado = 'incidencias_resueltas'
+            cierre.estado_incidencias = 'resueltas'
+            cierre.total_incidencias = 0
+            cierre.save(update_fields=['estado', 'estado_incidencias', 'total_incidencias'])
+            logger.info(f"✅ Cierre {cierre_id}: Sin incidencias → 'incidencias_resueltas'")
+            
+        # CASO 2: Todas las incidencias están aprobadas → Estado resuelto
+        elif incidencias_aprobadas == total_incidencias:
+            # Solo actualizar si el cierre está en estados de incidencias
+            if cierre.estado in ['con_incidencias', 'datos_consolidados']:
+                cierre.estado = 'incidencias_resueltas'
+            cierre.estado_incidencias = 'resueltas'
+            cierre.total_incidencias = 0  # Todas resueltas
+            cierre.save(update_fields=['estado', 'estado_incidencias', 'total_incidencias'])
+            logger.info(f"✅ Cierre {cierre_id}: {incidencias_aprobadas}/{total_incidencias} aprobadas → 'incidencias_resueltas'")
+            
+        # CASO 3: Hay incidencias pendientes → Estado con incidencias
+        else:
+            if cierre.estado not in ['con_incidencias']:
+                cierre.estado = 'con_incidencias'
+            
+            # Determinar sub-estado según cantidad de resueltas
+            if incidencias_resueltas > 0:
+                cierre.estado_incidencias = 'en_revision'
+            else:
+                cierre.estado_incidencias = 'detectadas'
+            
+            cierre.total_incidencias = total_incidencias - incidencias_aprobadas
+            cierre.save(update_fields=['estado', 'estado_incidencias', 'total_incidencias'])
+            logger.info(f"⚠️ Cierre {cierre_id}: {cierre.total_incidencias} pendientes → '{cierre.estado}' / '{cierre.estado_incidencias}'")
+        
+        return {
+            'success': True,
+            'cierre_id': cierre_id,
+            'estado_anterior': estado_anterior,
+            'estado_nuevo': cierre.estado,
+            'estado_incidencias_anterior': estado_incidencias_anterior,
+            'estado_incidencias_nuevo': cierre.estado_incidencias,
+            'total_incidencias': total_incidencias,
+            'incidencias_aprobadas': incidencias_aprobadas,
+            'incidencias_pendientes': incidencias_pendientes,
+            'cambio_realizado': estado_anterior != cierre.estado or estado_incidencias_anterior != cierre.estado_incidencias
+        }
+        
+    except CierreNomina.DoesNotExist:
+        logger.error(f"❌ Cierre {cierre_id} no existe")
+        return {'success': False, 'error': 'Cierre no encontrado'}
+    except Exception as e:
+        logger.error(f"❌ Error verificando estado del cierre {cierre_id}: {e}", exc_info=True)
+        return {'success': False, 'error': str(e)}
+
 
 
 def reconciliar_cierre_suma_total(cierre_id: int, umbral_pct: float = 30.0) -> dict:
@@ -219,6 +305,21 @@ def reconciliar_cierre_suma_total(cierre_id: int, umbral_pct: float = 30.0) -> d
                 tipo_resolucion='justificacion',
                 comentario=comentario
             )
+
+        # ✅ ACTUALIZAR ESTADO DEL CIERRE según incidencias detectadas
+        total_vigentes = creadas + actualizadas
+        if total_vigentes > 0:
+            cierre.estado = 'con_incidencias'
+            cierre.estado_incidencias = 'detectadas'
+            cierre.total_incidencias = total_vigentes
+            cierre.save(update_fields=['estado', 'estado_incidencias', 'total_incidencias'])
+            logger.info(f"📌 Estado del cierre actualizado a 'con_incidencias' / 'detectadas' ({total_vigentes} incidencias)")
+        else:
+            cierre.estado = 'incidencias_resueltas'
+            cierre.estado_incidencias = 'resueltas'
+            cierre.total_incidencias = 0
+            cierre.save(update_fields=['estado', 'estado_incidencias', 'total_incidencias'])
+            logger.info(f"✅ Estado del cierre actualizado a 'incidencias_resueltas' / 'resueltas' (0 incidencias)")
 
         return {
             'creadas': creadas,

@@ -30,13 +30,19 @@ def libro_resumen_v2(request, cierre_id: int):
         if informe and isinstance(informe.datos_cierre, dict):
             bloque = informe.datos_cierre.get('libro_resumen_v2')
             if isinstance(bloque, dict) and bloque.get('cierre', {}).get('id') == cierre.id:
-                # Agregar metadata de fuente
-                bloque['_metadata'] = {
-                    'fuente': 'informe_persistente',
-                    'descripcion': 'Datos históricos del informe guardado (no caduca)',
-                    'fecha_informe': informe.fecha_generacion.isoformat() if hasattr(informe, 'fecha_generacion') else None
-                }
-                return Response(bloque, status=status.HTTP_200_OK)
+                # 🔥 VERIFICAR SI EL INFORME ESTÁ INVALIDADO POR RECLASIFICACIÓN
+                meta = bloque.get('meta', {})
+                if meta.get('invalidado_por_reclasificacion'):
+                    # Informe invalidado, saltar al query directo
+                    pass  # Continúa al query directo de BD
+                else:
+                    # Agregar metadata de fuente
+                    bloque['_metadata'] = {
+                        'fuente': 'informe_persistente',
+                        'descripcion': 'Datos históricos del informe guardado (no caduca)',
+                        'fecha_informe': informe.fecha_generacion.isoformat() if hasattr(informe, 'fecha_generacion') else None
+                    }
+                    return Response(bloque, status=status.HTTP_200_OK)
     except Exception:
         pass
 

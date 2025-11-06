@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 from django.db import transaction
+from django.utils import timezone
 from .models import CierreNomina, ConceptoConsolidado, IncidenciaCierre
 
 TIPO_VALIDO_SET = {
@@ -150,13 +151,54 @@ def reclasificar_concepto_consolidado(request, cierre_id: int):
         except Exception:
             pass
 
-        # Limpiar cache Redis de datos consolidados (TTL corto) para este cierre
+        # Invalidar cache Redis de datos consolidados para este cierre
         try:
             from .cache_redis import get_cache_system_nomina
             cache = get_cache_system_nomina()
-            # La clase no tiene delete explícito; sobreescribimos con dict vacío TTL muy corto para invalidar
-            cache.set_datos_consolidados(cierre.cliente_id, cierre.periodo, {'invalidado_por_reclasificacion': True}, ttl=5)
+            cache.delete_datos_consolidados(cierre.cliente_id, cierre.periodo)
         except Exception:
+            pass
+
+        # 🔥 NUEVO: INVALIDAR CACHE PREVIEW ESPECIALIZADO
+        try:
+            from .cache_redis import get_cache_system_nomina
+            cache = get_cache_system_nomina()
+            
+            # Eliminar cache preview específico
+            preview_keys = [
+                f"{cierre_id}_cache_libro",
+                f"{cierre_id}_cache_mov"
+            ]
+            
+            preview_invalidated = 0
+            for key in preview_keys:
+                try:
+                    if cache.redis_client.delete(key):
+                        preview_invalidated += 1
+                except Exception:
+                    pass
+        except Exception:
+            preview_invalidated = 0
+
+        # 🔥 INVALIDAR INFORME PERSISTENTE: Marcar como desactualizado después de reclasificación
+        informe_invalidado = False
+        try:
+            informe = getattr(cierre, 'informe', None)
+            if informe and cierre.estado == 'finalizado':
+                # Marcar el informe como desactualizado para forzar regeneración
+                datos_cierre = informe.datos_cierre or {}
+                if 'libro_resumen_v2' in datos_cierre:
+                    # Agregar marcador de invalidación
+                    meta = datos_cierre['libro_resumen_v2'].get('meta', {})
+                    meta['invalidado_por_reclasificacion'] = True
+                    meta['fecha_invalidacion'] = timezone.now().isoformat()
+                    meta['concepto_reclasificado'] = nombre
+                    meta['usuario_reclasifica'] = getattr(request.user, 'correo_bdo', str(request.user))
+                    datos_cierre['libro_resumen_v2']['meta'] = meta
+                    informe.datos_cierre = datos_cierre
+                    informe.save(update_fields=['datos_cierre'])
+                    informe_invalidado = True
+        except Exception as e:
             pass
 
     return Response({
@@ -167,6 +209,9 @@ def reclasificar_concepto_consolidado(request, cierre_id: int):
         'registros_afectados': total_registros,
         'motivo': motivo,
         'informe_actualizado': informe_actualizado,
+        'informe_invalidado': locals().get('informe_invalidado', False),
         'incidencias_actualizadas': locals().get('incidencias_actualizadas', 0),
-        'incidencias_eliminadas': locals().get('incidencias_eliminadas', 0)
+        'incidencias_eliminadas': locals().get('incidencias_eliminadas', 0),
+        'cache_invalidado': True,
+        'preview_cache_invalidated': locals().get('preview_invalidated', 0)
     }, status=200)

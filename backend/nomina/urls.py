@@ -94,6 +94,14 @@ from .views_resumen_movimientos import movimientos_personal_detalle_v3
 from .views_incidencias import IncidenciaCierreViewSet
 from .views_finalizacion import finalizar_cierre_view
 from .views_correcciones import corregir_libro_view
+from .views_cache_specialized import (
+    libro_preview_cached,
+    movimientos_preview_cached,
+    reporte_oficial_cached,
+    dashboard_unificado,
+    invalidar_cache_preview,
+    promover_a_oficial
+)
 
 router = routers.DefaultRouter()
 router.register(r'cierres', CierreNominaViewSet)
@@ -272,6 +280,22 @@ urlpatterns = router.urls + [
     path('cierres/<int:cierre_id>/nomina-consolidada/detalle/', obtener_detalle_nomina_consolidada, name='detalle_nomina_consolidada'),
     # === Libro Remuneraciones V2 (simplificado) ===
     path('cierres/<int:cierre_id>/libro/v2/resumen/', libro_resumen_v2, name='libro_resumen_v2'),
+    
+    # === NUEVOS ENDPOINTS CACHE ESPECIALIZADO ===
+    # SITUACIÓN 1: Preview (trabajo en curso)
+    path('cierres/<int:cierre_id>/libro-preview/', libro_preview_cached, name='libro_preview_cached'),
+    path('cierres/<int:cierre_id>/movimientos-preview/', movimientos_preview_cached, name='movimientos_preview_cached'),
+    
+    # SITUACIÓN 2-3: Reporte oficial (finalizado)
+    path('cierres/<int:cierre_id>/reporte-oficial/', reporte_oficial_cached, name='reporte_oficial_cached'),
+    
+    # Dashboard unificado (redirección inteligente)
+    path('cierres/<int:cierre_id>/dashboard/', dashboard_unificado, name='dashboard_unificado'),
+    
+    # Utilidades de cache
+    path('cierres/<int:cierre_id>/cache/invalidar-preview/', invalidar_cache_preview, name='invalidar_cache_preview'),
+    path('cierres/<int:cierre_id>/cache/promover-oficial/', promover_a_oficial, name='promover_a_oficial'),
+    
     # === Corrección exclusiva de Libro de Remuneraciones (endpoint mínimo de prueba) ===
     path('cierres/<int:cierre_id>/corregir-libro/', corregir_libro_view, name='corregir_libro'),
     # === Reclasificación de conceptos consolidados ===

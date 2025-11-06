@@ -398,6 +398,31 @@ class SGMCacheSystemNomina:
             logger.error(f"Error obteniendo datos consolidados: {e}")
             self._increment_stat("cache_errors")
             return None
+
+    def delete_datos_consolidados(self, cliente_id: int, periodo: str) -> bool:
+        """
+        Eliminar datos consolidados de nómina del cache
+        
+        Args:
+            cliente_id: ID del cliente
+            periodo: Período del cierre
+            
+        Returns:
+            bool: True si se eliminó exitosamente
+        """
+        key = self._get_key(cliente_id, periodo, "consolidados")
+        try:
+            result = self.redis_client.delete(key)
+            if result:
+                self._increment_stat("cache_deletions")
+                logger.info(f"Cache consolidados eliminado: cliente={cliente_id}, periodo={periodo}")
+                return True
+            else:
+                logger.info(f"Cache consolidados no existía: cliente={cliente_id}, periodo={periodo}")
+                return False
+        except Exception as e:
+            logger.error(f"Error eliminando cache consolidados: {e}")
+            return False
     
     # ========== GESTIÓN DE CACHE ==========
     def invalidate_cliente_periodo(self, cliente_id: int, periodo: str) -> int:

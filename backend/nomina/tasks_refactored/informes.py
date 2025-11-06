@@ -60,22 +60,39 @@ def build_informe_libro(self, cierre_id: int) -> dict:
             'resumen': None,
         }
 
-    qs = NominaConsolidada.objects.filter(cierre=cierre)
+    # 🔥 CAMBIO: Usar ConceptoConsolidado como single source of truth (igual que dashboard)
+    conceptos_qs = ConceptoConsolidado.objects.filter(nomina_consolidada__cierre=cierre)
+    
+    # Categorías esperadas
+    CATEGORIAS = [
+        'haber_imponible',
+        'haber_no_imponible', 
+        'descuento_legal',
+        'otro_descuento',
+        'impuesto',
+        'aporte_patronal',
+    ]
 
-    # Resumen general (totales por campo principal)
+    # Resumen general (totales por categoría desde ConceptoConsolidado)
     zero_dec_2 = Value(0, output_field=DecimalField(max_digits=20, decimal_places=2))
     zero_dec_4 = Value(0, output_field=DecimalField(max_digits=20, decimal_places=4))
     
-    resumen_agg = qs.aggregate(
-        total_empleados=Count('id'),
-        total_haberes_imponibles=Coalesce(Sum('haberes_imponibles'), zero_dec_2),
-        total_haberes_no_imponibles=Coalesce(Sum('haberes_no_imponibles'), zero_dec_2),
-        total_dctos_legales=Coalesce(Sum('dctos_legales'), zero_dec_2),
-        total_otros_dctos=Coalesce(Sum('otros_dctos'), zero_dec_2),
-        total_impuestos=Coalesce(Sum('impuestos'), zero_dec_2),
-        total_aportes_patronales=Coalesce(Sum('aportes_patronales'), zero_dec_2),
-        horas_extras_cantidad_total=Coalesce(Sum('horas_extras_cantidad'), zero_dec_4),
+    # Total empleados únicos
+    total_empleados = NominaConsolidada.objects.filter(cierre=cierre).count()
+    
+    # Totales por categoría (igual que dashboard)
+    totales_categorias_raw = conceptos_qs.values('tipo_concepto').annotate(
+        total=Coalesce(
+            Sum('monto_total'),
+            zero_dec_2,
+            output_field=DecimalField(max_digits=20, decimal_places=2)
+        )
     )
+    totales_categorias_dict = {c: 0.0 for c in CATEGORIAS}
+    for row in totales_categorias_raw:
+        tipo = row.get('tipo_concepto')
+        if tipo in totales_categorias_dict:
+            totales_categorias_dict[tipo] = float(row['total'])
 
     # Desglose por concepto (por tipo_concepto)
     conceptos_base = (
@@ -110,15 +127,15 @@ def build_informe_libro(self, cierre_id: int) -> dict:
                     'empleados': emp_map.get((tipo, it['nombre_concepto']), 0),
                 })
 
+    # 🔥 CAMBIO: Usar totales calculados desde ConceptoConsolidado
     totales_categorias = {
-        'haber_imponible': float(resumen_agg['total_haberes_imponibles'] or 0),
-        'haber_no_imponible': float(resumen_agg['total_haberes_no_imponibles'] or 0),
-        'descuento_legal': float(resumen_agg['total_dctos_legales'] or 0),
-        'otro_descuento': float(resumen_agg['total_otros_dctos'] or 0),
-        'impuesto': float(resumen_agg['total_impuestos'] or 0),
-        'aporte_patronal': float(resumen_agg['total_aportes_patronales'] or 0),
+        'haber_imponible': totales_categorias_dict['haber_imponible'],
+        'haber_no_imponible': totales_categorias_dict['haber_no_imponible'],
+        'descuento_legal': totales_categorias_dict['descuento_legal'],
+        'otro_descuento': totales_categorias_dict['otro_descuento'],
+        'impuesto': totales_categorias_dict['impuesto'],
+        'aporte_patronal': totales_categorias_dict['aporte_patronal'],
     }
-    total_empleados = int(resumen_agg['total_empleados'] or 0)
 
     libro_v2 = {
         'cierre': {
@@ -389,11 +406,41 @@ def finalizar_cierre_post_informe(self, prev_result: dict, cierre_id: int, usuar
     else:
         cierre.save(update_fields=['estado', 'fecha_finalizacion'])
 
+    # 🔥 NUEVO: ELIMINAR CACHE PREVIEW AL FINALIZAR
+    preview_cache_deleted = 0
+    try:
+        from nomina.cache_redis import get_cache_system_nomina
+        cache = get_cache_system_nomina()
+        
+        # Eliminar cache preview específico
+        preview_keys = [
+            f"{cierre_id}_cache_libro",
+            f"{cierre_id}_cache_mov"
+        ]
+        
+        for key in preview_keys:
+            try:
+                if cache.redis_client.delete(key):
+                    preview_cache_deleted += 1
+            except Exception:
+                pass
+        
+        # 🔥 NUEVO: INVALIDAR CACHE PRINCIPAL CONSOLIDADOS TAMBIÉN
+        try:
+            cache.delete_datos_consolidados(cierre.cliente_id, cierre.periodo)
+        except Exception:
+            pass
+        
+        logger.info(f"🗑️ [Finalización] Cache preview eliminado: {preview_cache_deleted} claves para cierre {cierre_id}")
+    except Exception as e:
+        logger.warning(f"⚠️ [Finalización] Error eliminando cache preview: {e}")
+
     return {
         'success': True,
         'cierre_id': cierre_id,
         'finalizado': True,
-        'informe_id': (prev_result or {}).get('informe_id')
+        'informe_id': (prev_result or {}).get('informe_id'),
+        'preview_cache_deleted': preview_cache_deleted
     }
 
 

@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   db:
     image: postgres:15
@@ -72,6 +70,20 @@ services:
       - redis
       - celery_worker
 
+  redis-insight:
+    image: redis/redisinsight:latest
+    container_name: sgm-redis-insight
+    ports:
+      - "5540:5540"                # UI en http://<host>:5540
+    volumes:
+      - redis_insight_data:/data   # Persistencia de conexiones/logs
+    environment:
+      - RI_APP_PORT=5540           # explícito (default ya es 5540)
+      - RI_APP_HOST=0.0.0.0        # escucha en todas las interfaces
+      - RI_LOG_LEVEL=debug
+    depends_on:
+      - redis
+
   streamlit_conta:
     build:
       context: .
@@ -92,7 +104,8 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:        # ← NUEVO: Persistencia para Redis
+  redis_data:
+  redis_insight_data:
   
 
 

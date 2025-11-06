@@ -153,6 +153,11 @@ def generar_discrepancias_libro_vs_novedades(cierre):
     - Solo genera discrepancias para casos críticos y accionables
     - Omite conceptos donde novedades tiene valores vacíos (sin novedad real)
     - Enfocado en diferencias reales que requieren acción
+    
+    🔄 CORREGIDO: Ahora usa el mapeo definido en ConceptoRemuneracionNovedades
+    - Cada concepto de novedades se mapea a su concepto_libro_equivalente
+    - Ejemplo: "Otros Descuentos" (novedades) → "Otros Descuentos.1" (libro)
+    - Compara valores usando el mapeo, no por nombre directo
     """
     discrepancias = []
     
@@ -258,49 +263,61 @@ def _comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades):
     """
     Compara solo diferencias en montos de conceptos comunes entre libro y novedades
     
-    LÓGICA ACTUALIZADA: 
-    - Solo compara conceptos que aparecen en AMBOS archivos
+    LÓGICA CORREGIDA CON MAPEO:
+    - Usa el mapeo definido en ConceptoRemuneracionNovedades
+    - Para cada concepto de novedades, busca su concepto_libro_equivalente
+    - Compara el monto de novedades vs el monto del concepto mapeado en libro
     - OMITE conceptos donde novedades tiene valor vacío (significa "sin novedad")
-    - Solo considera discrepancia cuando hay valores reales diferentes
     """
     discrepancias = []
     
     # Obtener registros de conceptos
     registros_libro = RegistroConceptoEmpleado.objects.filter(empleado=emp_libro)
-    registros_novedades = RegistroConceptoEmpleadoNovedades.objects.filter(empleado=emp_novedades)
+    registros_novedades = RegistroConceptoEmpleadoNovedades.objects.filter(
+        empleado=emp_novedades,
+        concepto__isnull=False,  # Solo registros con mapeo definido
+        concepto__concepto_libro__isnull=False  # Y que tengan concepto libro mapeado
+    )
     
-    # Crear diccionarios por concepto normalizado
-    dict_libro = {normalizar_texto(reg.nombre_concepto_original): reg for reg in registros_libro}
-    dict_novedades = {normalizar_texto(reg.nombre_concepto_original): reg for reg in registros_novedades}
+    # Crear diccionario de libro por concepto ID
+    dict_libro = {reg.concepto.id: reg for reg in registros_libro if reg.concepto}
     
     # Estadísticas para logging
-    conceptos_comunes = len(dict_libro.keys() & dict_novedades.keys())
+    registros_con_mapeo = len(registros_novedades)
     conceptos_omitidos_sin_novedad = 0
     conceptos_comparados = 0
+    comparaciones_realizadas = 0
     
-    logger.debug(f"RUT {emp_libro.rut}: {conceptos_comunes} conceptos comunes entre Libro y Novedades")
+    logger.debug(f"RUT {emp_libro.rut}: {registros_con_mapeo} registros de novedades con mapeo definido")
     
-    # OMITIDO: Conceptos solo en Libro (normal, no es error)
-    # OMITIDO: Conceptos solo en Novedades (normal, comportamiento esperado)
-    
-    # Solo comparar montos de conceptos que aparecen en ambos archivos
-    for concepto_norm in dict_libro.keys() & dict_novedades.keys():
-        reg_libro = dict_libro[concepto_norm]
-        reg_novedades = dict_novedades[concepto_norm]
+    # Comparar conceptos usando el mapeo
+    for reg_novedades in registros_novedades:
+        # Obtener el concepto equivalente en el libro
+        concepto_libro_equivalente = reg_novedades.concepto_libro_equivalente
+        if not concepto_libro_equivalente:
+            continue
+        
+        # Buscar el registro correspondiente en el libro
+        reg_libro = dict_libro.get(concepto_libro_equivalente.id)
+        if not reg_libro:
+            # El concepto mapeado no existe en el libro para este empleado
+            logger.debug(f"RUT {emp_libro.rut} - Concepto '{concepto_libro_equivalente.nombre_concepto}' (mapeado desde '{reg_novedades.nombre_concepto_original}') no encontrado en libro")
+            continue
         
         # FILTRO: Omitir si novedades tiene valor vacío/nulo (significa que no hubo novedad)
         if _es_valor_vacio(reg_novedades.monto):
             conceptos_omitidos_sin_novedad += 1
-            logger.debug(f"RUT {emp_libro.rut} - Concepto '{reg_libro.nombre_concepto_original}': omitido (valor vacío en novedades = sin novedad)")
+            logger.debug(f"RUT {emp_libro.rut} - Concepto '{reg_novedades.nombre_concepto_original}' → '{concepto_libro_equivalente.nombre_concepto}': omitido (valor vacío en novedades = sin novedad)")
             continue
         
         conceptos_comparados += 1
+        comparaciones_realizadas += 1
         
         # Comparar montos si ambos son numéricos
         if reg_libro.es_numerico and reg_novedades.es_numerico:
             diferencia = abs(reg_libro.monto_numerico - reg_novedades.monto_numerico)
             if diferencia > 0.01:  # Tolerancia de 1 centavo
-                logger.info(f"RUT {emp_libro.rut} - Concepto '{reg_libro.nombre_concepto_original}': discrepancia numérica (Libro: {reg_libro.monto}, Novedades: {reg_novedades.monto}, Diff: {diferencia})")
+                logger.info(f"RUT {emp_libro.rut} - Concepto '{reg_novedades.nombre_concepto_original}' → '{concepto_libro_equivalente.nombre_concepto}': discrepancia numérica (Libro: {reg_libro.monto}, Novedades: {reg_novedades.monto}, Diff: {diferencia})")
                 
                 discrepancias.append(DiscrepanciaCierre(
                     cierre=cierre,
@@ -308,14 +325,14 @@ def _comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades):
                     empleado_libro=emp_libro,
                     empleado_novedades=emp_novedades,
                     rut_empleado=emp_libro.rut,
-                    descripcion=f"Diferencia en monto del concepto '{reg_libro.nombre_concepto_original}' para RUT {emp_libro.rut}",
+                    descripcion=f"Diferencia en monto: '{reg_novedades.nombre_concepto_original}' (novedades) → '{concepto_libro_equivalente.nombre_concepto}' (libro) para RUT {emp_libro.rut}",
                     valor_libro=str(int(reg_libro.monto_numerico)),
                     valor_novedades=str(int(reg_novedades.monto_numerico)),
-                    concepto_afectado=reg_libro.nombre_concepto_original
+                    concepto_afectado=f"{reg_novedades.nombre_concepto_original} → {concepto_libro_equivalente.nombre_concepto}"
                 ))
         elif str(reg_libro.monto) != str(reg_novedades.monto):
             # Si no son numéricos, comparar como texto
-            logger.info(f"RUT {emp_libro.rut} - Concepto '{reg_libro.nombre_concepto_original}': discrepancia textual (Libro: '{reg_libro.monto}', Novedades: '{reg_novedades.monto}')")
+            logger.info(f"RUT {emp_libro.rut} - Concepto '{reg_novedades.nombre_concepto_original}' → '{concepto_libro_equivalente.nombre_concepto}': discrepancia textual (Libro: '{reg_libro.monto}', Novedades: '{reg_novedades.monto}')")
             
             discrepancias.append(DiscrepanciaCierre(
                 cierre=cierre,
@@ -323,15 +340,15 @@ def _comparar_solo_montos_conceptos(cierre, emp_libro, emp_novedades):
                 empleado_libro=emp_libro,
                 empleado_novedades=emp_novedades,
                 rut_empleado=emp_libro.rut,
-                descripcion=f"Diferencia en valor del concepto '{reg_libro.nombre_concepto_original}' para RUT {emp_libro.rut}",
+                descripcion=f"Diferencia en valor: '{reg_novedades.nombre_concepto_original}' (novedades) → '{concepto_libro_equivalente.nombre_concepto}' (libro) para RUT {emp_libro.rut}",
                 valor_libro=str(reg_libro.monto),
                 valor_novedades=str(reg_novedades.monto),
-                concepto_afectado=reg_libro.nombre_concepto_original
+                concepto_afectado=f"{reg_novedades.nombre_concepto_original} → {concepto_libro_equivalente.nombre_concepto}"
             ))
     
     # Log estadísticas finales
-    if conceptos_comunes > 0:
-        logger.debug(f"RUT {emp_libro.rut}: {conceptos_omitidos_sin_novedad}/{conceptos_comunes} conceptos omitidos (sin novedad), {conceptos_comparados} comparados, {len(discrepancias)} discrepancias encontradas")
+    if registros_con_mapeo > 0:
+        logger.debug(f"RUT {emp_libro.rut}: {conceptos_omitidos_sin_novedad}/{registros_con_mapeo} conceptos omitidos (sin novedad), {conceptos_comparados} comparados, {len(discrepancias)} discrepancias encontradas")
     
     return discrepancias
 

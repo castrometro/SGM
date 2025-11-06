@@ -139,6 +139,29 @@ def corregir_libro_view(request, cierre_id: int):
             # No bloquear si el logging falla
             pass
 
+    # 🔥 NUEVO: INVALIDAR CACHE PREVIEW DESPUÉS DE CORRECCIÓN
+    preview_cache_invalidated = 0
+    try:
+        from .cache_redis import get_cache_system_nomina
+        cache = get_cache_system_nomina()
+        
+        # Eliminar cache preview específico
+        preview_keys = [
+            f"{cierre_id}_cache_libro",
+            f"{cierre_id}_cache_mov"
+        ]
+        
+        for key in preview_keys:
+            try:
+                if cache.redis_client.delete(key):
+                    preview_cache_invalidated += 1
+            except Exception:
+                pass
+        
+        logger.info(f"[CorreccionLibro] Cache preview invalidado: {preview_cache_invalidated} claves eliminadas")
+    except Exception as e:
+        logger.warning(f"[CorreccionLibro] Error invalidando cache preview: {e}")
+
     logger.info(
         f"[CorreccionLibro] cierre_id={cierre_id} archivo={archivo.name} validado. Previos eliminados={eliminados} (archivos={eliminados_archivo}). Versión: v{version_anterior} → v{cierre.version_datos}"
     )
@@ -157,4 +180,5 @@ def corregir_libro_view(request, cierre_id: int):
         "eliminados": eliminados,
         "eliminados_archivo": eliminados_archivo,
         "upload_log_id": upload_log.id,
+        "preview_cache_invalidated": preview_cache_invalidated,  # 🆕 Cache invalidado
     }, status=status.HTTP_200_OK)

@@ -1,0 +1,14 @@
+/* Estilos adicionales para DocsViewer cuando no se usa typography plugin */
+.docs-viewer { color: #e5e7eb; }
+.docs-viewer h1,.docs-viewer h2,.docs-viewer h3 { color: #fff; }
+.docs-viewer p,.docs-viewer li { color: #e5e7eb; }
+.docs-viewer a { color: #93c5fd; text-decoration: underline; }
+.docs-viewer a:hover { color: #bfdbfe; }
+.docs-viewer code { background: #111827; color: #f6adcc; padding: 2px 4px; border-radius: 4px; }
+.docs-viewer pre { background: #0b1220; color: #e5e7eb; padding: 12px; overflow-x: auto; border: 1px solid #1f2937; border-radius: 8px; }
+.docs-viewer blockquote { border-left: 4px solid #4b5563; color: #d1d5db; background: #111827; padding: 8px 12px; }
+.docs-viewer table { width: 100%; border-collapse: collapse; }
+.docs-viewer th, .docs-viewer td { border: 1px solid #374151; padding: 8px; }
+.docs-viewer th { background: #1f2937; }
+.docs-viewer ul { list-style: disc; padding-left: 1.5rem; }
+.docs-viewer ol { list-style: decimal; padding-left: 1.5rem; }

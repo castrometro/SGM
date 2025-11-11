@@ -47,12 +47,25 @@ import GestionCobranzav2 from "./pages/GestionCobranzav2";
 import CobranzaFacturas from "./pages/CobranzaFacturas";
 import ImplementacionBDODashboard from "./pages/ProyectosBDOLatam";
 
+// ==================== MÓDULOS REFACTORIZADOS (DEV) ====================
+// Páginas de showcase y demostración de módulos refactorizados
+import ModulesShowcase from "./pages/ModulesShowcase";
+import AuthModuleDemo from "./pages/AuthModuleDemo";
+import ModulesDocumentation from "./pages/ModulesDocumentation";
+
 function App() {
   return (
     <Router>
       <Routes>
         {/* ------------------ PÚBLICAS ------------------ */}
         <Route path="/" element={<Login />} />
+
+        {/* ==================== DESARROLLO: MÓDULOS REFACTORIZADOS ==================== */}
+        {/* Showcase de módulos - Solo visible en desarrollo */}
+        <Route path="/dev/modules" element={<ModulesShowcase />} />
+        <Route path="/dev/modules/auth/demo" element={<AuthModuleDemo />} />
+        <Route path="/dev/modules/docs" element={<ModulesDocumentation />} />
+        {/* =============================================================================== */}
 
         {/* ------------------ PROTEGIDAS / LAYOUT ------------------ */}
         <Route

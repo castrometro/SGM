@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatearFechaLocal } from '../../../utils/dashboard/dates';
 
 const TablaResumenMovimientos = ({
   tablaRef,
@@ -146,7 +147,7 @@ const TablaResumenMovimientos = ({
                                     .sort((a,b)=> a.colorIdx - b.colorIdx || (new Date(a.fi||'1970-01-01') - new Date(b.fi||'1970-01-01')))
                                     .map(rw => {
                                       if (isIF) {
-                                        const fecha = rw.fi && rw.fi !== '-' ? new Date(rw.fi).toLocaleDateString('es-CL') : (rw.ff && rw.ff !== '-' ? new Date(rw.ff).toLocaleDateString('es-CL') : '-');
+                                        const fecha = rw.fi && rw.fi !== '-' ? formatearFechaLocal(rw.fi) : (rw.ff && rw.ff !== '-' ? formatearFechaLocal(rw.ff) : '-');
                                         return (
                                           <tr key={rw.id} className="hover:bg-gray-800/60">
                                             <td className="px-4 py-3 text-gray-300 text-sm">{formatRut(rw.rut)}</td>
@@ -158,8 +159,8 @@ const TablaResumenMovimientos = ({
                                         <tr key={rw.id} className={`hover:bg-gray-800/60 ${rw.color}`}>
                                           <td className="px-4 py-3 text-gray-300 text-sm">{formatRut(rw.rut)}</td>
                                           <td className="px-4 py-3 text-white text-sm">{prettifyEtiqueta(rw.cat)}</td>
-                                          <td className="px-4 py-3 text-gray-300 text-sm">{rw.fi ? new Date(rw.fi).toLocaleDateString('es-CL') : '-'}</td>
-                                          <td className="px-4 py-3 text-gray-300 text-sm">{rw.ff ? new Date(rw.ff).toLocaleDateString('es-CL') : '-'}</td>
+                                          <td className="px-4 py-3 text-gray-300 text-sm">{formatearFechaLocal(rw.fi)}</td>
+                                          <td className="px-4 py-3 text-gray-300 text-sm">{formatearFechaLocal(rw.ff)}</td>
                                           <td className="px-4 py-3 text-gray-200 text-sm text-right">{rw.dias}</td>
                                         </tr>
                                       );

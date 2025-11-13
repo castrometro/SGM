@@ -27,6 +27,7 @@ import { prettifyEtiqueta as prettifyEtiquetaUtil } from '../../utils/dashboard/
 import { colorClassForEmpleado, colorIndexForEmpleado } from '../../utils/dashboard/colorHash';
 import { useMovimientosMetrics } from '../../hooks/dashboard/useMovimientosMetrics';
 import { useHiddenSlices } from '../../hooks/dashboard/useHiddenSlices';
+import { formatearFechaLocal } from '../../utils/dashboard/dates';
 // Componente principal
 const MovimientosMes = () => {
   // Navegación y params (por ahora no usados directamente, se pueden reutilizar si se restaura fetch real)
@@ -294,11 +295,6 @@ const MovimientosMes = () => {
     }
     return Array.from(acc.values()).sort((a,b)=> b.eventos - a.eventos || b.dias - a.dias);
   }, [datos]);
-
-  const formatearFecha = (fecha) => {
-    if (!fecha) return '-';
-    return new Date(fecha).toLocaleDateString('es-CL');
-  };
 
   const obtenerIconoTipo = (tipo) => {
     switch (tipo) {

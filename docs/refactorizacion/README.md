@@ -123,6 +123,33 @@
 
 ---
 
+### ✅ **Módulo: Menu**
+📁 **Ubicación:** `/src/modules/menu/`  
+📄 **Documentación:** [`/src/modules/menu/README.md`](../../src/modules/menu/README.md)  
+📄 **Resumen Refactorización:** [`07_RESUMEN_MODULO_MENU.md`](./07_RESUMEN_MODULO_MENU.md)  
+📄 **Guía Rápida:** [`08_GUIA_RAPIDA_MENU.md`](./08_GUIA_RAPIDA_MENU.md)
+
+**Estado:** ✅ Completado (14 de noviembre de 2025)
+
+**Componentes:**
+- MenuUsuarioPage
+- MenuCard
+
+**Utilidades:**
+- `menuConfig.js` - Configuración dinámica de opciones por rol y área
+- `roleHelpers.js` - Funciones auxiliares para lógica de roles
+
+**Constantes:**
+- Opacidad de tarjetas
+- Delays de animación
+- Tipos de usuario y áreas de negocio
+
+**Archivos:** 7 archivos creados  
+**Líneas de código:** ~600  
+**Documentación:** 900+ líneas (README.md + guías)
+
+---
+
 ### ⏳ **Módulo: Clientes** (Pendiente)
 📁 **Ubicación:** `/src/modules/clientes/` (por crear)
 

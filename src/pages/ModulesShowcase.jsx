@@ -40,6 +40,27 @@ const ModulesShowcase = () => {
       }
     },
     {
+      id: 'menu',
+      name: 'Menú Principal',
+      status: 'completed',
+      description: 'Módulo de menú principal con opciones dinámicas por rol y área',
+      route: '/dev/modules/menu/demo',
+      docsRoute: '/dev/modules/menu/docs',
+      features: [
+        'MenuUsuarioPage refactorizada',
+        'MenuCard componente reutilizable',
+        'Configuración dinámica por roles',
+        'Utilidades de menú (getUserMenuOptions, hasArea)',
+        'Constantes centralizadas'
+      ],
+      stats: {
+        files: 7,
+        lines: '~600',
+        utils: 2,
+        constants: '6 grupos'
+      }
+    },
+    {
       id: 'clientes',
       name: 'Gestión de Clientes',
       status: 'pending',

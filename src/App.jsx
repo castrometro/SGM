@@ -51,6 +51,7 @@ import ImplementacionBDODashboard from "./pages/ProyectosBDOLatam";
 // Páginas de showcase y demostración de módulos refactorizados
 import ModulesShowcase from "./pages/ModulesShowcase";
 import AuthModuleDemo from "./pages/AuthModuleDemo";
+import MenuModuleDemo from "./pages/MenuModuleDemo";
 import ModulesDocumentation from "./pages/ModulesDocumentation";
 
 function App() {
@@ -64,6 +65,7 @@ function App() {
         {/* Showcase de módulos - Solo visible en desarrollo */}
         <Route path="/dev/modules" element={<ModulesShowcase />} />
         <Route path="/dev/modules/auth/demo" element={<AuthModuleDemo />} />
+        <Route path="/dev/modules/menu/demo" element={<MenuModuleDemo />} />
         <Route path="/dev/modules/docs" element={<ModulesDocumentation />} />
         {/* =============================================================================== */}
 

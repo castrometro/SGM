@@ -64,6 +64,12 @@ const DevModulesButton = () => {
             description: 'Prueba en vivo'
         },
         {
+            to: '/dev/modules/menu/demo',
+            icon: '📋',
+            label: 'Demo Menu',
+            description: 'Prueba en vivo'
+        },
+        {
             to: '/dev/modules/docs',
             icon: '📚',
             label: 'Documentación',

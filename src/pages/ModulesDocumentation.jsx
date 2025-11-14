@@ -3,16 +3,11 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { 
-  FiArrowLeft, 
-  FiBook, 
-  FiFileText,
-  FiGitBranch,
-  FiLayers,
-  FiExternalLink
+  FiChevronRight,
+  FiCopy,
+  FiCheck
 } from 'react-icons/fi';
-import { DevModulesButton, DocsViewer } from '../modules/auth';
-
-/**
+import { DevModulesButton } from '../modules/shared/auth';/**
  * Página de documentación de módulos refactorizados
  * Muestra enlaces a todos los documentos MD generados
  */
@@ -104,10 +99,10 @@ const ModulesDocumentation = () => {
       id: 'auth-readme',
       title: 'README - Módulo Auth',
       description: 'Documentación completa del módulo de autenticación refactorizado',
-      file: 'auth/README.md',
+      file: 'shared/auth/README.md',
       icon: FiBook,
       color: 'pink',
-      path: '/src/modules/auth/README.md',
+      path: '/src/modules/shared/auth/README.md',
       stats: '850 líneas'
     }
   ];
@@ -161,7 +156,7 @@ const ModulesDocumentation = () => {
           'guia-rapida': () => import('../../docs/refactorizacion/05_GUIA_RAPIDA_IMPLEMENTACION.md?raw'),
           'principio-colocacion': () => import('../../docs/refactorizacion/06_PRINCIPIO_COLOCACION.md?raw'),
           'correccion-colocacion': () => import('../../docs/refactorizacion/CORRECCION_PRINCIPIO_COLOCACION.md?raw'),
-          'auth-readme': () => import('../modules/auth/README.md?raw'),
+          'auth-readme': () => import('../modules/shared/auth/README.md?raw'),
         };
         const loader = rawMap[selected.id];
         if (!loader) {
@@ -330,7 +325,7 @@ const ModulesDocumentation = () => {
           <div className="bg-white rounded-lg border border-blue-200 p-4">
             <code className="text-sm text-gray-700 font-mono">
               /root/SGM/docs/refactorizacion/<br />
-              /root/SGM/src/modules/auth/README.md
+              /root/SGM/src/modules/shared/auth/README.md
             </code>
           </div>
         </motion.div>

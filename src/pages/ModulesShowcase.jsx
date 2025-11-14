@@ -10,7 +10,7 @@ import {
   FiCode,
   FiLayers
 } from 'react-icons/fi';
-import { DevModulesButton } from '../modules/auth';
+import { DevModulesButton } from '../modules/shared/auth';
 
 /**
  * Página de showcase para módulos refactorizados

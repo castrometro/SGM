@@ -15,23 +15,31 @@ import {
 import { USER_TYPES, BUSINESS_AREAS } from "../constants/menu.constants";
 
 /**
- * Configuración de opciones de menú por tipo de usuario y área
+ * 📊 MENU DE CONTABILIDAD
+ * Configuración de opciones de menú específicas para el dominio de Contabilidad
  */
 
 /**
- * Opciones disponibles para usuarios tipo Analista
+ * Opciones disponibles para usuarios tipo Analista de Contabilidad
  */
 const OPCIONES_ANALISTA = [
   { 
     label: "Clientes", 
-    descripcion: "Ver y trabajar con tus clientes asignados", 
+    descripcion: "Ver y trabajar con tus clientes de contabilidad", 
     icon: FolderKanban, 
     color: "#4F46E5", 
     path: "/menu/clientes" 
   },
   { 
+    label: "Gestión de Cobranza", 
+    descripcion: "Seguimiento y gestión de cobros a clientes", 
+    icon: CreditCard, 
+    color: "#059669", 
+    path: "/menu/gestion-cobranza-v2"
+  },
+  { 
     label: "Herramientas", 
-    descripcion: "Acceso a recursos y utilidades", 
+    descripcion: "Acceso a recursos y utilidades de contabilidad", 
     icon: Wrench, 
     color: "#10B981", 
     path: "/menu/tools" 
@@ -39,26 +47,26 @@ const OPCIONES_ANALISTA = [
 ];
 
 /**
- * Opciones disponibles para usuarios tipo Supervisor
+ * Opciones disponibles para usuarios tipo Supervisor de Contabilidad
  */
 const OPCIONES_SUPERVISOR = [
   { 
     label: "Mis Analistas", 
-    descripcion: "Gestión y supervisión de analistas asignados", 
+    descripcion: "Gestión y supervisión de analistas de contabilidad", 
     icon: Users, 
     color: "#EC4899", 
     path: "/menu/mis-analistas" 
   },
   { 
     label: "Clientes", 
-    descripcion: "Ver y validar clientes asignados", 
+    descripcion: "Ver y validar clientes de contabilidad", 
     icon: FolderKanban, 
     color: "#4F46E5", 
     path: "/menu/clientes" 
   },
   { 
     label: "Validaciones", 
-    descripcion: "Revisar y aprobar cierres", 
+    descripcion: "Revisar y aprobar cierres contables", 
     icon: ShieldCheck, 
     color: "#F59E0B", 
     path: "/menu/validaciones" 
@@ -66,12 +74,12 @@ const OPCIONES_SUPERVISOR = [
 ];
 
 /**
- * Opciones base disponibles para todos los gerentes
+ * Opciones base para gerentes de Contabilidad
  */
 const OPCIONES_GERENTE_BASE = [
   { 
     label: "Clientes", 
-    descripcion: "Visión general de todos los clientes", 
+    descripcion: "Visión general de todos los clientes de contabilidad", 
     icon: FolderKanban, 
     color: "#4F46E5", 
     path: "/menu/clientes" 
@@ -79,7 +87,7 @@ const OPCIONES_GERENTE_BASE = [
 ];
 
 /**
- * Opciones específicas para gerentes del área de Contabilidad
+ * Opciones específicas para gerentes de Contabilidad
  */
 const OPCIONES_GERENTE_CONTABILIDAD = [
   { 
@@ -102,43 +110,30 @@ const OPCIONES_GERENTE_CONTABILIDAD = [
     icon: Users, 
     color: "#3B82F6", 
     path: "/menu/proyectos-bdo-latam" 
-  }
-];
-
-/**
- * Opciones específicas para gerentes del área de Nómina
- */
-const OPCIONES_GERENTE_NOMINA = [
-  { 
-    label: "Logs y Actividad Nómina", 
-    descripcion: "Auditoría y logs de actividades de nómina", 
-    icon: FileText, 
-    color: "#F97316", 
-    path: "/menu/gerente/logs-actividad-nomina" 
   },
   { 
-    label: "Estados de Cierres Nómina", 
-    descripcion: "Monitoreo en tiempo real de cierres de nómina", 
+    label: "Estados de Cierres", 
+    descripcion: "Monitoreo en tiempo real de cierres contables", 
     icon: Monitor, 
     color: "#06B6D4", 
-    path: "/menu/gerente/estados-cierres-nomina" 
+    path: "/menu/gerente/estados-cierres" 
   },
   { 
-    label: "Cache Redis Nómina", 
-    descripcion: "Estado y gestión del cache Redis de nómina", 
+    label: "Cache Redis", 
+    descripcion: "Estado y gestión del cache Redis", 
     icon: Database, 
     color: "#10B981", 
-    path: "/menu/gerente/cache-redis-nomina" 
+    path: "/menu/gerente/cache-redis" 
   }
 ];
 
 /**
- * Opciones finales comunes para gerentes
+ * Herramientas comunes para gerentes
  */
 const OPCIONES_GERENTE_FINALES = [
   { 
     label: "Herramientas", 
-    descripcion: "Utilidades del sistema", 
+    descripcion: "Utilidades del sistema de contabilidad", 
     icon: Wrench, 
     color: "#10B981", 
     path: "/menu/tools" 
@@ -159,26 +154,21 @@ const OPCIONES_ADMIN_SISTEMA = [
 ];
 
 /**
- * Opción de gestión de cobranza para usuarios de contabilidad (no gerentes)
- */
-const OPCION_COBRANZA_NO_GERENTE = [
-  {
-    label: "Gestión de Cobranza", 
-    descripcion: "Seguimiento y gestión de cobros a clientes", 
-    icon: CreditCard, 
-    color: "#059669", 
-    path: "/menu/gestion-cobranza-v2"
-  }
-];
-
-/**
- * Obtiene las opciones de menú según el tipo de usuario y áreas asignadas
+ * Obtiene las opciones de menú de Contabilidad según el tipo de usuario
  * 
  * @param {Object} usuario - Objeto de usuario con tipo_usuario y areas
- * @returns {Array} Array de opciones de menú
+ * @returns {Array} Array de opciones de menú de contabilidad
  */
 export const getUserMenuOptions = (usuario) => {
   const opciones = [];
+
+  // Verificar que el usuario tenga área de Contabilidad
+  const areas = usuario.areas || [];
+  const tieneContabilidad = areas.some(area => area.nombre === BUSINESS_AREAS.CONTABILIDAD);
+  
+  if (!tieneContabilidad) {
+    return opciones; // Retornar vacío si no es de contabilidad
+  }
 
   // Opciones según tipo de usuario
   if (usuario.tipo_usuario === USER_TYPES.ANALISTA) {
@@ -190,38 +180,17 @@ export const getUserMenuOptions = (usuario) => {
   }
 
   if (usuario.tipo_usuario === USER_TYPES.GERENTE) {
-    const areas = usuario.areas || [];
-    const tieneContabilidad = areas.some(area => area.nombre === BUSINESS_AREAS.CONTABILIDAD);
-    const tieneNomina = areas.some(area => area.nombre === BUSINESS_AREAS.NOMINA);
-    
     // Opciones base
     opciones.push(...OPCIONES_GERENTE_BASE);
     
     // Opciones específicas de Contabilidad
-    if (tieneContabilidad) {
-      opciones.push(...OPCIONES_GERENTE_CONTABILIDAD);
-    }
-
-    // Opciones específicas de Nómina
-    if (tieneNomina) {
-      opciones.push(...OPCIONES_GERENTE_NOMINA);
-    }
+    opciones.push(...OPCIONES_GERENTE_CONTABILIDAD);
     
-    // Opciones finales comunes
+    // Herramientas comunes
     opciones.push(...OPCIONES_GERENTE_FINALES);
 
     // Admin Sistema solo para gerentes de contabilidad
-    if (tieneContabilidad) {
-      opciones.push(...OPCIONES_ADMIN_SISTEMA);
-    }
-  }
-
-  // Gestión de cobranza para usuarios de contabilidad no gerentes
-  const areas = usuario.areas || [];
-  const tieneContabilidad = areas.some(area => area.nombre === BUSINESS_AREAS.CONTABILIDAD);
-  
-  if (tieneContabilidad && usuario.tipo_usuario !== USER_TYPES.GERENTE) {
-    opciones.push(...OPCION_COBRANZA_NO_GERENTE);
+    opciones.push(...OPCIONES_ADMIN_SISTEMA);
   }
 
   return opciones;
@@ -247,8 +216,6 @@ export const MENU_CONFIG = {
   OPCIONES_SUPERVISOR,
   OPCIONES_GERENTE_BASE,
   OPCIONES_GERENTE_CONTABILIDAD,
-  OPCIONES_GERENTE_NOMINA,
   OPCIONES_GERENTE_FINALES,
-  OPCIONES_ADMIN_SISTEMA,
-  OPCION_COBRANZA_NO_GERENTE
+  OPCIONES_ADMIN_SISTEMA
 };

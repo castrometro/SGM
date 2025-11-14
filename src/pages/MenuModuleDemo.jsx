@@ -1,9 +1,8 @@
 // src/pages/MenuModuleDemo.jsx
 import { Link } from 'react-router-dom';
-import { MenuUsuarioPage } from '../modules/menu';
-import { DevModulesButton } from '../modules/auth';
-import Header from '../components/Header';
-import Footer from '../components/Footer';
+import { MenuUsuarioPage } from '../modules/contabilidad/menu';
+import { DevModulesButton } from '../modules/shared/auth';
+import { Header, Footer } from '../modules/shared/common';
 import { FiArrowLeft, FiCheckCircle } from 'react-icons/fi';
 
 /**

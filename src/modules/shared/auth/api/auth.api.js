@@ -1,5 +1,5 @@
-// src/modules/auth/api/auth.api.js
-import api from "../../../api/config";
+// src/modules/shared/auth/api/auth.api.js
+import api from "../../../../api/config";
 import { API_ENDPOINTS, ERROR_MESSAGES, HTTP_STATUS } from '../constants/auth.constants';
 
 /**

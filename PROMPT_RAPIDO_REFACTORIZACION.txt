@@ -1,0 +1,134 @@
+# ⚡ Prompt Rápido - Refactorización de Módulos
+
+**Copiar y pegar, cambiar [NOMBRE], listo.**
+
+---
+
+## 🎯 VERSIÓN ULTRA-CORTA
+
+```
+Tal como se hizo la refactorización de /menu, hazla con /[NOMBRE_MODULO].
+
+Referencia: /src/modules/auth y /src/modules/menu
+```
+
+**Eso es todo.** El sistema sabe qué hacer. ✅
+
+---
+
+## 📋 VERSIÓN CON DETALLES (si necesitas especificar más)
+
+```
+Refactoriza /[NOMBRE_MODULO] siguiendo el patrón de /src/modules/menu:
+
+Archivos actuales:
+- /src/pages/[Archivo1].jsx
+- /src/pages/[Archivo2].jsx
+- /src/components/[Archivo3].jsx
+
+Incluye:
+✅ Estructura modular completa
+✅ Documentación en /docs/refactorizacion/
+✅ Integración en /dev/modules
+✅ [Nombre]ModuleDemo.jsx funcional
+
+Referencia: /src/modules/auth y /src/modules/menu
+```
+
+---
+
+## 🎯 EJEMPLOS REALES
+
+### Clientes
+```
+Tal como se hizo la refactorización de /menu, hazla con /clientes.
+```
+
+### Contabilidad
+```
+Tal como se hizo la refactorización de /menu, hazla con /contabilidad.
+```
+
+### Nómina
+```
+Tal como se hizo la refactorización de /menu, hazla con /nomina.
+```
+
+### Herramientas
+```
+Tal como se hizo la refactorización de /menu, hazla con /tools.
+```
+
+---
+
+## ✅ LO QUE OBTIENES AUTOMÁTICAMENTE
+
+Con ese simple prompt, el sistema crea:
+
+1. **Estructura modular completa:**
+   ```
+   /src/modules/[nombre]/
+   ├── README.md
+   ├── index.js
+   ├── pages/
+   ├── components/
+   ├── utils/
+   ├── constants/
+   └── router/
+   ```
+
+2. **Documentación completa:**
+   ```
+   /docs/refactorizacion/
+   ├── XX_RESUMEN_MODULO_[NOMBRE].md
+   ├── XX_GUIA_RAPIDA_[NOMBRE].md
+   └── XX_ARBOL_ESTRUCTURA_[NOMBRE].md
+   ```
+
+3. **Integración en desarrollo:**
+   ```
+   - ModulesShowcase.jsx (actualizado)
+   - [Nombre]ModuleDemo.jsx (creado)
+   - App.jsx (ruta agregada)
+   - DevModulesButton.jsx (link agregado)
+   ```
+
+4. **Demo funcional:**
+   - Accesible en `/dev/modules/[nombre]/demo`
+   - Con Header y Footer
+   - Banner de demo
+   - Botón flotante de desarrollo
+
+---
+
+## 💡 TIPS
+
+1. **Cambia solo [NOMBRE_MODULO]** por el nombre del módulo
+2. **Mantén "Tal como se hizo"** para que use el patrón establecido
+3. **Menciona /menu o /auth** según el tipo de módulo:
+   - `/menu` → Módulos solo UI
+   - `/auth` → Módulos con API
+
+---
+
+## 🚀 PROMPT USADO HOY
+
+```
+Tal como se hizo la refactorización de login.
+Hazla con /menu
+```
+
+**Resultado:** Módulo completo en ~30 minutos ✅
+
+---
+
+**Siguiente módulo sugerido:** `/clientes`
+
+**Prompt a usar:**
+```
+Tal como se hizo la refactorización de /menu, hazla con /clientes.
+```
+
+---
+
+**Happy coding! 🎉**

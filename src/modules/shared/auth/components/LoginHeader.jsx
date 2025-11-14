@@ -2,7 +2,8 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import logo from '../../../assets/BDO_LOGO.png';
+import { Shield } from 'lucide-react';
+import logo from '../../../../assets/BDO_LOGO.png';
 
 /**
  * Header específico para la página de login

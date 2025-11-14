@@ -1,6 +1,6 @@
 // src/pages/AuthModuleDemo.jsx
 import { Link } from 'react-router-dom';
-import { LoginPage, DevModulesButton } from '../modules/auth';
+import { LoginPage, DevModulesButton } from '../modules/shared/auth';
 import { FiArrowLeft, FiCheckCircle } from 'react-icons/fi';
 
 /**

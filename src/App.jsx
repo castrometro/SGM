@@ -111,7 +111,7 @@ function App() {
 
           {/* ----------- ÁREA: CLIENTES ------------- */}
           <Route path="clientes" element={<Clientes />} />
-          <Route path="clientes/:id/*" element={<ClienteDetalleNominaRouter />} />
+          <Route path="clientes/:id" element={<ClienteDetalle />} />
           <Route path="clientes/:clienteId/clasificacion" element={<PaginaClasificacion />} />
           <Route path="clientes/:clienteId/cierres" element={<HistorialCierresPage />} />
           <Route path="clientes/:clienteId/crear-cierre" element={<CrearCierre />} />

@@ -1,5 +1,6 @@
 // src/pages/ModulesShowcase.jsx
 import { Link } from 'react-router-dom';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { 
   FiPackage, 
@@ -160,6 +161,27 @@ const ModulesShowcase = () => {
       }
     },
     {
+      id: 'cliente-detalle-nomina',
+      name: 'Detalle de Cliente de Nómina',
+      status: 'completed',
+      description: 'Vista completa de cliente con KPIs del último cierre y acciones rápidas',
+      route: '/dev/modules/cliente-detalle-nomina/demo',
+      docsRoute: '/dev/modules/cliente-detalle-nomina/docs',
+      features: [
+        'Validación de acceso al área',
+        'KPIs del último cierre',
+        'Información del cliente con badges',
+        '5 botones de acción rápida',
+        'Fallback a datos básicos'
+      ],
+      stats: {
+        files: 9,
+        lines: '~650',
+        components: 3,
+        endpoints: 4
+      }
+    },
+    {
       id: 'contabilidad',
       name: 'Contabilidad',
       status: 'pending',
@@ -211,6 +233,92 @@ const ModulesShowcase = () => {
         <Icon size={14} />
         {config.text}
       </span>
+    );
+  };
+
+  /**
+   * Componente especial para módulos que necesitan parámetros
+   */
+  const ModuleCardWithInput = ({ module }) => {
+    const [clienteId, setClienteId] = useState('1');
+
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
+      >
+        {/* Header */}
+        <div className="p-6 border-b border-gray-100">
+          <div className="flex items-start justify-between mb-3">
+            <h3 className="text-lg font-semibold text-gray-900">{module.name}</h3>
+            {getStatusBadge(module.status)}
+          </div>
+          <p className="text-sm text-gray-600 leading-relaxed">{module.description}</p>
+        </div>
+
+        {/* Features */}
+        <div className="px-6 py-4 bg-gray-50">
+          <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Características</h4>
+          <ul className="space-y-1">
+            {module.features.map((feature, idx) => (
+              <li key={idx} className="flex items-start gap-2 text-sm text-gray-700">
+                <FiCheckCircle size={16} className="text-green-500 flex-shrink-0 mt-0.5" />
+                <span>{feature}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Stats */}
+        {module.stats && (
+          <div className="px-6 py-4 border-t border-gray-100">
+            <div className="grid grid-cols-2 gap-3">
+              {Object.entries(module.stats).map(([key, value]) => (
+                <div key={key} className="text-center p-2 bg-white rounded-lg border border-gray-200">
+                  <div className="text-xl font-bold text-gray-900">{value}</div>
+                  <div className="text-xs text-gray-500 capitalize">{key}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Actions con Input */}
+        <div className="p-6 bg-gray-50 border-t border-gray-200">
+          <div className="mb-3">
+            <label htmlFor={`clienteId-${module.id}`} className="block text-sm font-medium text-gray-700 mb-2">
+              🔢 ID del Cliente para Demo:
+            </label>
+            <input
+              type="number"
+              id={`clienteId-${module.id}`}
+              value={clienteId}
+              onChange={(e) => setClienteId(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+              min="1"
+              placeholder="Ingrese ID del cliente"
+            />
+          </div>
+          <div className="flex gap-2">
+            <Link
+              to={`${module.route}/${clienteId}`}
+              className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-teal-600 to-teal-700 text-white rounded-lg text-sm font-medium hover:from-teal-700 hover:to-teal-800 transition-all"
+            >
+              Ver Demo (Cliente {clienteId})
+              <FiArrowRight size={14} />
+            </Link>
+            {module.docsRoute && (
+              <Link
+                to={module.docsRoute}
+                className="px-4 py-2 bg-white hover:bg-gray-100 text-gray-700 rounded-lg text-sm font-medium transition-colors border border-gray-300"
+              >
+                <FiFileText size={16} />
+              </Link>
+            )}
+          </div>
+        </div>
+      </motion.div>
     );
   };
 
@@ -290,24 +398,36 @@ const ModulesShowcase = () => {
 
         {/* Modules Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {modules.map((module, index) => (
-            <motion.div
-              key={module.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.1 }}
-              className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow"
-            >
-              {/* Header */}
-              <div className="p-6 border-b border-gray-100">
-                <div className="flex items-start justify-between mb-3">
-                  <h3 className="text-lg font-semibold text-gray-900">{module.name}</h3>
-                  {getStatusBadge(module.status)}
+          {modules.map((module, index) => {
+            // Usar componente especial para cliente-detalle-nomina
+            if (module.id === 'cliente-detalle-nomina') {
+              return (
+                <ModuleCardWithInput 
+                  key={module.id} 
+                  module={module} 
+                />
+              );
+            }
+
+            // Componente normal para otros módulos
+            return (
+              <motion.div
+                key={module.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.1 }}
+                className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow"
+              >
+                {/* Header */}
+                <div className="p-6 border-b border-gray-100">
+                  <div className="flex items-start justify-between mb-3">
+                    <h3 className="text-lg font-semibold text-gray-900">{module.name}</h3>
+                    {getStatusBadge(module.status)}
+                  </div>
+                  <p className="text-sm text-gray-600 leading-relaxed">
+                    {module.description}
+                  </p>
                 </div>
-                <p className="text-sm text-gray-600 leading-relaxed">
-                  {module.description}
-                </p>
-              </div>
 
               {/* Features */}
               <div className="p-6 border-b border-gray-100">
@@ -380,7 +500,8 @@ const ModulesShowcase = () => {
                 </div>
               </div>
             </motion.div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Footer Info */}

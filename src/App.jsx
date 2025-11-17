@@ -36,8 +36,9 @@ import CacheRedisNomina from "./components/Gerente/CacheRedisNomina";
 import LibroRemuneracionesPage from "./pages/DashboardsNomina/LibroRemuneraciones";
 import MovimientosMesPage from "./pages/DashboardsNomina/MovimientosMes";
 import NominaDashboard from "./pages/DashboardsNomina/NominaDashboard";
-import { HerramientasNominaRouter } from "./modules/nomina/herramientas";
-import { HerramientasContabilidadRouter } from "./modules/contabilidad/herramientas";
+import { HerramientasNominaRouter } from './modules/nomina/herramientas';
+import { HerramientasContabilidadRouter } from './modules/contabilidad/herramientas';
+import { ClienteDetalleNominaRouter } from './modules/nomina/cliente-detalle';
 
 // Importar componentes de Captura Masiva de Gastos
 import CapturaMasivaGastos from "./pages/CapturaMasivaGastos";
@@ -64,6 +65,8 @@ import HerramientasNominaModuleDemo from "./pages/HerramientasNominaModuleDemo";
 import HerramientasNominaModuleDocs from "./pages/HerramientasNominaModuleDocs";
 import HerramientasContabilidadModuleDemo from "./pages/HerramientasContabilidadModuleDemo";
 import HerramientasContabilidadModuleDocs from "./pages/HerramientasContabilidadModuleDocs";
+import ClienteDetalleNominaModuleDemo from "./pages/ClienteDetalleNominaModuleDemo";
+import ClienteDetalleNominaModuleDocs from "./pages/ClienteDetalleNominaModuleDocs";
 import ModulesDocumentation from "./pages/ModulesDocumentation";
 
 function App() {
@@ -88,6 +91,8 @@ function App() {
         <Route path="/dev/modules/herramientas-nomina/docs" element={<HerramientasNominaModuleDocs />} />
         <Route path="/dev/modules/herramientas-contabilidad/demo" element={<HerramientasContabilidadModuleDemo />} />
         <Route path="/dev/modules/herramientas-contabilidad/docs" element={<HerramientasContabilidadModuleDocs />} />
+        <Route path="/dev/modules/cliente-detalle-nomina/demo/*" element={<ClienteDetalleNominaModuleDemo />} />
+        <Route path="/dev/modules/cliente-detalle-nomina/docs" element={<ClienteDetalleNominaModuleDocs />} />
         <Route path="/dev/modules/docs" element={<ModulesDocumentation />} />
         {/* =============================================================================== */}
 
@@ -106,7 +111,7 @@ function App() {
 
           {/* ----------- ÁREA: CLIENTES ------------- */}
           <Route path="clientes" element={<Clientes />} />
-          <Route path="clientes/:id" element={<ClienteDetalle />} />
+          <Route path="clientes/:id/*" element={<ClienteDetalleNominaRouter />} />
           <Route path="clientes/:clienteId/clasificacion" element={<PaginaClasificacion />} />
           <Route path="clientes/:clienteId/cierres" element={<HistorialCierresPage />} />
           <Route path="clientes/:clienteId/crear-cierre" element={<CrearCierre />} />

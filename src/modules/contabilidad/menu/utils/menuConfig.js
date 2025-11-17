@@ -42,7 +42,7 @@ const OPCIONES_ANALISTA = [
     descripcion: "Acceso a recursos y utilidades de contabilidad", 
     icon: Wrench, 
     color: "#10B981", 
-    path: "/menu/tools" 
+    path: "/menu/contabilidad/tools" 
   }
 ];
 
@@ -133,10 +133,10 @@ const OPCIONES_GERENTE_CONTABILIDAD = [
 const OPCIONES_GERENTE_FINALES = [
   { 
     label: "Herramientas", 
-    descripcion: "Utilidades del sistema de contabilidad", 
+    descripcion: "Utilidades del sistema", 
     icon: Wrench, 
     color: "#10B981", 
-    path: "/menu/tools" 
+    path: "/menu/contabilidad/tools" 
   }
 ];
 

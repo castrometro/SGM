@@ -97,6 +97,69 @@ const ModulesShowcase = () => {
       }
     },
     {
+      id: 'clientes-contabilidad',
+      name: 'Clientes de Contabilidad',
+      status: 'completed',
+      description: 'Gestión de clientes con validación de acceso al área de Contabilidad',
+      route: '/dev/modules/clientes-contabilidad/demo',
+      docsRoute: '/dev/modules/clientes-contabilidad/docs',
+      features: [
+        'Validación de área Contabilidad',
+        'Vista adaptativa (Card/Tabla)',
+        'Estados de cierres con badges',
+        'Búsqueda por nombre/RUT',
+        'API diferenciada por rol'
+      ],
+      stats: {
+        files: 11,
+        lines: '~900',
+        components: 6,
+        endpoints: 5
+      }
+    },
+    {
+      id: 'herramientas-nomina',
+      name: 'Herramientas de Nómina',
+      status: 'completed',
+      description: 'Centro de utilidades y recursos para gestión integral de nómina',
+      route: '/dev/modules/herramientas-nomina/demo',
+      docsRoute: '/dev/modules/herramientas-nomina/docs',
+      features: [
+        '4 categorías de herramientas',
+        '15 herramientas configuradas',
+        'Sistema de estados',
+        'Estadísticas en tiempo real',
+        'Tabs animados'
+      ],
+      stats: {
+        files: 7,
+        lines: '~800',
+        tools: 15,
+        categories: 4
+      }
+    },
+    {
+      id: 'herramientas-contabilidad',
+      name: 'Herramientas de Contabilidad',
+      status: 'completed',
+      description: 'Centro de utilidades y recursos para gestión integral de contabilidad',
+      route: '/dev/modules/herramientas-contabilidad/demo',
+      docsRoute: '/dev/modules/herramientas-contabilidad/docs',
+      features: [
+        '4 categorías de herramientas',
+        '17 herramientas configuradas',
+        'Sistema de estados',
+        'Estadísticas en tiempo real',
+        'Tabs animados'
+      ],
+      stats: {
+        files: 7,
+        lines: '~850',
+        tools: 17,
+        categories: 4
+      }
+    },
+    {
       id: 'contabilidad',
       name: 'Contabilidad',
       status: 'pending',

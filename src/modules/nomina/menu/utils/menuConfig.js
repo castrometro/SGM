@@ -45,7 +45,7 @@ const OPCIONES_ANALISTA = [
     descripcion: "Acceso a recursos y utilidades de nómina", 
     icon: Wrench, 
     color: "#10B981", 
-    path: "/menu/tools" 
+    path: "/menu/nomina/tools" 
   }
 ];
 
@@ -132,7 +132,7 @@ const OPCIONES_GERENTE_FINALES = [
     descripcion: "Utilidades del sistema de nómina", 
     icon: Wrench, 
     color: "#10B981", 
-    path: "/menu/tools" 
+    path: "/menu/nomina/tools" 
   }
 ];
 

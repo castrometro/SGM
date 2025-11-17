@@ -145,11 +145,19 @@ const OPCIONES_GERENTE_FINALES = [
 export const getUserMenuOptions = (usuario) => {
   const opciones = [];
 
+  // Helper para normalizar nombres (sin tildes, lowercase)
+  const normalizar = (str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
   // Verificar que el usuario tenga área de Nómina
   const areas = usuario.areas || [];
-  const tieneNomina = areas.some(area => area.nombre === BUSINESS_AREAS.NOMINA);
+  // Soportar tanto objetos {nombre: 'Nomina'} como strings 'Nómina'
+  const tieneNomina = areas.some(area => {
+    const nombreArea = typeof area === 'string' ? area : area.nombre;
+    return normalizar(nombreArea) === 'nomina';
+  });
   
   if (!tieneNomina) {
+    console.log('Usuario sin área de Nómina:', usuario);
     return opciones; // Retornar vacío si no es de nómina
   }
 
@@ -184,8 +192,12 @@ export const getUserMenuOptions = (usuario) => {
  * @returns {boolean}
  */
 export const hasArea = (usuario, areaNombre) => {
+  const normalizar = (str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const areas = usuario.areas || [];
-  return areas.some(area => area.nombre === areaNombre);
+  return areas.some(area => {
+    const nombreArea = typeof area === 'string' ? area : area.nombre;
+    return normalizar(nombreArea) === normalizar(areaNombre);
+  });
 };
 
 /**

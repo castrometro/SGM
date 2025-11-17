@@ -19,8 +19,13 @@ const MenuUsuarioPage = () => {
   // Obtener usuario del localStorage
   const usuario = JSON.parse(localStorage.getItem("usuario"));
 
+  // DEBUG: Log del usuario y opciones
+  console.log('🔍 MenuUsuarioPage - Usuario:', usuario);
+  
   // Obtener opciones de menú según el usuario
   const opciones = getUserMenuOptions(usuario);
+  
+  console.log('📋 MenuUsuarioPage - Opciones obtenidas:', opciones);
 
   return (
     <div className="text-white">

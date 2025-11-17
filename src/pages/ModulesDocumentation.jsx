@@ -5,9 +5,25 @@ import { motion } from 'framer-motion';
 import { 
   FiChevronRight,
   FiCopy,
-  FiCheck
+  FiCheck,
+  FiBook,
+  FiLayers,
+  FiFileText,
+  FiGitBranch,
+  FiArrowLeft
 } from 'react-icons/fi';
-import { DevModulesButton } from '../modules/shared/auth';/**
+import { DevModulesButton } from '../modules/shared/auth';
+
+// Componente simple para renderizar markdown
+const DocsViewer = ({ markdown }) => {
+  return (
+    <div className="prose prose-invert max-w-none">
+      <pre className="whitespace-pre-wrap text-gray-300 text-sm font-mono p-4 bg-gray-900 rounded-lg">
+        {markdown}
+      </pre>
+    </div>
+  );
+};/**
  * Página de documentación de módulos refactorizados
  * Muestra enlaces a todos los documentos MD generados
  */

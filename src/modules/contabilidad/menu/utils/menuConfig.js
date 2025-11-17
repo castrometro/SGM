@@ -162,11 +162,19 @@ const OPCIONES_ADMIN_SISTEMA = [
 export const getUserMenuOptions = (usuario) => {
   const opciones = [];
 
+  // Helper para normalizar nombres (sin tildes, lowercase)
+  const normalizar = (str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
   // Verificar que el usuario tenga área de Contabilidad
   const areas = usuario.areas || [];
-  const tieneContabilidad = areas.some(area => area.nombre === BUSINESS_AREAS.CONTABILIDAD);
+  // Soportar tanto objetos {nombre: 'Contabilidad'} como strings 'Contabilidad'
+  const tieneContabilidad = areas.some(area => {
+    const nombreArea = typeof area === 'string' ? area : area.nombre;
+    return normalizar(nombreArea) === 'contabilidad';
+  });
   
   if (!tieneContabilidad) {
+    console.log('Usuario sin área de Contabilidad:', usuario);
     return opciones; // Retornar vacío si no es de contabilidad
   }
 
@@ -204,8 +212,12 @@ export const getUserMenuOptions = (usuario) => {
  * @returns {boolean}
  */
 export const hasArea = (usuario, areaNombre) => {
+  const normalizar = (str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const areas = usuario.areas || [];
-  return areas.some(area => area.nombre === areaNombre);
+  return areas.some(area => {
+    const nombreArea = typeof area === 'string' ? area : area.nombre;
+    return normalizar(nombreArea) === normalizar(areaNombre);
+  });
 };
 
 /**

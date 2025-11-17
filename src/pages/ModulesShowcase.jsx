@@ -75,6 +75,28 @@ const ModulesShowcase = () => {
       ]
     },
     {
+      id: 'clientes-nomina',
+      name: 'Clientes de Nómina',
+      status: 'completed',
+      description: 'Módulo de gestión de clientes del área de Nómina con dashboard integrado',
+      route: '/dev/modules/clientes-nomina/demo',
+      docsRoute: '/dev/modules/clientes-nomina/docs',
+      features: [
+        'ClientesNominaPage refactorizada',
+        'Vista responsiva: Cards + Tabla',
+        'Filtrado por tipo de usuario',
+        'Estados de cierre con badges',
+        'Integración con Dashboard Nómina',
+        'Modo debug integrado'
+      ],
+      stats: {
+        files: 11,
+        lines: '~800',
+        components: 7,
+        constants: '5 grupos'
+      }
+    },
+    {
       id: 'contabilidad',
       name: 'Contabilidad',
       status: 'pending',

@@ -70,6 +70,12 @@ const DevModulesButton = () => {
             description: 'Prueba en vivo'
         },
         {
+            to: '/dev/modules/clientes-nomina/demo',
+            icon: '👥',
+            label: 'Demo Clientes',
+            description: 'Nómina'
+        },
+        {
             to: '/dev/modules/docs',
             icon: '📚',
             label: 'Documentación',

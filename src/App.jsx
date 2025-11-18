@@ -39,6 +39,7 @@ import NominaDashboard from "./pages/DashboardsNomina/NominaDashboard";
 import { HerramientasNominaRouter } from './modules/nomina/herramientas';
 import { HerramientasContabilidadRouter } from './modules/contabilidad/herramientas';
 import { ClienteDetalleNominaRouter } from './modules/nomina/cliente-detalle';
+import { ClienteDetalleContabilidadRouter } from './modules/contabilidad/cliente-detalle';
 
 // Importar componentes de Captura Masiva de Gastos
 import CapturaMasivaGastos from "./pages/CapturaMasivaGastos";
@@ -69,6 +70,8 @@ import HerramientasContabilidadModuleDemo from "./pages/HerramientasContabilidad
 import HerramientasContabilidadModuleDocs from "./pages/HerramientasContabilidadModuleDocs";
 import ClienteDetalleNominaModuleDemo from "./pages/ClienteDetalleNominaModuleDemo";
 import ClienteDetalleNominaModuleDocs from "./pages/ClienteDetalleNominaModuleDocs";
+import ClienteDetalleContabilidadModuleDemo from "./pages/ClienteDetalleContabilidadModuleDemo";
+import ClienteDetalleContabilidadModuleDocs from "./pages/ClienteDetalleContabilidadModuleDocs";
 import ModulesDocumentation from "./pages/ModulesDocumentation";
 
 function App() {
@@ -95,6 +98,8 @@ function App() {
         <Route path="/dev/modules/herramientas-contabilidad/docs" element={<HerramientasContabilidadModuleDocs />} />
         <Route path="/dev/modules/cliente-detalle-nomina/demo/*" element={<ClienteDetalleNominaModuleDemo />} />
         <Route path="/dev/modules/cliente-detalle-nomina/docs" element={<ClienteDetalleNominaModuleDocs />} />
+        <Route path="/dev/modules/cliente-detalle-contabilidad/demo/*" element={<ClienteDetalleContabilidadModuleDemo />} />
+        <Route path="/dev/modules/cliente-detalle-contabilidad/docs" element={<ClienteDetalleContabilidadModuleDocs />} />
         <Route path="/dev/modules/captura-gastos/demo" element={<CapturaGastosModuleDemo />} />
         <Route path="/dev/modules/captura-gastos/docs" element={<CapturaGastosModuleDocs />} />
         <Route path="/dev/modules/docs" element={<ModulesDocumentation />} />
@@ -135,6 +140,10 @@ function App() {
           <Route path="cierres-nomina/:id/libro-remuneraciones" element={<LibroRemuneracionesPage />} />
           <Route path="cierres-nomina/:id/movimientos" element={<MovimientosMesPage />} />
           <Route path="nomina/tools/*" element={<HerramientasNominaRouter />} />
+          <Route path="nomina/clientes/:id/*" element={<ClienteDetalleNominaRouter />} />
+          
+          {/* ----------- ÁREA: CONTABILIDAD - CLIENTE DETALLE ------------- */}
+          <Route path="contabilidad/clientes/:id/*" element={<ClienteDetalleContabilidadRouter />} />
           
           {/* ----------- ÁREA: GESTIÓN DE ANALISTAS ------------- */}
           {/* Dashboard Nómina (solo informes y cierres finalizados) */}

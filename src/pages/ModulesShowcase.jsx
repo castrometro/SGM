@@ -182,6 +182,27 @@ const ModulesShowcase = () => {
       }
     },
     {
+      id: 'cliente-detalle-contabilidad',
+      name: 'Detalle de Cliente de Contabilidad',
+      status: 'completed',
+      description: 'Vista completa de cliente con KPIs contables y análisis de balance',
+      route: '/dev/modules/cliente-detalle-contabilidad/demo',
+      docsRoute: '/dev/modules/cliente-detalle-contabilidad/docs',
+      features: [
+        'Validación de acceso a Contabilidad',
+        'KPIs del último cierre contable',
+        'Indicador de balance (debe/haber)',
+        '5 botones de acción rápida',
+        'Fallback a datos básicos'
+      ],
+      stats: {
+        files: 9,
+        lines: '~650',
+        components: 3,
+        endpoints: 4
+      }
+    },
+    {
       id: 'captura-gastos',
       name: 'Captura Masiva de Gastos',
       status: 'completed',
@@ -420,8 +441,8 @@ const ModulesShowcase = () => {
         {/* Modules Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {modules.map((module, index) => {
-            // Usar componente especial para cliente-detalle-nomina
-            if (module.id === 'cliente-detalle-nomina') {
+            // Usar componente especial para módulos de cliente detalle con input de ID
+            if (module.id === 'cliente-detalle-nomina' || module.id === 'cliente-detalle-contabilidad') {
               return (
                 <ModuleCardWithInput 
                   key={module.id} 

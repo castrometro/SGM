@@ -24,14 +24,6 @@ import { TOOL_CATEGORIES, TOOL_STATUS, TOOL_COLORS } from "../constants/herramie
  */
 export const GENERAL_TOOLS = [
   {
-    title: "Captura Masiva de Gastos",
-    description: "Procesar y clasificar gastos desde archivos Excel",
-    icon: Receipt,
-    color: TOOL_COLORS.emerald,
-    path: "/menu/tools/captura-masiva-gastos",
-    status: TOOL_STATUS.AVAILABLE
-  },
-  {
     title: "Exportar Datos de Nómina",
     description: "Exportar información de empleados y cierres",
     icon: Download,

@@ -42,6 +42,8 @@ import { ClienteDetalleNominaRouter } from './modules/nomina/cliente-detalle';
 
 // Importar componentes de Captura Masiva de Gastos
 import CapturaMasivaGastos from "./pages/CapturaMasivaGastos";
+import CapturaGastosModuleDemo from "./pages/CapturaGastosModuleDemo";
+import CapturaGastosModuleDocs from "./pages/CapturaGastosModuleDocs";
 
 
 
@@ -93,6 +95,8 @@ function App() {
         <Route path="/dev/modules/herramientas-contabilidad/docs" element={<HerramientasContabilidadModuleDocs />} />
         <Route path="/dev/modules/cliente-detalle-nomina/demo/*" element={<ClienteDetalleNominaModuleDemo />} />
         <Route path="/dev/modules/cliente-detalle-nomina/docs" element={<ClienteDetalleNominaModuleDocs />} />
+        <Route path="/dev/modules/captura-gastos/demo" element={<CapturaGastosModuleDemo />} />
+        <Route path="/dev/modules/captura-gastos/docs" element={<CapturaGastosModuleDocs />} />
         <Route path="/dev/modules/docs" element={<ModulesDocumentation />} />
         {/* =============================================================================== */}
 

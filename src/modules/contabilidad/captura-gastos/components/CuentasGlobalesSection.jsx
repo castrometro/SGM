@@ -1,5 +1,5 @@
 import { Settings, Info, CheckCircle, AlertCircle } from "lucide-react";
-import { STYLES_CONFIG } from "../config/capturaConfig";
+import { STYLES_CONFIG } from "../constants/capturaConfig";
 
 const CuentasGlobalesSection = ({ cuentasGlobales, setCuentasGlobales }) => {
   const { containers } = STYLES_CONFIG;

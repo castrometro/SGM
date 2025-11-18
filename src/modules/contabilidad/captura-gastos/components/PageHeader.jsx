@@ -1,6 +1,8 @@
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
-import { CAPTURA_CONFIG, STYLES_CONFIG } from "../config/capturaConfig";
+import { Receipt } from "lucide-react";
+
+import { CAPTURA_CONFIG, STYLES_CONFIG } from "../constants/capturaConfig";
 
 /**
  * Componente header de la página de captura masiva

@@ -1,5 +1,6 @@
 import { FileSpreadsheet, X, Clock } from "lucide-react";
-import { CAPTURA_CONFIG, STYLES_CONFIG, UI_MESSAGES } from "../config/capturaConfig";
+import { Upload, FileUp, AlertCircle, Loader2 } from "lucide-react";
+import { CAPTURA_CONFIG, STYLES_CONFIG, UI_MESSAGES } from "../constants/capturaConfig";
 
 /**
  * Componente para subir archivos Excel

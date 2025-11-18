@@ -1,33 +1,23 @@
+// src/modules/contabilidad/captura-gastos/pages/CapturaGastosPage.jsx
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { useCapturaGastos } from "./hooks/useCapturaGastos";
-import PageHeader from "./components/PageHeader";
-import InstructionsSection from "./components/InstructionsSection";
-import DownloadTemplateSection from "./components/DownloadTemplateSection";
-import FileUploadSection from "./components/FileUploadSection";
-import MapeoCC from "./components/MapeoCC";
-import CuentasGlobalesSection from "./components/CuentasGlobalesSection";
-import ResultsSection from "./components/ResultsSection";
-import ErrorSection from "./components/ErrorSection";
-import { STYLES_CONFIG } from "./config/capturaConfig";
+import { useCapturaGastos } from "../hooks/useCapturaGastos";
+import PageHeader from "../components/PageHeader";
+import InstructionsSection from "../components/InstructionsSection";
+import DownloadTemplateSection from "../components/DownloadTemplateSection";
+import FileUploadSection from "../components/FileUploadSection";
+import MapeoCC from "../components/MapeoCC";
+import CuentasGlobalesSection from "../components/CuentasGlobalesSection";
+import ResultsSection from "../components/ResultsSection";
+import ErrorSection from "../components/ErrorSection";
+import { STYLES_CONFIG } from "../constants/capturaConfig";
+import { validarAccesoContabilidad } from "../utils/capturaGastosHelpers";
 
 /**
- * Normaliza texto removiendo acentos y convirtiendo a minúsculas
- */
-const normalizar = (texto) => {
-  if (!texto) return '';
-  return texto
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
-};
-
-/**
- * Página principal de captura masiva de gastos
- * Refactorizada usando el patrón de feature folders
+ * Página principal de captura masiva de gastos (Rinde Gastos)
  * SOLO ACCESIBLE PARA ÁREA DE CONTABILIDAD
  */
-const CapturaMasivaGastos = () => {
+const CapturaGastosPage = () => {
   const navigate = useNavigate();
   const [validandoAcceso, setValidandoAcceso] = useState(true);
   const [tieneAcceso, setTieneAcceso] = useState(false);
@@ -38,7 +28,6 @@ const CapturaMasivaGastos = () => {
       const usuarioStr = localStorage.getItem('usuario');
       
       console.log('🔍 Validando acceso a Rinde Gastos...');
-      console.log('📦 Usuario string:', usuarioStr);
       
       if (!usuarioStr) {
         console.log('❌ No hay usuario en localStorage');
@@ -49,24 +38,7 @@ const CapturaMasivaGastos = () => {
 
       try {
         const usuario = JSON.parse(usuarioStr);
-        console.log('👤 Usuario parseado:', usuario);
-        console.log('📋 Areas del usuario:', usuario.areas);
-        
-        if (!usuario.areas || !Array.isArray(usuario.areas)) {
-          console.log('❌ No tiene areas o no es array');
-          setTieneAcceso(false);
-          setValidandoAcceso(false);
-          return;
-        }
-
-        // Verificar si el usuario tiene acceso al área de Contabilidad
-        const tieneContabilidad = usuario.areas.some(area => {
-          // El área puede ser un string o un objeto con propiedad 'nombre'
-          const areaNombre = typeof area === 'string' ? area : area.nombre;
-          const areaNormalizada = normalizar(areaNombre);
-          console.log(`  ➡️ Verificando área: "${areaNombre}" → normalizada: "${areaNormalizada}"`);
-          return areaNormalizada === 'contabilidad';
-        });
+        const tieneContabilidad = validarAccesoContabilidad(usuario);
 
         console.log(tieneContabilidad ? '✅ Tiene acceso a Contabilidad' : '❌ NO tiene acceso a Contabilidad');
         setTieneAcceso(tieneContabilidad);
@@ -168,7 +140,7 @@ const CapturaMasivaGastos = () => {
           setMapeoCC={setMapeoCC}
         />
 
-        {/* Cuentas Globales (placeholder) */}
+        {/* Cuentas Globales (obligatorias) */}
         {mostrarMapeoCC && (
           <CuentasGlobalesSection 
             cuentasGlobales={cuentasGlobales}
@@ -189,4 +161,4 @@ const CapturaMasivaGastos = () => {
   );
 };
 
-export default CapturaMasivaGastos;
+export default CapturaGastosPage;

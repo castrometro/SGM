@@ -182,6 +182,27 @@ const ModulesShowcase = () => {
       }
     },
     {
+      id: 'captura-gastos',
+      name: 'Captura Masiva de Gastos',
+      status: 'completed',
+      description: 'Herramienta para procesar gastos desde Excel de forma masiva, exclusiva para Contabilidad',
+      route: '/dev/modules/captura-gastos/demo',
+      docsRoute: '/dev/modules/captura-gastos/docs',
+      features: [
+        'Validación de acceso a Contabilidad',
+        'Carga masiva desde Excel',
+        'Validación de cuentas contables',
+        'Mapeo de centros de costo',
+        'Descarga de plantilla y resultados'
+      ],
+      stats: {
+        files: 8,
+        lines: '~700',
+        hooks: 1,
+        endpoints: 4
+      }
+    },
+    {
       id: 'contabilidad',
       name: 'Contabilidad',
       status: 'pending',

@@ -266,6 +266,27 @@ const ModulesShowcase = () => {
       }
     },
     {
+      id: 'cierre-detalle-contabilidad',
+      name: 'Detalle de Cierre de Contabilidad',
+      status: 'completed',
+      description: 'Vista completa del progreso de un cierre contable con todas sus etapas y procesos',
+      route: '/dev/modules/cierre-detalle-contabilidad/demo',
+      docsRoute: '/dev/modules/cierre-detalle-contabilidad/docs',
+      features: [
+        '4 etapas: Tipo de Documento, Clasificación, Nombres en Inglés, Libro Mayor',
+        'Gestión de incidencias consolidadas',
+        'Reprocesamiento con excepciones',
+        'Finalización de cierre con reportes',
+        'Validación de acceso por área'
+      ],
+      stats: {
+        files: '12+',
+        lines: '~800',
+        components: '12+',
+        endpoints: '30+'
+      }
+    },
+    {
       id: 'captura-gastos',
       name: 'Captura Masiva de Gastos',
       status: 'completed',
@@ -509,7 +530,8 @@ const ModulesShowcase = () => {
                 module.id === 'cliente-detalle-contabilidad' ||
                 module.id === 'historial-cierres-nomina' ||
                 module.id === 'historial-cierres-contabilidad' ||
-                module.id === 'cierre-detalle-nomina') {
+                module.id === 'cierre-detalle-nomina' ||
+                module.id === 'cierre-detalle-contabilidad') {
               return (
                 <ModuleCardWithInput 
                   key={module.id} 

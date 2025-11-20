@@ -245,6 +245,27 @@ const ModulesShowcase = () => {
       }
     },
     {
+      id: 'cierre-detalle-nomina',
+      name: 'Detalle de Cierre de Nómina',
+      status: 'completed',
+      description: 'Vista completa del progreso de un cierre de nómina con todas sus etapas, archivos y verificaciones',
+      route: '/dev/modules/cierre-detalle-nomina/demo',
+      docsRoute: '/dev/modules/cierre-detalle-nomina/docs',
+      features: [
+        '8+ secciones: Talana, Analista, Verificador, Incidencias, Resumen',
+        '6+ tarjetas: Libro, Movimientos, Ingresos, Finiquitos, Ausentismos, Novedades',
+        'Verificador de datos automático',
+        'Gestión completa de incidencias',
+        'Auto-actualización del estado'
+      ],
+      stats: {
+        files: '28+',
+        lines: '~1,200',
+        components: '28+',
+        endpoints: '50+'
+      }
+    },
+    {
       id: 'captura-gastos',
       name: 'Captura Masiva de Gastos',
       status: 'completed',
@@ -487,7 +508,8 @@ const ModulesShowcase = () => {
             if (module.id === 'cliente-detalle-nomina' || 
                 module.id === 'cliente-detalle-contabilidad' ||
                 module.id === 'historial-cierres-nomina' ||
-                module.id === 'historial-cierres-contabilidad') {
+                module.id === 'historial-cierres-contabilidad' ||
+                module.id === 'cierre-detalle-nomina') {
               return (
                 <ModuleCardWithInput 
                   key={module.id} 

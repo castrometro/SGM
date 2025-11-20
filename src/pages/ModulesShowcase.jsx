@@ -203,6 +203,48 @@ const ModulesShowcase = () => {
       }
     },
     {
+      id: 'historial-cierres-nomina',
+      name: 'Historial de Cierres de Nómina',
+      status: 'completed',
+      description: 'Lista completa de cierres de nómina con filtros, estadísticas y auto-refresh',
+      route: '/dev/modules/historial-cierres-nomina/demo',
+      docsRoute: '/dev/modules/historial-cierres-nomina/docs',
+      features: [
+        'Auto-refresh cada 30s para cierres en proceso',
+        'Filtros por estado (todos, finalizado, procesando, incidencias)',
+        '4 estadísticas (Total, Finalizados, En Proceso, Con Incidencias)',
+        'Navegación a detalle y libro de remuneraciones',
+        'Validación de acceso a Nómina'
+      ],
+      stats: {
+        files: 9,
+        lines: '~750',
+        components: 3,
+        endpoints: 3
+      }
+    },
+    {
+      id: 'historial-cierres-contabilidad',
+      name: 'Historial de Cierres de Contabilidad',
+      status: 'completed',
+      description: 'Lista completa de cierres contables con cuentas nuevas y estado de proceso',
+      route: '/dev/modules/historial-cierres-contabilidad/demo',
+      docsRoute: '/dev/modules/historial-cierres-contabilidad/docs',
+      features: [
+        'Tabla extendida con Cuentas Nuevas y Estado Proceso',
+        'Badges de estado: Listo para finalizar, Generando reportes, Reportes disponibles',
+        'Auto-refresh cada 30s',
+        'Filtros por estado con contadores dinámicos',
+        'Navegación a detalle y libro mayor'
+      ],
+      stats: {
+        files: 9,
+        lines: '~800',
+        components: 3,
+        endpoints: 3
+      }
+    },
+    {
       id: 'captura-gastos',
       name: 'Captura Masiva de Gastos',
       status: 'completed',
@@ -441,8 +483,11 @@ const ModulesShowcase = () => {
         {/* Modules Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {modules.map((module, index) => {
-            // Usar componente especial para módulos de cliente detalle con input de ID
-            if (module.id === 'cliente-detalle-nomina' || module.id === 'cliente-detalle-contabilidad') {
+            // Usar componente especial para módulos con input de ID
+            if (module.id === 'cliente-detalle-nomina' || 
+                module.id === 'cliente-detalle-contabilidad' ||
+                module.id === 'historial-cierres-nomina' ||
+                module.id === 'historial-cierres-contabilidad') {
               return (
                 <ModuleCardWithInput 
                   key={module.id} 

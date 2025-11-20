@@ -1,0 +1,24 @@
+/**
+ * 🎯 Módulo de Historial de Cierres de Contabilidad
+ * Exports públicos del módulo
+ */
+
+// Router
+export { default as HistorialCierresContabilidadRouter } from './router/HistorialCierresContabilidadRouter';
+
+// Página principal
+export { default as HistorialCierresContabilidadPage } from './pages/HistorialCierresContabilidadPage';
+
+// Componentes
+export { default as EstadisticasCierres } from './components/EstadisticasCierres';
+export { default as FiltrosCierres } from './components/FiltrosCierres';
+export { default as TablaCierres } from './components/TablaCierres';
+
+// API
+export * from './api/historialCierres.api';
+
+// Utilidades
+export * from './utils/historialCierresHelpers';
+
+// Export default de la página principal
+export { default } from './pages/HistorialCierresContabilidadPage';

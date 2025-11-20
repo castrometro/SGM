@@ -72,6 +72,10 @@ import ClienteDetalleNominaModuleDemo from "./pages/ClienteDetalleNominaModuleDe
 import ClienteDetalleNominaModuleDocs from "./pages/ClienteDetalleNominaModuleDocs";
 import ClienteDetalleContabilidadModuleDemo from "./pages/ClienteDetalleContabilidadModuleDemo";
 import ClienteDetalleContabilidadModuleDocs from "./pages/ClienteDetalleContabilidadModuleDocs";
+import HistorialCierresNominaModuleDemo from "./pages/HistorialCierresNominaModuleDemo";
+import HistorialCierresNominaModuleDocs from "./pages/HistorialCierresNominaModuleDocs";
+import HistorialCierresContabilidadModuleDemo from "./pages/HistorialCierresContabilidadModuleDemo";
+import HistorialCierresContabilidadModuleDocs from "./pages/HistorialCierresContabilidadModuleDocs";
 import ModulesDocumentation from "./pages/ModulesDocumentation";
 
 function App() {
@@ -100,6 +104,10 @@ function App() {
         <Route path="/dev/modules/cliente-detalle-nomina/docs" element={<ClienteDetalleNominaModuleDocs />} />
         <Route path="/dev/modules/cliente-detalle-contabilidad/demo/*" element={<ClienteDetalleContabilidadModuleDemo />} />
         <Route path="/dev/modules/cliente-detalle-contabilidad/docs" element={<ClienteDetalleContabilidadModuleDocs />} />
+        <Route path="/dev/modules/historial-cierres-nomina/demo/:clienteId" element={<HistorialCierresNominaModuleDemo />} />
+        <Route path="/dev/modules/historial-cierres-nomina/docs" element={<HistorialCierresNominaModuleDocs />} />
+        <Route path="/dev/modules/historial-cierres-contabilidad/demo/:clienteId" element={<HistorialCierresContabilidadModuleDemo />} />
+        <Route path="/dev/modules/historial-cierres-contabilidad/docs" element={<HistorialCierresContabilidadModuleDocs />} />
         <Route path="/dev/modules/captura-gastos/demo" element={<CapturaGastosModuleDemo />} />
         <Route path="/dev/modules/captura-gastos/docs" element={<CapturaGastosModuleDocs />} />
         <Route path="/dev/modules/docs" element={<ModulesDocumentation />} />

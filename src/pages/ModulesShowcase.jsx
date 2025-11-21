@@ -287,6 +287,50 @@ const ModulesShowcase = () => {
       }
     },
     {
+      id: 'crear-cierre-contabilidad',
+      name: 'Crear Cierre de Contabilidad',
+      status: 'completed',
+      description: 'Formulario para crear nuevos cierres mensuales de contabilidad con validaciones',
+      route: '/dev/modules/crear-cierre-contabilidad/demo/1',
+      docsRoute: '/dev/modules/crear-cierre-contabilidad/docs',
+      features: [
+        'Validación de acceso a Contabilidad',
+        'Información del cliente con resumen',
+        'Verificación de cierres existentes',
+        'Selector de periodo (mes y año)',
+        'Confirmación antes de crear',
+        'Navegación automática al cierre'
+      ],
+      stats: {
+        files: 9,
+        lines: '~600',
+        components: 2,
+        endpoints: 5
+      }
+    },
+    {
+      id: 'crear-cierre-nomina',
+      name: 'Crear Cierre de Nómina',
+      status: 'completed',
+      description: 'Formulario para crear cierres de nómina con checklist de tareas comprometidas',
+      route: '/dev/modules/crear-cierre-nomina/demo/1',
+      docsRoute: '/dev/modules/crear-cierre-nomina/docs',
+      features: [
+        'Validación de acceso a Nómina',
+        'Información del cliente con resumen',
+        'Gestión de checklist de tareas',
+        'Validación de tareas antes de crear',
+        'Confirmación con advertencia',
+        'Navegación automática al cierre'
+      ],
+      stats: {
+        files: 10,
+        lines: '~700',
+        components: 3,
+        endpoints: 5
+      }
+    },
+    {
       id: 'contabilidad',
       name: 'Contabilidad',
       status: 'pending',
